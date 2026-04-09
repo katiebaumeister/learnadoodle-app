@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Platform, Animated, Easing, ScrollView, StyleSheet, Modal, Switch } from 'react-native';
-import { X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, AlertCircle, Check } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import AddSubjectModal from './AddSubjectModal';
@@ -19,6 +19,9 @@ import {
   resolveLearnerChild,
   sharedConflictBannerStyles as cb,
 } from './planner/conflictBannerShared';
+import AppModalShell from './ui/AppModalShell';
+import { ModalFooter } from './ui/ModalFooter';
+import { ModalSectionCard } from './ui/ModalSectionCard';
 
 const BG = '#ffffff';
 const FG = '#111827';
@@ -247,7 +250,6 @@ export default function TaskCreateModal({
   const [percentValidationError, setPercentValidationError] = useState(null);
   const [percentValidationData, setPercentValidationData] = useState(null);
   const [checkingPercent, setCheckingPercent] = useState(false);
-  const [createButtonHovered, setCreateButtonHovered] = useState(false);
 
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes
   useEffect(() => {
@@ -2089,38 +2091,55 @@ export default function TaskCreateModal({
             // Prevent clicks inside modal from closing it
           }}
         >
-          {/* Title input */}
-          <View style={styles.header}>
-            <View style={{ marginBottom: 8 }}>
-              <Text style={styles.fieldLabel}>
-                Name <Text style={{ color: '#ef4444' }}>*</Text>
-              </Text>
-            </View>
-            <TextInput
-              placeholder="Event name"
-              placeholderTextColor={MUTED}
-              value={title}
-              onChangeText={(text) => {
-                setTitle(text);
-                if (validationErrors.title) {
-                  setValidationErrors({ ...validationErrors, title: null });
-                }
-              }}
-              style={[
-                styles.titleInput,
-                validationErrors.title && styles.inputError,
-              ]}
-              autoFocus
-            />
-            {validationErrors.title && (
-              <Text style={styles.errorText}>{validationErrors.title}</Text>
+          <AppModalShell
+            mode="add"
+            title={title || 'New event'}
+            eyebrow="EVENT"
+            accent="#7C70F4"
+            accentSoft="#FAF9FF"
+            HeroIcon={Calendar}
+            onClose={onClose}
+            contentContainerStyle={styles.bodyContent}
+            bodyStyle={styles.shellBody}
+            footer={(
+              <ModalFooter
+                mode="add"
+                primaryLabel={submitting ? 'Adding…' : 'Add Event'}
+                onCancel={onClose}
+                onPrimary={handleCreate}
+                accent="#7C70F4"
+                disabled={submitting || !isFormValid()}
+                loading={submitting}
+              />
             )}
+          >
+          <View style={{ marginBottom: 8 }}>
+            <Text style={styles.fieldLabel}>
+              Name <Text style={{ color: '#ef4444' }}>*</Text>
+            </Text>
           </View>
+          <TextInput
+            placeholder="Event name"
+            placeholderTextColor={MUTED}
+            value={title}
+            onChangeText={(text) => {
+              setTitle(text);
+              if (validationErrors.title) {
+                setValidationErrors({ ...validationErrors, title: null });
+              }
+            }}
+            style={[
+              styles.titleInput,
+              validationErrors.title && styles.inputError,
+            ]}
+            autoFocus
+          />
+          {validationErrors.title && (
+            <Text style={styles.errorText}>{validationErrors.title}</Text>
+          )}
 
-          {/* Scrollable Content */}
           <ScrollView 
             style={styles.bodyScroll}
-            contentContainerStyle={styles.bodyContent}
             showsVerticalScrollIndicator={true}
             nestedScrollEnabled={true}
             {...(Platform.OS === 'web' && {
@@ -3194,26 +3213,15 @@ export default function TaskCreateModal({
             )}
           </SafeView>
 
-            {/* Logistic Details Section */}
-            <SafeView style={styles.academicSection}>
-              <TouchableOpacity
-                onPress={() => setShowLogisticDetails(!showLogisticDetails)}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  paddingVertical: 4,
-                }}
-              >
-                <Text style={styles.sectionLabel}>Logistical details</Text>
-                {showLogisticDetails ? (
-                  <ChevronUp size={20} color={MUTED} />
-                ) : (
-                  <ChevronDown size={20} color={MUTED} />
-                )}
-              </TouchableOpacity>
-              {showLogisticDetails && (
-                <>
+            <ModalSectionCard
+              Icon={MapPin}
+              title="Logistical details"
+              subtitle="Location, mode, and host"
+              expanded={showLogisticDetails}
+              onPress={() => setShowLogisticDetails(!showLogisticDetails)}
+              accent="#7C70F4"
+            >
+                <SafeView>
                   <SafeFieldRow style={styles.fieldRow}>
                     <View style={styles.field}>
                       <Text style={styles.fieldLabel}>Location (optional)</Text>
@@ -3262,30 +3270,19 @@ export default function TaskCreateModal({
                       />
                     </View>
                   </SafeFieldRow>
-                </>
-            )}
-          </SafeView>
+                </SafeView>
+            </ModalSectionCard>
 
             {/* Academic Details Section - after Schedule time */}
-            <SafeView style={styles.academicSection}>
-              <TouchableOpacity
-                onPress={() => setShowAcademicDetails(!showAcademicDetails)}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  paddingVertical: 4,
-                }}
-              >
-                <Text style={styles.sectionLabel}>Academic Details</Text>
-                {showAcademicDetails ? (
-                  <ChevronUp size={20} color={MUTED} />
-                ) : (
-                  <ChevronDown size={20} color={MUTED} />
-                )}
-              </TouchableOpacity>
-              {showAcademicDetails && (
-                <>
+            <ModalSectionCard
+              Icon={GraduationCap}
+              title="Academic details"
+              subtitle="Planning and grading context"
+              expanded={showAcademicDetails}
+              onPress={() => setShowAcademicDetails(!showAcademicDetails)}
+              accent="#7C70F4"
+            >
+                <SafeView>
               {/* Count this as instructional time + plan (was below Event Type; lives in Academic Details) */}
               {placement === 'calendar' &&
                 ['Lesson', 'Project', 'Exam', 'Assignment', 'Activity', 'Appointment'].includes(eventType) && (
@@ -3641,31 +3638,19 @@ export default function TaskCreateModal({
                   )}
                 </View>
               </SafeFieldRow>
-                </>
-              )}
-            </SafeView>
+                </SafeView>
+            </ModalSectionCard>
 
             {/* Additional notes — collapsible, same pattern as Add Subject modal */}
-            <SafeView style={styles.academicSection}>
-              <TouchableOpacity
-                onPress={() => setShowNotesSection(!showNotesSection)}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  paddingVertical: 4,
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.sectionLabel}>Additional notes</Text>
-                {showNotesSection ? (
-                  <ChevronUp size={20} color={MUTED} />
-                ) : (
-                  <ChevronDown size={20} color={MUTED} />
-                )}
-              </TouchableOpacity>
-              {showNotesSection && (
-                <View style={{ marginTop: 12, paddingTop: 8 }}>
+            <ModalSectionCard
+              Icon={FileText}
+              title="Additional notes"
+              subtitle="Anything else to remember"
+              expanded={showNotesSection}
+              onPress={() => setShowNotesSection(!showNotesSection)}
+              accent="#7C70F4"
+            >
+                <View style={{ marginTop: 2 }}>
                   <TextInput
                     placeholder="Add any additional notes about this event"
                     placeholderTextColor={MUTED}
@@ -3676,8 +3661,7 @@ export default function TaskCreateModal({
                     textAlignVertical="top"
                   />
                 </View>
-              )}
-            </SafeView>
+            </ModalSectionCard>
 
             {/* Labels removed - no longer used */}
 
@@ -3780,7 +3764,7 @@ export default function TaskCreateModal({
                       style={styles.addMaterialButton}
                       onPress={() => setShowAddMaterialModal(true)}
                     >
-                      <Plus size={14} color={ACCENT} />
+                      <Plus size={14} color="#B8D7F9" />
                       <Text style={styles.addMaterialText}>Add New</Text>
                     </TouchableOpacity>
                   </View>
@@ -3894,35 +3878,7 @@ export default function TaskCreateModal({
             )}
 
           </ScrollView>
-
-          {/* Footer */}
-          <View style={styles.footer}>
-            <TouchableOpacity 
-              onPress={onClose}
-              style={{ paddingVertical: 10, paddingHorizontal: 20 }}
-            >
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={handleCreate}
-              disabled={submitting}
-              style={[
-                styles.createButton,
-                (submitting || !isFormValid()) && styles.createButtonDisabled,
-                Platform.OS === 'web' && isFormValid() && !submitting && createButtonHovered && styles.createButtonHovered,
-              ]}
-              onMouseEnter={Platform.OS === 'web' ? () => setCreateButtonHovered(true) : undefined}
-              onMouseLeave={Platform.OS === 'web' ? () => setCreateButtonHovered(false) : undefined}
-              activeOpacity={0.9}
-            >
-              <Text style={[
-                styles.createButtonText,
-                (submitting || !isFormValid()) && styles.createButtonTextDisabled,
-              ]}>
-                {submitting ? 'Adding…' : 'Add Event'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+          </AppModalShell>
         </Animated.View>
       </Animated.View>
       
@@ -4660,25 +4616,20 @@ const styles = StyleSheet.create({
     zIndex: 50,
   },
   modal: {
-    width: 720,
-    maxWidth: '100%',
-    maxHeight: Platform.OS === 'web' ? '82vh' : '85%',
-    backgroundColor: BG,
-    borderRadius: 24,
+    width: '100%',
+    maxWidth: 860,
+    maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
+    backgroundColor: 'transparent',
+    borderRadius: 0,
     flexDirection: 'column',
-    ...Platform.select({
-      web: {
-        boxShadow: '0 10px 20px rgba(0, 0, 0, 0.15)',
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOpacity: 0.15,
-        shadowRadius: 20,
-        shadowOffset: { width: 0, height: 10 },
-        elevation: 6,
-      },
-    }),
-    overflow: 'hidden',
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0,
+    overflow: 'visible',
+  },
+  shellBody: {
+    paddingTop: 10,
   },
   header: {
     paddingHorizontal: 20,
@@ -5320,14 +5271,16 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 6,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: ACCENT,
+    borderColor: '#B8D7F9',
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   addMaterialText: {
     fontSize: 13,
-    color: ACCENT,
-    fontWeight: '500',
+    color: '#1e40af',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

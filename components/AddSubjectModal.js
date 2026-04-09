@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput, Alert } from 'react-native';
-import { ChevronDown, ChevronUp, Plus, Trash2, CheckCircle, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, Trash2, CheckCircle, AlertTriangle, BookOpen, Library, SlidersHorizontal, FileText } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -13,6 +13,9 @@ import { useModalStackElevation } from './hooks/useModalStackElevation';
 import ConfirmDialog from './ConfirmDialog';
 import { PLANNING_PREFERENCES_UI } from './planner/planningPreferencesUiCopy';
 import { deriveRoleFromTags, DOCUMENT_ROLES } from '../lib/docs/roles';
+import AppModalShell from './ui/AppModalShell';
+import { ModalFooter } from './ui/ModalFooter';
+import { ModalSectionCard } from './ui/ModalSectionCard';
 import {
   deleteSubjectCascade,
   dispatchSubjectDeletedSideEffects,
@@ -125,6 +128,10 @@ export default function AddSubjectModal({
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [confirmDeleteSubjectName, setConfirmDeleteSubjectName] = useState('');
   const [deletingSubject, setDeletingSubject] = useState(false);
+  /** Add-mode draft subject persisted early so unit structure can be saved before final subject save. */
+  const [draftSubjectId, setDraftSubjectId] = useState(null);
+  const [openingAddUnits, setOpeningAddUnits] = useState(false);
+  const finalizedSubjectSaveRef = useRef(false);
 
   // Update children when prop changes
   useEffect(() => {
@@ -136,6 +143,7 @@ export default function AddSubjectModal({
 
   useEffect(() => {
     if (visible) {
+      finalizedSubjectSaveRef.current = false;
       // Only fetch children if not provided as prop
       if (!propChildren || propChildren.length === 0) {
         fetchChildren();
@@ -206,6 +214,8 @@ export default function AddSubjectModal({
       setShowPlanningAccordion(false);
       setShowAdditionalNotesAccordion(false);
       setShowEventMgmtAccordion(false);
+      setDraftSubjectId(null);
+      setOpeningAddUnits(false);
       hasPrefilledFromFamilyRef.current = false;
     }
   }, [visible, defaultChildId, defaultSubjectName, subject]);
@@ -267,30 +277,162 @@ export default function AddSubjectModal({
     }
   }, [familyId, subject?.id]);
 
+  const buildSubjectPayload = useCallback(() => {
+    const childIdString = selectedChildIds.length > 0 ? selectedChildIds.join(';') : '';
+    return {
+      name: subjectName.trim(),
+      summary: null,
+      child_id: childIdString,
+      grade: grade || null,
+      school_year: schoolYear || getDefaultSchoolYear(),
+      credits: credits ? parseFloat(credits) : null,
+      notes: additionalNotes.trim() || null,
+      default_constraint_mode: goalModeForSubject === 'per_subject' ? targetMode : null,
+      default_target_days:
+        goalModeForSubject === 'per_subject' &&
+        targetMode === 'days' &&
+        defaultTargetDays.trim()
+          ? parseInt(defaultTargetDays, 10) || null
+          : null,
+      default_target_hours:
+        goalModeForSubject === 'per_subject' &&
+        targetMode === 'hours' &&
+        defaultTargetHours.trim()
+          ? parseFloat(defaultTargetHours) || null
+          : null,
+    };
+  }, [
+    selectedChildIds,
+    subjectName,
+    grade,
+    schoolYear,
+    credits,
+    additionalNotes,
+    goalModeForSubject,
+    targetMode,
+    defaultTargetDays,
+    defaultTargetHours,
+  ]);
+
+  const ensureDraftSubjectExists = useCallback(async () => {
+    if (subject?.id) return subject.id;
+    if (draftSubjectId) return draftSubjectId;
+    if (!familyId) throw new Error('Family ID not found. Please refresh and try again.');
+    if (!subjectName.trim()) throw new Error('Please enter a subject name before adding units.');
+    if (selectedChildIds.length === 0) throw new Error('Please select at least one student before adding units.');
+
+    const payload = {
+      ...buildSubjectPayload(),
+      family_id: familyId,
+    };
+    const { data, error } = await supabase.from('subject').insert([payload]).select().single();
+    if (error) throw error;
+    const newId = data?.id || null;
+    if (!newId) throw new Error('Failed to create draft subject.');
+    setDraftSubjectId(newId);
+    return newId;
+  }, [
+    subject?.id,
+    draftSubjectId,
+    familyId,
+    subjectName,
+    selectedChildIds,
+    buildSubjectPayload,
+  ]);
+
+  const handleCloseWithDraftCleanup = useCallback(async () => {
+    if (!onClose) return;
+    if (subject?.id || !draftSubjectId || finalizedSubjectSaveRef.current) {
+      onClose();
+      return;
+    }
+    try {
+      await deleteSubjectCascade(
+        supabase,
+        familyId,
+        draftSubjectId,
+        subjectName.trim() || 'Subject'
+      );
+    } catch (cleanupError) {
+      console.warn('Failed to clean up draft subject on close:', cleanupError);
+    } finally {
+      onClose();
+    }
+  }, [onClose, subject?.id, draftSubjectId, familyId, subjectName]);
+
   /** Same global flows as Course Structure / library: manual, paste, upload, generate. Web dispatches to WebLayout. */
   const openAddUnitsCurriculumAction = useCallback(
-    (kind) => {
+    async (kind) => {
       if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+      if (openingAddUnits) return;
       const childIds = selectedChildIds.length
         ? selectedChildIds
         : (children || []).map((c) => c.id).filter(Boolean);
+      let ensuredSubjectId = subject?.id ?? draftSubjectId ?? null;
+      if (!ensuredSubjectId && (kind === 'manual' || kind === 'paste' || kind === 'generate')) {
+        try {
+          setOpeningAddUnits(true);
+          ensuredSubjectId = await ensureDraftSubjectExists();
+        } catch (e) {
+          setError(e?.message || 'Unable to prepare subject for Add units.');
+          return;
+        } finally {
+          setOpeningAddUnits(false);
+        }
+      }
       const base = {
-        subjectId: subject?.id ?? null,
+        subjectId: ensuredSubjectId,
         subjectName: (subjectName || '').trim() || subject?.name || 'Subject',
         familyId,
         childIds,
       };
-      if (kind === 'manual') {
-        window.dispatchEvent(new CustomEvent('openManualCurriculumBuilderModal', { detail: base }));
-      } else if (kind === 'paste') {
-        window.dispatchEvent(new CustomEvent('openParsePlainTextModal', { detail: base }));
-      } else if (kind === 'generate') {
-        window.dispatchEvent(new CustomEvent('openGenerateCurriculumModal', { detail: base }));
-      } else if (kind === 'upload') {
-        window.dispatchEvent(new CustomEvent('openAddMaterialModal', { detail: { ...base, role: null } }));
+      if (kind === 'upload') {
+        // Keep upload in the current stack: open the refreshed AddMaterialModal directly.
+        setMaterialDropdownSlot(null);
+        setAddMaterialDefaultRole(null);
+        setShowAddMaterialModal(true);
+        return;
+      }
+
+      if (kind === 'manual' || kind === 'paste' || kind === 'generate') {
+        const initialUnitStructureMethod =
+          kind === 'manual'
+            ? 'manual'
+            : kind === 'paste'
+              ? 'paste_plain'
+              : 'generate';
+        const dispatchPlanYear = () =>
+          window.dispatchEvent(
+            new CustomEvent('openPlanYearModal', {
+              detail: {
+                ...base,
+                from: 'subject_detail',
+                openAsModal: true,
+                skipPlanSummary: true,
+                openDirectlyToScope: true,
+                initialUnitStructureMethod,
+              },
+            })
+          );
+
+        // Keep subject modal state alive while Add Units is open.
+        dispatchPlanYear();
       }
     },
-    [subject?.id, subject?.name, subjectName, familyId, selectedChildIds, children]
+    [
+      subject?.id,
+      draftSubjectId,
+      subject?.name,
+      subjectName,
+      familyId,
+      selectedChildIds,
+      children,
+      openingAddUnits,
+      ensureDraftSubjectExists,
+      setMaterialDropdownSlot,
+      setAddMaterialDefaultRole,
+      setShowAddMaterialModal,
+    ]
   );
 
   useEffect(() => {
@@ -687,34 +829,18 @@ export default function AddSubjectModal({
         throw new Error('User not authenticated');
       }
 
-      // Create subject record with semicolon-separated child IDs
-      // Format: "child1;child2;child3" or empty string for all children
-      const childIdString = selectedChildIds.length > 0 
-        ? selectedChildIds.join(';')
-        : ''; // Empty string means applies to all children
-
-      const subjectData = {
-        name: subjectName.trim(),
-        summary: null,
-        child_id: childIdString, // Now stores semicolon-separated IDs
-        grade: grade || null,
-        school_year: schoolYear || getDefaultSchoolYear(),
-        credits: credits ? parseFloat(credits) : null,
-        notes: additionalNotes.trim() || null,
-        default_constraint_mode: goalModeForSubject === 'per_subject' ? targetMode : null,
-        default_target_days: goalModeForSubject === 'per_subject' && targetMode === 'days' && defaultTargetDays.trim() ? parseInt(defaultTargetDays, 10) || null : null,
-        default_target_hours: goalModeForSubject === 'per_subject' && targetMode === 'hours' && defaultTargetHours.trim() ? parseFloat(defaultTargetHours) || null : null,
-      };
+      const subjectData = buildSubjectPayload();
 
       let newSubjects;
       let insertError;
+      const effectiveSubjectId = subject?.id || draftSubjectId || null;
 
-      if (subject && subject.id) {
-        // Edit mode - UPDATE
+      if (effectiveSubjectId) {
+        // Edit mode OR add-mode draft subject - UPDATE
         const { data, error } = await supabase
           .from('subject')
           .update(subjectData)
-          .eq('id', subject.id)
+          .eq('id', effectiveSubjectId)
           .eq('family_id', familyId)
           .select();
         newSubjects = data;
@@ -784,7 +910,8 @@ export default function AddSubjectModal({
       }
 
       // Success
-      const isEdit = subject && subject.id;
+      finalizedSubjectSaveRef.current = true;
+      const isEdit = !!(subject && subject.id);
       const successMessage = isEdit 
         ? `Subject "${subjectName}" updated successfully!`
         : `Subject "${subjectName}" added successfully!`;
@@ -806,16 +933,16 @@ export default function AddSubjectModal({
         window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
         window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
-        if (subject && subject.id) {
+        if (effectiveSubjectId) {
           window.dispatchEvent(new CustomEvent('refreshSubjectDetail', {
-            detail: { subjectId: subject.id }
+            detail: { subjectId: effectiveSubjectId }
           }));
         }
       }
       
       // Close modal after a brief delay
       setTimeout(() => {
-        onClose();
+        handleCloseWithDraftCleanup();
       }, 500);
     } catch (err) {
       setError(err.message || 'Failed to add subject. Please try again.');
@@ -832,24 +959,38 @@ export default function AddSubjectModal({
       visible={visible}
       transparent={true}
       animationType="fade"
-      onRequestClose={onClose}
+      onRequestClose={handleCloseWithDraftCleanup}
     >
       <View ref={overlayRef} style={styles.overlay}>
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
           activeOpacity={1}
-          onPress={onClose}
+          onPress={handleCloseWithDraftCleanup}
         />
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={(e) => e.stopPropagation()}
-          style={styles.modal}
-        >
-          {/* Content - Scrollable */}
-          <ScrollView 
-            style={styles.scrollContainer}
+        <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalWrap}>
+          <AppModalShell
+            mode={subject ? 'edit' : 'add'}
+            title={subject ? subjectName || 'Edit subject' : 'New subject'}
+            eyebrow="SUBJECT"
+            accent="#5A92D6"
+            accentSoft="#EEF7FF"
+            HeroIcon={BookOpen}
+            onClose={handleCloseWithDraftCleanup}
             contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={true}
+            bodyStyle={styles.shellBody}
+            footer={(
+              <ModalFooter
+                mode={subject ? 'edit' : 'add'}
+                primaryLabel={isSubmitting ? 'Saving...' : (subject ? 'Save changes' : 'Save Subject')}
+                destructiveLabel={subject ? 'Delete Subject' : undefined}
+                onCancel={handleCloseWithDraftCleanup}
+                onDelete={subject ? () => setShowDangerZone(true) : undefined}
+                onPrimary={handleSubmit}
+                accent="#5A92D6"
+                disabled={!canSubmit || isSubmitting}
+                loading={isSubmitting}
+              />
+            )}
           >
             {error && !error.includes('children') && (
               <View style={styles.errorContainer}>
@@ -1032,34 +1173,29 @@ export default function AddSubjectModal({
 
               return (
                 <>
-                  <View style={styles.addUnitsRow}>
+                  <View style={styles.addUnitsPillsRow}>
                     <Text style={styles.addUnitsLabel}>Add units</Text>
-                    <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.7} {...addUnitsLinkWeb}>
-                      <Text style={styles.addUnitsLink}>Manual input</Text>
+                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                      <Text style={styles.secondaryActionText}>Manual input</Text>
                     </TouchableOpacity>
-                    <Text style={styles.addUnitsSep}>·</Text>
-                    <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.7} {...addUnitsLinkWeb}>
-                      <Text style={styles.addUnitsLink}>Paste plain text</Text>
+                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                      <Text style={styles.secondaryActionText}>Paste plain text</Text>
                     </TouchableOpacity>
-                    <Text style={styles.addUnitsSep}>·</Text>
-                    <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.7} {...addUnitsLinkWeb}>
-                      <Text style={styles.addUnitsLink}>Upload material</Text>
+                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                      <Text style={styles.secondaryActionText}>Upload material</Text>
                     </TouchableOpacity>
-                    <Text style={styles.addUnitsSep}>·</Text>
-                    <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.7} {...addUnitsLinkWeb}>
-                      <Text style={styles.addUnitsLink}>Generate curriculum</Text>
+                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                      <Text style={styles.secondaryActionText}>Generate curriculum</Text>
                     </TouchableOpacity>
                   </View>
-                <View style={styles.accordionSection}>
-                  <TouchableOpacity
-                    onPress={() => setShowMaterialsAccordion(!showMaterialsAccordion)}
-                    style={styles.accordionHeader}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.accordionSectionLabel}>Syllabus and Lesson Plan</Text>
-                    {showMaterialsAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
-                  </TouchableOpacity>
-                  {showMaterialsAccordion && (
+                <ModalSectionCard
+                  Icon={Library}
+                  title="Syllabus and lesson plan"
+                  subtitle="Units, pacing, and lesson structure"
+                  expanded={showMaterialsAccordion}
+                  onPress={() => setShowMaterialsAccordion(!showMaterialsAccordion)}
+                  accent="#5A92D6"
+                >
                     <View style={styles.accordionContent}>
                       {renderAttachmentRow(
                         MATERIAL_SLOT.SYLLABUS,
@@ -1181,21 +1317,20 @@ export default function AddSubjectModal({
                         return dropdownContent;
                       })()}
                     </View>
-                  )}
-                </View>
+                </ModalSectionCard>
                 </>
               );
             })()}
 
             {/* Accordion C: Planning preferences */}
-            <View style={styles.accordionSection}>
-              <TouchableOpacity onPress={() => setShowPlanningAccordion(!showPlanningAccordion)} style={styles.accordionHeader} activeOpacity={0.8}>
-                <Text style={styles.accordionSectionLabel}>
-                  {PLANNING_PREFERENCES_UI.subjectModalAccordionTitle}
-                </Text>
-                {showPlanningAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
-              </TouchableOpacity>
-              {showPlanningAccordion && (
+            <ModalSectionCard
+              Icon={SlidersHorizontal}
+              title={PLANNING_PREFERENCES_UI.subjectModalAccordionTitle}
+              subtitle="Cadence, defaults, and planner behavior"
+              expanded={showPlanningAccordion}
+              onPress={() => setShowPlanningAccordion(!showPlanningAccordion)}
+              accent="#5A92D6"
+            >
                 <View style={styles.accordionContent}>
                   <View style={[styles.formGroup, styles.planningDefaultsField]}>
                     <Text style={styles.label}>School year</Text>
@@ -1402,20 +1537,17 @@ export default function AddSubjectModal({
                     </View>
                   )}
                 </View>
-              )}
-            </View>
+            </ModalSectionCard>
 
             {/* Additional notes — same card pattern as Add Child */}
-            <View style={[styles.accordionSection, !subject && styles.accordionSectionLastInForm]}>
-              <TouchableOpacity
-                onPress={() => setShowAdditionalNotesAccordion(!showAdditionalNotesAccordion)}
-                style={styles.accordionHeader}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.accordionSectionLabel}>Additional notes</Text>
-                {showAdditionalNotesAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
-              </TouchableOpacity>
-              {showAdditionalNotesAccordion && (
+            <ModalSectionCard
+              Icon={FileText}
+              title="Additional notes"
+              subtitle="Anything extra for this subject"
+              expanded={showAdditionalNotesAccordion}
+              onPress={() => setShowAdditionalNotesAccordion(!showAdditionalNotesAccordion)}
+              accent="#5A92D6"
+            >
                 <View style={styles.accordionContent}>
                   <View style={styles.formGroup}>
                     <TextInput
@@ -1430,8 +1562,7 @@ export default function AddSubjectModal({
                     />
                   </View>
                 </View>
-              )}
-            </View>
+            </ModalSectionCard>
 
             {/* Accordion D: Event management (edit mode only) */}
             {subject && subject.id && (
@@ -1546,28 +1677,7 @@ export default function AddSubjectModal({
                 )}
               </View>
             )}
-          </ScrollView>
-
-          {subject ? <View style={styles.footerDivider} /> : null}
-          {/* Fixed Footer with Save Button */}
-          <View style={[styles.footer, subject && styles.footerEdit]}>
-            <TouchableOpacity
-              style={[styles.cancelButton, isSubmitting && styles.buttonDisabled]}
-              onPress={onClose}
-              disabled={isSubmitting}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.saveButton, (!canSubmit || isSubmitting) && styles.buttonDisabled]}
-              onPress={handleSubmit}
-              disabled={!canSubmit || isSubmitting}
-            >
-              <Text style={styles.saveButtonText}>
-                {isSubmitting ? 'Saving...' : (subject ? 'Update Subject' : 'Save Subject')}
-              </Text>
-            </TouchableOpacity>
-          </View>
+          </AppModalShell>
         </TouchableOpacity>
       </View>
 
@@ -1608,7 +1718,7 @@ export default function AddSubjectModal({
       familyId={familyId}
       children={children}
       defaultRole={addMaterialDefaultRole ?? null}
-      defaultSubjectId={subject?.id ?? null}
+      defaultSubjectId={subject?.id ?? draftSubjectId ?? null}
       defaultSubjectName={!subject && subjectName.trim() ? subjectName.trim() : null}
       defaultChildIds={selectedChildIds}
       draftSubjectForMaterial={
@@ -1629,28 +1739,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  modal: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    width: 800,
-    maxWidth: '100%',
-    maxHeight: '85vh',
-    ...Platform.select({
-      web: {
-        display: 'flex',
-        flexDirection: 'column',
-        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 12,
-        elevation: 8,
-      },
-    }),
-    overflow: 'hidden',
-    position: 'relative',
+  modalWrap: {
+    width: '100%',
+    maxWidth: 860,
+  },
+  shellBody: {
+    paddingTop: 18,
   },
   scrollContainer: {
     backgroundColor: '#ffffff',
@@ -1668,6 +1762,35 @@ const styles = StyleSheet.create({
     }),
   },
   scrollContent: {
+    paddingBottom: 18,
+  },
+  addUnitsPillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+  },
+  secondaryActionPill: {
+    minHeight: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D9E0EA',
+    backgroundColor: '#F8FAFD',
+    paddingHorizontal: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  secondaryActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#5E6C84',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  scrollContentOld: {
     padding: 32,
     // Small inset only — footer sits outside ScrollView, so large padding created a false “gap”
     paddingBottom: 20,

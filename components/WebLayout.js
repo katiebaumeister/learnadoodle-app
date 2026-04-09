@@ -31,9 +31,6 @@ import EditChildModal from './EditChildModal';
 import { linkedSummariesFromFamilyApiMembers } from '../lib/services/childInviteStatus';
 import PlanYearWizard from './year/PlanYearWizard';
 import PlanYearModal from './planner/PlanYearModal';
-import GenerateCurriculumModal from './GenerateCurriculumModal';
-import ParsePlainTextModal from './ParsePlainTextModal';
-import ManualCurriculumBuilderModal from './ManualCurriculumBuilderModal';
 import { STRINGS } from '../lib/i18n/strings';
 import PackWeekModal from './ai/PackWeekModal';
 import CatchUpModal from './ai/CatchUpModal';
@@ -309,26 +306,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [buildCurriculumInitialSourceUrl, setBuildCurriculumInitialSourceUrl] = useState(null);
   const [buildCurriculumInitialTopic, setBuildCurriculumInitialTopic] = useState(null);
   const [buildCurriculumInitialMaterialId, setBuildCurriculumInitialMaterialId] = useState(null);
-  const [showGenerateCurriculumModal, setShowGenerateCurriculumModal] = useState(false);
-  const [generateCurriculumContext, setGenerateCurriculumContext] = useState({
-    subjectId: null,
-    subjectName: null,
-    familyId: null,
-    childIds: [],
-  });
-  const [showParsePlainTextModal, setShowParsePlainTextModal] = useState(false);
-  const [parsePlainTextContext, setParsePlainTextContext] = useState({
-    subjectId: null,
-    subjectName: null,
-    familyId: null,
-    childIds: [],
-  });
-  const [showManualCurriculumBuilderModal, setShowManualCurriculumBuilderModal] = useState(false);
-  const [manualCurriculumBuilderContext, setManualCurriculumBuilderContext] = useState({
-    subjectId: null,
-    subjectName: null,
-    familyId: null,
-  });
   const [showProgressForecastModal, setShowProgressForecastModal] = useState(false);
   const [showSchedulingAssistantModal, setShowSchedulingAssistantModal] = useState(false);
   const [schedulingAssistantChildId, setSchedulingAssistantChildId] = useState(null);
@@ -2137,39 +2114,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('openExportPlannerModal', handler);
   }, []);
 
-  // Listen for openGenerateCurriculumModal (from Edit Subject → Course Structure → Generate curriculum)
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = (e) => {
-      const detail = e?.detail || {};
-      setGenerateCurriculumContext({
-        subjectId: detail.subjectId || null,
-        subjectName: detail.subjectName || null,
-        familyId: detail.familyId || familyId || null,
-        childIds: Array.isArray(detail.childIds) ? detail.childIds : [],
-      });
-      setShowGenerateCurriculumModal(true);
-    };
-    window.addEventListener('openGenerateCurriculumModal', handler);
-    return () => window.removeEventListener('openGenerateCurriculumModal', handler);
-  }, [familyId]);
-
-  // Listen for openParsePlainTextModal (from Edit Subject → Course Structure → Import & extract)
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = (e) => {
-      const detail = e?.detail || {};
-      setParsePlainTextContext({
-        subjectId: detail.subjectId || null,
-        subjectName: detail.subjectName || null,
-        familyId: detail.familyId || familyId || null,
-        childIds: Array.isArray(detail.childIds) ? detail.childIds : [],
-      });
-      setShowParsePlainTextModal(true);
-    };
-    window.addEventListener('openParsePlainTextModal', handler);
-    return () => window.removeEventListener('openParsePlainTextModal', handler);
-  }, [familyId]);
+  // Legacy unit-structure event routes removed.
+  // Add Subject "Add units" now routes through openPlanYearModal to keep one modal stack.
 
   // Open Doodle chat from anywhere (e.g. Library empty state — optional initialPrompt in event detail)
   useEffect(() => {
@@ -2183,22 +2129,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     window.addEventListener('openDoodleSearchModal', handler);
     return () => window.removeEventListener('openDoodleSearchModal', handler);
   }, []);
-
-  // Listen for openManualCurriculumBuilderModal (from Edit Subject → Course Structure → Add unit manually)
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = (e) => {
-      const detail = e?.detail || {};
-      setManualCurriculumBuilderContext({
-        subjectId: detail.subjectId || null,
-        subjectName: detail.subjectName || null,
-        familyId: detail.familyId || familyId || null,
-      });
-      setShowManualCurriculumBuilderModal(true);
-    };
-    window.addEventListener('openManualCurriculumBuilderModal', handler);
-    return () => window.removeEventListener('openManualCurriculumBuilderModal', handler);
-  }, [familyId]);
 
   // Navigation handler for global search - expose via window for GlobalSearchModal
   const handleSearchNavigate = useCallback((tab, subtab = null, params = {}) => {
@@ -3753,12 +3683,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     }}
                     onOpenPlannerSettings={() => handleTabChange('settings', 'planner-settings')}
                     onOpenManualCurriculumBuilder={(detail) => {
-                      setManualCurriculumBuilderContext({
-                        subjectId: detail?.subjectId ?? null,
-                        subjectName: detail?.subjectName ?? null,
-                        familyId: detail?.familyId ?? familyId ?? null,
-                      });
-                      setShowManualCurriculumBuilderModal(true);
+                      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                        window.dispatchEvent(
+                          new CustomEvent('openPlanYearModal', {
+                            detail: {
+                              from: 'subject_detail',
+                              openAsModal: false,
+                              skipPlanSummary: true,
+                              openDirectlyToScope: true,
+                              subjectId: detail?.subjectId ?? null,
+                              familyId: detail?.familyId ?? familyId ?? null,
+                              initialUnitStructureMethod: 'manual',
+                            },
+                          })
+                        );
+                      }
                     }}
                     onComplete={() => {
                       const returnView = planYearReturnViewRef.current || defaultView || 'month';
@@ -4020,12 +3959,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setShowRebalanceModal(true);
         }}
         onOpenManualCurriculumBuilder={(detail) => {
-          setManualCurriculumBuilderContext({
-            subjectId: detail?.subjectId ?? null,
-            subjectName: detail?.subjectName ?? null,
-            familyId: detail?.familyId ?? familyId ?? null,
-          });
-          setShowManualCurriculumBuilderModal(true);
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('openPlanYearModal', {
+                detail: {
+                  from: 'subject_detail',
+                  openAsModal: true,
+                  skipPlanSummary: true,
+                  openDirectlyToScope: true,
+                  subjectId: detail?.subjectId ?? null,
+                  familyId: detail?.familyId ?? familyId ?? null,
+                  initialUnitStructureMethod: 'manual',
+                },
+              })
+            );
+          }
         }}
         onComplete={async () => {
           const sid = planYearModalReturnSubjectIdRef.current;
@@ -4281,44 +4229,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         visible={showPlanYearWizard}
         onClose={() => setShowPlanYearWizard(false)}
         familyId={familyId}
-      />
-
-      <GenerateCurriculumModal
-        visible={showGenerateCurriculumModal}
-        onClose={() => setShowGenerateCurriculumModal(false)}
-        subjectId={generateCurriculumContext.subjectId}
-        subjectName={generateCurriculumContext.subjectName}
-        familyId={generateCurriculumContext.familyId}
-        childIds={generateCurriculumContext.childIds}
-        onSaved={() => {
-          setShowGenerateCurriculumModal(false);
-          fetchFamilyData?.();
-        }}
-      />
-
-      <ParsePlainTextModal
-        visible={showParsePlainTextModal}
-        onClose={() => setShowParsePlainTextModal(false)}
-        subjectId={parsePlainTextContext.subjectId}
-        subjectName={parsePlainTextContext.subjectName}
-        familyId={parsePlainTextContext.familyId}
-        childIds={parsePlainTextContext.childIds}
-        onSaved={() => {
-          setShowParsePlainTextModal(false);
-          fetchFamilyData?.();
-        }}
-      />
-
-      <ManualCurriculumBuilderModal
-        visible={showManualCurriculumBuilderModal}
-        onClose={() => setShowManualCurriculumBuilderModal(false)}
-        subjectId={manualCurriculumBuilderContext.subjectId}
-        subjectName={manualCurriculumBuilderContext.subjectName}
-        familyId={manualCurriculumBuilderContext.familyId}
-        onSaved={() => {
-          setShowManualCurriculumBuilderModal(false);
-          fetchFamilyData?.();
-        }}
       />
 
       {/* Global Add Child Modal - so Plan Year and other screens can open it */}

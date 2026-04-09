@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, Alert, TextInput, ActivityIndicator } from 'react-native';
-import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Smile } from 'lucide-react';
 import AddChildForm from './AddChildForm';
 import { supabase } from '../lib/supabase';
 import { permanentDeleteChild, unlinkChildLogin } from '../lib/apiClient';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 import { designTokens } from '../theme/designTokens';
+import AppModalShell from './ui/AppModalShell';
+import { ModalFooter } from './ui/ModalFooter';
 
 /** Normalize DB row for client lists (name + avatar for color chips). */
 function mapChildRowForClient(row) {
@@ -579,28 +581,42 @@ export default function EditChildModal({
 
   return (
     <>
-    <RNModal
-      visible={visible}
-      transparent={true}
-      animationType="fade"
-      onRequestClose={onClose}
-    >
+    <RNModal visible={visible} transparent={true} animationType="fade" onRequestClose={onClose}>
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
-        <TouchableOpacity activeOpacity={1} onPress={(e) => e?.stopPropagation?.()} style={styles.modal}>
-          {error && (
-            <View style={styles.errorContainer}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          )}
-
-          {/* Content - Scrollable */}
-          <ScrollView 
-            style={styles.scrollContainer}
+        <TouchableOpacity activeOpacity={1} onPress={(e) => e?.stopPropagation?.()} style={styles.modalWrap}>
+          <AppModalShell
+            mode="edit"
+            title={childName || 'Edit child'}
+            eyebrow="CHILD"
+            accent="#4BB39C"
+            accentSoft="#EEF9F6"
+            HeroIcon={Smile}
+            onClose={onClose}
             contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={true}
+            footer={(
+              <ModalFooter
+                mode="edit"
+                primaryLabel={isSubmitting ? 'Saving...' : 'Save changes'}
+                destructiveLabel="Delete Student"
+                onCancel={onClose}
+                onDelete={() => setShowDangerZone(true)}
+                onPrimary={() => {
+                  if (formRef.current?.submit) formRef.current.submit();
+                }}
+                accent="#4BB39C"
+                disabled={isSubmitting || !formCanSubmit}
+                loading={isSubmitting}
+              />
+            )}
           >
-            {baseData ? (
-              <>
+            {error && (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            )}
+            <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={true}>
+              {baseData ? (
+                <>
                 <AddChildForm
                   key={child.id}
                   ref={formRef}
@@ -782,34 +798,10 @@ export default function EditChildModal({
                 </View>
               )}
                 </View>
-              </>
-            ) : null}
-          </ScrollView>
-
-          <View style={styles.footerDivider} />
-          {/* Footer */}
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={onClose}
-              disabled={isSubmitting}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.saveButton, (isSubmitting || !formCanSubmit) && styles.saveButtonDisabled]}
-              onPress={() => {
-                if (formRef.current?.submit) {
-                  formRef.current.submit();
-                }
-              }}
-              disabled={isSubmitting || !formCanSubmit}
-            >
-              <Text style={styles.saveButtonText}>
-                {isSubmitting ? 'Saving...' : 'Save Changes'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+                </>
+              ) : null}
+            </ScrollView>
+          </AppModalShell>
         </TouchableOpacity>
       </TouchableOpacity>
     </RNModal>
@@ -922,18 +914,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  modal: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    width: 810,
-    maxWidth: '100%',
-    maxHeight: '85vh',
-    overflow: 'hidden',
-    ...Platform.select({
-      web: {
-        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-      },
-    }),
+  modalWrap: {
+    width: '100%',
+    maxWidth: 860,
   },
   header: {
     flexDirection: 'row',

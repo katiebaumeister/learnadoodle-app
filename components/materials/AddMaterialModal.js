@@ -15,7 +15,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import { X, Upload, FileText, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, Upload, FileText, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Paperclip, Building2, Star } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { createMaterial, linkMaterialToChild, updateMaterial, updateMaterialChildStatus } from '../../lib/services/materialsClient';
@@ -23,6 +23,9 @@ import { parseChildIds } from '../../lib/services/subjectsClient';
 import { DOCUMENT_ROLE_CHIPS } from '../../lib/docs/roles';
 import { useModalStackElevation, NESTED_MODAL_STACK_Z } from '../hooks/useModalStackElevation';
 import MaterialScheduleLinksSection from './MaterialScheduleLinksSection';
+import AppModalShell from '../ui/AppModalShell';
+import { ModalFooter } from '../ui/ModalFooter';
+import { ModalSectionCard } from '../ui/ModalSectionCard';
 
 const ROLE_OPTIONS = DOCUMENT_ROLE_CHIPS.filter((c) => c.value !== 'all');
 
@@ -93,6 +96,7 @@ export default function AddMaterialModal({
   visible,
   onClose,
   onSaved,
+  onDelete = null,
   familyId,
   children = [],
   material = null, // If provided, edit mode
@@ -1123,8 +1127,31 @@ export default function AddMaterialModal({
           activeOpacity={1}
           onPress={onClose}
         />
-        <View style={[styles.modal, { pointerEvents: 'box-none' }]}>
-          <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        <View style={[styles.modalWrap, { pointerEvents: 'box-none' }]}>
+          <AppModalShell
+            mode={effectiveMaterial ? 'edit' : 'add'}
+            title={effectiveMaterial ? title || 'Edit material' : 'Add material'}
+            eyebrow="MATERIAL"
+            accent="#E39A4B"
+            accentSoft="#FFF7EE"
+            HeroIcon={Paperclip}
+            onClose={onClose}
+            contentContainerStyle={styles.contentContainer}
+            bodyStyle={styles.shellBody}
+            footer={(
+              <ModalFooter
+                mode={effectiveMaterial ? 'edit' : 'add'}
+                primaryLabel={loading ? 'Saving...' : (effectiveMaterial ? 'Save changes' : 'Add Material')}
+                destructiveLabel={effectiveMaterial && typeof onDelete === 'function' ? 'Delete Material' : undefined}
+                onCancel={onClose}
+                onDelete={effectiveMaterial && typeof onDelete === 'function' ? () => onDelete(effectiveMaterial) : undefined}
+                onPrimary={handleSave}
+                accent="#E39A4B"
+                disabled={loading || !isFormValid}
+                loading={loading}
+              />
+            )}
+          >
             {/* Document Upload */}
             <View style={styles.fieldRow}>
               <View style={styles.field}>
@@ -1321,21 +1348,15 @@ export default function AddMaterialModal({
               Material Metadata (optional)
             </Text>
 
-            {/* Provider Info (optional) */}
-            <View style={styles.blockSection}>
-              <TouchableOpacity
-                style={styles.sectionHeader}
-                onPress={() => setShowProviderInfo(!showProviderInfo)}
-              >
-                <Text style={styles.sectionTitle}>Provider Information</Text>
-                {showProviderInfo ? (
-                  <ChevronUp size={20} color={SUB} />
-                ) : (
-                  <ChevronDown size={20} color={SUB} />
-                )}
-              </TouchableOpacity>
-              {showProviderInfo && (
-                <>
+            <ModalSectionCard
+              Icon={Building2}
+              title="Provider information"
+              subtitle="Publisher, source, author, and links"
+              expanded={showProviderInfo}
+              onPress={() => setShowProviderInfo(!showProviderInfo)}
+              accent="#E39A4B"
+            >
+                <View style={styles.sectionCardBody}>
                   <View style={styles.fieldRow}>
                     <View style={styles.field}>
                       <Text style={styles.fieldLabel}>Provider (optional)</Text>
@@ -1362,25 +1383,18 @@ export default function AddMaterialModal({
                       />
                     </View>
                   </View>
-                </>
-              )}
-            </View>
+                </View>
+            </ModalSectionCard>
 
-            {/* Rate and Review Material */}
-            <View style={styles.blockSection}>
-              <TouchableOpacity
-                style={styles.sectionHeader}
-                onPress={() => setShowReviewInfo(!showReviewInfo)}
-              >
-                <Text style={styles.sectionTitle}>Rate and Review Material</Text>
-                {showReviewInfo ? (
-                  <ChevronUp size={20} color={SUB} />
-                ) : (
-                  <ChevronDown size={20} color={SUB} />
-                )}
-              </TouchableOpacity>
-              {showReviewInfo && (
-                <>
+            <ModalSectionCard
+              Icon={Star}
+              title="Rate and review material"
+              subtitle="Difficulty, usefulness, and notes"
+              expanded={showReviewInfo}
+              onPress={() => setShowReviewInfo(!showReviewInfo)}
+              accent="#E39A4B"
+            >
+                <View style={styles.sectionCardBody}>
                   {/* Select Child for Review */}
                   {children.length > 0 && (
                     <View style={styles.fieldRow}>
@@ -1534,36 +1548,9 @@ export default function AddMaterialModal({
                       />
                     </View>
                   </View>
-                </>
-              )}
-            </View>
-          </ScrollView>
-
-          {effectiveMaterial ? <View style={styles.footerDivider} /> : null}
-          {/* Actions - Fixed at bottom */}
-          <View style={[styles.actions, effectiveMaterial && styles.actionsEdit]}>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={onClose}
-              disabled={loading}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.saveButton, 
-                (loading || !isFormValid) && styles.saveButtonDisabled
-              ]}
-              onPress={handleSave}
-              disabled={loading || !isFormValid}
-            >
-              {loading ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.saveButtonText}>{effectiveMaterial ? 'Save Changes' : 'Add Material'}</Text>
-              )}
-            </TouchableOpacity>
-          </View>
+                </View>
+            </ModalSectionCard>
+          </AppModalShell>
         </View>
       </View>
 
@@ -1824,19 +1811,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  modal: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    overflow: 'hidden',
-    width: 720,
-    maxWidth: '100%',
-    maxHeight: '90%',
-    flexDirection: 'column',
-    ...Platform.select({
-      web: {
-        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-      },
-    }),
+  modalWrap: {
+    width: '100%',
+    maxWidth: 860,
+  },
+  shellBody: {
+    paddingTop: 18,
   },
   header: {
     flexDirection: 'row',
@@ -1887,8 +1867,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    padding: 20,
-    paddingBottom: 10,
+    paddingBottom: 14,
   },
   section: {
     marginBottom: 24,
@@ -2171,6 +2150,9 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     backgroundColor: '#f9fafb',
     overflow: 'visible',
+  },
+  sectionCardBody: {
+    paddingTop: 6,
   },
   sectionTitle: {
     fontSize: 14,

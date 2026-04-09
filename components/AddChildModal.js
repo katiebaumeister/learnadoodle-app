@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform } from 'react-native';
-import { X } from 'lucide-react';
+import { View, Text, TouchableOpacity, StyleSheet, Modal as RNModal } from 'react-native';
+import { Smile } from 'lucide-react';
 import AddChildForm from './AddChildForm';
 import { addChild } from '../lib/apiClient';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
-import { colors } from '../theme/colors';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
+import AppModalShell from './ui/AppModalShell';
+import { ModalFooter } from './ui/ModalFooter';
 
 /**
  * Add Child Modal - Matches Learnadoodle onboarding spec
@@ -146,67 +147,42 @@ export default function AddChildModal({
           activeOpacity={1}
           onPress={onClose}
         />
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={(e) => e.stopPropagation()}
-          style={styles.modal}
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>Add Child</Text>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={onClose}
-              accessibilityLabel="Close modal"
-              accessibilityRole="button"
-            >
-              <X size={20} color="#6b7280" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Content - Scrollable */}
-          <ScrollView 
-            style={styles.scrollContainer}
+        <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalWrap}>
+          <AppModalShell
+            mode="add"
+            title="Add child"
+            eyebrow="CHILD"
+            accent="#4BB39C"
+            accentSoft="#EEF9F6"
+            HeroIcon={Smile}
+            onClose={onClose}
             contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={true}
+            footer={(
+              <ModalFooter
+                mode="add"
+                primaryLabel={isSubmitting ? 'Saving...' : 'Save Student'}
+                onCancel={onClose}
+                onPrimary={() => {
+                  if (formRef.current?.submit) formRef.current.submit();
+                }}
+                accent="#4BB39C"
+                disabled={isSubmitting || !canSubmit}
+                loading={isSubmitting}
+              />
+            )}
           >
             {error && (
               <View style={styles.errorContainer}>
                 <Text style={styles.errorText}>{error}</Text>
               </View>
             )}
-            
             <AddChildForm
               ref={formRef}
               onSubmit={handleSubmit}
               submitting={isSubmitting}
               onValidationChange={setCanSubmit}
             />
-          </ScrollView>
-
-          {/* Fixed Footer with Save Button */}
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.cancelButton, isSubmitting && styles.buttonDisabled]}
-              onPress={onClose}
-              disabled={isSubmitting}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.saveButton, (isSubmitting || !canSubmit) && styles.buttonDisabled]}
-              onPress={() => {
-                if (formRef.current?.submit) {
-                  formRef.current.submit();
-                }
-              }}
-              disabled={isSubmitting || !canSubmit}
-            >
-              <Text style={styles.saveButtonText}>
-                {isSubmitting ? 'Saving...' : 'Save Student'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+          </AppModalShell>
         </TouchableOpacity>
       </View>
     </RNModal>
@@ -221,55 +197,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  modal: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    width: 720,
-    maxWidth: '100%',
-    maxHeight: '90vh',
-    ...Platform.select({
-      web: {
-        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-      },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 12,
-        elevation: 8,
-      },
-    }),
-    overflow: 'hidden',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.text,
-    flex: 1,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  closeButton: {
-    padding: 4,
-    marginLeft: 16,
-  },
-  scrollContainer: {
-    flex: 1,
-    backgroundColor: '#ffffff',
+  modalWrap: {
+    width: '100%',
+    maxWidth: 860,
   },
   scrollContent: {
-    padding: 32,
-    paddingBottom: 100, // Extra padding for fixed footer
+    paddingBottom: 16,
   },
   errorContainer: {
     backgroundColor: '#fef2f2',
@@ -284,51 +217,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 24,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
-    gap: 12,
-  },
-  cancelButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    backgroundColor: 'transparent',
-  },
-  cancelButtonText: {
-    color: '#666666',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  saveButton: {
-    backgroundColor: '#85C4F2',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    alignSelf: 'flex-end',
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
-      cursor: 'pointer',
-    }),
-  },
-  saveButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '500',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
-    }),
-  },
   buttonDisabled: {
     backgroundColor: '#9CA3AF',
     opacity: 0.8,
-    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
   },
 });
 

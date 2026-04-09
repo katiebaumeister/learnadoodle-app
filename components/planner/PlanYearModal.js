@@ -2632,7 +2632,18 @@ export default function PlanYearModal({
       return;
     }
     if (typeof window !== 'undefined' && window.dispatchEvent) {
-      window.dispatchEvent(new CustomEvent('openManualCurriculumBuilderModal', { detail }));
+      window.dispatchEvent(
+        new CustomEvent('openPlanYearModal', {
+          detail: {
+            ...detail,
+            from: 'subject_detail',
+            openAsModal: true,
+            skipPlanSummary: true,
+            openDirectlyToScope: true,
+            initialUnitStructureMethod: 'manual',
+          },
+        })
+      );
       onClose?.();
     }
   }, [
@@ -3699,8 +3710,22 @@ export default function PlanYearModal({
       setShowPlanManagerView(false);
     }
     setStartCreatingNew(true);
-    setPlanStep(getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST));
-  }, [visible, openDirectlyToScope, renderInline, openForNewPlan, goBackPlanSummaryToList]);
+    // Keep direct "Add units" routes on the unit-structure step.
+    // Without this guard, openDirectlyToScope can reset the entry step
+    // back to the generic planning flow and bypass manual/paste/generate entry.
+    if (initialUnitStructureMethod) {
+      setPlanStep('unit_structure');
+    } else {
+      setPlanStep(getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST));
+    }
+  }, [
+    visible,
+    openDirectlyToScope,
+    renderInline,
+    openForNewPlan,
+    goBackPlanSummaryToList,
+    initialUnitStructureMethod,
+  ]);
 
   /** Right toolbar "Edit plan" while drilled into a plan summary or logistics: show YOUR PLANS list again. */
   const resetInlineEditPlanDrillDown = useCallback(() => {
