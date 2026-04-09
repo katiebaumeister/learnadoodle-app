@@ -460,7 +460,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       setConfirmDialog({
         visible: true,
         title: 'Delete this item?',
-        message: `Are you sure you want to delete "${itemName}"? You can restore it from the trash bin.`,
+        message: `Are you sure you want to delete "${itemName}"?`,
         confirmLabel: 'Delete',
         destructive: true,
         onConfirm: () => {
@@ -472,7 +472,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     }
     Alert.alert(
       'Delete this item?',
-      `Are you sure you want to delete "${itemName}"? You can restore it from the trash bin.`,
+      `Are you sure you want to delete "${itemName}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: () => performDelete(item, itemName) },

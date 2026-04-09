@@ -1693,10 +1693,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               (async () => {
                 try {
                   const { supabase } = await import('../lib/supabase');
+                  const cleanEventId = cleanPlannerEventId(String(eventId || ''));
+                  if (!cleanEventId) return;
                   const { data: currentEvent, error: fetchError } = await supabase
                     .from('events')
                     .select('*')
-                    .eq('id', eventId)
+                    .eq('id', cleanEventId)
                     .eq('family_id', familyId)
                     .maybeSingle();
                   
@@ -2268,10 +2270,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       // Fetch the current event state from the database first
       try {
         const { supabase } = await import('../lib/supabase');
+        const cleanEventId = cleanPlannerEventId(String(eventId || ''));
+        if (!cleanEventId) return;
         const { data: currentEvent, error } = await supabase
           .from('events')
           .select('*')
-          .eq('id', eventId)
+          .eq('id', cleanEventId)
           .eq('family_id', familyId)
           .maybeSingle();
         
@@ -2581,7 +2585,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             _family_id: familyId,
             _year: year,
             _month: month + 1,
-            _child_ids: allChildren ? null : (propSelectedCalendarChildren && propSelectedCalendarChildren.length > 0 ? propSelectedCalendarChildren : null),
+            // Always fetch full family month and apply child filtering client-side in CenterPane.
+            // This prevents family-wide / plan-generated slots from being dropped by server-side child filters.
+            _child_ids: null,
           }),
           getHolidaysForRange(familyId, start, end),
         ]);
@@ -2599,6 +2605,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           byDate[dateKey] = (list || []).map((e) => ({
             ...e,
             id: e.id,
+            title: e.title || e.subject_name || e.event_type || 'Lesson',
             time: e.start_local || e.time,
             start_local: e.start_local,
             date_local: dateKey,
@@ -2611,6 +2618,20 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             source: e.source,
           }));
         });
+        if (Platform.OS === 'web') {
+          const allLoadedEvents = Object.values(byDate).flat();
+          const planLoadedCount = allLoadedEvents.filter(
+            (ev) =>
+              String(ev.generated_by || '').toLowerCase() === 'plan_year' ||
+              !!ev.academic_year_id,
+          ).length;
+          console.log('[WebContent] Month view loaded events:', {
+            monthKey,
+            total: allLoadedEvents.length,
+            planSlots: planLoadedCount,
+            selectedChildrenCount: Array.isArray(propSelectedCalendarChildren) ? propSelectedCalendarChildren.length : 0,
+          });
+        }
         setCalendarDataCache((prev) => ({ ...prev, [monthKey]: byDate }));
         setCalendarEvents((prev) => {
           let merged = { ...prev, ...byDate };
@@ -4170,10 +4191,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         throw new Error(rpcResult.data?.error || 'Could not save overlap change');
       }
 
+      const cleanId = cleanPlannerEventId(String(id || ''));
+      if (!cleanId) throw new Error('Missing event id');
       const { data: savedEvent, error: fetchError } = await supabase
         .from('events')
         .select('*')
-        .eq('id', id)
+        .eq('id', cleanId)
         .eq('family_id', familyId)
         .single();
       if (fetchError) throw fetchError;
@@ -4281,13 +4304,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         }));
       }
 
+      const cleanId = cleanPlannerEventId(String(id || ''));
+      if (!cleanId) throw new Error('Missing event id');
       const { error } = await supabase
         .from('events')
         .update({
           start_ts: newStart.toISOString(),
           end_ts: newEnd.toISOString(),
         })
-        .eq('id', id)
+        .eq('id', cleanId)
         .eq('family_id', familyId);
       if (error) throw error;
       pendingOptimisticUpdatesRef.current.delete(id);
@@ -5012,7 +5037,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         rawSlots.forEach((raw) => {
           const dateKey = raw?.date_local || raw?.date || '';
           if (!dateKey) return;
-          const monthKey = dateKey.slice(0, 7);
+          const parsed = new Date(`${dateKey}T00:00:00`);
+          const monthKey = !Number.isNaN(parsed.getTime())
+            ? `${parsed.getFullYear()}-${parsed.getMonth()}`
+            : `${dateKey.slice(0, 4)}-${Math.max(0, Number(dateKey.slice(5, 7)) - 1)}`;
           const byDate = next[monthKey] && typeof next[monthKey] === 'object' ? { ...next[monthKey] } : {};
           const list = Array.isArray(byDate[dateKey]) ? [...byDate[dateKey]] : [];
           if (
@@ -5202,7 +5230,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         });
         patches.forEach((patch) => {
           const dateKey = patch.date_local;
-          const monthKey = dateKey.slice(0, 7);
+          const parsed = new Date(`${dateKey}T00:00:00`);
+          const monthKey = !Number.isNaN(parsed.getTime())
+            ? `${parsed.getFullYear()}-${parsed.getMonth()}`
+            : `${dateKey.slice(0, 4)}-${Math.max(0, Number(dateKey.slice(5, 7)) - 1)}`;
           const byDate = next[monthKey] && typeof next[monthKey] === 'object' ? { ...next[monthKey] } : {};
           const list = Array.isArray(byDate[dateKey]) ? [...byDate[dateKey]] : [];
           const idx = list.findIndex((ev) => ev && String(ev.id) === String(patch.id));

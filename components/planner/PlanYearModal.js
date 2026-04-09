@@ -3772,6 +3772,7 @@ export default function PlanYearModal({
 
   // When we have academicYearId, load full year + plan to populate form (for "Edit plan" from banner)
   const loadedYearIdRef = useRef(null);
+  const invalidYearIdRef = useRef(new Set());
   const savedTargetsAppliedRef = useRef(false);
   const onCloseRef = useRef(onClose);
   const onCompleteRef = useRef(onComplete);
@@ -3782,6 +3783,7 @@ export default function PlanYearModal({
   useEffect(() => {
     const yearIdToLoad = initialAcademicYearId || academicYearId;
     if (!visible || !yearIdToLoad || !familyId) return;
+    if (invalidYearIdRef.current.has(String(yearIdToLoad))) return;
     if (loadedYearIdRef.current === yearIdToLoad) return;
     setCadenceBaselineKey(null);
     let cancelled = false;
@@ -3901,6 +3903,31 @@ export default function PlanYearModal({
       const { data, error } = await getAcademicYear(yearIdToLoad);
       if (cancelled) return;
       if (error) {
+        const errorMsg = String(error.message || '').toLowerCase();
+        const missingYear =
+          error.status === 404 ||
+          error.status === 500 ||
+          /no academic year|academic year.*not found|not found/.test(errorMsg);
+        if (missingYear) {
+          invalidYearIdRef.current.add(String(yearIdToLoad));
+          loadedYearIdRef.current = null;
+          setAcademicYearId(null);
+          setLoadError(null);
+          setPlanSummaryYearId((prev) => (String(prev || '') === String(yearIdToLoad) ? null : prev));
+          setPlanSummaryData(null);
+          setPlanSummaryError(null);
+          setShowPlanManagerView(true);
+          setStartCreatingNew(false);
+          setPreviousPlans((prev) => {
+            const next = (Array.isArray(prev) ? prev : []).filter(
+              (row) => String(row?.id || '') !== String(yearIdToLoad),
+            );
+            if (familyId) setAcademicYearsPickerCache(familyId, next);
+            return next;
+          });
+          await refreshPreviousPlansList();
+          return;
+        }
         if (!cachedLocal) {
           const isAuth = error.status === 401 || (error.message && /token|auth|login/i.test(error.message));
           if (isAuth) {
@@ -3936,10 +3963,11 @@ export default function PlanYearModal({
     return () => {
       cancelled = true;
     };
-  }, [visible, initialAcademicYearId, academicYearId, familyId]);
+  }, [visible, initialAcademicYearId, academicYearId, familyId, refreshPreviousPlansList]);
   useEffect(() => {
     if (!visible) {
       loadedYearIdRef.current = null;
+      invalidYearIdRef.current.clear();
       savedTargetsAppliedRef.current = false;
       setCadenceBaselineKey(null);
       setLoadError(null);

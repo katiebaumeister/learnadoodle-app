@@ -1992,17 +1992,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
       const detail = event?.detail ?? {};
       const from = detail.from;
-      const yearIdFromEvent = detail.academicYearId;
+      const yearIdFromEvent =
+        detail.academicYearId ||
+        detail.academic_year_id ||
+        detail.yearPlanId ||
+        detail.year_plan_id ||
+        null;
       const subjectId = detail.subjectId ?? null;
       const materialId = detail.materialId ?? null;
       const initialUnitStructureMethod = detail.initialUnitStructureMethod ?? null;
-      const openToEditList = detail.openToEditList === true;
+      const openToEditListBase = detail.openToEditList === true;
       const openAsModal = detail.openAsModal === true;
       const skipPlanSummary = detail.skipPlanSummary === true;
       const fromEventDetails = from === 'event_details';
       const onPlannerLikeShell =
         activeTabRef.current === 'planner' || activeTabRef.current === 'calendar';
       const effectiveOpenAsModal = fromEventDetails ? !onPlannerLikeShell : openAsModal;
+      const openToEditList = openToEditListBase || (fromEventDetails && !yearIdFromEvent);
       console.log('[WebLayout] openPlanYearModal event', {
         from,
         yearIdFromEvent,

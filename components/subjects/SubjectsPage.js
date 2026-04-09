@@ -1264,7 +1264,7 @@ const styles = StyleSheet.create({
     width: '100%',
     marginHorizontal: 'auto',
     marginTop: 24,
-    marginBottom: 16,
+    marginBottom: 8,
     paddingHorizontal: 24,
     flexDirection: 'row',
     alignItems: 'center',
@@ -1276,7 +1276,7 @@ const styles = StyleSheet.create({
   },
   filterRowBelowChildren: {
     marginTop: 0,
-    marginBottom: 16,
+    marginBottom: 8,
   },
   filterLabel: {
     fontSize: 15,
@@ -1440,7 +1440,7 @@ const styles = StyleSheet.create({
   subjectsList: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 24,
+    paddingTop: 8,
   },
   subjectsListContent: {
     paddingBottom: 40,

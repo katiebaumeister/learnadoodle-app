@@ -141,12 +141,25 @@ export default function CenterPane({
     // Only filter by event types if filters.eventTypes is an array with items
     if (filters?.eventTypes && Array.isArray(filters.eventTypes) && filters.eventTypes.length > 0) {
       out = out.filter(e => {
+        const selected = filters.eventTypes || [];
+        const selectedLower = selected.map(t => String(t || '').toLowerCase());
         const eventType = e.event_type || e.data?.event_type || e.type;
+        const generatedByPlan = String(e.generated_by || e.data?.generated_by || '').toLowerCase() === 'plan_year';
+        const hasAcademicYear = !!(e.academic_year_id || e.data?.academic_year_id);
+        const looksLikePlanSlot = generatedByPlan || hasAcademicYear;
+        const typeLower = String(eventType || '').toLowerCase();
+
+        // Plan slots often serialize as "Schedule Block"/"Scheduled Class Day" (or no explicit type).
+        // Treat them as lessons for filter UX parity with the right-rail filter chips.
+        if (looksLikePlanSlot && selectedLower.includes('lesson')) {
+          if (!eventType || typeLower === 'schedule block' || typeLower === 'scheduled class day' || typeLower === 'lesson') {
+            return true;
+          }
+        }
+
         if (!eventType) return false;
-        if (filters.eventTypes.includes(eventType)) return true;
+        if (selected.includes(eventType)) return true;
         // Treat "Schedule Block" and "Scheduled Class Day" as the same
-        const typeLower = (eventType || '').toLowerCase();
-        const selectedLower = (filters.eventTypes || []).map(t => (t || '').toLowerCase());
         if ((typeLower === 'schedule block' && selectedLower.includes('scheduled class day')) ||
             (typeLower === 'scheduled class day' && selectedLower.includes('schedule block'))) return true;
         // Treat "Exam" and "Assessment" as the same (UI shows "Exam", DB may store "Assessment")

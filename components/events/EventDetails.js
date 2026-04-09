@@ -3088,8 +3088,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       // Extract child ID from error message if available
       const childIdMatch = errorMessage.match(/child:\s*([a-f0-9-]+)/i);
       const targetChildIds = childIdMatch ? [childIdMatch[1]] : assigneeIds;
+      const validTargetChildIds = (targetChildIds || []).filter((id) =>
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id || '').trim())
+      );
+      const cleanCurrentEventId = cleanPlannerEventId(String(event?.id || ''));
 
-      if (!targetChildIds || targetChildIds.length === 0) {
+      if (validTargetChildIds.length === 0) {
         console.warn('[EventDetails] No child IDs available for conflict check');
         return false;
       }
@@ -3100,17 +3104,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const endOfRange = new Date(endDate || startDate);
       endOfRange.setHours(23, 59, 59, 999);
 
-      const { data: existingEvents, error: fetchError } = await supabase
+      let query = supabase
         .from('events')
         .select('*')
         .eq('family_id', familyId)
-        .in('child_id', targetChildIds)
+        .in('child_id', validTargetChildIds)
         .gte('start_ts', startOfRange.toISOString())
         .lte('start_ts', endOfRange.toISOString())
         .neq('status', 'canceled')
         .is('canceled_at', null)
-        .is('deleted_at', null)
-        .neq('id', event?.id); // Exclude the current event being edited
+        .is('deleted_at', null);
+
+      if (cleanCurrentEventId) {
+        query = query.neq('id', cleanCurrentEventId); // Exclude the current event being edited
+      }
+      const { data: existingEvents, error: fetchError } = await query;
 
       if (fetchError || !existingEvents || existingEvents.length === 0) {
         console.warn('[EventDetails] Could not fetch conflicting events:', fetchError);
@@ -3550,7 +3558,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         childIdsChanged
       });
       
-      let { error, data } = await supabase.from('events').update(cleanUpdates).eq('id', event.id).select();
+      let { error, data } = await supabase
+        .from('events')
+        .update(cleanUpdates)
+        .eq('id', cleanPlannerEventId(String(event.id)))
+        .select();
       
       // Log the response from the database
       console.log('[EventDetails] Database update response:', {
@@ -3575,7 +3587,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           const setFlexibleResult = await supabase
             .from('events')
             .update({ is_flexible: true })
-            .eq('id', event.id)
+            .eq('id', cleanPlannerEventId(String(event.id)))
             .select();
           
           if (setFlexibleResult.error) {
@@ -3595,7 +3607,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           const updateWithoutChildResult = await supabase
             .from('events')
             .update(updatesWithoutChildId)
-            .eq('id', event.id)
+            .eq('id', cleanPlannerEventId(String(event.id)))
             .select();
           
           if (updateWithoutChildResult.error) {
@@ -3623,7 +3635,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           });
           try {
             const rpcResult = await supabase.rpc('update_event_with_overlap_handling', {
-              _event_id: event.id,
+              _event_id: cleanPlannerEventId(String(event.id)),
               _updates: {
                 ...cleanUpdates,
                 child_id: childIdToUpdate,
@@ -3640,7 +3652,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             if (rpcResult.data && rpcResult.data.ok) {
               console.log('[EventDetails] Updated child_id successfully using RPC function');
               // Fetch the updated event
-              const fetchResult = await supabase.from('events').select().eq('id', event.id).single();
+              const fetchResult = await supabase
+                .from('events')
+                .select()
+                .eq('id', cleanPlannerEventId(String(event.id)))
+                .single();
               if (fetchResult.error) {
                 throw fetchResult.error;
               }
@@ -3679,7 +3695,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             const fallbackResult = await supabase
               .from('events')
               .update(fallbackUpdate)
-              .eq('id', event.id)
+              .eq('id', cleanPlannerEventId(String(event.id)))
               .select();
             
             if (fallbackResult.error) {
@@ -3698,7 +3714,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           }
         } else {
           // Fetch the final data if we didn't update child_id
-          const fetchResult = await supabase.from('events').select().eq('id', event.id).single();
+          const fetchResult = await supabase
+            .from('events')
+            .select()
+            .eq('id', cleanPlannerEventId(String(event.id)))
+            .single();
           if (fetchResult.error) {
             console.error('[EventDetails] Error fetching updated event:', fetchResult.error);
             throw fetchResult.error;
@@ -3757,7 +3777,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           }
           
           console.log(`[EventDetails] Fetching event (attempt ${4 - retries}/3)...`);
-          fetchResult = await supabase.from('events').select().eq('id', event.id).single();
+          fetchResult = await supabase
+            .from('events')
+            .select()
+            .eq('id', cleanPlannerEventId(String(event.id)))
+            .single();
           
           if (fetchResult.error) {
             console.warn(`[EventDetails] Error fetching updated event (attempt ${4 - retries}/3):`, {
@@ -4137,11 +4161,19 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       new CustomEvent('openPlanYearModal', {
                         detail: {
                           from: 'event_details',
-                          academicYearId,
+                      academicYearId:
+                        academicYearId ||
+                        event?.academic_year_id ||
+                        event?.data?.academic_year_id ||
+                        null,
                           subjectId:
                             event?.subject_id != null ? String(event.subject_id) : null,
                           skipPlanSummary: true,
-                          openToEditList: false,
+                      openToEditList: !(
+                        academicYearId ||
+                        event?.academic_year_id ||
+                        event?.data?.academic_year_id
+                      ),
                         },
                       })
                     );
@@ -4856,11 +4888,19 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   new CustomEvent('openPlanYearModal', {
                     detail: {
                       from: 'event_details',
-                      academicYearId,
+                      academicYearId:
+                        academicYearId ||
+                        event?.academic_year_id ||
+                        event?.data?.academic_year_id ||
+                        null,
                       subjectId:
                         event?.subject_id != null ? String(event.subject_id) : null,
                       skipPlanSummary: true,
-                      openToEditList: false,
+                      openToEditList: !(
+                        academicYearId ||
+                        event?.academic_year_id ||
+                        event?.data?.academic_year_id
+                      ),
                     },
                   })
                 );
@@ -6470,7 +6510,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           start_ts: nextStart.toISOString(),
           end_ts: nextEnd.toISOString(),
         })
-        .eq('id', event.id)
+        .eq('id', cleanPlannerEventId(String(event.id)))
         .select()
         .single();
       if (error) throw error;

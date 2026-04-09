@@ -1155,7 +1155,18 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
               const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday (0) or Saturday (6)
               
               // Event density scaling logic
-              const validEvents = dayEvents.filter(ev => ev.title && ev.title !== 'undefined' && ev.title !== 'null');
+              const validEvents = dayEvents
+                .filter((ev) => ev && typeof ev === 'object')
+                .map((ev) => {
+                  const fallbackTitle = ev.title || ev.subject_name || ev.subjectName || ev.event_type || ev.type || 'Lesson';
+                  const normalizedTitle = String(fallbackTitle).trim();
+                  return {
+                    ...ev,
+                    title: normalizedTitle && normalizedTitle !== 'undefined' && normalizedTitle !== 'null'
+                      ? normalizedTitle
+                      : 'Lesson',
+                  };
+                });
               const eventCount = validEvents.length;
               
               // Show up to 2 events, then "+X more" if needed
