@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, Platform } from 'react-native';
 import { designTokens } from '../theme/designTokens';
 
-const { colors: tok, fonts } = designTokens;
+const { colors: tok, fonts, radius } = designTokens;
 const primary = tok.primary;
 const paper = tok.paper;
 const ink = tok.ink;
@@ -12,7 +12,7 @@ const muted = tok.muted;
 const FONT_MODAL_TITLE = '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const MODAL_RADIUS = 28;
 const MODAL_PAD = 32;
-const BTN_RADIUS = 12;
+/** designTokens.radius (12) — used for action pills; keep name `radius` for any HMR paths expecting it */
 
 // On web, render above other modals (e.g. Edit Subject). Use portal + high z-index so dialog is never behind a parent modal.
 const WEB_DIALOG_Z_INDEX = 2147483647;
@@ -208,7 +208,7 @@ const styles = StyleSheet.create({
   cancelButton: {
     paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: BTN_RADIUS,
+    borderRadius: radius,
     backgroundColor: '#f3f4f6',
     minWidth: 96,
     alignItems: 'center',
@@ -222,7 +222,7 @@ const styles = StyleSheet.create({
   confirmButton: {
     paddingHorizontal: 22,
     paddingVertical: 12,
-    borderRadius: BTN_RADIUS,
+    borderRadius: radius,
     backgroundColor: primary,
     minWidth: 96,
     alignItems: 'center',
