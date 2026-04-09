@@ -2,37 +2,58 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, Platform } from 'react-native';
 import { designTokens } from '../theme/designTokens';
 
-const { colors: tok, radius, fonts } = designTokens;
+const { colors: tok, fonts } = designTokens;
 const primary = tok.primary;
 const paper = tok.paper;
 const ink = tok.ink;
 const muted = tok.muted;
+
+/** Align with Invite-a-child and other large modals: League Spartan title, soft card. */
+const FONT_MODAL_TITLE = '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const MODAL_RADIUS = 28;
+const MODAL_PAD = 32;
+const BTN_RADIUS = 12;
 
 // On web, render above other modals (e.g. Edit Subject). Use portal + high z-index so dialog is never behind a parent modal.
 const WEB_DIALOG_Z_INDEX = 2147483647;
 
 function DialogContent({ title, message, confirmLabel, cancelLabel, destructive, onConfirm, onCancel }) {
   return (
-    <>
-      <View style={styles.modal}>
-        {title ? <Text style={styles.title}>{title}</Text> : null}
-        {message ? <Text style={styles.message}>{message}</Text> : null}
-        <View style={styles.actions}>
-          <TouchableOpacity style={styles.cancelButton} onPress={onCancel} activeOpacity={0.8}>
-            <Text style={styles.cancelButtonText}>{cancelLabel}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.confirmButton, destructive && styles.confirmButtonDestructive]}
-            onPress={onConfirm}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.confirmButtonText, destructive && styles.confirmButtonTextDestructive]}>
-              {confirmLabel}
-            </Text>
-          </TouchableOpacity>
-        </View>
+    <View style={styles.cardInner}>
+      <View style={styles.headerRow}>
+        {title ? (
+          <Text style={styles.title} numberOfLines={3}>
+            {title}
+          </Text>
+        ) : (
+          <View style={styles.titleSpacer} />
+        )}
+        <TouchableOpacity
+          style={styles.closeButton}
+          onPress={onCancel}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+        >
+          <Text style={styles.closeButtonIcon}>×</Text>
+        </TouchableOpacity>
       </View>
-    </>
+      {message ? <Text style={styles.message}>{message}</Text> : null}
+      <View style={styles.actions}>
+        <TouchableOpacity style={styles.cancelButton} onPress={onCancel} activeOpacity={0.85}>
+          <Text style={styles.cancelButtonText}>{cancelLabel}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.confirmButton, destructive && styles.confirmButtonDestructive]}
+          onPress={onConfirm}
+          activeOpacity={0.85}
+        >
+          <Text style={[styles.confirmButtonText, destructive && styles.confirmButtonTextDestructive]}>
+            {confirmLabel}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
@@ -63,7 +84,7 @@ export default function ConfirmDialog({
       onPress={handleCancel}
     >
       <TouchableOpacity
-        style={styles.modal}
+        style={styles.card}
         activeOpacity={1}
         onPress={(e) => e?.stopPropagation?.()}
       >
@@ -99,7 +120,7 @@ export default function ConfirmDialog({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
@@ -115,55 +136,102 @@ const styles = StyleSheet.create({
   overlayWebPortal: {
     zIndex: WEB_DIALOG_Z_INDEX,
   },
-  modal: {
+  card: {
     width: '100%',
-    maxWidth: 400,
+    maxWidth: 420,
     backgroundColor: paper,
-    borderRadius: radius,
-    padding: 24,
+    borderRadius: MODAL_RADIUS,
+    padding: MODAL_PAD,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.18)',
+    }),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.14,
+    shadowRadius: 28,
+    elevation: 16,
+  },
+  cardInner: {
+    width: '100%',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
+  },
+  titleSpacer: {
+    flex: 1,
   },
   title: {
-    fontSize: 18,
-    fontWeight: '600',
+    flex: 1,
+    fontSize: 22,
+    fontWeight: '700',
     color: ink,
-    marginBottom: 8,
-    fontFamily: fonts.sans,
+    fontFamily: FONT_MODAL_TITLE,
+    paddingRight: 8,
+    lineHeight: 28,
+  },
+  closeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: paper,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginTop: -4,
+  },
+  closeButtonIcon: {
+    fontSize: 22,
+    lineHeight: 24,
+    color: '#6b7280',
+    fontWeight: '400',
+    marginTop: -2,
   },
   message: {
     fontSize: 15,
     color: muted,
     lineHeight: 22,
-    marginBottom: 24,
+    marginBottom: 28,
     fontFamily: fonts.sans,
   },
   actions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    flexWrap: 'wrap',
     gap: 12,
   },
   cancelButton: {
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    backgroundColor: 'transparent',
-    borderWidth: 0,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: BTN_RADIUS,
+    backgroundColor: '#f3f4f6',
+    minWidth: 96,
+    alignItems: 'center',
   },
   cancelButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: primary,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#374151',
     fontFamily: fonts.sans,
   },
   confirmButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: BTN_RADIUS,
     backgroundColor: primary,
+    minWidth: 96,
+    alignItems: 'center',
   },
   confirmButtonDestructive: {
     backgroundColor: '#dc2626',
   },
   confirmButtonText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
     fontFamily: fonts.sans,

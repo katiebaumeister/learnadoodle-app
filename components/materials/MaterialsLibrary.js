@@ -113,7 +113,14 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const [showDeletedBin, setShowDeletedBin] = useState(false);
   const [deletedMaterials, setDeletedMaterials] = useState([]);
   const [loadingDeleted, setLoadingDeleted] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState({ visible: false, title: '', message: '', confirmLabel: 'OK', onConfirm: null });
+  const [confirmDialog, setConfirmDialog] = useState({
+    visible: false,
+    title: '',
+    message: '',
+    confirmLabel: 'OK',
+    destructive: false,
+    onConfirm: null,
+  });
   
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -452,9 +459,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       setConfirmDialog({
         visible: true,
-        title: 'Move to Recently Deleted',
-        message: `"${itemName}" will be moved to Recently Deleted. You can restore it from there.\n\nDo you want to continue?`,
-        confirmLabel: 'OK',
+        title: 'Delete this item?',
+        message: `Are you sure you want to delete "${itemName}"? You can restore it from the trash bin.`,
+        confirmLabel: 'Delete',
+        destructive: true,
         onConfirm: () => {
           setConfirmDialog((p) => ({ ...p, visible: false }));
           performDelete(item, itemName);
@@ -463,11 +471,11 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       return;
     }
     Alert.alert(
-      'Move to Recently Deleted',
-      `"${itemName}" will be moved to Recently Deleted. You can restore it from there.`,
+      'Delete this item?',
+      `Are you sure you want to delete "${itemName}"? You can restore it from the trash bin.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Move to Deleted', style: 'destructive', onPress: () => performDelete(item, itemName) }
+        { text: 'Delete', style: 'destructive', onPress: () => performDelete(item, itemName) },
       ],
       { cancelable: true }
     );
@@ -502,7 +510,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         await loadDeletedMaterials();
       }
       
-      toast.push(`${itemName} moved to Recently Deleted`, 'success');
+      toast.push(`${itemName} deleted`, 'success');
     } catch (error) {
       console.error('[MaterialsLibrary] Error deleting item:', error);
       console.error('[MaterialsLibrary] Error details:', { 
@@ -1097,9 +1105,10 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       setConfirmDialog({
         visible: true,
-        title: 'Permanently Delete',
-        message: `Are you sure you want to permanently delete "${itemName}"? This action cannot be undone and will remove the item forever.`,
-        confirmLabel: 'OK',
+        title: 'Delete forever?',
+        message: `Are you sure you want to permanently delete "${itemName}"? This cannot be undone.`,
+        confirmLabel: 'Delete forever',
+        destructive: true,
         onConfirm: async () => {
           setConfirmDialog((p) => ({ ...p, visible: false }));
           await performPermanentDelete(item, itemName);
@@ -1108,11 +1117,11 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       return;
     }
     Alert.alert(
-      'Permanently Delete',
-      `Are you sure you want to permanently delete "${itemName}"? This action cannot be undone and will remove the item forever.`,
+      'Delete forever?',
+      `Are you sure you want to permanently delete "${itemName}"? This cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete Forever', style: 'destructive', onPress: () => performPermanentDelete(item, itemName) }
+        { text: 'Delete forever', style: 'destructive', onPress: () => performPermanentDelete(item, itemName) },
       ],
       { cancelable: true }
     );
@@ -1217,13 +1226,13 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       </View>
       )}
 
-      {/* Recently Deleted Bin */}
+      {/* Deleted (trash) bin */}
       {showDeletedBin && (
         <View style={styles.deletedBinContainer}>
           <View style={styles.deletedBinHeader}>
             <View style={styles.deletedBinHeaderLeft}>
               <Trash2 size={20} color={colors.muted} />
-              <Text style={styles.deletedBinTitle}>Recently Deleted</Text>
+              <Text style={styles.deletedBinTitle}>Deleted</Text>
               <Text style={styles.deletedBinSubtitle}>
                 {deletedMaterials.length} {deletedMaterials.length === 1 ? 'item' : 'items'}
               </Text>
@@ -1767,6 +1776,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
         message={confirmDialog.message}
         confirmLabel={confirmDialog.confirmLabel}
         cancelLabel="Cancel"
+        destructive={confirmDialog.destructive}
         onConfirm={confirmDialog.onConfirm}
         onCancel={() => setConfirmDialog((p) => ({ ...p, visible: false }))}
       />
@@ -1852,7 +1862,7 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  // Muted card for Recently Deleted
+  // Muted card for deleted items bin
   actionCardMuted: {
     backgroundColor: '#ffffff',
     borderRadius: 12,

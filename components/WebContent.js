@@ -25,6 +25,17 @@ import {
   softDeleteEventSeries,
 } from '../lib/utils/recurringEventUtils'
 
+/** Lucide paths — same as MaterialsLibrary context menu (visual parity). */
+const PLANNER_CTX_ICON_PATHS = {
+  edit2:
+    'M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7 M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z',
+  trash2: 'M3 6h18 M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6 M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2',
+  calendar:
+    'M8 2v4 M16 2v4 M3 10h18 M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
+  rotateCcw:
+    'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M3 21v-5h5',
+}
+
 // Set up error suppression immediately on module load (before React renders)
 // This catches errors that occur during initial page load
 // Only run on web where both window and document exist
@@ -4531,6 +4542,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         const cleanId = (ev._originalId || ev.originalId || ev.id || '').toString().split('-day-')[0];
         menuItems.push({
           text: 'Add back to calendar',
+          iconKey: 'rotateCcw',
           action: async () => {
             try {
               const res = await restoreEventFromTrash(cleanId, familyId);
@@ -4615,6 +4627,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         menuItems.push({
           text: 'Delete forever',
           isDelete: true,
+          iconKey: 'trash2',
           action: () => {
             const setConfirm = setConfirmDialogRef.current;
             if (!setConfirm) return;
@@ -4643,6 +4656,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       } else if (isHoliday) {
         menuItems.push({
           text: 'View',
+          iconKey: 'calendar',
           action: () => {
             window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev } }));
           },
@@ -4652,6 +4666,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       eventId = cleanPlannerEventId(eventId);
       menuItems.push({
         text: 'Edit Event',
+        iconKey: 'edit2',
         action: () => {
           window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev } }));
         },
@@ -4661,6 +4676,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         menuItems.push({
           text: 'Delete This Event',
           isDelete: true,
+          iconKey: 'trash2',
           action: () => {
             const setConfirm = setConfirmDialogRef.current;
             if (!setConfirm) return;
@@ -4697,6 +4713,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         menuItems.push({
           text: 'Delete All in Series',
           isDelete: true,
+          iconKey: 'trash2',
           action: () => {
             const setConfirm = setConfirmDialogRef.current;
             if (!setConfirm) return;
@@ -4730,6 +4747,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         menuItems.push({
           text: 'Delete Event',
           isDelete: true,
+          iconKey: 'trash2',
           action: () => {
             const setConfirm = setConfirmDialogRef.current;
             if (!setConfirm) return;
@@ -4767,7 +4785,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       }
       const estimatedMenuHeight = menuItems.length * 48 + 16;
       const windowHeight = window.innerHeight;
-      const estimatedMenuWidth = 200;
+      const estimatedMenuWidth = 240;
       const windowWidth = window.innerWidth;
       let menuTop = clientY;
       if (clientY + estimatedMenuHeight > windowHeight) {
@@ -4779,14 +4797,79 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       }
       const menu = document.createElement('div');
       menu.id = 'planner-event-context-menu';
-      menu.style.cssText = `position: fixed; top: ${menuTop}px; left: ${menuLeft}px; background-color: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05); z-index: 999999; min-width: 200px; padding: 8px 0; font-family: "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;`;
-      menuItems.forEach((item, index) => {
+      menu.style.cssText = `
+        position: fixed;
+        top: ${menuTop}px;
+        left: ${menuLeft}px;
+        background-color: #ffffff;
+        border-radius: 12px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
+        z-index: 999999;
+        min-width: 200px;
+        padding: 8px 0;
+        font-family: "League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      `;
+      menuItems.forEach((menuItem, index) => {
+        const iconPath =
+          PLANNER_CTX_ICON_PATHS[menuItem.iconKey] ||
+          (menuItem.isDelete ? PLANNER_CTX_ICON_PATHS.trash2 : PLANNER_CTX_ICON_PATHS.edit2);
         const div = document.createElement('div');
-        div.style.cssText = `padding: 16px 24px; color: ${item.isDelete ? '#dc2626' : '#374151'}; font-size: 15px; font-weight: 500; cursor: pointer; transition: all 0.15s ease; border-bottom: ${index < menuItems.length - 1 ? '1px solid #f3f4f6' : 'none'};`;
-        div.addEventListener('mouseenter', () => { div.style.backgroundColor = item.isDelete ? '#fef2f2' : '#f8fafc'; });
-        div.addEventListener('mouseleave', () => { div.style.backgroundColor = 'transparent'; });
-        div.textContent = item.text;
-        div.addEventListener('click', () => { item.action(); menu.remove(); });
+        div.style.cssText = `
+          padding: 16px 24px;
+          color: ${menuItem.isDelete ? '#dc2626' : '#374151'};
+          font-size: 16px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          border-bottom: ${index < menuItems.length - 1 ? '1px solid #f3f4f6' : 'none'};
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        `;
+        div.addEventListener('mouseenter', () => {
+          div.style.backgroundColor = menuItem.isDelete ? '#fef2f2' : '#f8fafc';
+        });
+        div.addEventListener('mouseleave', () => {
+          div.style.backgroundColor = 'transparent';
+        });
+        const iconContainer = document.createElement('div');
+        iconContainer.style.cssText = `
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          width: 16px;
+          height: 16px;
+        `;
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', '16');
+        svg.setAttribute('height', '16');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', menuItem.isDelete ? '#dc2626' : '#374151');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', iconPath);
+        svg.appendChild(path);
+        iconContainer.appendChild(svg);
+        div.appendChild(iconContainer);
+        const textSpan = document.createElement('span');
+        textSpan.textContent = menuItem.text;
+        div.appendChild(textSpan);
+        div.addEventListener('click', (evt) => {
+          evt.stopPropagation();
+          evt.preventDefault();
+          menu.remove();
+          document.removeEventListener('click', closeMenu);
+          document.removeEventListener('mousedown', closeMenu, true);
+          document.removeEventListener('contextmenu', closeMenu, true);
+          setTimeout(() => {
+            menuItem.action();
+          }, 10);
+        });
         menu.appendChild(div);
       });
       document.body.appendChild(menu);
