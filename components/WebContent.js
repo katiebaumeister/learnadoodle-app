@@ -2618,20 +2618,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             source: e.source,
           }));
         });
-        if (Platform.OS === 'web') {
-          const allLoadedEvents = Object.values(byDate).flat();
-          const planLoadedCount = allLoadedEvents.filter(
-            (ev) =>
-              String(ev.generated_by || '').toLowerCase() === 'plan_year' ||
-              !!ev.academic_year_id,
-          ).length;
-          console.log('[WebContent] Month view loaded events:', {
-            monthKey,
-            total: allLoadedEvents.length,
-            planSlots: planLoadedCount,
-            selectedChildrenCount: Array.isArray(propSelectedCalendarChildren) ? propSelectedCalendarChildren.length : 0,
-          });
-        }
         setCalendarDataCache((prev) => ({ ...prev, [monthKey]: byDate }));
         setCalendarEvents((prev) => {
           let merged = { ...prev, ...byDate };
@@ -4696,6 +4682,17 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev } }));
         },
       });
+      if (ev.academic_year_id) {
+        menuItems.push({
+          text: 'Edit Plan',
+          iconKey: 'calendar',
+          action: () => {
+            window.dispatchEvent(new CustomEvent('openPlanYearModal', {
+              detail: { from: 'calendar_context_menu', academicYearId: ev.academic_year_id, openAsModal: true },
+            }));
+          },
+        });
+      }
       const isSeriesGroup = isDeletableSeriesGroup(ev);
       if (isSeriesGroup) {
         menuItems.push({
@@ -4735,7 +4732,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             });
           },
         });
-        menuItems.push({
+        if (!ev.academic_year_id) menuItems.push({
           text: 'Delete All in Series',
           isDelete: true,
           iconKey: 'trash2',
@@ -4798,6 +4795,44 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   window.dispatchEvent(new CustomEvent('refreshCalendar'));
                 } catch (err) {
                   Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
+                } finally {
+                  setConfirm((prev) => ({ ...prev, visible: false }));
+                }
+              },
+              onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
+            });
+          },
+        });
+      }
+      if (ev.academic_year_id) {
+        menuItems.push({
+          text: 'Delete Plan',
+          isDelete: true,
+          iconKey: 'trash2',
+          action: () => {
+            const setConfirm = setConfirmDialogRef.current;
+            if (!setConfirm) return;
+            setConfirm({
+              visible: true,
+              title: 'Delete plan?',
+              message: 'This will permanently remove this plan and its scheduled lessons from the calendar. You cannot undo this.',
+              confirmLabel: 'Delete plan',
+              cancelLabel: 'Cancel',
+              destructive: true,
+              onConfirm: async () => {
+                try {
+                  const { clearPlaceholders } = await import('../lib/services/academicYearClient');
+                  const { invalidatePlanHealthCache } = await import('../lib/services/academicYearClient');
+                  const { data, error } = await clearPlaceholders(familyId, ev.academic_year_id, { deletePlan: true });
+                  if (error) throw new Error(error.message || 'Failed to delete plan');
+                  if (data?.plan_deleted) {
+                    invalidatePlanHealthCache();
+                    window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+                    window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { academicYearId: ev.academic_year_id } }));
+                    window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+                  }
+                } catch (err) {
+                  Alert.alert('Error', err?.message || 'Failed to delete plan');
                 } finally {
                   setConfirm((prev) => ({ ...prev, visible: false }));
                 }
@@ -4920,10 +4955,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     if (!familyId) return;
     const monthKey = `${plannerDate.getFullYear()}-${plannerDate.getMonth()}`;
     const hasCache = !!calendarDataCache[monthKey];
-    refreshCalendarData(plannerDate, { background: hasCache, force: hasCache }).catch((err) =>
+    refreshCalendarData(plannerDate, { background: hasCache }).catch((err) =>
       console.error('[WebContent] Initial planner load failed:', err)
     );
-  }, [activeTab, familyId, plannerDate, calendarDataCache, refreshCalendarData]);
+  }, [activeTab, familyId, plannerDate, refreshCalendarData]);
 
   // Optimistically add newly created calendar events so they appear on the planner immediately
   useEffect(() => {

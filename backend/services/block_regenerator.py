@@ -9,6 +9,7 @@ filled slots are never overwritten).
 """
 
 from datetime import date, datetime, timedelta, timezone
+import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from services.blocks_calculator import get_block_occurrence_dates
@@ -294,6 +295,55 @@ def _looks_like_overlap_constraint_error(msg: str) -> bool:
     )
 
 
+_MISSING_EVENT_REVISION_USER_RE = re.compile(
+    r'Key \(user_id\)=\(([0-9a-fA-F-]{36})\) is not present in table "users"',
+    re.IGNORECASE,
+)
+
+
+def _extract_missing_event_revision_user_id(msg: str) -> Optional[str]:
+    m = _MISSING_EVENT_REVISION_USER_RE.search(msg or "")
+    if not m:
+        return None
+    user_id = (m.group(1) or "").strip()
+    return user_id or None
+
+
+def _ensure_event_revision_user_fk_target(supabase, user_id: str) -> bool:
+    """
+    Self-heal for event_revisions_user_id_fkey:
+    if the referenced users.id is missing, create a minimal row so event writes can proceed.
+    """
+    if not user_id:
+        return False
+    uid = str(user_id).strip()
+    if not uid:
+        return False
+
+    # Already present.
+    try:
+        existing = supabase.table("users").select("id").eq("id", uid).limit(1).execute()
+        if existing.data and len(existing.data) > 0:
+            return True
+    except Exception:
+        # Continue to insert attempt.
+        pass
+
+    # Try progressively richer payloads in case the table has required columns.
+    payloads = [
+        {"id": uid},
+        {"id": uid, "email": f"service+{uid[:8]}@learnadoodle.local"},
+        {"id": uid, "email": f"service+{uid[:8]}@learnadoodle.local", "name": "System"},
+    ]
+    for payload in payloads:
+        try:
+            supabase.table("users").insert(payload).execute()
+            return True
+        except Exception:
+            continue
+    return False
+
+
 def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any]) -> bool:
     payload = {
         "start_ts": row["start_ts"],
@@ -313,7 +363,15 @@ def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any]) -> bool:
     try:
         supabase.table("events").update(payload).eq("id", row["id"]).eq("family_id", family_id).execute()
         return True
-    except Exception:
+    except Exception as e1:
+        err1 = _format_db_exc(e1)
+        missing_uid = _extract_missing_event_revision_user_id(err1)
+        if missing_uid and _ensure_event_revision_user_fk_target(supabase, missing_uid):
+            try:
+                supabase.table("events").update(payload).eq("id", row["id"]).eq("family_id", family_id).execute()
+                return True
+            except Exception:
+                pass
         fallback_payload = dict(payload)
         if "child_ids" in row and row["child_ids"] is not None:
             fallback_payload["child_ids"] = row["child_ids"]
@@ -322,16 +380,116 @@ def _safe_overlap_update(supabase, family_id: str, row: Dict[str, Any]) -> bool:
         try:
             supabase.table("events").update(fallback_payload).eq("id", row["id"]).eq("family_id", family_id).execute()
             return True
-        except Exception:
+        except Exception as e2:
+            err2 = _format_db_exc(e2)
+            missing_uid2 = _extract_missing_event_revision_user_id(err2)
+            if missing_uid2 and _ensure_event_revision_user_fk_target(supabase, missing_uid2):
+                try:
+                    supabase.table("events").update(fallback_payload).eq("id", row["id"]).eq("family_id", family_id).execute()
+                    return True
+                except Exception:
+                    pass
             return False
 
 
 def _safe_overlap_insert(supabase, row: Dict[str, Any]) -> bool:
+    def _parse_iso(ts: Any) -> Optional[datetime]:
+        if not ts:
+            return None
+        s = str(ts).strip()
+        if not s:
+            return None
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(s)
+        except Exception:
+            return None
+
+    def _event_has_child(ev: Dict[str, Any], child: Optional[str]) -> bool:
+        if not child:
+            return False
+        row_child = ev.get("child_id")
+        if row_child is not None and str(row_child).strip() == child:
+            return True
+        row_children = _normalized_child_id_set(ev.get("child_ids"))
+        return child in row_children
+
+    def _purge_soft_deleted_overlaps_for_row() -> int:
+        family_id = row.get("family_id")
+        if not family_id:
+            return 0
+        row_start = _parse_iso(row.get("start_ts"))
+        row_end = _parse_iso(row.get("end_ts"))
+        if row_start is None or row_end is None:
+            return 0
+        child_for_match = str(row.get("child_id")).strip() if row.get("child_id") else None
+        if not child_for_match:
+            child_ids = row.get("child_ids") or []
+            child_for_match = str(child_ids[0]).strip() if isinstance(child_ids, list) and len(child_ids) > 0 else None
+        # If this is a family-level row, no child overlap cleanup is needed.
+        if not child_for_match:
+            return 0
+        # Narrow window around the candidate row; then filter overlap in Python.
+        window_start = (row_start - timedelta(hours=2)).isoformat()
+        window_end = (row_end + timedelta(hours=2)).isoformat()
+        try:
+            res = (
+                supabase.table("events")
+                .select("id, start_ts, end_ts, child_id, child_ids, deleted_at")
+                .eq("family_id", family_id)
+                .not_.is_("deleted_at", "null")
+                .gte("start_ts", window_start)
+                .lte("start_ts", window_end)
+                .execute()
+            )
+        except Exception:
+            return 0
+        candidates = res.data or []
+        purge_ids: List[str] = []
+        for ev in candidates:
+            if not _event_has_child(ev, child_for_match):
+                continue
+            ev_start = _parse_iso(ev.get("start_ts"))
+            ev_end = _parse_iso(ev.get("end_ts")) or ev_start
+            if ev_start is None or ev_end is None:
+                continue
+            if row_start < ev_end and ev_start < row_end:
+                eid = str(ev.get("id") or "").strip()
+                if eid:
+                    purge_ids.append(eid)
+        if not purge_ids:
+            return 0
+        try:
+            supabase.table("events").delete().in_("id", purge_ids).eq("family_id", family_id).execute()
+            return len(purge_ids)
+        except Exception:
+            return 0
+
     try:
         supabase.table("events").insert(row).execute()
         return True
     except Exception as e1:
         err1 = _format_db_exc(e1)
+        if _looks_like_overlap_constraint_error(err1):
+            purged = _purge_soft_deleted_overlaps_for_row()
+            if purged > 0:
+                try:
+                    supabase.table("events").insert(row).execute()
+                    print(
+                        f"[BACKEND] block_regen overlap cleanup removed {purged} soft-deleted conflicting event(s); retry insert succeeded",
+                        flush=True,
+                    )
+                    return True
+                except Exception as e1_retry_after_purge:
+                    err1 = _format_db_exc(e1_retry_after_purge)
+        missing_uid = _extract_missing_event_revision_user_id(err1)
+        if missing_uid and _ensure_event_revision_user_fk_target(supabase, missing_uid):
+            try:
+                supabase.table("events").insert(row).execute()
+                return True
+            except Exception as e1_retry:
+                err1 = _format_db_exc(e1_retry)
         fallback_row = dict(row)
         child_id = fallback_row.get("child_id")
         child_ids = fallback_row.get("child_ids")
@@ -344,6 +502,13 @@ def _safe_overlap_insert(supabase, row: Dict[str, Any]) -> bool:
             return True
         except Exception as e2:
             err2 = _format_db_exc(e2)
+            missing_uid2 = _extract_missing_event_revision_user_id(err2)
+            if missing_uid2 and _ensure_event_revision_user_fk_target(supabase, missing_uid2):
+                try:
+                    supabase.table("events").insert(fallback_row).execute()
+                    return True
+                except Exception as e2_retry:
+                    err2 = _format_db_exc(e2_retry)
             # Plan-year placeholders are excluded from events_no_overlap_exclude (see migration
             # 20260221_events_no_overlap_exclude_plan_year_placeholders). Use when the DB still
             # enforces overlap on flexible rows (older constraint) or other overlap edge cases.
@@ -356,9 +521,17 @@ def _safe_overlap_insert(supabase, row: Dict[str, Any]) -> bool:
                     supabase.table("events").insert(ph_row).execute()
                     return True
                 except Exception as e3:
+                    err3 = _format_db_exc(e3)
+                    missing_uid3 = _extract_missing_event_revision_user_id(err3)
+                    if missing_uid3 and _ensure_event_revision_user_fk_target(supabase, missing_uid3):
+                        try:
+                            supabase.table("events").insert(ph_row).execute()
+                            return True
+                        except Exception as e3_retry:
+                            err3 = _format_db_exc(e3_retry)
                     print(
                         f"[BACKEND] block_regen insert failed (incl. placeholder fallback) subject={row.get('subject_id')} "
-                        f"start={row.get('start_ts')}: 1={err1} | 2={err2} | 3={_format_db_exc(e3)}",
+                        f"start={row.get('start_ts')}: 1={err1} | 2={err2} | 3={err3}",
                         flush=True,
                     )
                     return False

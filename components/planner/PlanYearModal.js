@@ -1430,6 +1430,7 @@ export default function PlanYearModal({
   const [applyFromDateCalendarMonth, setApplyFromDateCalendarMonth] = useState(() => new Date());
   const [showDeletePlanConfirm, setShowDeletePlanConfirm] = useState(false);
   const [deletingPlan, setDeletingPlan] = useState(false);
+  const [planListContextMenu, setPlanListContextMenu] = useState(null); // { x, y, planId }
   const [suggestionAccepted, setSuggestionAccepted] = useState(false);
 
   // Phase 3: constraint mode + target (I need X days | X hours)
@@ -3228,6 +3229,7 @@ export default function PlanYearModal({
           target_hours: planSummaryData.plan.target_hours ?? null,
           child_id: null,
           replace_placeholders: true,
+        create_calendar_events: true,
           blocks: blocksForApply,
           year_name: planSummaryData.year_name || undefined,
           timezone: (function getClientTimezone() {
@@ -5070,6 +5072,118 @@ export default function PlanYearModal({
     hoursPerDay: hoursPerDay || '5',
   };
 
+  const normalizeSlotTimeTo24h = useCallback((raw, fallback) => {
+    const txt = String(raw || '').trim().toLowerCase();
+    if (!txt) return fallback;
+    const compact = txt.replace(/\s+/g, '');
+    const ampm = compact.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)$/i);
+    if (ampm) {
+      let h = Number(ampm[1]);
+      const m = Number(ampm[2] || '0');
+      const ap = String(ampm[3]).toLowerCase();
+      if (ap === 'pm' && h < 12) h += 12;
+      if (ap === 'am' && h === 12) h = 0;
+      if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      }
+    }
+    const twentyFour = compact.match(/^(\d{1,2}):(\d{2})$/);
+    if (twentyFour) {
+      const h = Number(twentyFour[1]);
+      const m = Number(twentyFour[2]);
+      if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      }
+    }
+    return fallback;
+  }, []);
+
+  const backfillPlanEventsIfMissing = useCallback(async ({ yearId, slotLines, blocksForApply }) => {
+    if (!familyId || !yearId || !Array.isArray(slotLines) || slotLines.length === 0) return;
+    const dates = slotLines.map((l) => String(l.date || '').slice(0, 10)).filter(Boolean).sort();
+    if (dates.length === 0) return;
+    const startYmd = dates[0];
+    const endYmd = dates[dates.length - 1];
+    const minIso = `${startYmd}T00:00:00`;
+    const maxIso = `${endYmd}T23:59:59`;
+    const { data: existingRows, error: existingErr } = await supabase
+      .from('events')
+      .select('id, start_ts, subject_id, academic_year_id, generated_by')
+      .eq('family_id', familyId)
+      .eq('academic_year_id', yearId)
+      .gte('start_ts', minIso)
+      .lte('start_ts', maxIso)
+      .is('deleted_at', null);
+    if (existingErr) {
+      console.warn('[PlanYearModal] Backfill check failed:', existingErr);
+      return;
+    }
+    if ((existingRows || []).length > 0) return;
+
+    const blockById = new Map((blocksForApply || []).map((b) => [String(b?.block_id || ''), b]));
+    const rowsToInsert = slotLines.map((line) => {
+      const block = blockById.get(String(line.blockId || '')) || null;
+      const subjectId = line.subjectId ?? block?.subject_id ?? null;
+      const startLocalRaw = line.timeLabel === 'All day' ? '09:00' : (String(line.timeLabel || '').split('–')[0] || '09:00');
+      const endLocalRaw = line.timeLabel === 'All day' ? '15:00' : (String(line.timeLabel || '').split('–')[1] || '10:00');
+      const startLocal = normalizeSlotTimeTo24h(startLocalRaw, '09:00');
+      const endLocal = normalizeSlotTimeTo24h(endLocalRaw, '10:00');
+      const startTs = new Date(`${line.date}T${startLocal}:00`);
+      const endTs = new Date(`${line.date}T${endLocal}:00`);
+      const candidateChildIds = Array.isArray(block?.child_ids) && block.child_ids.length > 0
+        ? block.child_ids
+        : (subjectId
+          ? getChildIdsForSubject(
+              baseSubjectList.find((s) => String(s.id) === String(subjectId)),
+              children,
+            )
+          : allFamilyChildIds);
+      const normalizedChildIds = (candidateChildIds || []).filter(Boolean).map(String);
+      return {
+        family_id: familyId,
+        academic_year_id: yearId,
+        title: line.subjectName || 'Lesson',
+        subject_id: subjectId,
+        // For overlap-safe plan slots, store assignees in child_ids (same strategy as TaskCreate overlap fallback).
+        child_id: null,
+        child_ids: normalizedChildIds,
+        start_ts: Number.isNaN(startTs.getTime()) ? `${line.date}T09:00:00` : startTs.toISOString(),
+        end_ts: Number.isNaN(endTs.getTime()) ? `${line.date}T10:00:00` : endTs.toISOString(),
+        status: 'scheduled',
+        event_type: 'Lesson',
+        generated_by: 'plan_year',
+        source: 'plan_year',
+        is_flexible: true,
+        counts_toward_plan: true,
+      };
+    });
+    if (rowsToInsert.length === 0) return;
+    const { error: insertErr } = await supabase.from('events').insert(rowsToInsert);
+    if (!insertErr) {
+      console.log('[PlanYearModal] Backfilled plan events:', rowsToInsert.length);
+      return;
+    }
+    const msg = String(insertErr?.message || '').toLowerCase();
+    const isOverlap = msg.includes('overlap') || msg.includes('exclusion');
+    if (!isOverlap) {
+      console.warn('[PlanYearModal] Backfill insert failed:', insertErr);
+      return;
+    }
+    // Last-resort fallback: persist as family-level slots (no child assignment) so planner still shows the plan.
+    const familyLevelRows = rowsToInsert.map((row) => ({
+      ...row,
+      child_id: null,
+      child_ids: null,
+      is_flexible: true,
+    }));
+    const { error: familyInsertErr } = await supabase.from('events').insert(familyLevelRows);
+    if (familyInsertErr) {
+      console.warn('[PlanYearModal] Backfill family-level insert failed:', familyInsertErr);
+      return;
+    }
+    console.log('[PlanYearModal] Backfilled plan events as family-level slots:', familyLevelRows.length);
+  }, [familyId, normalizeSlotTimeTo24h, baseSubjectList, children, allFamilyChildIds]);
+
   const runApplyToCalendar = async (replacePlaceholdersChoice) => {
     setSaving(true);
     setError(null);
@@ -5103,6 +5217,7 @@ export default function PlanYearModal({
         target_hours: effectivePlanTarget.target_hours ?? null,
         child_id: null,
         replace_placeholders: replacePlaceholdersChoice,
+        create_calendar_events: true,
         blocks: blocks.length > 0 ? blocks.map((b) => {
           const subj = b.subject_id ? baseSubjectList.find((s) => String(s.id) === String(b.subject_id)) : null;
           const resolvedChildIds = b.subject_id
@@ -5142,6 +5257,23 @@ export default function PlanYearModal({
 
       const { data, error: applyError } = await applyToCalendar(payload);
       if (applyError) throw applyError;
+      console.log('[PlanYearModal] applyToCalendar result:', {
+        academicYearId: data?.academic_year_id || academicYearId || null,
+        created: data?.created ?? null,
+        totals: data?.totals ?? null,
+        eventsCreated: data?.events_created ?? null,
+        slotsUsed: data?.slots_used ?? null,
+      });
+      console.log(
+        '[PlanYearModal] applyToCalendar result json:',
+        JSON.stringify({
+          academicYearId: data?.academic_year_id || academicYearId || null,
+          created: data?.created ?? null,
+          totals: data?.totals ?? null,
+          eventsCreated: data?.events_created ?? null,
+          slotsUsed: data?.slots_used ?? null,
+        }),
+      );
 
       if (data?.academic_year_id) {
         setAcademicYearId(data.academic_year_id);
@@ -5192,6 +5324,11 @@ export default function PlanYearModal({
             },
           }),
         );
+        await backfillPlanEventsIfMissing({
+          yearId: data.academic_year_id,
+          slotLines: optimisticSlotLines,
+          blocksForApply: payload.blocks,
+        });
       }
       await refreshPreviousPlansList();
 
@@ -6192,6 +6329,51 @@ export default function PlanYearModal({
     setWebDraftUnitMenuLayout(null);
   }, []);
 
+  const openPlanInEditMode = useCallback((yearId) => {
+    if (!yearId) return;
+    setAcademicYearId(yearId);
+    setPlanSummaryYearId(null);
+    setPlanSummaryData(null);
+    setPlanSummaryError(null);
+    setShowPlanManagerView(false);
+    setPlanStep('logistics');
+    setEditingFromSummary(true);
+    setStartCreatingNew(false);
+    setPlanListContextMenu(null);
+  }, []);
+
+  const openPlanDeleteConfirm = useCallback((yearId) => {
+    if (!yearId) return;
+    setPlanSummaryYearId(yearId);
+    setShowDeletePlanConfirm(true);
+    setPlanListContextMenu(null);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !planListContextMenu) return;
+    const close = () => setPlanListContextMenu(null);
+    const onKeyDown = (e) => {
+      if (e?.key === 'Escape') close();
+    };
+    // Defer listener registration so the opening right-click event finishes propagation
+    // before we start listening — otherwise capture fires on the same event and closes immediately.
+    const timer = setTimeout(() => {
+      window.addEventListener('resize', close);
+      window.addEventListener('scroll', close, true);
+      document.addEventListener('mousedown', close, true);
+      document.addEventListener('contextmenu', close, true);
+      document.addEventListener('keydown', onKeyDown, true);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+      document.removeEventListener('mousedown', close, true);
+      document.removeEventListener('contextmenu', close, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [planListContextMenu]);
+
   const renderWebDraftLessonMenuPortal = () => {
     if (Platform.OS !== 'web' || draftBuilderLessonMenuKey == null || !webDraftLessonMenuLayout) return null;
     const currentUnits = (draftData || manualDraft)?.units;
@@ -6313,6 +6495,60 @@ export default function PlanYearModal({
           {menuPanel}
         </View>
       </>,
+      document.body,
+    );
+  };
+
+  const renderPlanListContextMenuPortal = () => {
+    if (Platform.OS !== 'web' || !planListContextMenu) return null;
+    let ReactDOM;
+    try {
+      ReactDOM = require('react-dom');
+    } catch (_) {
+      return null;
+    }
+    if (!ReactDOM?.createPortal || typeof document === 'undefined' || !document.body) return null;
+    const menuW = 210;
+    const viewportW = typeof window !== 'undefined' ? window.innerWidth : 1280;
+    const viewportH = typeof window !== 'undefined' ? window.innerHeight : 800;
+    const left = Math.max(8, Math.min(planListContextMenu.x, viewportW - menuW - 8));
+    const top = Math.max(8, Math.min(planListContextMenu.y, viewportH - 120));
+    return ReactDOM.createPortal(
+      <View
+        style={{
+          position: 'fixed',
+          top,
+          left,
+          width: menuW,
+          backgroundColor: '#FFFFFF',
+          borderRadius: 14,
+          borderWidth: 1,
+          borderColor: '#E5E7EB',
+          boxShadow: '0 14px 28px rgba(15, 23, 42, 0.16)',
+          zIndex: 2147483647,
+          overflow: 'hidden',
+        }}
+      >
+        <TouchableOpacity
+          onPress={() => openPlanInEditMode(planListContextMenu.planId)}
+          activeOpacity={0.85}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11 }}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Pencil size={16} color="#374151" strokeWidth={2} />
+          <Text style={{ fontSize: 14, color: '#111827', fontWeight: '600' }}>Edit plan</Text>
+        </TouchableOpacity>
+        <View style={{ height: 1, backgroundColor: '#F3F4F6' }} />
+        <TouchableOpacity
+          onPress={() => openPlanDeleteConfirm(planListContextMenu.planId)}
+          activeOpacity={0.85}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11 }}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Trash2 size={16} color="#B91C1C" strokeWidth={2} />
+          <Text style={{ fontSize: 14, color: '#B91C1C', fontWeight: '600' }}>Delete plan</Text>
+        </TouchableOpacity>
+      </View>,
       document.body,
     );
   };
@@ -8736,10 +8972,25 @@ export default function PlanYearModal({
                         return (
                           <TouchableOpacity
                             key={ay.id}
-                            onPress={() => setPlanSummaryYearId(ay.id)}
+                            onPress={() => {
+                              setPlanListContextMenu(null);
+                              setPlanSummaryYearId(ay.id);
+                            }}
                             style={[styles.planListItem, isSelected && styles.planListItemSelected]}
                             activeOpacity={0.85}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            {...(Platform.OS === 'web' && {
+                              cursor: 'pointer',
+                              onContextMenu: (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const native = e.nativeEvent || e;
+                                setPlanListContextMenu({
+                                  x: native?.clientX ?? 0,
+                                  y: native?.clientY ?? 0,
+                                  planId: ay.id,
+                                });
+                              },
+                            })}
                           >
                             <View style={styles.planListItemMainRow}>
                               <View style={styles.planListItemLeft}>
@@ -11897,12 +12148,14 @@ export default function PlanYearModal({
     return (
       <View style={{ flex: 1, minHeight: 0, width: '100%', minWidth: 0 }}>
         {modalContent}
+      {renderPlanListContextMenuPortal()}
       <ConfirmDialog
         visible={showDeletePlanConfirm}
         title="Delete plan?"
         message="This will permanently remove this plan and its instructional slots from the calendar. You cannot undo this."
         confirmLabel="Delete plan"
         cancelLabel={STRINGS.global.actions.cancel}
+        destructive={true}
         onConfirm={async () => {
           setShowDeletePlanConfirm(false);
           if (!planSummaryYearId || !familyId) return;
@@ -11956,12 +12209,14 @@ export default function PlanYearModal({
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
         {modalContent}
       </TouchableOpacity>
+      {renderPlanListContextMenuPortal()}
       <ConfirmDialog
         visible={showDeletePlanConfirm}
         title="Delete plan?"
         message="This will permanently remove this plan and its instructional slots from the calendar. You cannot undo this."
         confirmLabel="Delete plan"
         cancelLabel={STRINGS.global.actions.cancel}
+        destructive={true}
         onConfirm={async () => {
           setShowDeletePlanConfirm(false);
           if (!planSummaryYearId || !familyId) return;

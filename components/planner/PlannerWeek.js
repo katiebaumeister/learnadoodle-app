@@ -836,6 +836,16 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       const menuItems = [];
       
       menuItems.push({ text: 'Edit Event', action: () => handleEventClick(event) });
+      if (event.academic_year_id) {
+        menuItems.push({
+          text: 'Edit Plan',
+          action: () => {
+            window.dispatchEvent(new CustomEvent('openPlanYearModal', {
+              detail: { from: 'calendar_context_menu', academicYearId: event.academic_year_id, openAsModal: true },
+            }));
+          },
+        });
+      }
       
       // Check if event is recurring
       const isRecurringEvent = isPartOfRecurringSeries(event);
@@ -919,7 +929,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           }, 
           isDelete: true 
         });
-        menuItems.push({ 
+        if (!event.academic_year_id) menuItems.push({ 
           text: 'Delete All in Series', 
           action: async () => {
             if (window.confirm('Are you sure you want to delete all occurrences in this series?')) {
@@ -1073,6 +1083,29 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
             }
           }
         }, isDelete: true });
+      }
+      if (event.academic_year_id) {
+        menuItems.push({
+          text: 'Delete Plan',
+          action: async () => {
+            if (window.confirm('This will permanently remove this plan and its scheduled lessons from the calendar. You cannot undo this. Continue?')) {
+              try {
+                const { clearPlaceholders, invalidatePlanHealthCache } = await import('../../lib/services/academicYearClient');
+                const { data, error } = await clearPlaceholders(familyId, event.academic_year_id, { deletePlan: true });
+                if (error) throw new Error(error.message || 'Failed to delete plan');
+                if (data?.plan_deleted) {
+                  invalidatePlanHealthCache();
+                  window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { academicYearId: event.academic_year_id } }));
+                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+                }
+              } catch (err) {
+                Alert.alert('Error', err?.message || 'Failed to delete plan');
+              }
+            }
+          },
+          isDelete: true,
+        });
       }
       
       // Calculate menu height (estimate: ~48px per item + 16px padding)

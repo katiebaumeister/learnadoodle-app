@@ -5749,7 +5749,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
                     }}
                   >
-                    New plans can be added from Build plan in the right toolbar.
+                    New plans can be added from Build Plan in the right toolbar.
                   </Text>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 0, marginBottom: 8 }}>
                     <TouchableOpacity

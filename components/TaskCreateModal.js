@@ -3339,7 +3339,7 @@ export default function TaskCreateModal({
                               ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
                             }}
                           >
-                            New plans can be added from Build plan in the right toolbar.
+                            New plans can be added from Build Plan in the right toolbar.
                           </Text>
                           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                             <TouchableOpacity
