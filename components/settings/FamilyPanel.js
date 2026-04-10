@@ -900,7 +900,31 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
-  const familyChildrenForSubjectDots = childrenWithAvatars.length > 0 ? childrenWithAvatars : (family?.children || []);
+  const familyChildrenForSubjectDots = useMemo(() => {
+    const byId = new Map();
+    const mergeChild = (child) => {
+      if (!child?.id) return;
+      const id = String(child.id);
+      const prev = byId.get(id) || {};
+      const nextName =
+        child.name ||
+        child.first_name ||
+        prev.name ||
+        prev.first_name ||
+        null;
+      byId.set(id, {
+        ...prev,
+        ...child,
+        id,
+        name: nextName,
+        first_name: child.first_name || prev.first_name || nextName,
+      });
+    };
+    (family?.children || []).forEach(mergeChild);
+    (childrenFromDb || []).forEach(mergeChild);
+    (childrenWithAvatars || []).forEach(mergeChild);
+    return Array.from(byId.values());
+  }, [family?.children, childrenFromDb, childrenWithAvatars]);
 
   // Helper to get child names for a subject (child_id can be single UUID or semicolon-separated)
   const getSubjectChildNames = (subject) => {
@@ -914,7 +938,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       const child = availableChildren.find(c => String(c.id) === String(id));
       return child ? (child.name || child.first_name || 'Child') : null;
     }).filter(Boolean);
-    if (childNames.length > 0) return childNames.join(', ');
+    if (childNames.length > 0) {
+      const missingCount = childIds.length - childNames.length;
+      if (missingCount > 0) {
+        return `${childNames.join(', ')} +${missingCount}`;
+      }
+      return childNames.join(', ');
+    }
     return childIds.length === 1 ? '1 student' : `${childIds.length} students`;
   };
 

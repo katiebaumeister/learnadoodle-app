@@ -2556,7 +2556,7 @@ export default function PlanYearModal({
   );
 
   const cadenceConflictReport = useMemo(() => {
-    if (!isHomeschool || !startDate || !endDate || !blocks.length) return null;
+    if (!startDate || !endDate || !blocks.length) return null;
     return analyzePlanCadenceConflicts({
       blocks,
       startDate,
@@ -2570,7 +2570,6 @@ export default function PlanYearModal({
       academicYearId,
     });
   }, [
-    isHomeschool,
     blocks,
     startDate,
     endDate,
@@ -6199,7 +6198,7 @@ export default function PlanYearModal({
 
   // Load calendar events in range so cadence can be checked against existing schedule.
   useEffect(() => {
-    if (!visible || !familyId || !startDate || !endDate || !isHomeschool) {
+    if (!visible || !familyId || !startDate || !endDate) {
       setCalendarEventsForConflicts([]);
       setLoadingCalendarEventsForConflicts(false);
       return;
@@ -6210,7 +6209,7 @@ export default function PlanYearModal({
       const { data, error } = await supabase
         .from('events')
         .select(
-          'id, title, start_ts, end_ts, child_id, child_ids, status, deleted_at, is_backlog, is_flexible, recurrence_rule, generated_by, academic_year_id',
+          'id, title, start_ts, end_ts, child_id, child_ids, status, deleted_at, is_backlog, is_flexible, recurrence_rule, generated_by, academic_year_id, subject_id',
         )
         .eq('family_id', familyId)
         .gte('start_ts', `${startDate}T00:00:00`)
@@ -6229,7 +6228,7 @@ export default function PlanYearModal({
     return () => {
       cancelled = true;
     };
-  }, [visible, familyId, startDate, endDate, isHomeschool]);
+  }, [visible, familyId, startDate, endDate]);
 
   // Clear validation error when user fixes the missing field (e.g. selects end date)
   useEffect(() => {

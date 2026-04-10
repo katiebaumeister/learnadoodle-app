@@ -932,6 +932,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [showSendToStudentModal, setShowSendToStudentModal] = useState(false);
   const [sendToStudentNote, setSendToStudentNote] = useState('');
   const [sendToStudentSubmitting, setSendToStudentSubmitting] = useState(false);
+  const [hasInvitedAssignee, setHasInvitedAssignee] = useState(false);
 
   const isParentView = useMemo(
     () => session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true,
@@ -942,6 +943,64 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     () => event?.child_id || (assigneeIds.length > 0 ? assigneeIds[0] : null) || session?.child_id,
     [event?.child_id, assigneeIds, session?.child_id]
   );
+
+  const hasInvitedAssigneeFromMembers = useMemo(() => {
+    if (!assigneeIds?.length || !familyMembers?.length) return false;
+    const wanted = new Set(assigneeIds.map(String));
+    return (familyMembers || []).some((m) => {
+      const role = String(m?.member_role || m?.role || '').toLowerCase();
+      if (role !== 'child' && role !== 'student') return false;
+      if (m?.child_id != null && wanted.has(String(m.child_id))) return true;
+      let scope = m?.child_scope;
+      if (typeof scope === 'string') {
+        try { scope = JSON.parse(scope); } catch (_) { scope = []; }
+      }
+      if (Array.isArray(scope) && scope.some((id) => wanted.has(String(id)))) return true;
+      // Some callsites pass child rows (id + name) instead of family_members rows.
+      if (m?.id != null && wanted.has(String(m.id)) && role) return true;
+      return false;
+    });
+  }, [assigneeIds, familyMembers]);
+
+  useEffect(() => {
+    if (!isParentView || !familyId || assigneeIds.length === 0) {
+      setHasInvitedAssignee(false);
+      return;
+    }
+    if (hasInvitedAssigneeFromMembers) {
+      setHasInvitedAssignee(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('family_members')
+          .select('child_id, child_scope, member_role')
+          .eq('family_id', familyId)
+          .in('member_role', ['child', 'student']);
+        if (cancelled || error) {
+          if (!cancelled) setHasInvitedAssignee(false);
+          return;
+        }
+        const wanted = new Set(assigneeIds.map(String));
+        const hasLinked = (data || []).some((m) => {
+          if (m?.child_id != null && wanted.has(String(m.child_id))) return true;
+          let scope = m?.child_scope;
+          if (typeof scope === 'string') {
+            try { scope = JSON.parse(scope); } catch (_) { scope = []; }
+          }
+          return Array.isArray(scope) && scope.some((id) => wanted.has(String(id)));
+        });
+        if (!cancelled) setHasInvitedAssignee(hasLinked);
+      } catch (_) {
+        if (!cancelled) setHasInvitedAssignee(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isParentView, familyId, assigneeIds, hasInvitedAssigneeFromMembers]);
 
   const loadEventLinkedHelpAssignment = useCallback(async () => {
     const et = event?.event_type || eventType;
@@ -4198,7 +4257,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             event?.id &&
             familyId &&
             isSchoolWorkEventType(event?.event_type || eventType) &&
-            assigneeIds.length > 0 && (
+            assigneeIds.length > 0 &&
+            hasInvitedAssignee && (
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => setShowSendToStudentModal(true)}
@@ -4929,7 +4989,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         event?.id &&
         familyId &&
         isSchoolWorkEventType(eventType) &&
-        assigneeIds.length > 0 && (
+        assigneeIds.length > 0 &&
+        hasInvitedAssignee && (
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={() => setShowSendToStudentModal(true)}
