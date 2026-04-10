@@ -46,6 +46,10 @@ const EVENT_TYPES = [
 ];
 
 const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
+const CALENDAR_CONNECTION_OPTIONS = [
+  { value: 'google', label: 'Google' },
+  { value: 'apple', label: 'Apple' },
+];
 
 // Safe View wrapper that filters out text nodes
 function SafeView({ children, style, ...props }) {
@@ -205,6 +209,7 @@ export default function TaskCreateModal({
   const [percentOfTotalGrade, setPercentOfTotalGrade] = useState('');
   const [location, setLocation] = useState('');
   const [mode, setMode] = useState('');
+  const [connectedCalendarTargets, setConnectedCalendarTargets] = useState([]);
   const [instructor, setInstructor] = useState('');
   const [goalLink, setGoalLink] = useState(null);
   const [subjects, setSubjects] = useState([]);
@@ -839,6 +844,7 @@ export default function TaskCreateModal({
       setPercentOfTotalGrade('');
       setLocation('');
       setMode('');
+      setConnectedCalendarTargets([]);
       setInstructor('');
       setGoalLink(null);
       setShowMaterialDropdown(false);
@@ -3256,6 +3262,45 @@ export default function TaskCreateModal({
                             </TouchableOpacity>
                           ))}</ChipRow>
                       </SafeView>
+                      <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add to connected calendar</Text>
+                      <SafeView style={styles.dropdownContainer}>
+                        <ChipRow style={styles.dropdownRow}>
+                          {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
+                            const isSelected = connectedCalendarTargets.includes(provider.value);
+                            return (
+                              <TouchableOpacity
+                                key={provider.value}
+                                onPress={() =>
+                                  setConnectedCalendarTargets((prev) =>
+                                    prev.includes(provider.value)
+                                      ? prev.filter((value) => value !== provider.value)
+                                      : [...prev, provider.value]
+                                  )
+                                }
+                                style={[
+                                  styles.dropdownOption,
+                                  styles.calendarConnectionOption,
+                                  isSelected && styles.dropdownOptionActive,
+                                ]}
+                              >
+                                <View style={styles.calendarConnectionOptionContent}>
+                                  {isSelected ? (
+                                    <Check size={12} color="#6BB3E8" />
+                                  ) : null}
+                                  <Text
+                                    style={[
+                                      styles.dropdownOptionText,
+                                      isSelected && styles.dropdownOptionTextActive,
+                                    ]}
+                                  >
+                                    {provider.label}
+                                  </Text>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ChipRow>
+                      </SafeView>
                     </View>
                   </SafeFieldRow>
                   <SafeFieldRow style={styles.fieldRow}>
@@ -4644,6 +4689,14 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  calendarConnectionOption: {
+    minHeight: 30,
+  },
+  calendarConnectionOptionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   chipRow: {
     paddingHorizontal: 0,

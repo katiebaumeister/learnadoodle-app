@@ -629,6 +629,10 @@ const TAG_CATEGORIES = {
 };
 
 const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
+const CALENDAR_CONNECTION_OPTIONS = [
+  { value: 'google', label: 'Google' },
+  { value: 'apple', label: 'Apple' },
+];
 
 const DEFAULT_START_TIME = '9:00 AM';
 const DEFAULT_DURATION_MINUTES = 30;
@@ -867,6 +871,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [percentOfTotalGrade, setPercentOfTotalGrade] = useState(() => initialAcademicStringsFromEvent(event).percent);
   const [location, setLocation] = useState('');
   const [mode, setMode] = useState('');
+  const [connectedCalendarTargets, setConnectedCalendarTargets] = useState([]);
   const [instructor, setInstructor] = useState('');
   const [goalLink, setGoalLink] = useState(null);
   const [subjects, setSubjects] = useState(() => {
@@ -960,6 +965,22 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       if (m?.id != null && wanted.has(String(m.id)) && role) return true;
       return false;
     });
+  }, [assigneeIds, familyMembers]);
+
+  const sendToStudentTargetLabel = useMemo(() => {
+    if (!assigneeIds?.length) return 'No assignees selected';
+    const names = assigneeIds
+      .map((id) => {
+        const member = (familyMembers || []).find((m) => String(m.id) === String(id));
+        return (member?.name || member?.first_name || '').trim();
+      })
+      .filter(Boolean);
+    if (names.length === 0) {
+      return assigneeIds.length === 1 ? '1 student' : `${assigneeIds.length} students`;
+    }
+    if (names.length === 1) return names[0];
+    if (names.length === 2) return `${names[0]} and ${names[1]}`;
+    return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
   }, [assigneeIds, familyMembers]);
 
   useEffect(() => {
@@ -2069,6 +2090,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     // Location fields
     setLocation(event.location || '');
     setMode(event.mode || '');
+    setConnectedCalendarTargets([]);
     setInstructor(event.instructor || '');
     setGoalLink(event.goal_link || null);
     
@@ -5733,6 +5755,43 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       </TouchableOpacity>
                     ))}</ChipRow>
                   </SafeView>
+                  <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add to connected calendar</Text>
+                  <SafeView style={styles.dropdownContainer}>
+                    <ChipRow style={styles.dropdownRow}>
+                      {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
+                        const isSelected = connectedCalendarTargets.includes(provider.value);
+                        return (
+                          <TouchableOpacity
+                            key={provider.value}
+                            onPress={() =>
+                              setConnectedCalendarTargets((prev) =>
+                                prev.includes(provider.value)
+                                  ? prev.filter((value) => value !== provider.value)
+                                  : [...prev, provider.value]
+                              )
+                            }
+                            style={[
+                              styles.dropdownOption,
+                              styles.calendarConnectionOption,
+                              isSelected && styles.dropdownOptionActive,
+                            ]}
+                          >
+                            <View style={styles.calendarConnectionOptionContent}>
+                              {isSelected ? <Check size={12} color="#6BB3E8" /> : null}
+                              <Text
+                                style={[
+                                  styles.dropdownOptionText,
+                                  isSelected && styles.dropdownOptionTextActive,
+                                ]}
+                              >
+                                {provider.label}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ChipRow>
+                  </SafeView>
                 </View>
               </SafeFieldRow>
               <SafeFieldRow style={styles.fieldRow}>
@@ -6967,7 +7026,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ...fontDisplay('400'),
                     }}
                   >
-                    This will notify your student that the assignment needs their attention.
+                    This will notify {sendToStudentTargetLabel} that the assignment needs their attention.
                   </Text>
                   <Text
                     style={{
@@ -8458,6 +8517,26 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  googleConnectChip: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: '#eff6ff',
+    borderRadius: 9999,
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarConnectionOption: {
+    minHeight: 30,
+  },
+  calendarConnectionOptionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   headerDivider: {
     height: 1,

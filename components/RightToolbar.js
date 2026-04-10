@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { View, TouchableOpacity, StyleSheet, Platform, Text } from 'react-native';
-import { 
-  Calendar, 
-  Target, 
-  Search, 
-  RefreshCw, 
+import {
+  Calendar,
+  Target,
+  Search,
+  RefreshCw,
   HelpCircle,
   SlidersHorizontal,
   Moon,
@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { TOOL_META } from '../lib/toolTypes';
 import { checkFeatureFlags } from '../lib/services/yearClient';
+import ProviderConnectButton from './ui/ProviderConnectButton';
 
 export default function RightToolbar({
   onTasks,
@@ -83,6 +84,11 @@ export default function RightToolbar({
       onPress: onRebalance,
       color: '#f59e0b'
     },
+    {
+      key: 'google-connect',
+      label: 'Connect provider',
+      variant: 'chip',
+    },
     ...(onFilters ? [{ key: 'filters', icon: Filter, label: 'Filters', onPress: onFilters, color: '#64748b', _ref: filtersButtonRef }] : []),
     ...(onExport ? [{ key: 'export', icon: Download, label: 'Export', onPress: onExport, color: '#64748b' }] : []),
   ];
@@ -119,9 +125,26 @@ export default function RightToolbar({
   };
 
   const renderToolButton = (tool, index, isLastInGroup = false) => {
-    const Icon = tool.icon;
     const isActive = activeTool === tool.key;
-    
+
+    if (tool.variant === 'chip') {
+      return (
+        <ProviderConnectButton
+          key={tool.key}
+          triggerStyle={styles.googleChipButton}
+          triggerActiveStyle={styles.toolButtonActive}
+          iconColor="rgba(15,23,42,0.6)"
+          activeIconColor="rgba(99, 102, 241, 1)"
+          triggerIconSize={20}
+          context="planner integration"
+          direction="left"
+          accessibilityLabel={tool.label}
+        />
+      );
+    }
+
+    const Icon = tool.icon;
+
     return (
       <TouchableOpacity
         key={tool.key}
@@ -202,6 +225,18 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 6,
     borderRadius: 8,
+  },
+  googleChipButton: {
+    width: undefined,
+    height: undefined,
+    borderRadius: 8,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 8,
   },
   toolButtonActive: {
     backgroundColor: 'rgba(139, 92, 246, 0.15)',

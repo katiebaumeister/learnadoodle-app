@@ -38,6 +38,11 @@ import { getSubjectIdsAffectedByMaterial } from '../../lib/materialsSubjectLinkU
 
 // Single visible chip row everywhere: role-first
 const ROLE_CHIPS = DOCUMENT_ROLE_CHIPS;
+const CONNECTION_CHIPS = [
+  { value: 'google', label: 'Google' },
+  { value: 'dropbox', label: 'Dropbox' },
+  { value: 'notion', label: 'Notion' },
+];
 
 /**
  * Web-only: invalidate subject detail caches + broadcast refreshes.
@@ -154,6 +159,8 @@ export default function MaterialsLibrary({
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjects, setSubjects] = useState(preloadedSubjects || []); // Deduplicated for filter display
   const [allSubjectsForModal, setAllSubjectsForModal] = useState([]); // Full list with child_id for AddMaterialModal
+  // null = "All" (default); otherwise list of selected provider keys
+  const [selectedConnections, setSelectedConnections] = useState(null);
   const [sortBy, setSortBy] = useState('date'); // 'date' | 'alphabetical'
   const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
   const [hoveredItemId, setHoveredItemId] = useState(null);
@@ -178,6 +185,68 @@ export default function MaterialsLibrary({
     }
     return [...byId.values()];
   }, [subjects, allSubjectsForModal]);
+
+  const connectedAccountProviders = useMemo(() => {
+    const allowed = new Set(CONNECTION_CHIPS.map((chip) => chip.value));
+    const found = new Set();
+    const addProvider = (value) => {
+      const key = String(value || '').trim().toLowerCase();
+      if (allowed.has(key)) found.add(key);
+    };
+    const rawCandidates = [
+      session?.connected_accounts,
+      session?.integrations,
+      session?.provider_connections,
+    ];
+    rawCandidates.forEach((raw) => {
+      if (!raw) return;
+      if (Array.isArray(raw)) {
+        raw.forEach((entry) => {
+          if (typeof entry === 'string') {
+            addProvider(entry);
+            return;
+          }
+          if (entry && typeof entry === 'object') {
+            addProvider(entry.provider || entry.name || entry.id || entry.type);
+          }
+        });
+        return;
+      }
+      if (typeof raw === 'object') {
+        Object.entries(raw).forEach(([key, value]) => {
+          if (value === true || value === 'connected' || value === 'active') {
+            addProvider(key);
+            return;
+          }
+          if (value && typeof value === 'object') {
+            const status = String(value.status || value.state || '').toLowerCase();
+            if (value.connected === true || status === 'connected' || status === 'active') {
+              addProvider(key);
+            }
+          }
+        });
+      }
+    });
+    return Array.from(found);
+  }, [session?.connected_accounts, session?.integrations, session?.provider_connections]);
+
+  const handleConnectionChipPress = (providerValue) => {
+    if (!connectedAccountProviders.includes(providerValue)) {
+      toast.push(
+        'No connected accounts yet, please connect from the Family tab under Connected Accounts',
+        'info'
+      );
+      return;
+    }
+    setSelectedConnections((prev) => {
+      const current = Array.isArray(prev) ? prev : [];
+      if (current.includes(providerValue)) {
+        const next = current.filter((value) => value !== providerValue);
+        return next.length > 0 ? next : null;
+      }
+      return [...current, providerValue];
+    });
+  };
 
   // Sync from parent snapshot (including []) when filters are default — keeps list + TOTAL count stable.
   useEffect(() => {
@@ -1042,6 +1111,39 @@ export default function MaterialsLibrary({
               >
                 <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]}>
                   {roleOption.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      <View style={styles.connectionsFilterRow}>
+        <Text style={styles.connectionsLabelText}>Connections</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.connectionsFilterScroll}
+          contentContainerStyle={styles.connectionsFilterScrollContent}
+        >
+          <TouchableOpacity
+            style={[styles.childrenFilterChip, selectedConnections === null && styles.childrenFilterChipActive]}
+            onPress={() => setSelectedConnections(null)}
+          >
+            <Text style={[styles.childrenFilterChipText, selectedConnections === null && styles.childrenFilterChipTextActive]}>
+              All
+            </Text>
+          </TouchableOpacity>
+          {CONNECTION_CHIPS.map((connection) => {
+            const isActive = Array.isArray(selectedConnections) && selectedConnections.includes(connection.value);
+            return (
+              <TouchableOpacity
+                key={connection.value}
+                style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
+                onPress={() => handleConnectionChipPress(connection.value)}
+              >
+                <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]}>
+                  {connection.label}
                 </Text>
               </TouchableOpacity>
             );
@@ -2775,6 +2877,35 @@ const styles = StyleSheet.create({
     flexGrow: 0,
   },
   typesFilterScrollContent: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 8,
+  },
+  connectionsLabelText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  connectionsFilterRow: {
+    maxWidth: 1400,
+    width: '100%',
+    marginHorizontal: 'auto',
+    marginBottom: 16,
+    paddingHorizontal: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
+  },
+  connectionsFilterScroll: {
+    flexGrow: 0,
+  },
+  connectionsFilterScrollContent: {
     flexDirection: 'row',
     gap: 8,
     paddingRight: 8,

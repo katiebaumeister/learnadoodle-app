@@ -26,6 +26,7 @@ import MaterialScheduleLinksSection from './MaterialScheduleLinksSection';
 import AppModalShell from '../ui/AppModalShell';
 import { ModalFooter } from '../ui/ModalFooter';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
+import ProviderConnectButton from '../ui/ProviderConnectButton';
 
 const ROLE_OPTIONS = DOCUMENT_ROLE_CHIPS.filter((c) => c.value !== 'all');
 
@@ -1214,6 +1215,16 @@ export default function AddMaterialModal({
               </View>
             </View>
 
+            <View style={styles.fieldRow}>
+              <View style={styles.field}>
+                <ProviderConnectButton
+                  triggerStyle={styles.googleConnectChip}
+                  context="Drive/Docs integration"
+                  accessibilityLabel="Connect provider"
+                />
+              </View>
+            </View>
+
             {/* Type (Role) - Required */}
             <View style={styles.fieldRow}>
               <View style={styles.field}>
@@ -1964,6 +1975,17 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  googleConnectChip: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: '#eff6ff',
+    borderRadius: 9999,
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   checkboxRow: {
     flexDirection: 'row',

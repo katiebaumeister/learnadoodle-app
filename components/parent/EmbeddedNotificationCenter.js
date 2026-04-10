@@ -1029,11 +1029,13 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   emptyState: {
-    paddingTop: 4,
-    paddingBottom: 8,
+    flex: 1,
+    minHeight: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
     paddingHorizontal: 0,
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
   },
   emptyCompact: {
     paddingTop: 2,

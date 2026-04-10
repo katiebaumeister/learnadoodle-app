@@ -204,10 +204,9 @@ export default function SubjectOverviewCard({
   const openHomeReviewList = (e) => {
     if (e?.stopPropagation) e.stopPropagation();
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openParentHomeReviewInbox'));
       window.dispatchEvent(
-        new CustomEvent('embeddedNotificationParentFocus', {
-          detail: { section: 'submissions' },
+        new CustomEvent('openParentHomeReviewInbox', {
+          detail: { section: 'help_requests' },
         })
       );
     }

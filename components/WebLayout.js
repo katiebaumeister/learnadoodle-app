@@ -397,6 +397,53 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [filtersDropdownPosition, setFiltersDropdownPosition] = useState({ top: 0, left: 0 });
   const filtersDropdownRef = useRef(null);
   const [selectedEventTypes, setSelectedEventTypes] = useState(null);
+  const [selectedConnectedAccounts, setSelectedConnectedAccounts] = useState(null);
+  const connectedAccounts = useMemo(() => {
+    const allowed = new Set(['google', 'apple']);
+    const found = new Set();
+    const addProvider = (value) => {
+      const key = String(value || '').trim().toLowerCase();
+      if (allowed.has(key)) found.add(key);
+    };
+
+    const rawCandidates = [
+      session?.connected_accounts,
+      session?.integrations,
+      session?.provider_connections,
+    ];
+
+    rawCandidates.forEach((raw) => {
+      if (!raw) return;
+      if (Array.isArray(raw)) {
+        raw.forEach((entry) => {
+          if (typeof entry === 'string') {
+            addProvider(entry);
+            return;
+          }
+          if (entry && typeof entry === 'object') {
+            addProvider(entry.provider || entry.name || entry.id || entry.type);
+          }
+        });
+        return;
+      }
+      if (typeof raw === 'object') {
+        Object.entries(raw).forEach(([key, value]) => {
+          if (value === true || value === 'connected' || value === 'active') {
+            addProvider(key);
+            return;
+          }
+          if (value && typeof value === 'object') {
+            const status = String(value.status || value.state || '').toLowerCase();
+            if (value.connected === true || status === 'connected' || status === 'active') {
+              addProvider(key);
+            }
+          }
+        });
+      }
+    });
+
+    return Array.from(found).sort((a, b) => a.localeCompare(b));
+  }, [session?.connected_accounts, session?.integrations, session?.provider_connections]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showViewDropdown, setShowViewDropdown] = useState(false);
   const viewDropdownHandlerRef = useRef(null);
@@ -1899,7 +1946,32 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Subject overview → Home review inbox (parent)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = () => setActiveTab('home');
+    const handler = (event) => {
+      setActiveTab('home');
+      const requestedSection = event?.detail?.section;
+      if (!requestedSection) return;
+      const normalizedSection =
+        requestedSection === 'help'
+          ? 'help_requests'
+          : requestedSection;
+      if (
+        normalizedSection !== 'help_requests' &&
+        normalizedSection !== 'submissions' &&
+        normalizedSection !== 'needs_revision'
+      ) {
+        return;
+      }
+      // Fire after tab switch so EmbeddedNotificationCenter is mounted and can receive focus event.
+      setTimeout(() => {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('embeddedNotificationParentFocus', {
+              detail: { section: normalizedSection },
+            })
+          );
+        }
+      }, 0);
+    };
     window.addEventListener('openParentHomeReviewInbox', handler);
     return () => window.removeEventListener('openParentHomeReviewInbox', handler);
   }, []);
@@ -3080,6 +3152,117 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             </TouchableOpacity>
                           );
                         })}
+
+                        <View style={{
+                          height: 1,
+                          backgroundColor: 'rgba(15,23,42,0.06)',
+                          marginVertical: 4,
+                        }} />
+
+                        <View style={{
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderBottomWidth: 1,
+                          borderBottomColor: 'rgba(15,23,42,0.06)',
+                          marginBottom: 4,
+                        }}>
+                          <Text style={{
+                            fontSize: 13,
+                            color: 'rgba(107, 114, 128, 0.7)',
+                            fontWeight: '600',
+                            textTransform: 'uppercase',
+                            letterSpacing: 0.5,
+                            fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          }}>
+                            Connected Accounts
+                          </Text>
+                        </View>
+
+                        {connectedAccounts.length === 0 ? (
+                          <View style={{ paddingVertical: 8, paddingHorizontal: 10 }}>
+                            <Text style={{
+                              fontSize: 14,
+                              color: 'rgba(107,114,128,0.8)',
+                              fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                            }}>
+                              No connected accounts yet
+                            </Text>
+                          </View>
+                        ) : (
+                          <>
+                            <TouchableOpacity
+                              style={{
+                                flexDirection: 'row',
+                                alignItems: 'center',
+                                gap: 8,
+                                paddingVertical: 6,
+                                paddingHorizontal: 10,
+                                borderRadius: 4,
+                              }}
+                              onPress={() => setSelectedConnectedAccounts(null)}
+                            >
+                              <View style={{
+                                width: 14,
+                                height: 14,
+                                borderRadius: 3,
+                                borderWidth: 1.5,
+                                borderColor: selectedConnectedAccounts === null ? '#8B5CF6' : '#D1D5DB',
+                                backgroundColor: selectedConnectedAccounts === null ? '#8B5CF6' : 'transparent',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}>
+                                {selectedConnectedAccounts === null && (
+                                  <Check size={10} color="#FFFFFF" />
+                                )}
+                              </View>
+                              <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                                All Connected Accounts
+                              </Text>
+                            </TouchableOpacity>
+                            {connectedAccounts.map((provider) => {
+                              const isSelected = selectedConnectedAccounts?.includes(provider);
+                              const label = provider === 'google' ? 'Google' : 'Apple';
+                              return (
+                                <TouchableOpacity
+                                  key={provider}
+                                  style={{
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                    paddingVertical: 6,
+                                    paddingHorizontal: 10,
+                                    borderRadius: 4,
+                                  }}
+                                  onPress={() => {
+                                    const current = selectedConnectedAccounts || [];
+                                    const next = isSelected
+                                      ? current.filter((item) => item !== provider)
+                                      : [...current, provider];
+                                    setSelectedConnectedAccounts(next.length > 0 ? next : null);
+                                  }}
+                                >
+                                  <View style={{
+                                    width: 14,
+                                    height: 14,
+                                    borderRadius: 3,
+                                    borderWidth: 1.5,
+                                    borderColor: isSelected ? '#8B5CF6' : '#D1D5DB',
+                                    backgroundColor: isSelected ? '#8B5CF6' : 'transparent',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                  }}>
+                                    {isSelected && (
+                                      <Check size={10} color="#FFFFFF" />
+                                    )}
+                                  </View>
+                                  <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                                    {label}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </>
+                        )}
                       </View>
                     )}
                   
