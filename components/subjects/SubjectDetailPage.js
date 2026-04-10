@@ -744,7 +744,7 @@ export default function SubjectDetailPage({
                   accessibilityLabel="Add syllabus"
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color={colors.accent || '#4F46E5'} />
+                  <Plus size={16} color="#6BB3E8" />
                   <Text style={styles.materialsAddCtaText}>Add Syllabus</Text>
                 </TouchableOpacity>
               )}
@@ -782,7 +782,7 @@ export default function SubjectDetailPage({
                   accessibilityLabel="Add lesson plan"
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color={colors.accent || '#4F46E5'} />
+                  <Plus size={16} color="#6BB3E8" />
                   <Text style={styles.materialsAddCtaText}>Add Lesson Plan</Text>
                 </TouchableOpacity>
               )}
@@ -1544,15 +1544,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(79, 70, 229, 0.35)',
+    borderColor: 'rgba(133, 196, 242, 0.8)',
     borderStyle: 'dashed',
-    backgroundColor: '#FAFBFF',
+    backgroundColor: '#F4FAFF',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   materialsAddCtaText: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.accent || '#4F46E5',
+    color: '#6BB3E8',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

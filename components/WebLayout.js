@@ -267,6 +267,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [planYearSkipInitialPlanSummary, setPlanYearSkipInitialPlanSummary] = useState(false);
   const [planYearHighlightFromHealth, setPlanYearHighlightFromHealth] = useState(false);
   const [planYearInitialSubjectId, setPlanYearInitialSubjectId] = useState(null);
+  const [planYearInitialSubjectName, setPlanYearInitialSubjectName] = useState(null);
+  const [planYearInitialChildIds, setPlanYearInitialChildIds] = useState([]);
   const [planYearInitialMaterialId, setPlanYearInitialMaterialId] = useState(null);
   const [planYearInitialUnitStructureMethod, setPlanYearInitialUnitStructureMethod] = useState(null);
   /** When PlanYearModal opens as overlay from subject detail, refresh that subject on close. */
@@ -289,6 +291,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setPlanYearOpenDirectlyToScope(false);
     setPlanYearSkipInitialPlanSummary(false);
     setPlanYearInitialSubjectId(null);
+    setPlanYearInitialSubjectName(null);
+    setPlanYearInitialChildIds([]);
     setPlanYearInitialMaterialId(null);
     setPlanYearInitialUnitStructureMethod(null);
   }, []);
@@ -1976,6 +1980,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         detail.year_plan_id ||
         null;
       const subjectId = detail.subjectId ?? null;
+      const subjectName = detail.subjectName ?? null;
+      const childIds = Array.isArray(detail.childIds) ? detail.childIds.filter(Boolean) : [];
       const materialId = detail.materialId ?? null;
       const initialUnitStructureMethod = detail.initialUnitStructureMethod ?? null;
       const openToEditListBase = detail.openToEditList === true;
@@ -2001,6 +2007,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         from === 'subject_detail' || (fromEventDetails && effectiveOpenAsModal)
       );
       setPlanYearInitialSubjectId(subjectId);
+      setPlanYearInitialSubjectName(subjectName);
+      setPlanYearInitialChildIds(childIds);
       setPlanYearInitialMaterialId(materialId);
       setPlanYearInitialUnitStructureMethod(initialUnitStructureMethod);
 
@@ -3665,6 +3673,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         skipInitialPlanSummary={planYearSkipInitialPlanSummary}
         highlightFromPlanHealth={planYearHighlightFromHealth}
         initialSubjectId={planYearInitialSubjectId}
+                    initialSubjectName={planYearInitialSubjectName}
+                    initialSubjectChildIds={planYearInitialChildIds}
         initialMaterialId={planYearInitialMaterialId}
                     initialUnitStructureMethod={planYearInitialUnitStructureMethod}
         onOpenBuildCurriculum={(params) => {
@@ -3904,6 +3914,33 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         </View>
       )}
 
+      {/* Add/Edit Subject Modal */}
+      <AddSubjectModal
+        visible={showAddSubjectModal}
+        onClose={() => {
+          setShowAddSubjectModal(false);
+          setEditingSubject(null);
+        }}
+        familyId={familyId}
+        subject={editingSubject}
+        children={children}
+        onSubjectAdded={(newSubject) => {
+          const wasNewSubject = !editingSubject;
+          setEditingSubject(null);
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
+          // After adding (not editing), go to the new subject's detail page
+          if (wasNewSubject && newSubject?.id) {
+            handleTabChange(`subject-${newSubject.id}`);
+            setActiveTopNav('subjects');
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.history.pushState({}, '', `/subjects/${newSubject.id}`);
+            }
+          }
+        }}
+      />
+
       {/* Planning Modal - mostly full screen - unified Plan my year + Edit subject structure */}
       <PlanYearModal
         key={`${planYearInitialAcademicYearId || 'unified-planning-modal'}-${planYearInitialUnitStructureMethod || 'default'}`}
@@ -3925,6 +3962,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setPlanYearOpenDirectlyToScope(false);
             setPlanYearSkipInitialPlanSummary(false);
             setPlanYearInitialSubjectId(null);
+            setPlanYearInitialSubjectName(null);
+            setPlanYearInitialChildIds([]);
             setPlanYearInitialMaterialId(null);
             setPlanYearInitialUnitStructureMethod(null);
           }, 300);
@@ -3942,6 +3981,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         skipInitialPlanSummary={planYearSkipInitialPlanSummary}
         highlightFromPlanHealth={planYearHighlightFromHealth}
         initialSubjectId={planYearInitialSubjectId}
+        initialSubjectName={planYearInitialSubjectName}
+        initialSubjectChildIds={planYearInitialChildIds}
         initialMaterialId={planYearInitialMaterialId}
         initialUnitStructureMethod={planYearInitialUnitStructureMethod}
         onOpenBuildCurriculum={(params) => {
@@ -4884,33 +4925,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   }
                 : f
             );
-          }
-        }}
-      />
-
-      {/* Add/Edit Subject Modal */}
-      <AddSubjectModal
-        visible={showAddSubjectModal}
-        onClose={() => {
-          setShowAddSubjectModal(false);
-          setEditingSubject(null);
-        }}
-        familyId={familyId}
-        subject={editingSubject}
-        children={children}
-        onSubjectAdded={(newSubject) => {
-          const wasNewSubject = !editingSubject;
-          setEditingSubject(null);
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('refreshSubjects'));
-          }
-          // After adding (not editing), go to the new subject's detail page
-          if (wasNewSubject && newSubject?.id) {
-            handleTabChange(`subject-${newSubject.id}`);
-            setActiveTopNav('subjects');
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.history.pushState({}, '', `/subjects/${newSubject.id}`);
-            }
           }
         }}
       />

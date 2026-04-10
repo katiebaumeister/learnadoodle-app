@@ -8,7 +8,7 @@ import {
   mapChildrenForConflict,
   sharedConflictBannerStyles as cb,
 } from '../planner/conflictBannerShared';
-import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Calculator, FlaskConical, ExternalLink, AlertCircle } from 'lucide-react';
+import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { formatDate, apiRequest } from '../../lib/apiClient';
@@ -4058,7 +4058,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
         {/* Header / Title */}
         <View style={styles.header}>
-          <Text style={[styles.titleInput, { color: FG, fontSize: 18, fontWeight: '600' }]}>
+          <View style={styles.headerBadge}>
+            <Text style={styles.headerBadgeText}>EVENT DETAILS</Text>
+          </View>
+          <Text style={styles.headerTitleLarge}>
             {draftTitle || event?.title || 'Untitled Event'}
           </Text>
         </View>
@@ -4744,6 +4747,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               activeOpacity={0.9}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
+              <Edit2 size={16} color="#FFF" />
               <Text style={styles.createButtonText}>Edit Event</Text>
             </TouchableOpacity>
           </View>
@@ -4761,6 +4765,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
       {/* Header: title only (matches plan summary header) */}
       <View style={styles.headerEditEvent}>
+        <View style={styles.headerBadge}>
+          <Text style={styles.headerBadgeText}>EDIT EVENT</Text>
+        </View>
         <TextInput
           placeholder="Task name (required)"
           placeholderTextColor={MUTED}
@@ -4772,7 +4779,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             }
           }}
           style={[
-            styles.titleInput,
+            styles.titleInputHero,
             validationErrors.title && styles.inputError,
           ]}
         />
@@ -6149,7 +6156,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   style={styles.addMaterialButton}
                   onPress={() => setShowAddMaterialModal(true)}
                 >
-                  <Plus size={14} color={ACCENT} />
+                  <Plus size={14} color="#B8D7F9" />
                   <Text style={styles.addMaterialText}>Add New</Text>
                 </TouchableOpacity>
               </View>
@@ -6381,6 +6388,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             Platform.OS === 'web' && !saving && !isFormValid() && { cursor: 'pointer' },
           ]}
         >
+          <Check size={16} color="#FFF" />
           <Text style={[
             styles.createButtonText,
             (saving || !isFormValid()) && styles.createButtonTextDisabled,
@@ -8353,20 +8361,46 @@ const styles = StyleSheet.create({
   },
   // Styles matching TaskCreateModal.js
   header: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: BORDER,
+    borderBottomColor: '#EEF0F5',
+    backgroundColor: '#FAF9FF',
   },
   headerEditEvent: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 16,
+    paddingHorizontal: 24,
+    paddingTop: 18,
+    paddingBottom: 14,
     justifyContent: 'center',
+    backgroundColor: '#FAF9FF',
+  },
+  headerBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginBottom: 8,
+    backgroundColor: '#FFFFFFC9',
+  },
+  headerBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    color: '#7C70F4',
+  },
+  headerTitleLarge: {
+    fontSize: 34,
+    lineHeight: 38,
+    fontWeight: '800',
+    color: '#1E2A3A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   headerDivider: {
     height: 1,
-    backgroundColor: BORDER,
+    backgroundColor: '#EEF0F5',
     marginHorizontal: 0,
     marginTop: 0,
   },
@@ -8385,14 +8419,24 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  titleInputHero: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: FG,
+    paddingVertical: 0,
+    ...(Platform.OS !== 'web' && { textAlignVertical: 'center' }),
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   bodyScroll: {
     flex: 1,
     maxHeight: Platform.OS === 'web' ? 'calc(100vh - 200px)' : undefined,
   },
   bodyContent: {
-    paddingHorizontal: 20,
-    paddingTop: 0,
-    paddingBottom: 8,
+    paddingHorizontal: 24,
+    paddingTop: 10,
+    paddingBottom: 12,
   },
   modeToggle: {
     flexDirection: 'row',
@@ -8741,44 +8785,52 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
+    minHeight: 64,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
     borderTopWidth: 1,
-    borderTopColor: BORDER,
+    borderTopColor: '#EEF0F5',
   },
   footerEditEvent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
+    minHeight: 64,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
   },
   footerEditEventRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 14,
   },
   deleteEventText: {
-    color: SUB,
+    color: '#EF4444',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       cursor: 'pointer',
     }),
   },
   cancelText: {
-    color: SUB,
+    color: '#6C738E',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   createButton: {
-    backgroundColor: '#85C4F2',
+    backgroundColor: '#7C70F4',
+    minHeight: 50,
     paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 10,
+    paddingHorizontal: 18,
+    borderRadius: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+      boxShadow: '0 4px 12px rgba(124,112,244,0.24)',
       cursor: 'pointer',
     }),
   },
@@ -8791,7 +8843,7 @@ const styles = StyleSheet.create({
   },
   createButtonText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
     color: '#FFFFFF',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", sans-serif',
@@ -9029,14 +9081,16 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 6,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: ACCENT,
+    borderColor: '#B8D7F9',
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   addMaterialText: {
     fontSize: 13,
-    color: ACCENT,
-    fontWeight: '500',
+    color: '#1e40af',
+    fontWeight: '600',
   },
   pdfModalOverlay: {
     flex: 1,

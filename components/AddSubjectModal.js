@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput, Alert } from 'react-native';
-import { ChevronDown, ChevronUp, Plus, Trash2, CheckCircle, AlertTriangle, BookOpen, Library, SlidersHorizontal, FileText } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, Trash2, CheckCircle, AlertTriangle, BookOpen, Library, SlidersHorizontal, FileText, Calendar } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -9,6 +9,7 @@ import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { parseChildIds } from '../lib/services/subjectsClient';
 import { getFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
+import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import ConfirmDialog from './ConfirmDialog';
 import { PLANNING_PREFERENCES_UI } from './planner/planningPreferencesUiCopy';
@@ -58,6 +59,14 @@ function getDefaultSchoolYear() {
   const month = now.getMonth(); // 0-11
   if (month < 5) return `${year}/${String(year + 1).slice(-2)}`;
   return `${year + 1}/${String(year + 2).slice(-2)}`;
+}
+
+function normalizeLessonYmd(dateVal) {
+  if (dateVal == null || dateVal === '') return null;
+  const s = String(dateVal).trim();
+  if (s.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return null;
 }
 
 export default function AddSubjectModal({ 
@@ -112,9 +121,12 @@ export default function AddSubjectModal({
   // Event management state
   const [subjectEvents, setSubjectEvents] = useState([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
+  const [curriculumUnits, setCurriculumUnits] = useState([]);
+  const [loadingCurriculum, setLoadingCurriculum] = useState(false);
   const [deletingEvents, setDeletingEvents] = useState(false);
   const [deleteEventsConfirm, setDeleteEventsConfirm] = useState({ visible: false });
   const [markingAttended, setMarkingAttended] = useState(false);
+  const [showCurrentUnitsModal, setShowCurrentUnitsModal] = useState(false);
 
   // Accordion state (all collapsed by default)
   const [showMaterialsAccordion, setShowMaterialsAccordion] = useState(false);
@@ -130,6 +142,7 @@ export default function AddSubjectModal({
   const [deletingSubject, setDeletingSubject] = useState(false);
   /** Add-mode draft subject persisted early so unit structure can be saved before final subject save. */
   const [draftSubjectId, setDraftSubjectId] = useState(null);
+  const effectiveSubjectId = subject?.id ?? draftSubjectId ?? null;
   const [openingAddUnits, setOpeningAddUnits] = useState(false);
   const finalizedSubjectSaveRef = useRef(false);
 
@@ -210,6 +223,9 @@ export default function AddSubjectModal({
       setLoadingEvents(false);
       setDeletingEvents(false);
       setMarkingAttended(false);
+      setShowCurrentUnitsModal(false);
+      setCurriculumUnits([]);
+      setLoadingCurriculum(false);
       setShowMaterialsAccordion(false);
       setShowPlanningAccordion(false);
       setShowAdditionalNotesAccordion(false);
@@ -219,6 +235,18 @@ export default function AddSubjectModal({
       hasPrefilledFromFamilyRef.current = false;
     }
   }, [visible, defaultChildId, defaultSubjectName, subject]);
+
+  // Clear transient validation/banner errors as soon as form state is corrected.
+  useEffect(() => {
+    if (!error) return;
+    const needsSubjectName = /subject name/i.test(error);
+    const needsStudent = /student/i.test(error);
+    const needsFamily = /family id/i.test(error);
+    if (needsSubjectName && !subjectName.trim()) return;
+    if (needsStudent && selectedChildIds.length === 0) return;
+    if (needsFamily && !familyId) return;
+    setError(null);
+  }, [error, subjectName, selectedChildIds, familyId]);
 
   // Load family planner settings for prefill when modal opens (used when subject has no custom values)
   useEffect(() => {
@@ -415,8 +443,8 @@ export default function AddSubjectModal({
             })
           );
 
-        // Keep subject modal state alive while Add Units is open.
-        dispatchPlanYear();
+        // Keep subject modal open; Add Units opens above it.
+        setTimeout(dispatchPlanYear, 0);
       }
     },
     [
@@ -503,7 +531,7 @@ export default function AddSubjectModal({
     try {
       const { data, error } = await supabase
         .from('events')
-        .select('id, title, start_ts, status, event_type')
+        .select('id, title, start_ts, status, event_type, academic_year_id')
         .eq('subject_id', subjectId)
         .eq('family_id', familyId)
         .is('deleted_at', null)
@@ -519,10 +547,111 @@ export default function AddSubjectModal({
       setLoadingEvents(false);
     }
   };
+
+  const loadSubjectCurriculum = useCallback(async (subjectId, academicYearIds = []) => {
+    if (!subjectId || !familyId) return;
+    setLoadingCurriculum(true);
+    try {
+      const yearCandidates = [null, ...academicYearIds]
+        .filter((v, i, arr) => arr.findIndex((x) => String(x) === String(v)) === i);
+      const grouped = new Map();
+      const seenLessons = new Set();
+      for (const yearId of yearCandidates) {
+        const { data, error } = await fetchSubjectCurriculumEventsStructure(
+          familyId,
+          subjectId,
+          yearId
+        );
+        if (error) continue;
+        const units = Array.isArray(data?.units) ? data.units : [];
+        for (const unit of units) {
+          const unitTitle = (unit?.title || '').trim() || 'Unit';
+          if (!grouped.has(unitTitle)) grouped.set(unitTitle, []);
+          for (const lesson of unit?.lessons || []) {
+            const lessonKey = lesson?.id
+              ? `id:${String(lesson.id)}`
+              : `title:${unitTitle}::${String(lesson?.title || '').trim().toLowerCase()}`;
+            if (seenLessons.has(lessonKey)) continue;
+            seenLessons.add(lessonKey);
+            grouped.get(unitTitle).push(lesson);
+          }
+        }
+      }
+      const mergedUnits = Array.from(grouped.entries()).map(([title, lessons]) => ({
+        title,
+        lessons,
+      }));
+      setCurriculumUnits(mergedUnits);
+    } catch (error) {
+      console.error('Error loading subject curriculum:', error);
+      setCurriculumUnits([]);
+    } finally {
+      setLoadingCurriculum(false);
+    }
+  }, [familyId]);
+
+  const curriculumAcademicYearIds = useMemo(
+    () => [...new Set(subjectEvents.map((e) => e?.academic_year_id).filter(Boolean))],
+    [subjectEvents]
+  );
+
+  const unscheduledLessons = useMemo(() => {
+    const out = [];
+    for (const unit of curriculumUnits) {
+      const unitTitle = (unit?.title || '').trim() || 'Unit';
+      for (const lesson of unit?.lessons || []) {
+        const meta = lesson?.curriculum_metadata || {};
+        const isUnscheduledPlaceholder = Boolean(meta?.unscheduled_placeholder);
+        // Some existing subjects store placeholder rows with a timestamp; treat those as unscheduled.
+        const ymd = normalizeLessonYmd(lesson?.date);
+        if (!isUnscheduledPlaceholder && ymd) continue;
+        out.push({
+          id: String(lesson?.id || `${unitTitle}-${lesson?.title || 'lesson'}`),
+          unitTitle,
+          lessonTitle: (lesson?.title || '').trim() || 'Lesson',
+        });
+      }
+    }
+    return out;
+  }, [curriculumUnits]);
+
+  const unitsForCurrentUnitsModal = useMemo(
+    () => (curriculumUnits || []).filter((u) => (u?.lessons || []).length > 0),
+    [curriculumUnits]
+  );
+  const hasCurrentUnitsModalContent = unitsForCurrentUnitsModal.length > 0;
+  const hasUnitsOrLessonsContent = hasCurrentUnitsModalContent || unscheduledLessons.length > 0;
+
+  // Keep event management synced for both persisted subjects and add-mode draft subjects.
+  useEffect(() => {
+    if (!visible || !effectiveSubjectId || !familyId) return;
+    loadSubjectEvents(effectiveSubjectId);
+  }, [visible, effectiveSubjectId, familyId]);
+
+  useEffect(() => {
+    if (!visible || !effectiveSubjectId || !familyId) return;
+    loadSubjectCurriculum(effectiveSubjectId, curriculumAcademicYearIds);
+  }, [visible, effectiveSubjectId, familyId, curriculumAcademicYearIds, loadSubjectCurriculum]);
+
+  // After Add Units closes, WebLayout emits refreshSubjectDetail for this subject id.
+  // Refresh events and surface the Event management card so linked events are visible immediately.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (!visible || !effectiveSubjectId) return;
+    const onRefreshSubjectDetail = (evt) => {
+      const sid = evt?.detail?.subjectId;
+      if (!sid || String(sid) !== String(effectiveSubjectId)) return;
+      loadSubjectEvents(effectiveSubjectId);
+      loadSubjectCurriculum(effectiveSubjectId, curriculumAcademicYearIds);
+      setShowEventMgmtAccordion(true);
+    };
+    window.addEventListener('refreshSubjectDetail', onRefreshSubjectDetail);
+    return () => window.removeEventListener('refreshSubjectDetail', onRefreshSubjectDetail);
+  }, [visible, effectiveSubjectId, familyId, loadSubjectCurriculum, curriculumAcademicYearIds]);
   
   // Delete all events for this subject
   const performDeleteAllEvents = async () => {
-    if (!subject || !subject.id || subjectEvents.length === 0) return;
+    if (!effectiveSubjectId || subjectEvents.length === 0) return;
     setDeletingEvents(true);
     try {
       const eventIds = subjectEvents.map(e => e.id);
@@ -547,7 +676,7 @@ export default function AddSubjectModal({
   };
 
   const handleDeleteAllEvents = async () => {
-    if (!subject || !subject.id || subjectEvents.length === 0) return;
+    if (!effectiveSubjectId || subjectEvents.length === 0) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       setDeleteEventsConfirm({ visible: true });
       return;
@@ -568,7 +697,7 @@ export default function AddSubjectModal({
   
   // Mark all events as attended
   const handleMarkAllAttended = async () => {
-    if (!subject || !subject.id || subjectEvents.length === 0) return;
+    if (!effectiveSubjectId || subjectEvents.length === 0) return;
     
     const unattendedEvents = subjectEvents.filter(e => e.status !== 'done');
     if (unattendedEvents.length === 0) {
@@ -620,7 +749,7 @@ export default function AddSubjectModal({
       toast.show(`${unattendedEvents.length} event${unattendedEvents.length === 1 ? '' : 's'} marked as attended`, 'success');
       
       // Reload events
-      await loadSubjectEvents(subject.id);
+      await loadSubjectEvents(effectiveSubjectId);
       
       // Refresh events in the app
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1173,21 +1302,50 @@ export default function AddSubjectModal({
 
               return (
                 <>
-                  <View style={styles.addUnitsPillsRow}>
-                    <Text style={styles.addUnitsLabel}>Add units</Text>
-                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                      <Text style={styles.secondaryActionText}>Manual input</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                      <Text style={styles.secondaryActionText}>Paste plain text</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                      <Text style={styles.secondaryActionText}>Upload material</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                      <Text style={styles.secondaryActionText}>Generate curriculum</Text>
-                    </TouchableOpacity>
-                  </View>
+                  {hasUnitsOrLessonsContent ? (
+                    <View style={styles.addUnitsRow}>
+                      {hasCurrentUnitsModalContent ? (
+                        <>
+                          <TouchableOpacity onPress={() => setShowCurrentUnitsModal(true)} activeOpacity={0.7} {...addUnitsLinkWeb}>
+                            <Text style={styles.addUnitsLink}>View current units</Text>
+                          </TouchableOpacity>
+                          <Text style={styles.addUnitsSep}>·</Text>
+                        </>
+                      ) : null}
+                      <Text style={styles.addUnitsLabel}>Change units</Text>
+                      <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.7} {...addUnitsLinkWeb}>
+                        <Text style={styles.addUnitsLink}>Manual input</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.addUnitsSep}>·</Text>
+                      <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.7} {...addUnitsLinkWeb}>
+                        <Text style={styles.addUnitsLink}>Paste plain text</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.addUnitsSep}>·</Text>
+                      <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.7} {...addUnitsLinkWeb}>
+                        <Text style={styles.addUnitsLink}>Upload material</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.addUnitsSep}>·</Text>
+                      <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.7} {...addUnitsLinkWeb}>
+                        <Text style={styles.addUnitsLink}>Generate curriculum</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.addUnitsPillsRow}>
+                      <Text style={styles.addUnitsLabel}>Add units</Text>
+                      <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                        <Text style={styles.secondaryActionText}>Manual input</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                        <Text style={styles.secondaryActionText}>Paste plain text</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                        <Text style={styles.secondaryActionText}>Upload material</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                        <Text style={styles.secondaryActionText}>Generate curriculum</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 <ModalSectionCard
                   Icon={Library}
                   title="Syllabus and lesson plan"
@@ -1564,67 +1722,86 @@ export default function AddSubjectModal({
                 </View>
             </ModalSectionCard>
 
-            {/* Accordion D: Event management (edit mode only) */}
-            {subject && subject.id && (
-              <View style={styles.accordionSection}>
-                <TouchableOpacity onPress={() => setShowEventMgmtAccordion(!showEventMgmtAccordion)} style={styles.accordionHeader} activeOpacity={0.8}>
-                  <Text style={styles.accordionSectionLabel}>
-                    Event management
-                    {!loadingEvents && ` · ${subjectEvents.length} linked event${subjectEvents.length === 1 ? '' : 's'}`}
-                  </Text>
-                  {showEventMgmtAccordion ? <ChevronUp size={20} color="#9ca3af" /> : <ChevronDown size={20} color="#9ca3af" />}
-                </TouchableOpacity>
-                {showEventMgmtAccordion && (
-                  <View style={styles.accordionContent}>
-              <View style={[styles.eventManagementSection, { marginTop: 0, paddingTop: 0, borderTopWidth: 0 }]}>
-                <View style={styles.eventManagementHeader}>
-                  <Text style={styles.eventManagementTitle}>Event Management</Text>
-                  {loadingEvents ? (
-                    <Text style={styles.eventCountText}>Loading...</Text>
-                  ) : (
-                    <Text style={styles.eventCountText}>
-                      {subjectEvents.length} event{subjectEvents.length === 1 ? '' : 's'} found
-                    </Text>
-                  )}
-                </View>
-                
-                {subjectEvents.length > 0 && (
-                  <View style={styles.eventActions}>
-                    <TouchableOpacity
-                      style={[
-                        styles.eventActionButton, 
-                        styles.markAttendedButton,
-                        (markingAttended || deletingEvents) && styles.eventActionButtonDisabled
-                      ]}
-                      onPress={handleMarkAllAttended}
-                      disabled={markingAttended || deletingEvents}
-                    >
-                      <CheckCircle size={16} color="#10B981" />
-                      <Text style={[styles.eventActionButtonText, styles.markAttendedButtonText]}>
-                        {markingAttended ? 'Marking...' : 'Mark All as Attended'}
-                      </Text>
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity
-                      style={[
-                        styles.eventActionButton, 
-                        styles.deleteEventsButton,
-                        (deletingEvents || markingAttended) && styles.eventActionButtonDisabled
-                      ]}
-                      onPress={handleDeleteAllEvents}
-                      disabled={deletingEvents || markingAttended}
-                    >
-                      <Trash2 size={16} color="#EF4444" />
-                      <Text style={[styles.eventActionButtonText, styles.deleteEventsButtonText]}>
-                        {deletingEvents ? 'Deleting...' : 'Delete All Events'}
-                      </Text>
-                    </TouchableOpacity>
+            {/* Event management (edit + draft mode after Add Units) */}
+            {effectiveSubjectId && (
+              <ModalSectionCard
+                Icon={Calendar}
+                title="Event management"
+                subtitle={
+                  loadingEvents || loadingCurriculum
+                    ? 'Loading linked events and lessons...'
+                    : `${subjectEvents.length} linked event${subjectEvents.length === 1 ? '' : 's'}${unscheduledLessons.length ? ` · ${unscheduledLessons.length} unscheduled lesson${unscheduledLessons.length === 1 ? '' : 's'}` : ''}`
+                }
+                expanded={showEventMgmtAccordion}
+                onPress={() => setShowEventMgmtAccordion(!showEventMgmtAccordion)}
+                accent="#5A92D6"
+              >
+                <View style={styles.accordionContent}>
+                  <View style={[styles.eventManagementSection, { marginTop: 0, paddingTop: 0, borderTopWidth: 0 }]}>
+                    <View style={styles.eventManagementHeader}>
+                      <Text style={styles.eventManagementTitle}>Event Management</Text>
+                      {loadingEvents ? (
+                        <Text style={styles.eventCountText}>Loading...</Text>
+                      ) : (
+                        <Text style={styles.eventCountText}>
+                          {subjectEvents.length} event{subjectEvents.length === 1 ? '' : 's'} found
+                        </Text>
+                      )}
+                    </View>
+
+                    {subjectEvents.length > 0 && (
+                      <View style={styles.eventActions}>
+                        <TouchableOpacity
+                          style={[
+                            styles.eventActionButton,
+                            styles.markAttendedButton,
+                            (markingAttended || deletingEvents) && styles.eventActionButtonDisabled
+                          ]}
+                          onPress={handleMarkAllAttended}
+                          disabled={markingAttended || deletingEvents}
+                        >
+                          <CheckCircle size={16} color="#10B981" />
+                          <Text style={[styles.eventActionButtonText, styles.markAttendedButtonText]}>
+                            {markingAttended ? 'Marking...' : 'Mark All as Attended'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[
+                            styles.eventActionButton,
+                            styles.deleteEventsButton,
+                            (deletingEvents || markingAttended) && styles.eventActionButtonDisabled
+                          ]}
+                          onPress={handleDeleteAllEvents}
+                          disabled={deletingEvents || markingAttended}
+                        >
+                          <Trash2 size={16} color="#EF4444" />
+                          <Text style={[styles.eventActionButtonText, styles.deleteEventsButtonText]}>
+                            {deletingEvents ? 'Deleting...' : 'Delete All Events'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    {unscheduledLessons.length > 0 && (
+                      <View style={styles.unscheduledLessonsWrap}>
+                        <Text style={styles.unscheduledLessonsTitle}>
+                          Unscheduled lessons ({unscheduledLessons.length})
+                        </Text>
+                        {unscheduledLessons.slice(0, 8).map((row) => (
+                          <Text key={row.id} style={styles.unscheduledLessonRow}>
+                            {row.unitTitle} · {row.lessonTitle}
+                          </Text>
+                        ))}
+                        {unscheduledLessons.length > 8 ? (
+                          <Text style={styles.unscheduledLessonsMore}>
+                            +{unscheduledLessons.length - 8} more
+                          </Text>
+                        ) : null}
+                      </View>
+                    )}
                   </View>
-                )}
-              </View>
                 </View>
-              )}
-              </View>
+              </ModalSectionCard>
             )}
 
             {/* Accordion E: Danger zone (edit mode only) */}
@@ -1693,6 +1870,39 @@ export default function AddSubjectModal({
         }}
         onCancel={() => setDeleteEventsConfirm({ visible: false })}
       />
+
+      <RNModal
+        visible={showCurrentUnitsModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCurrentUnitsModal(false)}
+      >
+        <View style={styles.currentUnitsModalBackdrop}>
+          <View style={styles.currentUnitsModalCard}>
+            <View style={styles.currentUnitsModalHeader}>
+              <Text style={styles.currentUnitsModalTitle}>Current units</Text>
+              <TouchableOpacity onPress={() => setShowCurrentUnitsModal(false)} activeOpacity={0.7} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                <Text style={styles.currentUnitsModalClose}>Close</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.currentUnitsModalScroll} contentContainerStyle={styles.currentUnitsModalScrollContent}>
+              {unitsForCurrentUnitsModal.map((unit, index) => (
+                <View key={`${unit.title || 'unit'}-${index}`} style={styles.currentUnitCard}>
+                  <Text style={styles.currentUnitTitle}>{unit.title || `Unit ${index + 1}`}</Text>
+                  {(unit.lessons || []).map((lesson, lessonIndex) => (
+                    <Text
+                      key={`${lesson.id || lesson.title || 'lesson'}-${lessonIndex}`}
+                      style={styles.currentLessonRow}
+                    >
+                      {lessonIndex + 1}. {lesson.title || 'Lesson'}
+                    </Text>
+                  ))}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </RNModal>
     </RNModal>
 
     <AddMaterialModal
@@ -2295,6 +2505,110 @@ const styles = StyleSheet.create({
   },
   deleteEventsButtonText: {
     color: '#EF4444',
+  },
+  unscheduledLessonsWrap: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148, 163, 184, 0.12)',
+    gap: 6,
+  },
+  unscheduledLessonsTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unscheduledLessonRow: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unscheduledLessonsMore: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6BB3E8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentUnitsModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  currentUnitsModalCard: {
+    width: '100%',
+    maxWidth: 760,
+    maxHeight: '80%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.25)',
+  },
+  currentUnitsModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
+  },
+  currentUnitsModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentUnitsModalClose: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748b',
+    ...(Platform.OS === 'web' && {
+      textDecorationLine: 'underline',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentUnitsModalScroll: {
+    flexGrow: 0,
+  },
+  currentUnitsModalScrollContent: {
+    paddingBottom: 8,
+    gap: 12,
+  },
+  currentUnitCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.25)',
+    borderRadius: 12,
+    padding: 14,
+    backgroundColor: '#FFFFFF',
+    gap: 8,
+  },
+  currentUnitTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentLessonRow: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   // Danger zone accordion
   dangerZoneAccordion: {

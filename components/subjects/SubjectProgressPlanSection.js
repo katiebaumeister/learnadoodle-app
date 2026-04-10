@@ -624,7 +624,7 @@ export default function SubjectProgressPlanSection({
             <Calendar size={16} color={colors.accentContrast || '#ffffff'} strokeWidth={2} />
             <Text style={styles.emptyStatePrimaryBtnText}>Build plan</Text>
           </TouchableOpacity>
-          {Platform.OS === 'web' ? (
+          {Platform.OS === 'web' && !hasUnitsOrLessonsContent ? (
             <TouchableOpacity
               onPress={() => openCurriculumStructureAction('manual')}
               style={styles.emptyStateSecondaryLinkWrap}
@@ -952,8 +952,8 @@ const styles = StyleSheet.create({
   },
   /** Match Materials Snapshot “Add syllabus / Add lesson plan” chip (SubjectDetailPage materialsAddCta). */
   emptyStatePrimaryBtn: {
-    backgroundColor: colors.accent || '#0d9488',
-    borderColor: colors.accent || '#0d9488',
+    backgroundColor: '#85C4F2',
+    borderColor: '#85C4F2',
     borderWidth: 1,
     paddingHorizontal: 12,
     gap: 6,
@@ -975,7 +975,7 @@ const styles = StyleSheet.create({
   emptyStateSecondaryLink: {
     fontSize: 13,
     fontWeight: '500',
-    color: colors.accent || '#0d9488',
+    color: '#6BB3E8',
     ...(Platform.OS === 'web' && {
       textDecorationLine: 'underline',
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

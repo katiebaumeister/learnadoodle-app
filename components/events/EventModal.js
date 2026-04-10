@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, Platform } from 'react-native';
-import { colors, shadows } from '../../theme/colors';
+import { colors } from '../../theme/colors';
 import EventDetails from './EventDetails';
 import { getEvent, getSyllabusById } from '../../lib/apiClient';
 
@@ -367,20 +367,25 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   container: {
     backgroundColor: colors.card || '#ffffff',
-    borderRadius: 16,
-    width: '90%',
-    maxWidth: 600,
-    maxHeight: '80%',
-    ...shadows.large,
+    borderRadius: 30,
+    width: '100%',
+    maxWidth: 860,
+    height: Platform.OS === 'web' ? '86vh' : '86%',
+    shadowColor: '#24324A',
+    shadowOpacity: 0.14,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 10,
     overflow: 'hidden',
   },
   containerEditMode: {
-    maxWidth: 720,
-    width: '90%',
-    maxHeight: '90%',
+    width: '100%',
+    maxWidth: 860,
+    height: Platform.OS === 'web' ? '86vh' : '86%',
   },
   header: {
     flexDirection: 'row',

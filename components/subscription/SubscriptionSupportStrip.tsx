@@ -140,7 +140,7 @@ const styles = StyleSheet.create({
   fill: {
     height: '100%',
     borderRadius: 3,
-    backgroundColor: '#2563EB',
+    backgroundColor: '#85C4F2',
   },
   fillWarn: {
     backgroundColor: '#D97706',
@@ -160,7 +160,7 @@ const styles = StyleSheet.create({
   link: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#2563EB',
+    color: '#6BB3E8',
     marginTop: 2,
     alignSelf: 'flex-start',
     ...(Platform.OS === 'web' && {

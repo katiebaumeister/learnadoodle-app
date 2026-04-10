@@ -56,6 +56,7 @@ import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import ConfirmDialog from '../ConfirmDialog';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import { useToast } from '../Toast';
+import { useModalStackElevation, NESTED_MODAL_STACK_Z } from '../hooks/useModalStackElevation';
 import {
   createDefaultAcademicYear,
   recalculateAcademicYear,
@@ -1329,9 +1330,13 @@ export default function PlanYearModal({
   skipInitialPlanSummary = false,
   highlightFromPlanHealth = false,
   initialSubjectId = null,
+  initialSubjectName = null,
+  initialSubjectChildIds = [],
   initialMaterialId = null,
   initialUnitStructureMethod = null,
 }) {
+  const overlayRef = useRef(null);
+  useModalStackElevation(overlayRef, visible, NESTED_MODAL_STACK_Z);
   const toast = useToast();
   const initialPlanSourceForDirectUnitOpen =
     initialUnitStructureMethod === 'manual'
@@ -1343,6 +1348,7 @@ export default function PlanYearModal({
           : initialUnitStructureMethod === 'generate'
             ? 'generate'
             : 'placeholders';
+  const returnToSubjectModalAfterUnitSave = Boolean(fromSubjectDetail && initialUnitStructureMethod);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -1958,7 +1964,31 @@ export default function PlanYearModal({
   const planPrefsFamilySaveTimerRef = useRef(null);
   const planPrefsSubjectTimersRef = useRef({});
 
-  const baseSubjectList = Array.isArray(fullSubjects) && fullSubjects.length > 0 ? fullSubjects : subjects;
+  const baseSubjectListRaw = Array.isArray(fullSubjects) && fullSubjects.length > 0 ? fullSubjects : subjects;
+  const initialSubjectChildIdString = useMemo(() => {
+    if (!Array.isArray(initialSubjectChildIds) || initialSubjectChildIds.length === 0) return null;
+    return initialSubjectChildIds.map(String).filter(Boolean).join(';');
+  }, [initialSubjectChildIds]);
+  const baseSubjectList = useMemo(() => {
+    if (!initialSubjectId) return baseSubjectListRaw;
+    const subjectExists = (baseSubjectListRaw || []).some(
+      (s) => String(s?.id) === String(initialSubjectId)
+    );
+    if (subjectExists) return baseSubjectListRaw;
+    return [
+      {
+        id: initialSubjectId,
+        name: initialSubjectName || 'Subject',
+        child_id: initialSubjectChildIdString,
+      },
+      ...(baseSubjectListRaw || []),
+    ];
+  }, [
+    baseSubjectListRaw,
+    initialSubjectId,
+    initialSubjectName,
+    initialSubjectChildIdString,
+  ]);
   /** All family subjects; plan slots attach to children via each subject's `child_id` (see getChildIdsForSubject). */
   const subjectsForCurrentSelection = baseSubjectList;
   const allFamilyChildIds = useMemo(
@@ -6236,9 +6266,11 @@ export default function PlanYearModal({
     unitFocusSubjectNameForHeader && effectiveSubjectIds.length > 1 && (planStep === 'source' || planStep === 'unit_structure')
       ? t('planMyYear.multiSubjectUnits.headerUnitsFor', { subjectName: unitFocusSubjectNameForHeader })
       : null;
-  const unitStructureSaveDraftLabel = PLAN_MY_YEAR_LOGISTICS_FIRST
-    ? t('planMyYear.multiSubjectUnits.footerSaveDraftLogisticsFirst')
-    : t('planMyYear.multiSubjectUnits.footerSaveDraftClassic');
+  const unitStructureSaveDraftLabel = returnToSubjectModalAfterUnitSave
+    ? 'Back to Add Subject'
+    : PLAN_MY_YEAR_LOGISTICS_FIRST
+      ? t('planMyYear.multiSubjectUnits.footerSaveDraftLogisticsFirst')
+      : t('planMyYear.multiSubjectUnits.footerSaveDraftClassic');
   const unitStructureSkipDraftLabel = PLAN_MY_YEAR_LOGISTICS_FIRST
     ? t('planMyYear.multiSubjectUnits.footerSkipLogisticsFirst')
     : t('planMyYear.multiSubjectUnits.footerSkipClassic');
@@ -6799,7 +6831,9 @@ export default function PlanYearModal({
                     <>
                       {unitSubjectBanner}
                       {cadenceDifferentMethodBannerEl}
-                      {PLAN_MY_YEAR_LOGISTICS_FIRST && !cadenceYieldsInstructionalSlots && (
+                      {PLAN_MY_YEAR_LOGISTICS_FIRST &&
+                        !returnToSubjectModalAfterUnitSave &&
+                        !cadenceYieldsInstructionalSlots && (
                         <View
                           style={{
                             marginBottom: 16,
@@ -10891,6 +10925,10 @@ export default function PlanYearModal({
                             setDraftData(null);
                             setManualDraft(null);
                             setUnitStructureStep('input');
+                            if (returnToSubjectModalAfterUnitSave) {
+                              onClose?.();
+                              return;
+                            }
                             setPlanStep(getAfterUnitStructureContinue(PLAN_MY_YEAR_LOGISTICS_FIRST));
                             setUnitFocusSubjectId(null);
                             if (unitPipelineSubjectId) {
@@ -11899,6 +11937,10 @@ export default function PlanYearModal({
                         setDraftData(null);
                         setManualDraft(null);
                         setUnitStructureStep('input');
+                        if (returnToSubjectModalAfterUnitSave) {
+                          onClose?.();
+                          return;
+                        }
                         setPlanStep(getAfterUnitStructureContinue(PLAN_MY_YEAR_LOGISTICS_FIRST));
                         // Refresh unit structure data
                         if (unitPipelineSubjectId) {
@@ -11963,13 +12005,19 @@ export default function PlanYearModal({
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <TouchableOpacity
                       onPress={() => {
+                        if (returnToSubjectModalAfterUnitSave) {
+                          onClose?.();
+                          return;
+                        }
                         setPlanStep(getAfterUnitStructureContinue(PLAN_MY_YEAR_LOGISTICS_FIRST));
                       }}
                       style={{ paddingVertical: 10, paddingHorizontal: 8 }}
                       {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
                     >
                       <Text style={{ fontSize: 15, fontWeight: '600', color: SUB }}>
-                        {t('planMyYear.multiSubjectUnits.savedManualCurriculumFooterBackToBuilder')}
+                        {returnToSubjectModalAfterUnitSave
+                          ? 'Back to Add Subject'
+                          : t('planMyYear.multiSubjectUnits.savedManualCurriculumFooterBackToBuilder')}
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -12231,7 +12279,7 @@ export default function PlanYearModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade">
-      <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
+      <TouchableOpacity ref={overlayRef} style={styles.overlay} activeOpacity={1} onPress={onClose}>
         {modalContent}
       </TouchableOpacity>
       {renderPlanListContextMenuPortal()}

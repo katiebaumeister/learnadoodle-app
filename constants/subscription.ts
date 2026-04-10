@@ -56,7 +56,7 @@ export const SUBSCRIPTION_PLANS: Record<PlanKey, SubscriptionPlanDef> = {
     tagline: 'For records, compliance, and advanced planning',
     tier: 'premium',
     comparisonAnchor: 'Best for complex planning and analysis',
-    positioningLine: 'Records & compliance',
+    positioningLine: 'Records & analysis',
     topBenefits: ['Everything in Family', 'Attendance + transcripts', 'State requirements tracking'],
     secondaryFeatures: ['Advanced forecasting & planning insights', 'Extended usage limits'],
     features: [
