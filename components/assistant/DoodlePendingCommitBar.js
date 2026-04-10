@@ -27,7 +27,11 @@ const COMMIT_PRIMARY_LABELS = {
 export default function DoodlePendingCommitBar({ pendingCommit, disabled, onConfirm, onCancel }) {
   if (!pendingCommit || pendingCommit.resolved) return null;
 
-  const primaryLabel = COMMIT_PRIMARY_LABELS[pendingCommit.kind] ?? null;
+  const primaryLabel =
+    pendingCommit.kind === CHAT_COMMIT_KINDS.UPDATE_EVENT &&
+    pendingCommit?.payload?.allowOverlaps === true
+      ? 'Apply anyway'
+      : COMMIT_PRIMARY_LABELS[pendingCommit.kind] ?? null;
 
   if (primaryLabel) {
     return (

@@ -65,10 +65,31 @@ function emitSubjectDetailMaterialSyncWeb(
   }
 }
 
-export default function MaterialsLibrary({ familyId, children = [], preloadedSubjects = null, preloadedMaterials = null, onMaterialsUpdate = null }) {
+export default function MaterialsLibrary({
+  familyId,
+  children = [],
+  preloadedSubjects = null,
+  preloadedMaterials = null,
+  onMaterialsUpdate = null,
+  sessionOverride = null,
+  currentChildId = null,
+  viewerRole = null,
+}) {
   const toast = useToast();
-  const session = useSession();
+  const sessionFromContext = useSession();
+  const session = sessionOverride || sessionFromContext;
   const familyUserControls = useOptionalFamilyUserControls();
+  const isChildViewer =
+    session?.role_flags?.isChild === true || viewerRole === 'child' || viewerRole === 'student';
+  const forcedChildId = useMemo(() => {
+    if (!isChildViewer) return null;
+    if (currentChildId) return currentChildId;
+    if (session?.child_id) return session.child_id;
+    if (Array.isArray(session?.accessible_children) && session.accessible_children.length === 1) {
+      return session.accessible_children[0];
+    }
+    return null;
+  }, [isChildViewer, currentChildId, session]);
 
   const ensureCanEditMaterials = () => {
     if (familyUserControls.isRestrictedViewer && !familyUserControls.allowed('materials')) {
@@ -80,9 +101,9 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
 
   /** Non-empty preloaded list — skip redundant fetch when parent has rows. */
   const preloadedMaterialsUsable =
-    Array.isArray(preloadedMaterials) && preloadedMaterials.length > 0;
+    !isChildViewer && Array.isArray(preloadedMaterials) && preloadedMaterials.length > 0;
   /** Parent passed a snapshot (including []); avoids empty-state flash while cache is still null. */
-  const hasPreloadedLibrarySnapshot = Array.isArray(preloadedMaterials);
+  const hasPreloadedLibrarySnapshot = !isChildViewer && Array.isArray(preloadedMaterials);
 
   // Get child colors for dots
   const getChildDotColor = (childId) => {
@@ -95,8 +116,12 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   };
   
   // 
-  const [materials, setMaterials] = useState(() => (Array.isArray(preloadedMaterials) ? preloadedMaterials : []));
-  const [allMaterials, setAllMaterials] = useState(() => (Array.isArray(preloadedMaterials) ? preloadedMaterials : []));
+  const [materials, setMaterials] = useState(() =>
+    !isChildViewer && Array.isArray(preloadedMaterials) ? preloadedMaterials : []
+  );
+  const [allMaterials, setAllMaterials] = useState(() =>
+    !isChildViewer && Array.isArray(preloadedMaterials) ? preloadedMaterials : []
+  );
   /** False until parent snapshot exists or first load finishes — suppresses empty UI flash. */
   const [libraryReady, setLibraryReady] = useState(() => Array.isArray(preloadedMaterials));
   const [error, setError] = useState(null);
@@ -139,6 +164,11 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
   const filtersDropdownRef = useRef(null);
   const [filtersDropdownPosition, setFiltersDropdownPosition] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (!isChildViewer || !forcedChildId) return;
+    setSelectedChildId((prev) => (prev === forcedChildId ? prev : forcedChildId));
+  }, [isChildViewer, forcedChildId]);
 
   /** Deduped subjects for linking materials by name (subject_key) on Subject detail. */
   const mergedSubjectsForMaterialLookup = useMemo(() => {
@@ -324,7 +354,12 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
       setMaterials(data);
       
       // Update cache if no filters are applied (base materials list)
-      if (onMaterialsUpdate && searchQuery === '' && selectedChildId === '' && selectedSubjectId === null) {
+      if (
+        onMaterialsUpdate &&
+        searchQuery === '' &&
+        (selectedChildId === '' || (isChildViewer && selectedChildId === forcedChildId)) &&
+        selectedSubjectId === null
+      ) {
         onMaterialsUpdate(data);
       }
       
@@ -895,19 +930,22 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
               style={styles.childrenFilterScroll}
               contentContainerStyle={styles.childrenFilterScrollContent}
             >
-              <TouchableOpacity
-                style={[styles.childrenFilterChip, !selectedChildId && styles.childrenFilterChipActive]}
-                onPress={() => {
-                  setSelectedChildId('');
-                  setSelectedSubjectId(null);
-                  setRoleFilter('all');
-                }}
-              >
-                <Text style={[styles.childrenFilterChipText, !selectedChildId && styles.childrenFilterChipTextActive]}>
-                  All Children
-                </Text>
-              </TouchableOpacity>
+              {!isChildViewer && (
+                <TouchableOpacity
+                  style={[styles.childrenFilterChip, !selectedChildId && styles.childrenFilterChipActive]}
+                  onPress={() => {
+                    setSelectedChildId('');
+                    setSelectedSubjectId(null);
+                    setRoleFilter('all');
+                  }}
+                >
+                  <Text style={[styles.childrenFilterChipText, !selectedChildId && styles.childrenFilterChipTextActive]}>
+                    All Children
+                  </Text>
+                </TouchableOpacity>
+              )}
               {effectiveChildren.map((child) => {
+                if (isChildViewer && forcedChildId && child.id !== forcedChildId) return null;
                 const isActive = selectedChildId === child.id;
                 const label = child.first_name || child.name || 'Child';
                 const childColor = getChildDotColor(child.id);
@@ -916,6 +954,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
                     key={child.id}
                     style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
                     onPress={() => {
+                      if (isChildViewer) return;
                       setSelectedChildId(isActive ? '' : child.id);
                       setSelectedSubjectId(null);
                       setRoleFilter('all');
@@ -1353,7 +1392,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
                 ]}
               >
                 {/* Children Filter Section */}
-                {effectiveChildren.length > 0 && (
+                {effectiveChildren.length > 0 && !isChildViewer && (
                   <View style={styles.dropdownSection}>
                     <Text style={styles.dropdownSectionTitle}>CHILDREN</Text>
                     <TouchableOpacity
@@ -1386,7 +1425,7 @@ export default function MaterialsLibrary({ familyId, children = [], preloadedSub
                 )}
 
                 {/* Types Filter Section */}
-                {effectiveChildren.length > 0 && <View style={styles.dropdownDivider} />}
+                {effectiveChildren.length > 0 && !isChildViewer && <View style={styles.dropdownDivider} />}
                 <View style={styles.dropdownSection}>
                   <Text style={styles.dropdownSectionTitle}>TYPES</Text>
                   {ROLE_CHIPS.map((opt) => {

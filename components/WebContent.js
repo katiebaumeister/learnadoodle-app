@@ -8765,6 +8765,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             children={children || []}
             preloadedSubjects={subjects || []}
             preloadedMaterials={materialsCache}
+            sessionOverride={propSession || null}
+            currentChildId={propSession?.child_id || null}
+            viewerRole={roleForHome ?? userRole ?? null}
             onMaterialsUpdate={(newMaterials) => {
               setMaterialsCache(newMaterials);
               setMaterialsCacheTimestamp(Date.now());

@@ -30,6 +30,11 @@ import DoodleSetupGuidePanel from './assistant/DoodleSetupGuidePanel.js'
 import { isSetupGuideComplete, messageRequestsSetupGuideUI } from '../lib/doodleSetupGuide.js'
 
 const DOODLE_CHAT_SESSION_KEY = 'learnadoodle_doodle_chat_v1'
+const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi
+
+function sanitizeChatErrorMessage(msg) {
+  return String(msg || '').replace(UUID_RE, 'that item').trim()
+}
 
 function readDoodleChatSession(userId, familyId) {
   if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !userId || !familyId) return null
@@ -369,7 +374,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
               buildChatbotAuditPayload(
                 pc.kind,
                 { toolName, params },
-                { success: false, error: err?.message || String(err) },
+                { success: false, error: sanitizeChatErrorMessage(err?.message || String(err)) },
                 { client: 'search_modal' }
               ),
               'failed'
@@ -383,7 +388,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "that couldn't be saved."} Try again with more detail or from the planner.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "that couldn't be saved."} Try again with more detail or from the planner.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -454,7 +459,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't save attendance."} Try the planner attendance view.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't save attendance."} Try the planner attendance view.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -544,7 +549,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't save that grade."} Try **Records**.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't save that grade."} Try **Records**.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -620,7 +625,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't update."} Try **Family**.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't update."} Try **Family**.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -689,7 +694,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't archive."}`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't archive."}`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -762,7 +767,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't delete."} Confirm the name matches **Family** exactly.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't delete."} Confirm the name matches **Family** exactly.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -831,7 +836,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't add subject."} Try **Subjects**.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't add subject."} Try **Subjects**.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -902,7 +907,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't remove that."} Try from Library.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't remove that."} Try from Library.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -973,7 +978,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't rename that."} Try from **Library**.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't rename that."} Try from **Library**.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -1044,7 +1049,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't add that link."} Try **Library** → **Add material**.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't add that link."} Try **Library** → **Add material**.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -1116,7 +1121,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't rename that subject."} Try **Subjects**.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't rename that subject."} Try **Subjects**.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -1186,7 +1191,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't delete that subject."} Try **Subjects**.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't delete that subject."} Try **Subjects**.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -1258,7 +1263,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't delete that event."} Try from the planner.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't delete that event."} Try from the planner.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
@@ -1275,10 +1280,28 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
       if (!eventId || !updates || typeof updates !== 'object') return
       setIsLoading(true)
       try {
-        let res = await executeChatUpdateEvent(eventId, updates, allowOverlaps ?? false)
+        const overlapOverride = allowOverlaps === true
+        const res = await executeChatUpdateEvent(eventId, updates, overlapOverride, familyId)
         const errText = String(res.error || '').toLowerCase()
-        if (!res.success && (errText.includes('overlap') || errText.includes('exclusion'))) {
-          res = await executeChatUpdateEvent(eventId, updates, true)
+        const maybeOverlapFailure =
+          !res.success &&
+          (errText.includes('overlap') || errText.includes('exclusion') || errText.includes('conflict'))
+        if (maybeOverlapFailure && !overlapOverride) {
+          setMessages((prev) =>
+            prev.map((m, i) =>
+              i === messageIndex
+                ? {
+                    ...m,
+                    content: `${m.content}\n\nI found a possible scheduling overlap. Tap **Apply anyway** to save this one-time change, or **Cancel**.`,
+                    pendingCommit: {
+                      ...pc,
+                      payload: { ...(pc.payload || {}), allowOverlaps: true },
+                    },
+                  }
+                : m
+            )
+          )
+          return
         }
         if (!res.success) throw new Error(res.error || 'Update failed')
         if (convId) {
@@ -1288,7 +1311,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
               CHAT_COMMIT_KINDS.UPDATE_EVENT,
               buildChatbotAuditPayload(
                 CHAT_COMMIT_KINDS.UPDATE_EVENT,
-                { eventId, updates, allowOverlaps: allowOverlaps ?? false },
+                { eventId, updates, allowOverlaps: overlapOverride },
                 { success: true, data: res.data ?? null },
                 { client: 'search_modal' }
               ),
@@ -1334,7 +1357,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
             i === messageIndex
               ? {
                   ...m,
-                  content: `${m.content}\n\nSorry — ${err?.message || "couldn't update that event."} Try editing in the planner.`,
+                  content: `${m.content}\n\nSorry — ${sanitizeChatErrorMessage(err?.message) || "couldn't update that event."} Try editing in the planner.`,
                   pendingCommit: { ...pc, resolved: true },
                 }
               : m
