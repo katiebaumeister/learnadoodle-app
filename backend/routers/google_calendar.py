@@ -238,30 +238,37 @@ class PullRequest(BaseModel):
     max_pages: int = Field(5, ge=1, le=20)
 
 
-def _normalize_google_event_timestamps(event_payload: Dict[str, Any]) -> tuple[str, str]:
+def _normalize_google_event_timestamps(event_payload: Dict[str, Any]) -> tuple[str, str, bool]:
     start = event_payload.get("start") or {}
     end = event_payload.get("end") or {}
     start_dt = start.get("dateTime")
     end_dt = end.get("dateTime")
     if start_dt and end_dt:
-        return start_dt, end_dt
+        return start_dt, end_dt, False
+    if start_dt and not end_dt:
+        try:
+            parsed_start = datetime.fromisoformat(start_dt.replace("Z", "+00:00"))
+            parsed_end = parsed_start + timedelta(hours=1)
+            return start_dt, parsed_end.isoformat(), False
+        except Exception:  # noqa: BLE001
+            return start_dt, start_dt, False
 
     start_date = start.get("date")
     end_date = end.get("date")
     if not start_date:
         raise RuntimeError("Google event missing start date")
 
-    # Google all-day events use end.date as exclusive. Keep imported range readable in planner.
-    start_iso = f"{start_date}T09:00:00+00:00"
+    # Google all-day events use end.date as exclusive.
+    start_iso = f"{start_date}T00:00:00+00:00"
     if end_date:
         try:
             last_day = datetime.fromisoformat(end_date) - timedelta(days=1)
-            end_iso = f"{last_day.date().isoformat()}T10:00:00+00:00"
+            end_iso = f"{last_day.date().isoformat()}T23:59:59+00:00"
         except Exception:  # noqa: BLE001
-            end_iso = f"{start_date}T10:00:00+00:00"
+            end_iso = f"{start_date}T23:59:59+00:00"
     else:
-        end_iso = f"{start_date}T10:00:00+00:00"
-    return start_iso, end_iso
+        end_iso = f"{start_date}T23:59:59+00:00"
+    return start_iso, end_iso, True
 
 
 @router.post("/push_event")
@@ -374,6 +381,19 @@ async def pull_events(body: PullRequest, user=Depends(get_current_user), _: None
     skipped = 0
 
     supabase = get_admin_client()
+    children_resp = (
+        supabase
+        .table("child")
+        .select("id")
+        .eq("family_id", family_id)
+        .execute()
+    )
+    family_child_ids = [
+        row.get("id")
+        for row in (getattr(children_resp, "data", None) or [])
+        if row.get("id")
+    ]
+
     while page_count < body.max_pages:
         params: Dict[str, Any] = {
             "singleEvents": "true",
@@ -403,7 +423,7 @@ async def pull_events(body: PullRequest, user=Depends(get_current_user), _: None
                 continue
 
             try:
-                start_ts, end_ts = _normalize_google_event_timestamps(item)
+                start_ts, end_ts, is_all_day = _normalize_google_event_timestamps(item)
             except Exception:  # noqa: BLE001
                 skipped += 1
                 continue
@@ -411,14 +431,15 @@ async def pull_events(body: PullRequest, user=Depends(get_current_user), _: None
             event_values = {
                 "family_id": family_id,
                 "child_id": None,
-                "child_ids": [],
+                "child_ids": family_child_ids,
                 "title": item.get("summary") or "Google Calendar event",
                 "description": item.get("description") or None,
                 "start_ts": start_ts,
                 "end_ts": end_ts,
+                "all_day": is_all_day,
                 "status": "scheduled",
                 "source": "google",
-                "event_type": "Other",
+                "event_type": "Activity",
                 "is_placeholder": False,
             }
 

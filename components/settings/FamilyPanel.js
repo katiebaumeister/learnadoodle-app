@@ -1373,7 +1373,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     {
       key: 'apple_calendar',
       label: 'Apple Calendar',
-      description: 'Subscribe your family calendar feed in Apple Calendar.',
+      description: 'Sync your planner events to Apple Calendar.',
       image: appleLogo,
       imageStyle: styles.connectionRowImageApple,
       imageResizeMode: 'cover',
