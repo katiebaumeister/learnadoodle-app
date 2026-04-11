@@ -150,6 +150,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Connected accounts (integrations) state
   const [connectedProviders, setConnectedProviders] = useState({
     google: false,
+    google_calendar: false,
+    apple_calendar: false,
     dropbox: false,
     notion: false,
     youtube: false,
@@ -159,6 +161,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [connectingProvider, setConnectingProvider] = useState(null);
   const [hoveredConnectionKey, setHoveredConnectionKey] = useState(null);
   const [googleAccountEmail, setGoogleAccountEmail] = useState(null);
+  const [googleCalendarAccountEmail, setGoogleCalendarAccountEmail] = useState(null);
   const [loadingConnections, setLoadingConnections] = useState(false);
   const [hoveredSubjectId, setHoveredSubjectId] = useState(null);
   
@@ -1324,7 +1327,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       key: 'google',
       label: 'Google',
       description:
-        'Import files from Google Drive into your family library and sync Google Calendar with your Learnadoodle planner.',
+        'Import files from Google Drive into your family library.',
       image: googleLogo,
     },
     {
@@ -1356,6 +1359,22 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       label: 'Canvas',
       description: 'Sync assignments, courses, and materials from Canvas LMS.',
       image: canvasLogo,
+    },
+  ];
+
+  const PLANNING_CONNECTION_PROVIDERS = [
+    {
+      key: 'google_calendar',
+      label: 'Google Calendar',
+      description: 'Sync planner events to Google Calendar.',
+      image: googleLogo,
+    },
+    {
+      key: 'apple_calendar',
+      label: 'Apple Calendar',
+      description: 'Subscribe your family calendar feed in Apple Calendar.',
+      icon: CalendarPlus,
+      iconColor: '#0f172a',
     },
   ];
 
@@ -1394,15 +1413,15 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 if (integration.account_email) {
                   setGoogleAccountEmail(integration.account_email);
                 }
+              } else if (integration.provider === 'apple') {
+                setProviderConnection('apple_calendar', integration.connected);
               } else if (integration.provider === 'youtube') {
                 setProviderConnection('youtube', false);
               }
             });
             
-            // Refresh in background if cache is older than 1 minute
-            if (age > 60 * 1000) {
-              loadConnectionStatus(false, false); // Refresh without using cache, no loading state
-            }
+            // Refresh in background so separate Google Calendar status stays current.
+            loadConnectionStatus(false, false);
             return;
           }
         } catch (err) {
@@ -1446,10 +1465,24 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             if (integration.account_email) {
               setGoogleAccountEmail(integration.account_email);
             }
+          } else if (integration.provider === 'apple') {
+            setProviderConnection('apple_calendar', integration.connected);
           } else if (integration.provider === 'youtube') {
             setProviderConnection('youtube', false);
           }
         });
+      }
+
+      // Google Calendar connection is separate from Google Drive/Docs.
+      const calendarRes = await fetch(`${apiBase}/api/google/calendar/status`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      });
+      if (calendarRes.ok) {
+        const calendarData = await calendarRes.json();
+        setProviderConnection('google_calendar', !!calendarData?.connected);
+        setGoogleCalendarAccountEmail(calendarData?.account_email || null);
       }
     } catch (error) {
       console.error('Failed to load connection status:', error);
@@ -1558,6 +1591,51 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         } else {
           throw new Error('OAuth popup not supported on this platform');
         }
+      } else if (providerKey === 'google_calendar') {
+        // Start Google Calendar OAuth flow
+        const res = await fetch(`${apiBase}/api/google/calendar/oauth/start?family_id=${familyId}`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        });
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Failed to start Google Calendar OAuth');
+        }
+
+        const data = await res.json();
+        if (Platform.OS === 'web' && data.auth_url) {
+          const popup = window.open(
+            data.auth_url,
+            'Google Calendar OAuth',
+            'width=600,height=700,scrollbars=yes,resizable=yes'
+          );
+          if (!popup) {
+            setConnectingProvider(null);
+            toast.push('Popup blocked. Allow popups for learnadoodle.com and try again.', 'error');
+            return;
+          }
+
+          const checkClosed = setInterval(() => {
+            if (popup && popup.closed) {
+              clearInterval(checkClosed);
+              setTimeout(() => {
+                clearConnectionStatusCache();
+                loadConnectionStatus();
+                setConnectingProvider(null);
+              }, 1000);
+            }
+          }, 500);
+
+          toast.push('Complete Google Calendar connection in the popup window', 'info');
+        } else {
+          throw new Error('OAuth popup not supported on this platform');
+        }
+      } else if (providerKey === 'apple_calendar') {
+        toast.push('Apple Calendar subscription setup coming soon', 'info');
+        setConnectingProvider(null);
+        return;
       } else {
         const comingSoonProviders = ['dropbox', 'notion', 'youtube', 'quizlet', 'canvas'];
         if (comingSoonProviders.includes(providerKey)) {
@@ -1603,6 +1681,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         setGoogleAccountEmail(null);
         clearConnectionStatusCache();
         toast.push('Google account disconnected', 'success');
+      } else if (providerKey === 'google_calendar') {
+        const res = await fetch(`${apiBase}/api/google/calendar/credential`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        });
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Failed to disconnect Google Calendar');
+        }
+
+        setProviderConnection('google_calendar', false);
+        setGoogleCalendarAccountEmail(null);
+        clearConnectionStatusCache();
+        toast.push('Google Calendar disconnected', 'success');
       } else {
         // Other providers
         setProviderConnection(providerKey, false);
@@ -1727,7 +1822,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <View style={styles.connectionsList}>
               {CONNECTION_PROVIDERS.filter(p =>
                 ['google', 'dropbox', 'notion'].includes(p.key)
-              ).map(({ key, label, description, image }, index, array) => {
+              ).map(({ key, label, description, image, icon: Icon, iconColor }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
                 const isRecommended = key === 'google';
@@ -1747,7 +1842,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     >
                       <View style={styles.connectionRowLeft}>
                         <View style={styles.connectionRowIconContainer}>
-                          <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                          {image ? (
+                            <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                          ) : Icon ? (
+                            <Icon size={20} color={iconColor || '#0f172a'} />
+                          ) : null}
                         </View>
                         <View style={styles.connectionRowText}>
                           <View style={styles.connectionRowHeader}>
@@ -1824,13 +1923,115 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               })}
             </View>
 
+            <Text style={styles.connectionsSectionTitle}>Cloud planning</Text>
+            <View style={styles.connectionsSectionDivider} />
+
+            <View style={styles.connectionsList}>
+              {PLANNING_CONNECTION_PROVIDERS.map(({ key, label, description, image, icon: Icon, iconColor }, index, array) => {
+                const isConnected = !!connectedProviders[key];
+                const isBusy = connectingProvider === key;
+                const isRecommended = key === 'google_calendar';
+                const isHovered = hoveredConnectionKey === key;
+
+                return (
+                  <React.Fragment key={key}>
+                    <View
+                      style={[
+                        styles.connectionCardRow,
+                        isHovered && styles.connectionCardRowHovered,
+                      ]}
+                      {...(Platform.OS === 'web' && {
+                        onMouseEnter: () => setHoveredConnectionKey(key),
+                        onMouseLeave: () => setHoveredConnectionKey(null),
+                      })}
+                    >
+                      <View style={styles.connectionRowLeft}>
+                        <View style={styles.connectionRowIconContainer}>
+                          {image ? (
+                            <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                          ) : Icon ? (
+                            <Icon size={20} color={iconColor || '#0f172a'} />
+                          ) : null}
+                        </View>
+                        <View style={styles.connectionRowText}>
+                          <View style={styles.connectionRowHeader}>
+                            <Text style={styles.connectionRowLabel}>{label}</Text>
+                            {isConnected && (
+                              <View style={styles.connectionStatusChip}>
+                                <View style={styles.connectionStatusDot} />
+                                <Text style={styles.connectionStatusText}>Connected</Text>
+                              </View>
+                            )}
+                            {!isConnected && isRecommended && (
+                              <View style={styles.connectionRecommendedChip}>
+                                <Text style={styles.connectionRecommendedText}>Recommended</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.connectionRowDescription}>{description}</Text>
+                          {isConnected && key === 'google_calendar' && googleCalendarAccountEmail && (
+                            <Text style={styles.connectionAccountEmail}>Connected as: {googleCalendarAccountEmail}</Text>
+                          )}
+                        </View>
+                      </View>
+                      <View style={styles.connectionRowActions}>
+                        {isConnected ? (
+                          <>
+                            <TouchableOpacity
+                              style={styles.connectionManageButton}
+                              onPress={() => {
+                                if (key === 'apple_calendar') {
+                                  toast.push('Apple Calendar subscription setup coming soon', 'info');
+                                  return;
+                                }
+                                toast.push('Google Calendar sync is active for selected planner events.', 'info');
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={styles.connectionManageButtonText}>Manage</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.connectionDisconnectButton}
+                              onPress={() => handleDisconnectProvider(key)}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={styles.connectionDisconnectButtonText}>Disconnect</Text>
+                            </TouchableOpacity>
+                          </>
+                        ) : (
+                          <TouchableOpacity
+                            style={[
+                              styles.connectionConnectButton,
+                              isBusy && styles.connectionConnectButtonDisabled,
+                            ]}
+                            onPress={() => handleConnectProvider(key)}
+                            disabled={isBusy}
+                            {...(Platform.OS === 'web' && {
+                              cursor: isBusy ? 'not-allowed' : 'pointer',
+                            })}
+                          >
+                            {isBusy ? (
+                              <ActivityIndicator size="small" color="#887DEE" />
+                            ) : (
+                              <Text style={styles.connectionConnectButtonText}>Connect</Text>
+                            )}
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                    {index < array.length - 1 && <View style={styles.connectionRowDivider} />}
+                  </React.Fragment>
+                );
+              })}
+            </View>
+
             <Text style={styles.connectionsSectionTitle}>Learning platforms</Text>
             <View style={styles.connectionsSectionDivider} />
 
             <View style={styles.connectionsList}>
               {CONNECTION_PROVIDERS.filter(p =>
                 ['youtube', 'quizlet', 'canvas'].includes(p.key)
-              ).map(({ key, label, description, image }, index, array) => {
+              ).map(({ key, label, description, image, icon: Icon, iconColor }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
                 const isHovered = hoveredConnectionKey === key;
@@ -1849,7 +2050,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     >
                       <View style={styles.connectionRowLeft}>
                         <View style={styles.connectionRowIconContainer}>
-                          <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                          {image ? (
+                            <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                          ) : Icon ? (
+                            <Icon size={20} color={iconColor || '#0f172a'} />
+                          ) : null}
                         </View>
                         <View style={styles.connectionRowText}>
                           <View style={styles.connectionRowHeader}>

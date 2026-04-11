@@ -112,89 +112,98 @@ async def start_oauth(
 
 @router.get("/oauth/callback")
 async def oauth_callback(state: str, code: Optional[str] = None, error: Optional[str] = None):
-    client_id, client_secret, redirect_uri = _get_google_client()
-    state_value = parse_signed_oauth_state(
-        state, purpose="google_calendar", google_client_secret=client_secret
-    )
-    if not state_value:
-        raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
+    try:
+        client_id, client_secret, redirect_uri = _get_google_client()
+        state_value = parse_signed_oauth_state(
+            state, purpose="google_calendar", google_client_secret=client_secret
+        )
+        if not state_value:
+            raise HTTPException(status_code=400, detail="Invalid or expired OAuth state")
 
-    if error:
-        log_event("google.oauth.error", state=state, error=error)
-        raise HTTPException(status_code=400, detail=f"Google OAuth error: {error}")
+        if error:
+            log_event("google.oauth.error", state=state, error=error)
+            raise HTTPException(status_code=400, detail=f"Google OAuth error: {error}")
 
-    data = {
-        "code": code,
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "redirect_uri": redirect_uri,
-        "grant_type": "authorization_code",
-    }
+        data = {
+            "code": code,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        }
 
-    token_resp = requests.post(TOKEN_URL, data=data, timeout=20)
-    if token_resp.status_code != 200:
-        log_event("google.oauth.token_failed", status=token_resp.status_code, body=token_resp.text)
-        raise HTTPException(status_code=500, detail="Failed to exchange code for tokens")
+        token_resp = requests.post(TOKEN_URL, data=data, timeout=20)
+        if token_resp.status_code != 200:
+            log_event("google.oauth.token_failed", status=token_resp.status_code, body=token_resp.text)
+            raise HTTPException(status_code=500, detail="Failed to exchange code for tokens")
 
-    token_data = token_resp.json()
-    access_token = token_data.get("access_token")
-    refresh_token = token_data.get("refresh_token")
-    expires_in = token_data.get("expires_in", 3600)
+        token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token")
+        expires_in = token_data.get("expires_in", 3600)
 
-    if not access_token:
-        raise HTTPException(status_code=500, detail="Missing access token from Google")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="Missing access token from Google")
 
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
-    scope = token_data.get("scope")
-    scope_list = scope.split(" ") if isinstance(scope, str) else DEFAULT_SCOPES
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+        scope = token_data.get("scope")
+        scope_list = scope.split(" ") if isinstance(scope, str) else DEFAULT_SCOPES
 
-    email = fetch_account_email(access_token) if access_token else None
+        email = fetch_account_email(access_token) if access_token else None
 
-    # Preserve existing refresh token if Google did not return a new one
-    user_id = state_value["user_id"]
-    family_id = state_value["family_id"]
-    existing = get_credential(user_id, family_id)
-    if existing and not refresh_token:
-        refresh_token = existing.get("refresh_token")
+        # Preserve existing refresh token if Google did not return a new one
+        user_id = state_value["user_id"]
+        family_id = state_value["family_id"]
+        existing = get_credential(user_id, family_id)
+        if existing and not refresh_token:
+            refresh_token = existing.get("refresh_token")
 
-    upsert_credential(
-        user_id,
-        family_id,
-        {
-            "account_email": email,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "expires_at": expires_at.isoformat(),
-            "scope": scope_list,
-        },
-    )
+        upsert_credential(
+            user_id,
+            family_id,
+            {
+                "account_email": email,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "expires_at": expires_at.isoformat(),
+                "scope": scope_list,
+            },
+        )
 
-    log_event("google.oauth.success", user_id=user_id, family_id=family_id)
+        log_event("google.oauth.success", user_id=user_id, family_id=family_id)
 
-    success_redirect = os.environ.get("GOOGLE_OAUTH_SUCCESS_REDIRECT")
-    if success_redirect:
-        return RedirectResponse(url=success_redirect)
+        success_redirect = os.environ.get("GOOGLE_OAUTH_SUCCESS_REDIRECT")
+        if success_redirect:
+            return RedirectResponse(url=success_redirect)
 
-    html = """
-    <html>
-      <head><title>Connected</title></head>
-      <body style=\"font-family: sans-serif; text-align: center; margin-top: 80px;\">
-        <h1>Google Calendar Connected</h1>
-        <p>You can close this window and return to Learnadoodle.</p>
-        <script>
-          // Notify parent window of successful connection
-          if (window.opener) {
-            window.opener.postMessage({ type: 'GOOGLE_OAUTH_SUCCESS' }, '*');
-            // Close window after a short delay
-            setTimeout(function() {
-              window.close();
-            }, 1500);
-          }
-        </script>
-      </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+        html = """
+        <html>
+          <head><title>Connected</title></head>
+          <body style=\"font-family: sans-serif; text-align: center; margin-top: 80px;\">
+            <h1>Google Calendar Connected</h1>
+            <p>You can close this window and return to Learnadoodle.</p>
+            <script>
+              // Notify parent window of successful connection
+              if (window.opener) {
+                window.opener.postMessage({ type: 'GOOGLE_OAUTH_SUCCESS' }, '*');
+                // Close window after a short delay
+                setTimeout(function() {
+                  window.close();
+                }, 1500);
+              }
+            </script>
+          </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log_event("google.oauth.callback.error", error=str(exc))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Google Calendar OAuth callback failed: {str(exc)}"
+        ) from exc
 
 
 @router.delete("/credential")
