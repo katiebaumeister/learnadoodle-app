@@ -1500,8 +1500,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     
     try {
       const apiBase = getAPIBase();
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      const { data: { session: initialSession } } = await supabase.auth.getSession();
+      let session = initialSession;
+      if (!session?.access_token) {
+        // Session can be stale (especially after idle/private browsing); try refresh once.
+        const { data: refreshedData } = await supabase.auth.refreshSession();
+        session = refreshedData?.session || null;
+      }
+      if (!session?.access_token) {
         toast.push('Please sign in to connect accounts', 'error');
         setConnectingProvider(null);
         return;
@@ -1529,10 +1535,15 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             'Google Drive OAuth',
             'width=600,height=700,scrollbars=yes,resizable=yes'
           );
+          if (!popup) {
+            setConnectingProvider(null);
+            toast.push('Popup blocked. Allow popups for learnadoodle.com and try again.', 'error');
+            return;
+          }
 
           // Poll for popup closure (user may have completed OAuth)
           const checkClosed = setInterval(() => {
-            if (popup.closed) {
+            if (popup && popup.closed) {
               clearInterval(checkClosed);
               // Reload connection status after a short delay
               setTimeout(() => {
