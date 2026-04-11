@@ -36,7 +36,7 @@ import PackWeekModal from './ai/PackWeekModal';
 import CatchUpModal from './ai/CatchUpModal';
 import SummarizeProgressModal from './ai/SummarizeProgressModal';
 import AIModal from './AIModal';
-import { proposeReschedule, getFamilyMembers, getOnboardingStatus, ensureFamily } from '../lib/apiClient';
+import { proposeReschedule, getFamilyMembers, getOnboardingStatus, ensureFamily, startGoogleCalendarOAuth } from '../lib/apiClient';
 import { getPlanHealth } from '../lib/services/academicYearClient';
 import AnalyticsDashboard from './analytics/AnalyticsDashboard';
 import ProgressReport from './analytics/ProgressReport';
@@ -487,6 +487,41 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [exportEndCalendarMonth, setExportEndCalendarMonth] = useState(() => new Date());
   const [exportModalSubjectId, setExportModalSubjectId] = useState(null);
   const [exportModalSubjectName, setExportModalSubjectName] = useState(null);
+
+  const handlePlannerProviderConnect = useCallback(async (providerId, providerLabel) => {
+    if (providerId !== 'google') {
+      Alert.alert('Coming soon', `${providerLabel} planner integration is coming soon.`);
+      return;
+    }
+
+    const resolvedFamilyId = familyId || session?.family_id || null;
+    if (!resolvedFamilyId) {
+      Alert.alert('Not ready yet', 'Please finish loading your family profile, then try again.');
+      return;
+    }
+
+    const { data, error } = await startGoogleCalendarOAuth({ familyId: resolvedFamilyId });
+    if (error || !data?.auth_url) {
+      Alert.alert('Connection failed', error?.message || 'Failed to start Google Calendar connection.');
+      return;
+    }
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const popup = window.open(
+        data.auth_url,
+        'Google Calendar OAuth',
+        'width=600,height=700,scrollbars=yes,resizable=yes'
+      );
+      if (!popup) {
+        Alert.alert('Popup blocked', 'Allow popups for learnadoodle.com and try again.');
+        return;
+      }
+      Alert.alert('Continue in popup', 'Complete Google Calendar connection in the popup window.');
+      return;
+    }
+
+    Alert.alert('Unsupported', 'Google Calendar connection is currently available in the web app.');
+  }, [familyId, session?.family_id]);
   
   // Get default view from localStorage
   const getDefaultView = () => {
@@ -4019,6 +4054,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   selectedChildren={selectedCalendarChildren}
                   onChildFilterChange={setSelectedCalendarChildren}
                   familyId={familyId}
+                  onConnectProvider={handlePlannerProviderConnect}
                 />
               </View>
             )}

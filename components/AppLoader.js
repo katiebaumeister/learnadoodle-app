@@ -17,6 +17,7 @@ const AVATAR_SOURCES = {
 
 const TOOLBAR_IDS = ['logo', 'home', 'planner', 'family', 'library', 'subject', 'more'];
 const HOME_POODLE_IDS = ['homePoodleLight', 'homePoodleNormal', 'homePoodleHeavy'];
+const CONNECTED_ACCOUNT_LOGO_IDS = ['googleLogo', 'dropboxLogo', 'notionLogo', 'youtubeLogo', 'quizletLogo', 'canvasLogo'];
 const SHELL_IMAGE_IDS = ['icon', ...TOOLBAR_IDS, ...HOME_POODLE_IDS, ...AVATAR_KEYS];
 
 const SHELL_SOURCES = {
@@ -57,9 +58,23 @@ const LANDING_PAGE_SOURCES = {
   landingSuperdoodle: require('../assets/superdoodlesection.png'),
 };
 
-/** Shell + sidebar + FAB + avatars + landing — decoded before AppLoader gate opens */
-const CRITICAL_WEB_IMAGE_IDS = [...SHELL_IMAGE_IDS, ...LANDING_PAGE_IDS];
-const CRITICAL_WEB_SOURCES = { ...SHELL_SOURCES, ...LANDING_PAGE_SOURCES };
+/** Connected accounts logos (Family -> Connected accounts) */
+const CONNECTED_ACCOUNT_LOGO_SOURCES = {
+  googleLogo: require('../assets/google.png'),
+  dropboxLogo: require('../assets/dropbox.png'),
+  notionLogo: require('../assets/notion.png'),
+  youtubeLogo: require('../assets/youtube.png'),
+  quizletLogo: require('../assets/quizlet.png'),
+  canvasLogo: require('../assets/canvas.png'),
+};
+
+/** Shell + sidebar + FAB + avatars + landing + connected-accounts logos */
+const CRITICAL_WEB_IMAGE_IDS = [...SHELL_IMAGE_IDS, ...LANDING_PAGE_IDS, ...CONNECTED_ACCOUNT_LOGO_IDS];
+const CRITICAL_WEB_SOURCES = {
+  ...SHELL_SOURCES,
+  ...LANDING_PAGE_SOURCES,
+  ...CONNECTED_ACCOUNT_LOGO_SOURCES,
+};
 
 const TOTAL_PRELOAD = CRITICAL_WEB_IMAGE_IDS.length;
 /** No extra delay after images decode — gate opens as soon as shell assets are loaded. */

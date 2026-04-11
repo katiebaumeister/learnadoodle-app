@@ -25,6 +25,7 @@ import MaterialDetailDrawer from './MaterialDetailDrawer';
 import QuickReviewModal from './QuickReviewModal';
 import AddMaterialModal from './AddMaterialModal';
 import MaterialDetailsModal from './MaterialDetailsModal';
+import GoogleDriveImportModal from '../settings/GoogleDriveImportModal';
 import { calculateReusePotential } from '../../lib/utils/materialReuseLogic';
 import { supabase } from '../../lib/supabase';
 import { shouldSuppressError } from '../../lib/apiClient';
@@ -133,6 +134,7 @@ export default function MaterialsLibrary({
   const [selectedMaterial, setSelectedMaterial] = useState(null);
   const [showDetailDrawer, setShowDetailDrawer] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showGoogleDriveImportModal, setShowGoogleDriveImportModal] = useState(false);
   const [addModalDefaultRole, setAddModalDefaultRole] = useState(null);
   const [editingMaterial, setEditingMaterial] = useState(null);
   const [viewingMaterial, setViewingMaterial] = useState(null);
@@ -1347,6 +1349,19 @@ export default function MaterialsLibrary({
                 </View>
               )}
             </View>
+            {connectedAccountProviders.includes('google') && (
+              <TouchableOpacity
+                style={styles.importDriveButton}
+                onPress={() => {
+                  if (!ensureCanEditMaterials()) return;
+                  setShowGoogleDriveImportModal(true);
+                }}
+                activeOpacity={0.8}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.importDriveButtonText}>Import Drive</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={styles.newButton}
               onPress={() => {
@@ -1815,6 +1830,21 @@ export default function MaterialsLibrary({
         children={children}
         onEdit={handleEditFromDetails}
         onDelete={handleDeleteFromDetails}
+      />
+
+      <GoogleDriveImportModal
+        visible={showGoogleDriveImportModal}
+        onClose={() => setShowGoogleDriveImportModal(false)}
+        children={effectiveChildren}
+        subjects={subjects}
+        onImported={async () => {
+          await loadMaterials(true);
+          setShowGoogleDriveImportModal(false);
+        }}
+        onImportedForCurriculum={async () => {
+          await loadMaterials(true);
+          setShowGoogleDriveImportModal(false);
+        }}
       />
 
       {/* Edit Material Modal */}
@@ -2551,6 +2581,21 @@ const styles = StyleSheet.create({
         cursor: 'pointer',
       },
     }),
+  },
+  importDriveButton: {
+    height: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  importDriveButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1e40af',
   },
   newButtonText: {
     fontSize: 14,

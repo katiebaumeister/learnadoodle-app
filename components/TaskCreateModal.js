@@ -8,7 +8,7 @@ import { logAddEvent } from '../app/services/plannerInstrumentation';
 import { getMaterials } from '../lib/services/materialsClient';
 import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
-import { apiRequest } from '../lib/apiClient';
+import { apiRequest, pushEventToGoogleCalendar } from '../lib/apiClient';
 import { defaultRequiresSubmissionHomeForEventType } from '../lib/eventRequiresSubmissionHome';
 import { Search } from 'lucide-react';
 import {
@@ -1996,6 +1996,20 @@ export default function TaskCreateModal({
         } catch (attachErr) {
           console.error('[TaskCreateModal] Error attaching standards:', attachErr);
           // Don't fail the whole creation, just log the error
+        }
+      }
+
+      if (
+        data?.id &&
+        placement === 'calendar' &&
+        Array.isArray(connectedCalendarTargets) &&
+        connectedCalendarTargets.includes('google')
+      ) {
+        const { error: syncError } = await pushEventToGoogleCalendar(data.id);
+        if (syncError) {
+          toast.push(`Saved, but Google Calendar sync failed: ${syncError.message || 'Unknown error'}`, 'error');
+        } else {
+          toast.push('Event also added to Google Calendar', 'success');
         }
       }
 

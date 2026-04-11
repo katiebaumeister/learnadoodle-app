@@ -55,6 +55,7 @@ export default function RightToolbar({
   selectedChildren = null,
   onChildFilterChange,
   familyId,
+  onConnectProvider,
 }) {
   const [hoveredTool, setHoveredTool] = useState(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
@@ -139,6 +140,11 @@ export default function RightToolbar({
           context="planner integration"
           direction="left"
           accessibilityLabel={tool.label}
+          onProviderSelect={(providerId, providerLabel) => {
+            if (typeof onConnectProvider === 'function') {
+              onConnectProvider(providerId, providerLabel);
+            }
+          }}
         />
       );
     }

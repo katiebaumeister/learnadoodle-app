@@ -11,7 +11,7 @@ import {
 import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
-import { formatDate, apiRequest } from '../../lib/apiClient';
+import { formatDate, apiRequest, pushEventToGoogleCalendar } from '../../lib/apiClient';
 import { getMaterials } from '../../lib/services/materialsClient';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import { logDeleteEvent } from '../../app/services/plannerInstrumentation';
@@ -3934,6 +3934,19 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           }
         } catch (attachErr) {
           console.error('[EventDetails] Error attaching standards:', attachErr);
+        }
+      }
+
+      if (
+        placement === 'calendar' &&
+        Array.isArray(connectedCalendarTargets) &&
+        connectedCalendarTargets.includes('google')
+      ) {
+        const { error: syncError } = await pushEventToGoogleCalendar(event.id);
+        if (syncError) {
+          toast.push(`Saved, but Google Calendar sync failed: ${syncError.message || 'Unknown error'}`, 'error');
+        } else {
+          toast.push('Event also synced to Google Calendar', 'success');
         }
       }
 
