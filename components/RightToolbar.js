@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, TouchableOpacity, StyleSheet, Platform, Text } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, Platform, Text, Alert } from 'react-native';
 import {
   Calendar,
   Target,
@@ -56,6 +56,7 @@ export default function RightToolbar({
   onChildFilterChange,
   familyId,
   onConnectProvider,
+  connectedProviderIds = [],
 }) {
   const [hoveredTool, setHoveredTool] = useState(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
@@ -140,10 +141,22 @@ export default function RightToolbar({
           context="planner integration"
           direction="left"
           accessibilityLabel={tool.label}
+          connectedProviderIds={connectedProviderIds}
           onProviderSelect={(providerId, providerLabel) => {
             if (typeof onConnectProvider === 'function') {
               onConnectProvider(providerId, providerLabel);
             }
+          }}
+          onAlreadyConnected={(providerId, providerLabel) => {
+            if (typeof onConnectProvider === 'function') {
+              onConnectProvider(providerId, providerLabel, { alreadyConnected: true });
+              return;
+            }
+            if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.alert === 'function') {
+              window.alert(`${providerLabel} is already connected.`);
+              return;
+            }
+            Alert.alert('Connected', `${providerLabel} is already connected.`);
           }}
         />
       );

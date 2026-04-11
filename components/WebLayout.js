@@ -36,7 +36,7 @@ import PackWeekModal from './ai/PackWeekModal';
 import CatchUpModal from './ai/CatchUpModal';
 import SummarizeProgressModal from './ai/SummarizeProgressModal';
 import AIModal from './AIModal';
-import { proposeReschedule, getFamilyMembers, getOnboardingStatus, ensureFamily, startGoogleCalendarOAuth } from '../lib/apiClient';
+import { proposeReschedule, getFamilyMembers, getOnboardingStatus, ensureFamily, startGoogleCalendarOAuth, getGoogleCalendarStatus, pullGoogleCalendar } from '../lib/apiClient';
 import { getPlanHealth } from '../lib/services/academicYearClient';
 import AnalyticsDashboard from './analytics/AnalyticsDashboard';
 import ProgressReport from './analytics/ProgressReport';
@@ -398,6 +398,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const filtersDropdownRef = useRef(null);
   const [selectedEventTypes, setSelectedEventTypes] = useState(null);
   const [selectedConnectedAccounts, setSelectedConnectedAccounts] = useState(null);
+  const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false);
   const connectedAccounts = useMemo(() => {
     const allowed = new Set(['google', 'apple']);
     const found = new Set();
@@ -444,6 +445,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
     return Array.from(found).sort((a, b) => a.localeCompare(b));
   }, [session?.connected_accounts, session?.integrations, session?.provider_connections]);
+  const plannerConnectedProviderIds = useMemo(() => {
+    const found = [];
+    if (googleCalendarConnected) found.push('google');
+    if (connectedAccounts.includes('apple')) found.push('apple');
+    return found;
+  }, [connectedAccounts, googleCalendarConnected]);
+
+  const refreshGoogleCalendarConnection = useCallback(async () => {
+    const { data, error } = await getGoogleCalendarStatus();
+    if (error) return;
+    setGoogleCalendarConnected(!!data?.connected);
+  }, []);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showViewDropdown, setShowViewDropdown] = useState(false);
   const viewDropdownHandlerRef = useRef(null);
@@ -463,6 +476,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const planWeekButtonRef = useRef(null);
   const viewChipLayouts = useRef({});
   const [viewChipSlider, setViewChipSlider] = useState({ left: 0, width: 0 });
+  const syncingGoogleCalendarPullRef = useRef(false);
+  const lastGoogleCalendarPullAtRef = useRef(0);
 
   // Planner export date-range modal
   const [showExportModal, setShowExportModal] = useState(false);
@@ -488,9 +503,84 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [exportModalSubjectId, setExportModalSubjectId] = useState(null);
   const [exportModalSubjectName, setExportModalSubjectName] = useState(null);
 
-  const handlePlannerProviderConnect = useCallback(async (providerId, providerLabel) => {
+  const syncGoogleCalendarIntoPlanner = useCallback(async ({ showAlert = false } = {}) => {
+    if (!googleCalendarConnected || syncingGoogleCalendarPullRef.current) return;
+    syncingGoogleCalendarPullRef.current = true;
+    try {
+      const syncStart = new Date(currentMonth);
+      syncStart.setMonth(syncStart.getMonth() - 1);
+      syncStart.setDate(1);
+      const syncEnd = new Date(currentMonth);
+      syncEnd.setMonth(syncEnd.getMonth() + 3);
+      syncEnd.setDate(0);
+      syncEnd.setHours(23, 59, 59, 999);
+      const { data, error } = await pullGoogleCalendar({
+        start: syncStart.toISOString(),
+        end: syncEnd.toISOString(),
+      });
+      if (error) {
+        if (showAlert) {
+          Alert.alert('Sync failed', error?.message || 'Failed to sync Google Calendar events.');
+        }
+        return;
+      }
+      lastGoogleCalendarPullAtRef.current = Date.now();
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar'));
+      }
+      if (showAlert) {
+        const imported = data?.imported || 0;
+        const updated = data?.updated || 0;
+        Alert.alert('Google Calendar synced', `Imported ${imported} and updated ${updated} event${imported + updated === 1 ? '' : 's'}.`);
+      }
+    } finally {
+      syncingGoogleCalendarPullRef.current = false;
+    }
+  }, [googleCalendarConnected, currentMonth]);
+
+  useEffect(() => {
+    if (!session || !familyId) return;
+    refreshGoogleCalendarConnection();
+  }, [session, familyId, refreshGoogleCalendarConnection]);
+
+  useEffect(() => {
+    if (activeTab !== 'planner' && activeTab !== 'calendar') return;
+    refreshGoogleCalendarConnection();
+    if (googleCalendarConnected) {
+      const now = Date.now();
+      const elapsed = now - lastGoogleCalendarPullAtRef.current;
+      if (elapsed > 120000) {
+        syncGoogleCalendarIntoPlanner();
+      }
+    }
+  }, [activeTab, googleCalendarConnected, refreshGoogleCalendarConnection, syncGoogleCalendarIntoPlanner]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const handleOAuthMessage = (event) => {
+      const type = event?.data?.type;
+      if (type === 'GOOGLE_OAUTH_SUCCESS' || type === 'GOOGLE_DRIVE_OAUTH_SUCCESS') {
+        refreshGoogleCalendarConnection();
+        setTimeout(() => {
+          syncGoogleCalendarIntoPlanner();
+        }, 900);
+      }
+    };
+    window.addEventListener('message', handleOAuthMessage);
+    return () => window.removeEventListener('message', handleOAuthMessage);
+  }, [refreshGoogleCalendarConnection, syncGoogleCalendarIntoPlanner]);
+
+  const handlePlannerProviderConnect = useCallback(async (providerId, providerLabel, options = {}) => {
     if (providerId !== 'google') {
       Alert.alert('Coming soon', `${providerLabel} planner integration is coming soon.`);
+      return;
+    }
+    if (googleCalendarConnected) {
+      if (options?.alreadyConnected) {
+        await syncGoogleCalendarIntoPlanner({ showAlert: true });
+        return;
+      }
+      Alert.alert('Connected', 'Google Calendar is already connected.');
       return;
     }
 
@@ -521,7 +611,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
 
     Alert.alert('Unsupported', 'Google Calendar connection is currently available in the web app.');
-  }, [familyId, session?.family_id]);
+  }, [familyId, session?.family_id, googleCalendarConnected, syncGoogleCalendarIntoPlanner]);
   
   // Get default view from localStorage
   const getDefaultView = () => {
@@ -4054,6 +4144,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   selectedChildren={selectedCalendarChildren}
                   onChildFilterChange={setSelectedCalendarChildren}
                   familyId={familyId}
+                  connectedProviderIds={plannerConnectedProviderIds}
                   onConnectProvider={handlePlannerProviderConnect}
                 />
               </View>

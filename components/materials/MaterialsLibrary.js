@@ -28,7 +28,7 @@ import MaterialDetailsModal from './MaterialDetailsModal';
 import GoogleDriveImportModal from '../settings/GoogleDriveImportModal';
 import { calculateReusePotential } from '../../lib/utils/materialReuseLogic';
 import { supabase } from '../../lib/supabase';
-import { shouldSuppressError } from '../../lib/apiClient';
+import { getIntegrationStatus, shouldSuppressError } from '../../lib/apiClient';
 import { DOCUMENT_ROLE_CHIPS, normalizeMaterial, normalizeUpload, matchesRole, roleLabel, mediaTypeLabel } from '../../lib/docs/roles';
 import { useToast } from '../Toast';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
@@ -231,9 +231,34 @@ export default function MaterialsLibrary({
     });
     return Array.from(found);
   }, [session?.connected_accounts, session?.integrations, session?.provider_connections]);
+  const [resolvedConnectedAccountProviders, setResolvedConnectedAccountProviders] = useState([]);
+
+  useEffect(() => {
+    setResolvedConnectedAccountProviders(connectedAccountProviders);
+  }, [connectedAccountProviders]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshConnectedProviders = async () => {
+      const { data, error } = await getIntegrationStatus();
+      if (cancelled || error || !Array.isArray(data)) return;
+      const liveProviders = data
+        .filter((integration) => integration?.connected)
+        .map((integration) => String(integration?.provider || '').trim().toLowerCase())
+        .filter(Boolean);
+      const merged = Array.from(new Set([...connectedAccountProviders, ...liveProviders])).sort((a, b) =>
+        a.localeCompare(b)
+      );
+      if (!cancelled) setResolvedConnectedAccountProviders(merged);
+    };
+    refreshConnectedProviders();
+    return () => {
+      cancelled = true;
+    };
+  }, [connectedAccountProviders]);
 
   const handleConnectionChipPress = (providerValue) => {
-    if (!connectedAccountProviders.includes(providerValue)) {
+    if (!resolvedConnectedAccountProviders.includes(providerValue)) {
       toast.push(
         'No connected accounts yet, please connect from the Family tab under Connected Accounts',
         'info'
@@ -1349,7 +1374,7 @@ export default function MaterialsLibrary({
                 </View>
               )}
             </View>
-            {connectedAccountProviders.includes('google') && (
+            {resolvedConnectedAccountProviders.includes('google') && (
               <TouchableOpacity
                 style={styles.importDriveButton}
                 onPress={() => {
@@ -1819,6 +1844,7 @@ export default function MaterialsLibrary({
         children={children}
         allSubjects={allSubjectsForModal}
         defaultRole={addModalDefaultRole}
+        connectedProviderIds={resolvedConnectedAccountProviders}
       />
 
       {/* Material Details Modal (View Mode) */}
@@ -1895,6 +1921,7 @@ export default function MaterialsLibrary({
         children={children}
         material={editingMaterial}
         allSubjects={subjects}
+        connectedProviderIds={resolvedConnectedAccountProviders}
       />
 
       {/* Review Modal */}

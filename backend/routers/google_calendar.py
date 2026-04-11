@@ -1,7 +1,7 @@
 import os
 import urllib.parse
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -27,6 +27,7 @@ router = APIRouter(prefix="/api/google/calendar", tags=["google-calendar"])
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 STATE_TTL_SECONDS = 600
+GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 
 
 def _get_google_client() -> tuple[str, str, str]:
@@ -231,6 +232,38 @@ class SyncRequest(BaseModel):
     limit: int = Field(50, ge=1, le=200)
 
 
+class PullRequest(BaseModel):
+    start: Optional[str] = Field(None, description="ISO timestamp start (inclusive)")
+    end: Optional[str] = Field(None, description="ISO timestamp end (inclusive)")
+    max_pages: int = Field(5, ge=1, le=20)
+
+
+def _normalize_google_event_timestamps(event_payload: Dict[str, Any]) -> tuple[str, str]:
+    start = event_payload.get("start") or {}
+    end = event_payload.get("end") or {}
+    start_dt = start.get("dateTime")
+    end_dt = end.get("dateTime")
+    if start_dt and end_dt:
+        return start_dt, end_dt
+
+    start_date = start.get("date")
+    end_date = end.get("date")
+    if not start_date:
+        raise RuntimeError("Google event missing start date")
+
+    # Google all-day events use end.date as exclusive. Keep imported range readable in planner.
+    start_iso = f"{start_date}T09:00:00+00:00"
+    if end_date:
+        try:
+            last_day = datetime.fromisoformat(end_date) - timedelta(days=1)
+            end_iso = f"{last_day.date().isoformat()}T10:00:00+00:00"
+        except Exception:  # noqa: BLE001
+            end_iso = f"{start_date}T10:00:00+00:00"
+    else:
+        end_iso = f"{start_date}T10:00:00+00:00"
+    return start_iso, end_iso
+
+
 @router.post("/push_event")
 async def push_event(body: PushEventRequest, user=Depends(get_current_user), _: None = Depends(rate_limiter)):
     family_id = get_family_id_for_user(user["id"])
@@ -313,6 +346,130 @@ async def sync_events(body: SyncRequest, user=Depends(get_current_user), _: None
     }).execute()
 
     return {"synced": len(results), "failures": failures, "results": results}
+
+
+@router.post("/pull")
+async def pull_events(body: PullRequest, user=Depends(get_current_user), _: None = Depends(rate_limiter)):
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id:
+        raise HTTPException(status_code=400, detail="Family not found")
+
+    credential = get_credential(user["id"], family_id)
+    if not credential:
+        raise HTTPException(status_code=400, detail="Google Calendar not connected")
+
+    credential = ensure_access_token(credential)
+    access_token = credential.get("access_token")
+    if not access_token:
+        raise HTTPException(status_code=500, detail="Missing Google access token")
+
+    time_min = body.start or (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    time_max = body.end or (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+    page_token = None
+    page_count = 0
+    imported = 0
+    updated = 0
+    skipped = 0
+
+    supabase = get_admin_client()
+    while page_count < body.max_pages:
+        params: Dict[str, Any] = {
+            "singleEvents": "true",
+            "orderBy": "startTime",
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "maxResults": 250,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        resp = requests.get(GOOGLE_EVENTS_URL, headers=headers, params=params, timeout=20)
+        if resp.status_code != 200:
+            log_event("google.calendar.pull_failed", status=resp.status_code, body=resp.text)
+            raise HTTPException(status_code=502, detail="Failed to fetch Google Calendar events")
+
+        payload = resp.json() or {}
+        items = payload.get("items") or []
+        for item in items:
+            if item.get("status") == "cancelled":
+                skipped += 1
+                continue
+
+            google_event_id = item.get("id")
+            if not google_event_id:
+                skipped += 1
+                continue
+
+            try:
+                start_ts, end_ts = _normalize_google_event_timestamps(item)
+            except Exception:  # noqa: BLE001
+                skipped += 1
+                continue
+
+            event_values = {
+                "family_id": family_id,
+                "child_id": None,
+                "child_ids": [],
+                "title": item.get("summary") or "Google Calendar event",
+                "description": item.get("description") or None,
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+                "status": "scheduled",
+                "source": "google",
+                "event_type": "Other",
+                "is_placeholder": False,
+            }
+
+            link_resp = (
+                supabase
+                .table("google_calendar_event_links")
+                .select("id, event_id")
+                .eq("credential_id", credential["id"])
+                .eq("google_event_id", google_event_id)
+                .maybe_single()
+                .execute()
+            )
+            link_data = getattr(link_resp, "data", None)
+            existing_link = link_data if link_data else None
+
+            if existing_link and existing_link.get("event_id"):
+                supabase.table("events").update(event_values).eq("id", existing_link["event_id"]).execute()
+                updated += 1
+            else:
+                created_resp = supabase.table("events").insert(event_values).execute()
+                created_data = getattr(created_resp, "data", None) or []
+                if not created_data:
+                    skipped += 1
+                    continue
+                created_event_id = created_data[0].get("id")
+                if not created_event_id:
+                    skipped += 1
+                    continue
+                supabase.table("google_calendar_event_links").upsert({
+                    "event_id": created_event_id,
+                    "credential_id": credential["id"],
+                    "google_event_id": google_event_id,
+                    "synced_at": datetime.now(timezone.utc).isoformat(),
+                }, on_conflict="event_id,credential_id").execute()
+                imported += 1
+
+        page_count += 1
+        page_token = payload.get("nextPageToken")
+        if not page_token:
+            break
+
+    supabase.table("google_calendar_sync_log").insert({
+        "credential_id": credential["id"],
+        "status": "success",
+        "message": f"Pulled Google events (imported={imported}, updated={updated}, skipped={skipped})",
+        "inserted_events": imported,
+        "updated_events": updated,
+        "skipped_events": skipped,
+    }).execute()
+
+    return {"imported": imported, "updated": updated, "skipped": skipped}
 
 
 @router.post("/refresh-token")

@@ -18,9 +18,15 @@ export default function ProviderConnectButton({
   activeIconColor = '#2563eb',
   triggerIconSize = 16,
   onProviderSelect = null,
+  connectedProviderIds = [],
+  onAlreadyConnected = null,
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
+  const normalizedConnectedProviderIds = Array.isArray(connectedProviderIds)
+    ? connectedProviderIds.map((value) => String(value || '').trim().toLowerCase())
+    : [];
+  const hasAnyConnectedProvider = normalizedConnectedProviderIds.length > 0;
 
   useEffect(() => {
     if (!open || Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
@@ -49,6 +55,21 @@ export default function ProviderConnectButton({
 
   const handleSelect = (provider) => {
     setOpen(false);
+    const providerKey = String(provider.id || '').trim().toLowerCase();
+    const isAlreadyConnected = normalizedConnectedProviderIds.includes(providerKey);
+    if (isAlreadyConnected) {
+      if (typeof onAlreadyConnected === 'function') {
+        onAlreadyConnected(provider.id, provider.label);
+        return;
+      }
+      const message = `${provider.label} is already connected.`;
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.alert === 'function') {
+        window.alert(message);
+      } else {
+        Alert.alert('Connected', message);
+      }
+      return;
+    }
     if (typeof onProviderSelect === 'function') {
       onProviderSelect(provider.id, provider.label);
       return;
@@ -59,14 +80,14 @@ export default function ProviderConnectButton({
   return (
     <View ref={containerRef} style={styles.anchor}>
       <TouchableOpacity
-        style={[styles.trigger, triggerStyle, open && triggerActiveStyle]}
+        style={[styles.trigger, triggerStyle, (open || hasAnyConnectedProvider) && triggerActiveStyle]}
         onPress={() => setOpen((prev) => !prev)}
         activeOpacity={0.85}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
       >
-        <Plug size={triggerIconSize} color={open ? activeIconColor : iconColor} />
+        <Plug size={triggerIconSize} color={(open || hasAnyConnectedProvider) ? activeIconColor : iconColor} />
       </TouchableOpacity>
       {open && (
         <View
@@ -78,10 +99,12 @@ export default function ProviderConnectButton({
         >
           {PROVIDERS.map((provider) => {
             const Icon = provider.Icon;
+            const providerKey = String(provider.id || '').trim().toLowerCase();
+            const isConnected = normalizedConnectedProviderIds.includes(providerKey);
             return (
               <TouchableOpacity
                 key={provider.id}
-                style={styles.providerButton}
+                style={[styles.providerButton, isConnected && styles.providerButtonConnected]}
                 onPress={() => handleSelect(provider)}
                 activeOpacity={0.8}
                 accessibilityRole="button"
@@ -148,5 +171,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  providerButtonConnected: {
+    borderColor: '#93c5fd',
+    backgroundColor: '#eff6ff',
   },
 });

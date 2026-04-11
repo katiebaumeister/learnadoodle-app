@@ -111,6 +111,7 @@ export default function AddMaterialModal({
   defaultChildIds = [], // Optional array of child IDs to default-select (for multi-child subjects)
   /** Pre-fill link URL when opening add mode (e.g. from chat / deep link) */
   defaultProviderUrl = null,
+  connectedProviderIds = [],
 }) {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -1221,6 +1222,10 @@ export default function AddMaterialModal({
                   triggerStyle={styles.googleConnectChip}
                   context="Drive/Docs integration"
                   accessibilityLabel="Connect provider"
+                  connectedProviderIds={connectedProviderIds}
+                  onAlreadyConnected={(_providerId, providerLabel) => {
+                    Alert.alert('Connected', `${providerLabel} is already connected.`);
+                  }}
                 />
               </View>
             </View>
