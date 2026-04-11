@@ -381,18 +381,27 @@ async def pull_events(body: PullRequest, user=Depends(get_current_user), _: None
     skipped = 0
 
     supabase = get_admin_client()
-    children_resp = (
-        supabase
-        .table("child")
-        .select("id")
-        .eq("family_id", family_id)
-        .execute()
-    )
-    family_child_ids = [
-        row.get("id")
-        for row in (getattr(children_resp, "data", None) or [])
-        if row.get("id")
-    ]
+    family_child_ids: List[str] = []
+    # Schema differs between environments (`child` vs `children`), so try both.
+    for table_name in ("child", "children"):
+        try:
+            children_resp = (
+                supabase
+                .table(table_name)
+                .select("id")
+                .eq("family_id", family_id)
+                .execute()
+            )
+            ids = [
+                row.get("id")
+                for row in (getattr(children_resp, "data", None) or [])
+                if row.get("id")
+            ]
+            if ids:
+                family_child_ids = ids
+                break
+        except Exception as child_lookup_error:  # noqa: BLE001
+            log_event("google.calendar.pull.child_lookup_failed", table=table_name, error=str(child_lookup_error))
 
     while page_count < body.max_pages:
         params: Dict[str, Any] = {
