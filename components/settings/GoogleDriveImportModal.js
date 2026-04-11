@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -35,12 +35,19 @@ export default function GoogleDriveImportModal({
   onImportedForCurriculum,
 }) {
   const toast = useToast();
+  const toastRef = useRef(toast);
+  const lastLoadErrorRef = useRef('');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [importingId, setImportingId] = useState(null);
   const [selectedChildId, setSelectedChildId] = useState(children[0]?.id || null);
   const [selectedSubjectId, setSelectedSubjectId] = useState(subjects[0]?.id || null);
   const [mode, setMode] = useState('library');
+
+  useEffect(() => {
+    toastRef.current = toast;
+  }, [toast]);
 
   useEffect(() => {
     if (!visible) return;
@@ -55,17 +62,24 @@ export default function GoogleDriveImportModal({
       const { data, error } = await listGoogleDriveFiles({ pageSize: 30 });
       if (error) throw error;
       setFiles(Array.isArray(data) ? data : []);
+      setLoadError('');
+      lastLoadErrorRef.current = '';
     } catch (err) {
-      toast.push(err?.message || 'Could not load Google Drive files', 'error');
+      const message = err?.message || 'Could not load Google Drive files';
+      setLoadError(message);
+      if (lastLoadErrorRef.current !== message) {
+        toastRef.current?.push(message, 'error');
+        lastLoadErrorRef.current = message;
+      }
       setFiles([]);
     } finally {
       setLoading(false);
     }
-  }, [toast, visible]);
+  }, [visible]);
 
   useEffect(() => {
     if (visible) loadFiles();
-  }, [visible, loadFiles]);
+  }, [visible]);
 
   const subjectKey = useMemo(() => {
     const match = (subjects || []).find((s) => String(s.id) === String(selectedSubjectId));
@@ -180,6 +194,13 @@ export default function GoogleDriveImportModal({
           </View>
 
           <ScrollView style={styles.filesList} contentContainerStyle={styles.filesListContent}>
+            {!loading && !!loadError ? (
+              <View style={styles.errorState}>
+                <Text style={styles.errorTitle}>Unable to load Google files</Text>
+                <Text style={styles.errorText}>{loadError}</Text>
+              </View>
+            ) : null}
+
             {loading ? (
               <View style={styles.loadingState}>
                 <ActivityIndicator size="small" color={colors.accent || '#4F46E5'} />
@@ -420,5 +441,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     color: '#6b7280',
+  },
+  errorState: {
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+    borderRadius: 16,
+    padding: 14,
+  },
+  errorTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#991b1b',
+    marginBottom: 4,
+  },
+  errorText: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#7f1d1d',
   },
 });
