@@ -100,6 +100,13 @@ _LOG_LEVEL = os.environ.get("LOG_LEVEL", "warn").lower()
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
 allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
 
+# Always include canonical production web origins unless wildcard is used.
+# This prevents subtle prod breakage when only one variant is configured.
+if "*" not in allowed_origins:
+    for origin in ("https://learnadoodle.com", "https://www.learnadoodle.com"):
+        if origin not in allowed_origins:
+            allowed_origins.append(origin)
+
 # If no origins specified, fall back to common local development hosts
 # For development, allow all localhost origins
 if not allowed_origins:

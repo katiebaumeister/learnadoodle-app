@@ -260,7 +260,12 @@ async def get_files(
     if not credential:
         raise HTTPException(status_code=400, detail="Connect Google Drive first")
 
-    files = list_drive_files(credential, page_size=page_size)
+    try:
+        files = list_drive_files(credential, page_size=page_size)
+    except RuntimeError as exc:
+        # Surface the actionable Google API failure to the client instead of opaque 500s.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     out = []
     for row in files:
         owners = row.get("owners") or []

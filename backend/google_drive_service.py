@@ -160,7 +160,27 @@ def list_drive_files(credential: Dict[str, Any], page_size: int = 25) -> List[Di
     )
     if resp.status_code != 200:
         log_event("google.drive.files.list_failed", status=resp.status_code, body=resp.text)
-        raise RuntimeError("Failed to list Google Drive files")
+        detail = None
+        try:
+            payload = resp.json() or {}
+            err = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(err, dict):
+                detail = err.get("message")
+            elif isinstance(err, str):
+                detail = err
+        except Exception:
+            detail = None
+
+        if resp.status_code in (401, 403):
+            raise RuntimeError(
+                f"Google Drive API rejected file listing ({resp.status_code})"
+                + (f": {detail}" if detail else "")
+            )
+
+        raise RuntimeError(
+            f"Failed to list Google Drive files (status {resp.status_code})"
+            + (f": {detail}" if detail else "")
+        )
     return resp.json().get("files", [])
 
 
