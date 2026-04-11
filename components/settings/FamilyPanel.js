@@ -398,6 +398,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const youtubeLogo = require('../../assets/youtube.png');
   const quizletLogo = require('../../assets/quizlet.png');
   const canvasLogo = require('../../assets/canvas.png');
+  const appleLogo = require('../../assets/apple.png');
 
   // Update local state when prop changes
   useEffect(() => {
@@ -1373,8 +1374,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       key: 'apple_calendar',
       label: 'Apple Calendar',
       description: 'Subscribe your family calendar feed in Apple Calendar.',
-      icon: CalendarPlus,
-      iconColor: '#0f172a',
+      image: appleLogo,
     },
   ];
 
