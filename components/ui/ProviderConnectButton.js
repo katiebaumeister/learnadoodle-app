@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, Platform, Alert } from 'react-native';
-import { Plug, Chrome, Apple } from 'lucide-react';
+import { View, TouchableOpacity, StyleSheet, Platform, Alert, Modal, Text } from 'react-native';
+import { Plug, Chrome, Apple, Check, X } from 'lucide-react';
 
 const PROVIDERS = [
   { id: 'google', label: 'Google', Icon: Chrome, color: '#2563eb' },
@@ -22,11 +22,11 @@ export default function ProviderConnectButton({
   onAlreadyConnected = null,
 }) {
   const [open, setOpen] = useState(false);
+  const [connectedModalProviderLabel, setConnectedModalProviderLabel] = useState(null);
   const containerRef = useRef(null);
   const normalizedConnectedProviderIds = Array.isArray(connectedProviderIds)
     ? connectedProviderIds.map((value) => String(value || '').trim().toLowerCase())
     : [];
-  const hasAnyConnectedProvider = normalizedConnectedProviderIds.length > 0;
 
   useEffect(() => {
     if (!open || Platform.OS !== 'web' || typeof document === 'undefined') return undefined;
@@ -60,14 +60,8 @@ export default function ProviderConnectButton({
     if (isAlreadyConnected) {
       if (typeof onAlreadyConnected === 'function') {
         onAlreadyConnected(provider.id, provider.label);
-        return;
       }
-      const message = `${provider.label} is already connected.`;
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.alert === 'function') {
-        window.alert(message);
-      } else {
-        Alert.alert('Connected', message);
-      }
+      setConnectedModalProviderLabel(provider.label);
       return;
     }
     if (typeof onProviderSelect === 'function') {
@@ -80,14 +74,14 @@ export default function ProviderConnectButton({
   return (
     <View ref={containerRef} style={styles.anchor}>
       <TouchableOpacity
-        style={[styles.trigger, triggerStyle, (open || hasAnyConnectedProvider) && triggerActiveStyle]}
+        style={[styles.trigger, triggerStyle, open && triggerActiveStyle]}
         onPress={() => setOpen((prev) => !prev)}
         activeOpacity={0.85}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
       >
-        <Plug size={triggerIconSize} color={(open || hasAnyConnectedProvider) ? activeIconColor : iconColor} />
+        <Plug size={triggerIconSize} color={open ? activeIconColor : iconColor} />
       </TouchableOpacity>
       {open && (
         <View
@@ -112,11 +106,57 @@ export default function ProviderConnectButton({
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <Icon size={16} color={provider.color} />
+                {isConnected && (
+                  <View style={styles.connectedCheckBadge}>
+                    <Check size={10} color="#ffffff" strokeWidth={2.6} />
+                  </View>
+                )}
               </TouchableOpacity>
             );
           })}
         </View>
       )}
+      <Modal
+        visible={!!connectedModalProviderLabel}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setConnectedModalProviderLabel(null)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setConnectedModalProviderLabel(null)}
+        >
+          <TouchableOpacity
+            style={styles.modalSheet}
+            activeOpacity={1}
+            onPress={() => {}}
+          >
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Already connected</Text>
+              <TouchableOpacity
+                onPress={() => setConnectedModalProviderLabel(null)}
+                style={styles.modalCloseButton}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={18} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.modalText}>
+              {connectedModalProviderLabel} is already connected for this family.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalPrimaryButton}
+                onPress={() => setConnectedModalProviderLabel(null)}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.modalPrimaryButtonText}>Got it</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -175,5 +215,86 @@ const styles = StyleSheet.create({
   providerButtonConnected: {
     borderColor: '#93c5fd',
     backgroundColor: '#eff6ff',
+  },
+  connectedCheckBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#22c55e',
+    borderWidth: 1.5,
+    borderColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  modalSheet: {
+    width: '100%',
+    maxWidth: 430,
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: 20,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 20px 40px rgba(15, 23, 42, 0.22)',
+    }),
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  modalCloseButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#4b5563',
+    marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  modalPrimaryButton: {
+    backgroundColor: '#85C4F2',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 4px 10px rgba(133,196,242,0.35)',
+    }),
+  },
+  modalPrimaryButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

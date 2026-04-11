@@ -1223,9 +1223,6 @@ export default function AddMaterialModal({
                   context="Drive/Docs integration"
                   accessibilityLabel="Connect provider"
                   connectedProviderIds={connectedProviderIds}
-                  onAlreadyConnected={(_providerId, providerLabel) => {
-                    Alert.alert('Connected', `${providerLabel} is already connected.`);
-                  }}
                 />
               </View>
             </View>

@@ -1375,6 +1375,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       label: 'Apple Calendar',
       description: 'Subscribe your family calendar feed in Apple Calendar.',
       image: appleLogo,
+      imageStyle: styles.connectionRowImageApple,
+      imageResizeMode: 'cover',
     },
   ];
 
@@ -1822,7 +1824,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <View style={styles.connectionsList}>
               {CONNECTION_PROVIDERS.filter(p =>
                 ['google', 'dropbox', 'notion'].includes(p.key)
-              ).map(({ key, label, description, image, icon: Icon, iconColor }, index, array) => {
+              ).map(({ key, label, description, image, imageStyle, imageResizeMode, icon: Icon, iconColor }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
                 const isRecommended = key === 'google';
@@ -1843,7 +1845,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       <View style={styles.connectionRowLeft}>
                         <View style={styles.connectionRowIconContainer}>
                           {image ? (
-                            <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                            <Image source={image} style={[styles.connectionRowImage, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
                           ) : Icon ? (
                             <Icon size={20} color={iconColor || '#0f172a'} />
                           ) : null}
@@ -1927,7 +1929,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <View style={styles.connectionsSectionDivider} />
 
             <View style={styles.connectionsList}>
-              {PLANNING_CONNECTION_PROVIDERS.map(({ key, label, description, image, icon: Icon, iconColor }, index, array) => {
+              {PLANNING_CONNECTION_PROVIDERS.map(({ key, label, description, image, imageStyle, imageResizeMode, icon: Icon, iconColor }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
                 const isRecommended = key === 'google_calendar';
@@ -1948,7 +1950,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       <View style={styles.connectionRowLeft}>
                         <View style={styles.connectionRowIconContainer}>
                           {image ? (
-                            <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                            <Image source={image} style={[styles.connectionRowImage, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
                           ) : Icon ? (
                             <Icon size={20} color={iconColor || '#0f172a'} />
                           ) : null}
@@ -2031,7 +2033,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <View style={styles.connectionsList}>
               {CONNECTION_PROVIDERS.filter(p =>
                 ['youtube', 'quizlet', 'canvas'].includes(p.key)
-              ).map(({ key, label, description, image, icon: Icon, iconColor }, index, array) => {
+              ).map(({ key, label, description, image, imageStyle, imageResizeMode, icon: Icon, iconColor }, index, array) => {
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
                 const isHovered = hoveredConnectionKey === key;
@@ -2051,7 +2053,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       <View style={styles.connectionRowLeft}>
                         <View style={styles.connectionRowIconContainer}>
                           {image ? (
-                            <Image source={image} style={styles.connectionRowImage} resizeMode="contain" />
+                            <Image source={image} style={[styles.connectionRowImage, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
                           ) : Icon ? (
                             <Icon size={20} color={iconColor || '#0f172a'} />
                           ) : null}
@@ -5441,6 +5443,10 @@ function createStyles(tokens) {
     connectionRowImage: {
       width: 28,
       height: 28,
+    },
+    connectionRowImageApple: {
+      width: 34,
+      height: 34,
     },
     connectionRowText: {
       flex: 1,

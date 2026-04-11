@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, TouchableOpacity, StyleSheet, Platform, Text, Alert } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, Platform, Text } from 'react-native';
 import {
   Calendar,
   Target,
@@ -150,13 +150,7 @@ export default function RightToolbar({
           onAlreadyConnected={(providerId, providerLabel) => {
             if (typeof onConnectProvider === 'function') {
               onConnectProvider(providerId, providerLabel, { alreadyConnected: true });
-              return;
             }
-            if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.alert === 'function') {
-              window.alert(`${providerLabel} is already connected.`);
-              return;
-            }
-            Alert.alert('Connected', `${providerLabel} is already connected.`);
           }}
         />
       );
