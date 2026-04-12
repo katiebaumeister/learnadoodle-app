@@ -16,23 +16,11 @@ import {
   TextInput,
   Platform,
 } from 'react-native';
-import { X, RefreshCw, Check, Clock } from 'lucide-react';
+import { X, Check, Clock } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { previewRebalance, previewRebalanceRhythm, applyRebalanceMoves, checkFeatureFlags } from '../../lib/services/yearClient';
-import { acceptSuggestion } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
-
-function defaultScheduleDayYmd(suggestion, weekStartYmd) {
-  const td = suggestion.targetDay;
-  if (td) return String(td).slice(0, 10);
-  if (weekStartYmd) return String(weekStartYmd).slice(0, 10);
-  return new Date().toISOString().slice(0, 10);
-}
-
-function dayYmdToStartIso(dayYmd, hour = 9, minute = 0) {
-  const d = new Date(`${dayYmd}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`);
-  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
-}
+import { t } from '../../lib/i18n/strings';
 
 /** Prefer `child_id`; else first `child_ids` entry (overlaps / flexible assignees). */
 function effectiveChildIdFromEventRow(row) {
@@ -68,6 +56,7 @@ export default function RebalanceModal({
   const [schedulingId, setSchedulingId] = useState(null);
   const [howWorksOpen, setHowWorksOpen] = useState(false);
   const [closeHovered, setCloseHovered] = useState(false);
+  const autoRhythmPreviewRanRef = React.useRef(false);
 
   React.useEffect(() => {
     if (!visible) setCloseHovered(false);
@@ -395,27 +384,6 @@ export default function RebalanceModal({
     }
   };
 
-  const handleScheduleSuggestion = async (suggestion, weekStartYmd) => {
-    const sid = suggestion?.id;
-    if (!sid) return;
-    setSchedulingId(`sug:${sid}`);
-    try {
-      const dayYmd = defaultScheduleDayYmd(suggestion, weekStartYmd);
-      const startTs = dayYmdToStartIso(dayYmd);
-      const { error } = await acceptSuggestion({ id: sid, startTs });
-      if (error) throw error;
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshCalendar'));
-      }
-      onSuccess?.();
-      await refreshRhythmInsights();
-    } catch (err) {
-      Alert.alert('Could not schedule', err.message || 'Try again from the planner.');
-    } finally {
-      setSchedulingId(null);
-    }
-  };
-
   const handleScheduleBacklogEvent = async (row, weekStartYmd) => {
     const eid = row?.id;
     if (!eid) return;
@@ -455,7 +423,7 @@ export default function RebalanceModal({
     }
   };
 
-  const handleRhythmPreview = async () => {
+  const handleRhythmPreview = React.useCallback(async () => {
     if (!familyId) {
       Alert.alert('Error', 'Family is required to analyze the schedule.');
       return;
@@ -486,6 +454,49 @@ export default function RebalanceModal({
     } finally {
       setPreviewing(false);
     }
+  }, [familyId]);
+  React.useEffect(() => {
+    if (!visible) {
+      autoRhythmPreviewRanRef.current = false;
+      return;
+    }
+    const inSubjectShiftMode = !!(event?.id && yearPlanId);
+    if (inSubjectShiftMode || !familyId || autoRhythmPreviewRanRef.current) return;
+    autoRhythmPreviewRanRef.current = true;
+    handleRhythmPreview();
+  }, [visible, event, yearPlanId, familyId, handleRhythmPreview]);
+  const handleOpenPlanningPreferencesFromRhythm = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      handleClose();
+      setTimeout(() => {
+        if (typeof window.__ldSearchNavigate === 'function') {
+          window.__ldSearchNavigate('settings', 'planner-settings');
+        }
+      }, 40);
+      return;
+    }
+    handleClose();
+  };
+  const handleOpenBacklogFromRhythm = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      handleClose();
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
+        window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'backlog' } }));
+      }, 40);
+      return;
+    }
+    handleClose();
+  };
+  const handleOpenMonthFromRhythm = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      handleClose();
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
+      }, 40);
+      return;
+    }
+    handleClose();
   };
 
   if (!visible) return null;
@@ -512,8 +523,27 @@ export default function RebalanceModal({
     !!rhythmInsights &&
     (moves.length > 0 ||
       (rhythmInsights.backlogHints || []).length > 0 ||
-      (rhythmInsights.planSuggestionsPreview || []).length > 0 ||
       (rhythmInsights.backlogCount || 0) > 0);
+  const noActiveTargetInWindow = !!rhythmInsights && plannerSynopsis?.hasActiveTargets === false;
+  const noOpenItemsInWindow = !!rhythmInsights && (rhythmInsights.backlogCount || 0) === 0;
+  const noMovablePatternInWindow =
+    !!rhythmInsights &&
+    moves.length === 0 &&
+    Number(plannerSynopsis?.scheduledHrsHorizon || 0) < 4;
+  const hasMissingRhythmInputs = noActiveTargetInWindow || noOpenItemsInWindow || noMovablePatternInWindow;
+  const showCombinedMissingInputsCard = hasMissingRhythmInputs;
+  const plannerLoadBalanceSentence = noMovablePatternInWindow
+    ? "You don't have enough scheduled lessons in this window to compare workload across weekdays."
+    : "Your workload looks fairly balanced across weekdays in this window.";
+  const plannerOpenItemsSentence = noOpenItemsInWindow
+    ? "There are no backlog items to add at this time either."
+    : "There are backlog items available to schedule from recommended actions.";
+  const horizonWeeks = rhythmInsights?.horizonWeeks || 4;
+  const scheduledPerWeek = plannerSynopsis?.scheduledHrsPerWeek ?? 0;
+  const weekdaySkewLine = plannerSynopsis?.heavyWeekday
+    ? `${plannerSynopsis.heavyWeekday} is heavier in this window.`
+    : 'No strong weekday skew in this window.';
+  const rhythmSingleLineSummary = `Next ${horizonWeeks} weeks: ${scheduledPerWeek} hrs/wk scheduled. ${weekdaySkewLine}`;
   const paceBadgePalette = {
     on_track: styles.paceBadgeOnTrack,
     light: styles.paceBadgeLight,
@@ -733,21 +763,19 @@ export default function RebalanceModal({
 
   return (
     <View style={styles.overlay}>
+      <TouchableOpacity style={styles.overlayBackdrop} activeOpacity={1} onPress={handleClose} />
       <View style={styles.modalColumn}>
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <View style={styles.headerIconCircle}>
-              <RefreshCw size={18} color={colors.accent} />
-            </View>
             <View style={styles.headerTextBlock}>
               <Text style={styles.title}>
-                {hasRebalanceContext ? 'Shift subject series' : 'Schedule rhythm'}
+                {hasRebalanceContext ? 'Shift subject series' : 'Rebalance'}
               </Text>
-              <Text style={styles.headerSubtitle}>
-                {hasRebalanceContext
-                  ? 'One subject · move this lesson and following same-subject events'
-                  : 'Balance the next 4 weeks against your plan'}
-              </Text>
+              {!hasRebalanceContext ? (
+                <View style={styles.rhythmMetaChip}>
+                  <Text style={styles.rhythmMetaChipText}>Family · Next 4 weeks</Text>
+                </View>
+              ) : null}
             </View>
           </View>
           <TouchableOpacity
@@ -759,7 +787,7 @@ export default function RebalanceModal({
               onMouseLeave: () => setCloseHovered(false),
             })}
           >
-            <X size={17} color={colors.text} style={{ opacity: closeHovered ? 0.78 : 0.4 }} />
+            <X size={20} color="#6B7280" />
           </TouchableOpacity>
         </View>
 
@@ -780,66 +808,7 @@ export default function RebalanceModal({
           ) : (
             <>
               <View style={styles.emptyState}>
-                <View style={styles.rhythmMetaChip}>
-                  <Text style={styles.rhythmMetaChipText}>Family · Next 4 weeks</Text>
-                </View>
-                <Text style={styles.insightsKicker}>Planner status</Text>
-                <Text style={styles.oneLineSummary}>
-                  Targets are based on your overlapping academic year plan and allowed planner weekdays.
-                </Text>
-
-                {plannerSynopsis && (
-                  <View style={styles.synopsisStrip}>
-                    <View style={[styles.paceBadge, paceBadgePalette[plannerSynopsis.paceKey] || styles.paceBadgeNeutral]}>
-                      <Text style={styles.paceBadgeText}>{plannerSynopsis.paceLabel}</Text>
-                    </View>
-                    <Text style={styles.synopsisLine}>
-                      Next {rhythmInsights?.horizonWeeks || 4} wk: {plannerSynopsis.scheduledHrsPerWeek} hrs/wk scheduled
-                      {plannerSynopsis.hasActiveTargets && plannerSynopsis.targetHrsPerWeek != null
-                        ? ` · ${plannerSynopsis.targetHrsPerWeek} target`
-                        : ''}
-                      {plannerSynopsis.hasActiveTargets &&
-                      plannerSynopsis.gapHrsPerWeek != null &&
-                      plannerSynopsis.gapHrsPerWeek !== 0
-                        ? ` · gap ${plannerSynopsis.gapHrsPerWeek > 0 ? '+' : ''}${plannerSynopsis.gapHrsPerWeek} hrs/wk`
-                        : ''}
-                      {plannerSynopsis.sparseWeeksCount > 0
-                        ? ` · ${plannerSynopsis.sparseWeeksCount} sparse week${plannerSynopsis.sparseWeeksCount === 1 ? '' : 's'}`
-                        : ''}
-                      {plannerSynopsis.heavyWeekday
-                        ? ` · ${plannerSynopsis.heavyWeekday} heavier`
-                        : ''}
-                    </Text>
-                    {!!plannerSynopsis.pressureLine && (
-                      <Text style={styles.synopsisPressure}>{plannerSynopsis.pressureLine}</Text>
-                    )}
-                  </View>
-                )}
-
-                {!!familyId && (
-                  <View style={styles.rhythmCtaWrap}>
-                    <TouchableOpacity
-                      style={[styles.rhythmAnalysisButton, previewing && styles.buttonDisabled]}
-                      onPress={handleRhythmPreview}
-                      disabled={previewing}
-                      {...(Platform.OS === 'web' && { cursor: previewing ? 'default' : 'pointer' })}
-                    >
-                      {previewing ? (
-                        <>
-                          <ActivityIndicator size="small" color={colors.accent} />
-                          <Text style={styles.rhythmAnalysisButtonText}>Analyzing…</Text>
-                        </>
-                      ) : (
-                        <>
-                          <Clock size={14} color={colors.accent} />
-                          <Text style={styles.rhythmAnalysisButtonText}>
-                            {rhythmInsights ? 'Refresh analysis' : 'Run analysis'}
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                )}
+                <Text style={styles.oneLineSummary}>{previewing ? 'Analyzing…' : rhythmSingleLineSummary}</Text>
                 {!familyId && (
                   <Text style={styles.description}>Sign in with a family account to run schedule rhythm.</Text>
                 )}
@@ -850,37 +819,18 @@ export default function RebalanceModal({
                       <Text style={styles.recommendedSectionTitle}>Pace vs plan</Text>
                       {plannerSynopsis ? (
                         <>
-                          <View style={styles.paceRow}>
-                            <Text style={styles.paceRowLabel}>Scheduled now</Text>
-                            <Text style={styles.paceRowValue}>
-                              {plannerSynopsis.scheduledHrsHorizon} hrs across next {rhythmInsights.horizonWeeks || 4}{' '}
-                              weeks
-                            </Text>
-                          </View>
-                          <View style={styles.paceRow}>
-                            <Text style={styles.paceRowLabel}>Planned target</Text>
-                            <Text style={styles.paceRowValue}>
-                              {plannerSynopsis.hasActiveTargets && plannerSynopsis.targetHrsHorizon != null
-                                ? `${plannerSynopsis.targetHrsHorizon} hrs from year plan (in this window)`
-                                : 'No weekly target detected'}
-                            </Text>
-                          </View>
-                          <View style={styles.paceRow}>
-                            <Text style={styles.paceRowLabel}>Projected pace</Text>
-                            <Text style={styles.paceRowValue}>
-                              {plannerSynopsis.hasActiveTargets && plannerSynopsis.projectedGapHrsHorizon != null
-                                ? plannerSynopsis.projectedGapHrsHorizon > 0
-                                  ? `Behind by ${plannerSynopsis.projectedGapHrsHorizon} hrs — fill light weeks or add backlog to close the gap`
-                                  : plannerSynopsis.projectedGapHrsHorizon < 0
-                                    ? `Ahead by ${Math.abs(plannerSynopsis.projectedGapHrsHorizon)} hrs vs target in this window`
-                                    : 'Aligned with target for this window'
-                                : plannerSynopsis.paceDetailSentence || plannerSynopsis.summarySentence}
-                            </Text>
-                          </View>
-                          <Text style={styles.paceSubline}>
-                            {plannerSynopsis.hasActiveTargets
-                              ? 'Based on overlapping academic year targets and allowed planner weekdays.'
-                              : 'No active plan target found — showing rhythm from your current schedule and allowed weekdays.'}
+                          <Text style={styles.paceSummaryParagraph}>
+                            {`Scheduled ${plannerSynopsis.scheduledHrsHorizon} hrs across next ${rhythmInsights.horizonWeeks || 4} weeks. `}
+                            {plannerSynopsis.hasActiveTargets && plannerSynopsis.targetHrsHorizon != null
+                              ? `Target is ${plannerSynopsis.targetHrsHorizon} hrs in this window. `
+                              : 'No weekly target detected. '}
+                            {plannerSynopsis.hasActiveTargets && plannerSynopsis.projectedGapHrsHorizon != null
+                              ? plannerSynopsis.projectedGapHrsHorizon > 0
+                                ? `Projected pace is behind by ${plannerSynopsis.projectedGapHrsHorizon} hrs.`
+                                : plannerSynopsis.projectedGapHrsHorizon < 0
+                                  ? `Projected pace is ahead by ${Math.abs(plannerSynopsis.projectedGapHrsHorizon)} hrs.`
+                                  : 'Projected pace is aligned with target.'
+                              : plannerSynopsis.paceDetailSentence || plannerSynopsis.summarySentence}
                           </Text>
                         </>
                       ) : (
@@ -890,20 +840,61 @@ export default function RebalanceModal({
 
                     <View style={styles.plannerSynopsisCard}>
                       <Text style={styles.recommendedSectionTitle}>Planner synopsis</Text>
-                      <Text style={styles.synopsisBullet}>
-                        <Text style={styles.synopsisBulletKey}>Pace: </Text>
-                        {plannerSynopsis?.summarySentence ||
-                          'Compare scheduled time to your plan for the next few weeks.'}
-                      </Text>
-                      <Text style={styles.synopsisBullet}>
-                        <Text style={styles.synopsisBulletKey}>Load balance: </Text>
-                        {plannerSynopsis?.loadBalanceLine || '—'}
-                      </Text>
-                      <Text style={styles.synopsisBullet}>
-                        <Text style={styles.synopsisBulletKey}>Open items: </Text>
-                        {plannerSynopsis?.openItemsLine || '—'}
+                      <Text style={styles.paceSummaryParagraph}>
+                        {`${plannerLoadBalanceSentence} ${plannerOpenItemsSentence}`}
                       </Text>
                     </View>
+                    {showCombinedMissingInputsCard && (
+                      <View style={styles.missingInputsCard}>
+                        <Text style={styles.recommendedSectionTitle}>
+                          {t('rebalance.rhythm.emptyState.requirementsTitle')}
+                        </Text>
+                        {noActiveTargetInWindow && (
+                          <Text style={styles.missingInputLine}>
+                            • {t('rebalance.rhythm.emptyState.missingActiveTarget')}
+                          </Text>
+                        )}
+                        {noOpenItemsInWindow && (
+                          <Text style={styles.missingInputLine}>
+                            • {t('rebalance.rhythm.emptyState.missingSchedulableWork')}
+                          </Text>
+                        )}
+                        {noMovablePatternInWindow && (
+                          <Text style={styles.missingInputLine}>
+                            • {t('rebalance.rhythm.emptyState.missingMovablePattern')}
+                          </Text>
+                        )}
+                        <View style={styles.missingInputActionsRow}>
+                          {noActiveTargetInWindow && (
+                            <TouchableOpacity
+                              style={styles.emptyActionHintBtn}
+                              onPress={handleOpenPlanningPreferencesFromRhythm}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={styles.emptyActionHintBtnText}>{t('rebalance.rhythm.emptyState.openPlanningPreferences')}</Text>
+                            </TouchableOpacity>
+                          )}
+                          {noOpenItemsInWindow && (
+                            <TouchableOpacity
+                              style={styles.emptyActionHintBtn}
+                              onPress={handleOpenBacklogFromRhythm}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={styles.emptyActionHintBtnText}>{t('rebalance.rhythm.emptyState.openBacklog')}</Text>
+                            </TouchableOpacity>
+                          )}
+                          {noMovablePatternInWindow && (
+                            <TouchableOpacity
+                              style={styles.emptyActionHintBtn}
+                              onPress={handleOpenMonthFromRhythm}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={styles.emptyActionHintBtnText}>{t('rebalance.rhythm.emptyState.openMonthView')}</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </View>
+                    )}
 
                     <TouchableOpacity
                       onPress={() => setHowWorksOpen(!howWorksOpen)}
@@ -917,12 +908,9 @@ export default function RebalanceModal({
                     {howWorksOpen && (
                       <View style={styles.howWorksBody}>
                         <Text style={styles.insightsLine}>
-                          Load targets come from overlapping academic year plan rows (subject targets and total hours)
-                          spread across plan weeks, combined with your family planner weekday settings. We compare
-                          scheduled instructional time in the horizon to those targets, flag weeks below about 82% of
-                          per-child weekly goals when backlog or syllabus items exist, and propose shifting events from
-                          hotter days to colder ones within the same week. Empty weeks still count toward light-week
-                          detection when there is something you could schedule.
+                          We compare saved year or subject targets to actual scheduled events to show an analysis of
+                          courseload and pacing. We also analyze backlog and current items for skew based on fuller
+                          days versus free spaces within the same week.
                         </Text>
                         {rhythmInsights.weeklyFamilyTargetMinutes > 0 && (
                           <Text style={[styles.insightsLine, { marginTop: 8 }]}>
@@ -934,8 +922,7 @@ export default function RebalanceModal({
                     )}
 
                     {(plannerSynopsis?.sparseWeeksCount > 0 ||
-                      (rhythmInsights.backlogCount || 0) > 0 ||
-                      (rhythmInsights.planSuggestionCount || 0) > 0) && (
+                      (rhythmInsights.backlogCount || 0) > 0) && (
                       <View style={styles.planningNotesCard}>
                         <Text style={styles.recommendedSectionTitle}>Planning notes</Text>
                         {plannerSynopsis?.sparseWeeksCount > 0 && (
@@ -946,11 +933,6 @@ export default function RebalanceModal({
                         {(rhythmInsights.backlogCount || 0) > 0 && (
                           <Text style={styles.insightsLine}>
                             {rhythmInsights.backlogCount} calendar backlog item(s) can be scheduled.
-                          </Text>
-                        )}
-                        {(rhythmInsights.planSuggestionCount || 0) > 0 && (
-                          <Text style={styles.insightsLine}>
-                            {rhythmInsights.planSuggestionCount} syllabus suggestion(s) available.
                           </Text>
                         )}
                       </View>
@@ -973,31 +955,6 @@ export default function RebalanceModal({
                     <View key={idx} style={styles.sparseWeekBlock}>
                       <Text style={styles.sparseWeekTitle}>Week of {h.weekStart}</Text>
                       <Text style={styles.insightsLine}>{h.message}</Text>
-                      {(h.samplePlanSuggestions || []).length > 0 && (
-                        <>
-                          <Text style={[styles.insightsLine, { fontWeight: '600', marginTop: 4 }]}>
-                            Syllabus (this week)
-                          </Text>
-                          {(h.samplePlanSuggestions || []).map((s) => (
-                            <View key={s.id} style={styles.suggestionRow}>
-                              <Text style={[styles.insightsLine, styles.suggestionRowText]}>
-                                • {s.title}
-                                {s.estimatedMinutes ? ` (~${s.estimatedMinutes}m)` : ''}
-                              </Text>
-                              <TouchableOpacity
-                                style={[styles.scheduleBtn, schedulingId && styles.scheduleBtnDisabled]}
-                                disabled={!!schedulingId}
-                                onPress={() => handleScheduleSuggestion(s, h.weekStart)}
-                                {...(Platform.OS === 'web' && { cursor: schedulingId ? 'default' : 'pointer' })}
-                              >
-                                <Text style={styles.scheduleBtnText}>
-                                  {schedulingId === `sug:${s.id}` ? '…' : 'Schedule'}
-                                </Text>
-                              </TouchableOpacity>
-                            </View>
-                          ))}
-                        </>
-                      )}
                       {(h.sampleBacklog || []).length > 0 && (
                         <>
                           <Text style={[styles.insightsLine, { fontWeight: '600', marginTop: 4 }]}>
@@ -1030,32 +987,7 @@ export default function RebalanceModal({
                   )}
 
                   <View style={styles.recommendedSubBlock}>
-                  <Text style={styles.recommendedSectionTitle}>Schedule unscheduled work</Text>
-                  {(rhythmInsights.planSuggestionsPreview || []).length > 0 && (
-                    <>
-                      <Text style={styles.subsectionLabel}>From syllabus suggestions</Text>
-                      <Text style={styles.scheduleHint}>Schedule creates the event and marks the suggestion accepted.</Text>
-                      {(rhythmInsights.planSuggestionsPreview || []).slice(0, 6).map((s) => (
-                        <View key={s.id} style={styles.suggestionRow}>
-                          <Text style={[styles.insightsLine, styles.suggestionRowText]}>
-                            • {s.title}
-                            {s.targetDay ? ` → ${s.targetDay}` : ''}
-                            {s.estimatedMinutes ? ` (~${s.estimatedMinutes}m)` : ''}
-                          </Text>
-                          <TouchableOpacity
-                            style={[styles.scheduleBtn, schedulingId && styles.scheduleBtnDisabled]}
-                            disabled={!!schedulingId}
-                            onPress={() => handleScheduleSuggestion(s, rhythmInsights.weekStart)}
-                            {...(Platform.OS === 'web' && { cursor: schedulingId ? 'default' : 'pointer' })}
-                          >
-                            <Text style={styles.scheduleBtnText}>
-                              {schedulingId === `sug:${s.id}` ? '…' : 'Schedule'}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      ))}
-                    </>
-                  )}
+                  <Text style={styles.recommendedSectionTitle}>Backlog</Text>
                   {(rhythmInsights.backlogCount || 0) > 0 && (
                     <>
                       <Text style={[styles.subsectionLabel, { marginTop: 12 }]}>From calendar backlog</Text>
@@ -1065,10 +997,9 @@ export default function RebalanceModal({
                       </Text>
                     </>
                   )}
-                  {(rhythmInsights.planSuggestionsPreview || []).length === 0 &&
-                    (rhythmInsights.backlogCount || 0) === 0 && (
-                      <Text style={styles.insightsLine}>No syllabus suggestions or backlog items on file.</Text>
-                    )}
+                  {(rhythmInsights.backlogCount || 0) === 0 && (
+                    <Text style={styles.insightsLine}>No backlog items on file.</Text>
+                  )}
                 </View>
                 </View>
               )}
@@ -1146,36 +1077,40 @@ export default function RebalanceModal({
 
         {!hasRebalanceContext && rhythmInsights && (
           <View style={styles.rhythmStickyFooter}>
-            <TouchableOpacity
-              style={[
-                styles.footerPrimaryBtn,
-                (applying || applicableMoveCount === 0) && styles.buttonDisabled,
-              ]}
-              onPress={handleApply}
-              disabled={applying || applicableMoveCount === 0}
-              {...(Platform.OS === 'web' && { cursor: applicableMoveCount === 0 ? 'default' : 'pointer' })}
-            >
-              {applying ? (
-                <>
-                  <ActivityIndicator size="small" color={colors.accentContrast} />
-                  <Text style={styles.footerPrimaryBtnText}>
-                    Applying… ({appliedCount}/{applicableMoveCount})
-                  </Text>
-                </>
-              ) : (
-                <Text style={styles.footerPrimaryBtnText}>Apply selected changes</Text>
-              )}
-            </TouchableOpacity>
-            {applicableMoveCount === 0 && (
-              <Text style={styles.footerHelper}>
-                {moves.length === 0
-                  ? 'No time shifts suggested. Schedule backlog or syllabus items in the sections above.'
-                  : 'Select a move or tap Include on a skipped row to apply changes.'}
-              </Text>
-            )}
-            <TouchableOpacity onPress={handleClose} style={styles.footerCancelWrap} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={styles.footerCancel}>Cancel</Text>
-            </TouchableOpacity>
+            <View style={styles.footerActionsRow}>
+              <TouchableOpacity
+                onPress={handleClose}
+                style={styles.footerSecondaryBtn}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.footerSecondaryBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <View style={styles.footerPrimaryStack}>
+                <TouchableOpacity
+                  style={[
+                    styles.footerPrimaryBtn,
+                    (applying || applicableMoveCount === 0) && styles.buttonDisabled,
+                  ]}
+                  onPress={handleApply}
+                  disabled={applying || applicableMoveCount === 0}
+                  {...(Platform.OS === 'web' && { cursor: applicableMoveCount === 0 ? 'default' : 'pointer' })}
+                >
+                  {applying ? (
+                    <>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={styles.footerPrimaryBtnText}>
+                        Applying… ({appliedCount}/{applicableMoveCount})
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.footerPrimaryBtnText}>Apply selected changes</Text>
+                  )}
+                </TouchableOpacity>
+                {applicableMoveCount === 0 ? (
+                  <Text style={styles.footerHelper}>No suggested changes to apply.</Text>
+                ) : null}
+              </View>
+            </View>
           </View>
         )}
       </View>
@@ -1193,41 +1128,44 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.42)',
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
     zIndex: 10000,
   },
+  overlayBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
   modalColumn: {
-    backgroundColor: '#FCFCFF',
-    borderRadius: 14,
-    width: '90%',
-    maxWidth: 600,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    width: '100%',
+    maxWidth: 740,
     maxHeight: '88%',
     flexDirection: 'column',
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.04)',
+    borderColor: 'rgba(15, 23, 42, 0.08)',
     shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.1,
-    shadowRadius: 36,
-    elevation: 18,
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.12,
+    shadowRadius: 40,
+    elevation: 20,
     ...(Platform.OS === 'web'
       ? {
-          boxShadow:
-            '0 24px 56px rgba(15, 23, 42, 0.07), 0 10px 24px rgba(99, 102, 241, 0.06)',
-          backgroundImage:
-            'linear-gradient(180deg, rgba(99, 102, 241, 0.055) 0%, #FCFCFF 38%, #FCFCFF 100%)',
+          boxShadow: '0 24px 56px rgba(15, 23, 42, 0.18)',
         }
       : {}),
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingTop: 22,
-    paddingBottom: 18,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(15, 23, 42, 0.06)',
+    alignItems: 'center',
+    paddingTop: 24,
+    paddingBottom: 0,
+    paddingHorizontal: 28,
   },
   headerIconCircle: {
     width: 44,
@@ -1242,7 +1180,7 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: 10,
     flex: 1,
     paddingRight: 8,
   },
@@ -1250,9 +1188,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   title: {
-    fontSize: 18,
-    fontWeight: '500',
+    fontSize: 22,
+    fontWeight: '600',
     color: colors.text,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   headerSubtitle: {
     fontSize: 12,
@@ -1261,26 +1202,34 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   closeButton: {
-    padding: 6,
-    marginTop: -2,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
   },
   closeButtonHovered: {
-    backgroundColor: 'rgba(15, 23, 42, 0.04)',
+    backgroundColor: 'rgba(241, 245, 249, 0.7)',
   },
   content: {
     flex: 1,
   },
   contentContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 32,
+    paddingHorizontal: 28,
+    paddingTop: 10,
+    paddingBottom: 28,
   },
   oneLineSummary: {
-    fontSize: 13,
+    fontSize: 14,
     color: 'rgba(15, 23, 42, 0.62)',
-    lineHeight: 17,
-    marginBottom: 20,
+    lineHeight: 20,
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   synopsisStrip: {
     marginBottom: 14,
@@ -1330,17 +1279,17 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   paceVsPlanCard: {
-    marginTop: 16,
-    padding: 14,
-    backgroundColor: colors.bgSecondary || '#f8fafc',
+    marginTop: 8,
+    padding: 16,
+    backgroundColor: '#FFFFFF',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
   },
   plannerSynopsisCard: {
     marginTop: 12,
-    padding: 14,
-    backgroundColor: colors.bgSecondary || '#f8fafc',
+    padding: 16,
+    backgroundColor: '#FFFFFF',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
@@ -1352,6 +1301,29 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  missingInputsCard: {
+    marginTop: 12,
+    padding: 16,
+    backgroundColor: colors.bg || '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  missingInputLine: {
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 20,
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  missingInputActionsRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
   },
   paceRow: {
     marginBottom: 10,
@@ -1375,6 +1347,39 @@ const styles = StyleSheet.create({
     marginTop: 4,
     lineHeight: 16,
     fontStyle: 'italic',
+  },
+  paceSummaryParagraph: {
+    fontSize: 15,
+    color: colors.text,
+    lineHeight: 24,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyActionHintWrap: {
+    marginTop: 4,
+    marginBottom: 10,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: colors.bg || '#fff',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  emptyActionHintText: {
+    fontSize: 12,
+    color: colors.muted,
+    lineHeight: 17,
+  },
+  emptyActionHintBtn: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    paddingVertical: 3,
+  },
+  emptyActionHintBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.accent,
+    textDecorationLine: 'underline',
   },
   synopsisBullet: {
     fontSize: 13,
@@ -1426,10 +1431,13 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   recommendedSectionTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '600',
     color: colors.text,
     marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   subsectionLabel: {
     fontSize: 12,
@@ -1466,31 +1474,65 @@ const styles = StyleSheet.create({
     color: colors.accent,
   },
   rhythmStickyFooter: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(15, 23, 42, 0.06)',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 16,
-    backgroundColor: '#FCFCFF',
+    paddingHorizontal: 28,
+    paddingTop: 10,
+    paddingBottom: 22,
+    backgroundColor: '#FFFFFF',
   },
-  footerPrimaryBtn: {
-    backgroundColor: colors.greenBold || '#10b981',
-    borderRadius: 8,
-    paddingVertical: 14,
+  footerActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  footerPrimaryStack: {
+    alignItems: 'center',
+  },
+  footerSecondaryBtn: {
+    minWidth: 120,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 12,
+    paddingHorizontal: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  footerSecondaryBtnText: {
+    color: '#374151',
+    fontSize: 14,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  footerPrimaryBtn: {
+    minWidth: 176,
+    backgroundColor: '#9ECFFB',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
   footerPrimaryBtnText: {
-    color: colors.accentContrast,
+    color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   footerHelper: {
     fontSize: 12,
     color: colors.muted,
     textAlign: 'center',
-    marginTop: 8,
+    marginTop: 6,
     lineHeight: 17,
+    maxWidth: 220,
   },
   footerCancelWrap: {
     marginTop: 12,
@@ -1548,16 +1590,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 5,
     borderRadius: 999,
-    marginBottom: 16,
+    marginTop: 8,
+    marginBottom: 6,
     backgroundColor: 'rgba(99, 102, 241, 0.06)',
     borderWidth: 1,
     borderColor: 'rgba(99, 102, 241, 0.1)',
   },
   rhythmMetaChipText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '500',
     color: 'rgba(15, 23, 42, 0.45)',
     letterSpacing: 0.2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   rhythmCtaWrap: {
     alignSelf: 'stretch',
@@ -1754,7 +1800,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.greenBold || '#10b981',
   },
   buttonDisabled: {
-    opacity: 0.5,
+    backgroundColor: '#D1D5DB',
+    opacity: 1,
   },
   buttonText: {
     color: colors.accentContrast,

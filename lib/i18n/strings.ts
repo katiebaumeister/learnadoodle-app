@@ -310,11 +310,22 @@ export const STRINGS = {
       deltaUnderHours: "{n} h under target",
       deltaMetHours: "On target for hours",
       suggestedEnd: "End date that would match your day target: {date}",
+      overallHoursSuggestedEnd: "End date that would match your hours target: {date}",
+      overallHoursSuggestedEndCta: "Use suggested end date ({date})",
       excludedPublicHolidays:
         "{count} weekdays in range fall on a U.S. public holiday (not counted as instructional).",
       cadenceHint: "{message}",
       subjectRowDays: "{name}: {projected} of {target} class days",
       subjectRowHours: "{name}: {projected} of {target} instructional hours",
+      subjectDeltaUnderDaysOne: "1 more day needed.",
+      subjectDeltaUnderDaysMany: "{n} more days needed.",
+      subjectDeltaUnderHoursOne: "1 more hour needed.",
+      subjectDeltaUnderHoursMany: "{n} more hours needed.",
+      subjectSuggestedEndCta: "Extend to {date} for {name}",
+      applyAnywayHint: "You can still apply the plan even if targets are not met.",
+      existingPlanNoTargetHint: "This plan has no overall target saved yet.",
+      adoptCurrentTargetCtaDays: "Use current Planning Preferences target ({n} days)",
+      adoptCurrentTargetCtaHours: "Use current Planning Preferences target ({n} hours)",
     },
 
     multiSubjectUnits: {
@@ -843,6 +854,28 @@ export const STRINGS = {
       title: "Backlog is empty.",
       body:
         "Add lessons from a unit or import a syllabus to get started.",
+    },
+  },
+  rebalance: {
+    rhythm: {
+      emptyState: {
+        noRecommendedActionsYet:
+          "No recommended actions yet. Set targets in Planning Preferences, add events in the next 4 weeks, and add backlog items for future learning.",
+        noTimeShiftsSuggested:
+          "No time shifts suggested. Add more scheduled events in the next 4 weeks or move backlog items onto your calendar.",
+        selectMoveOrIncludeHint:
+          "Select a move or tap Include on a skipped row to apply changes.",
+        requirementsTitle: "To unlock full Rebalance functions:",
+        missingActiveTarget:
+          "Set an overall or per-subject target in Planning Preferences (settings button in the top planner toolbar).",
+        missingSchedulableWork:
+          "Add items to the backlog for future learning.",
+        missingMovablePattern:
+          "Add more scheduled events in the next 4 weeks so heavy/light balancing can be detected.",
+        openPlanningPreferences: "Open Planning Preferences",
+        openBacklog: "Open Backlog",
+        openMonthView: "Open Month View",
+      },
     },
   },
 } as const;

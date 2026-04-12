@@ -3957,8 +3957,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   <PlanYearModal
                     renderInline
                     visible
-                    onClose={() => {
-                      const returnView = planYearReturnViewRef.current || defaultView || 'month';
+                    onClose={(result) => {
+                      const returnView = result?.returnView || planYearReturnViewRef.current || defaultView || 'month';
                       setCurrentView(returnView);
                       if (Platform.OS === 'web') {
                         const url = new URL(window.location);
@@ -4017,8 +4017,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         );
                       }
                     }}
-                    onComplete={() => {
-                      const returnView = planYearReturnViewRef.current || defaultView || 'month';
+                    onComplete={(result) => {
+                      const returnView = result?.returnView || planYearReturnViewRef.current || defaultView || 'month';
                       setCurrentView(returnView);
                       if (Platform.OS === 'web') {
                         const url = new URL(window.location);
@@ -4255,11 +4255,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       <PlanYearModal
         key={`${planYearInitialAcademicYearId || 'unified-planning-modal'}-${planYearInitialUnitStructureMethod || 'default'}`}
         visible={showPlanningModal}
-        onClose={() => {
+        onClose={(result) => {
           const sid = planYearModalReturnSubjectIdRef.current;
           planYearModalReturnSubjectIdRef.current = null;
           if (sid && Platform.OS === 'web' && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: sid } }));
+          }
+          if (result?.returnView) {
+            handleTabChange('planner');
+            setActiveTopNav('planner');
+            setCurrentView(result.returnView);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.history.pushState({}, '', `/planner?view=${result.returnView}`);
+              window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: result.returnView }));
+            }
           }
           setShowPlanningModal(false);
           setTimeout(() => {
@@ -4326,9 +4335,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             );
           }
         }}
-        onComplete={async () => {
+        onComplete={async (result) => {
           const sid = planYearModalReturnSubjectIdRef.current;
           planYearModalReturnSubjectIdRef.current = null;
+          if (result?.returnView) {
+            handleTabChange('planner');
+            setActiveTopNav('planner');
+            setCurrentView(result.returnView);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.history.pushState({}, '', `/planner?view=${result.returnView}`);
+              window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: result.returnView }));
+            }
+          }
           setShowPlanningModal(false);
           await fetchFamilyData();
           if (Platform.OS === 'web') {

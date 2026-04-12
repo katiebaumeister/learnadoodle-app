@@ -1266,6 +1266,105 @@ function blockMinutesForPlanYearBlock(block) {
   return Math.max(0, endMin - startMin);
 }
 
+function buildPlanExclusionRanges(customHolidays, customBreaks) {
+  return [
+    ...(customHolidays || []).map((h) => [h.date, h.date]),
+    ...(customBreaks || [])
+      .map((b) => [b.start || b.startDate, b.end || b.endDate].filter(Boolean))
+      .filter((r) => r.length === 2),
+  ];
+}
+
+function computeProjectedHoursBySubjectForRange({
+  startDate,
+  endDate,
+  blocks,
+  customHolidays,
+  customBreaks,
+}) {
+  if (!startDate || !endDate || !Array.isArray(blocks) || blocks.length === 0) return {};
+  const exclusionRanges = buildPlanExclusionRanges(customHolidays, customBreaks);
+  const map = {};
+  blocks.forEach((block) => {
+    if (!block?.subject_id) return;
+    const dates = getBlockOccurrenceDates(block, startDate, endDate, exclusionRanges);
+    if (dates.length === 0) return;
+    const sid = String(block.subject_id);
+    const mins = blockMinutesForPlanYearBlock(block);
+    map[sid] = (map[sid] || 0) + (dates.length * mins) / 60;
+  });
+  return map;
+}
+
+function findExtendedEndDateForOverallHoursTarget({
+  startDate,
+  endDate,
+  targetHours,
+  blocks,
+  customHolidays,
+  customBreaks,
+  maxDaysAhead = 730,
+}) {
+  if (
+    !startDate ||
+    !endDate ||
+    !targetHours ||
+    targetHours <= 0 ||
+    !Array.isArray(blocks) ||
+    blocks.length === 0
+  ) {
+    return null;
+  }
+  const end = dateStringToDate(endDate);
+  for (let i = 1; i <= maxDaysAhead; i++) {
+    const probe = new Date(end);
+    probe.setDate(probe.getDate() + i);
+    const probeYmd = toLocalYYYYMMDD(probe);
+    const bySubject = computeProjectedHoursBySubjectForRange({
+      startDate,
+      endDate: probeYmd,
+      blocks,
+      customHolidays,
+      customBreaks,
+    });
+    const total = Object.values(bySubject).reduce((sum, h) => sum + (Number(h) || 0), 0);
+    if (total >= targetHours) return probeYmd;
+  }
+  return null;
+}
+
+function findExtendedEndDateForSubjectHoursTarget({
+  subjectId,
+  startDate,
+  endDate,
+  targetHours,
+  blocks,
+  customHolidays,
+  customBreaks,
+  maxDaysAhead = 730,
+}) {
+  if (!subjectId || !targetHours || targetHours <= 0) return null;
+  const sid = String(subjectId);
+  const scopedBlocks = (blocks || []).filter((b) => String(b?.subject_id || '') === sid);
+  if (!startDate || !endDate || scopedBlocks.length === 0) return null;
+  const end = dateStringToDate(endDate);
+  for (let i = 1; i <= maxDaysAhead; i++) {
+    const probe = new Date(end);
+    probe.setDate(probe.getDate() + i);
+    const probeYmd = toLocalYYYYMMDD(probe);
+    const bySubject = computeProjectedHoursBySubjectForRange({
+      startDate,
+      endDate: probeYmd,
+      blocks: scopedBlocks,
+      customHolidays,
+      customBreaks,
+    });
+    const projected = Number(bySubject[sid] || 0);
+    if (projected >= targetHours) return probeYmd;
+  }
+  return null;
+}
+
 function LessonOverflowFollowUp({
   textStyle,
   overflowCount,
@@ -2397,23 +2496,13 @@ export default function PlanYearModal({
 
   /** Projected instructional hours per subject (for per-subject hour targets). */
   const projectedHoursBySubjectId = useMemo(() => {
-    if (!startDate || !endDate || !blocks.length) return {};
-    const exclusionRanges = [
-      ...(customHolidays || []).map((h) => [h.date, h.date]),
-      ...(customBreaks || [])
-        .map((b) => [b.start || b.startDate, b.end || b.endDate].filter(Boolean))
-        .filter((r) => r.length === 2),
-    ];
-    const map = {};
-    blocks.forEach((block) => {
-      if (!block.subject_id) return;
-      const sid = String(block.subject_id);
-      const dates = getBlockOccurrenceDates(block, startDate, endDate, exclusionRanges);
-      const mins = blockMinutesForPlanYearBlock(block);
-      const h = (dates.length * mins) / 60;
-      map[sid] = (map[sid] || 0) + h;
+    return computeProjectedHoursBySubjectForRange({
+      startDate,
+      endDate,
+      blocks,
+      customHolidays,
+      customBreaks,
     });
-    return map;
   }, [blocks, startDate, endDate, customHolidays, customBreaks]);
 
   // Effective subject targets for apply: always use merged result (plan override + subject defaults)
@@ -2449,6 +2538,82 @@ export default function PlanYearModal({
     schedulePotential,
     baseSubjectList,
     projectedHoursBySubjectId,
+  ]);
+
+  const overallHoursSuggestedEndDate = useMemo(() => {
+    if (targetScopeFromSettings !== 'overall') return null;
+    if (planConstraintMode !== 'hours') return null;
+    if (!effectivePlanTarget.target_hours || effectivePlanTarget.target_hours <= 0) return null;
+    if (!schedulePotential || schedulePotential.delta_hours == null || schedulePotential.delta_hours >= 0) return null;
+    return findExtendedEndDateForOverallHoursTarget({
+      startDate,
+      endDate,
+      targetHours: effectivePlanTarget.target_hours,
+      blocks,
+      customHolidays,
+      customBreaks,
+    });
+  }, [
+    targetScopeFromSettings,
+    planConstraintMode,
+    effectivePlanTarget.target_hours,
+    schedulePotential,
+    startDate,
+    endDate,
+    blocks,
+    customHolidays,
+    customBreaks,
+  ]);
+
+  const planningTargetPerSubjectSuggestions = useMemo(() => {
+    if (!startDate || !endDate || targetScopeFromSettings !== 'per_subject') return {};
+    const map = {};
+    planningTargetPerSubjectLines.forEach((row) => {
+      const deficit = Number(row.target || 0) - Number(row.projected || 0);
+      if (!(deficit > 0)) return;
+      const subjectId = String(row.key || '').split('-')[0];
+      if (!subjectId) return;
+      if (row.kind === 'days') {
+        const extYmd = findExtendedEndDateForLessonOverflow({
+          startDate,
+          endDate,
+          overflowCount: Math.ceil(deficit),
+          curriculumSubjectId: subjectId,
+          blocks,
+          customHolidays,
+          customBreaks,
+          baseSubjectList,
+          children,
+          allFamilyChildIds,
+        });
+        if (extYmd) map[row.key] = extYmd;
+        return;
+      }
+      if (row.kind === 'hours') {
+        const extYmd = findExtendedEndDateForSubjectHoursTarget({
+          subjectId,
+          startDate,
+          endDate,
+          targetHours: Number(row.target || 0),
+          blocks,
+          customHolidays,
+          customBreaks,
+        });
+        if (extYmd) map[row.key] = extYmd;
+      }
+    });
+    return map;
+  }, [
+    startDate,
+    endDate,
+    targetScopeFromSettings,
+    planningTargetPerSubjectLines,
+    blocks,
+    customHolidays,
+    customBreaks,
+    baseSubjectList,
+    children,
+    allFamilyChildIds,
   ]);
 
   /** Matches schedule_potential request inputs so we can reuse a snapshot when re-opening edit logistics. */
@@ -2513,6 +2678,24 @@ export default function PlanYearModal({
       breaks: (customBreaks || []).filter((b) => !matchB(b)),
     };
   }, [customHolidays, customBreaks, exclusionsFromSettings]);
+  const adoptableOverallTargetFromSettings = useMemo(() => {
+    const settings = planningDefaultsData?.settings;
+    if (!settings) return null;
+    const modeRaw = typeof settings.default_constraint_mode === 'string'
+      ? settings.default_constraint_mode.toLowerCase()
+      : 'none';
+    const days = settings.default_target_days != null ? String(settings.default_target_days) : '';
+    const hours = settings.default_target_hours != null ? String(settings.default_target_hours) : '';
+    const defaultHoursPerDay = settings.default_planned_hours_per_day != null
+      ? String(settings.default_planned_hours_per_day)
+      : '';
+
+    if (modeRaw === 'days' && days) return { mode: 'days', target: days, hoursPerDay: defaultHoursPerDay };
+    if (modeRaw === 'hours' && hours) return { mode: 'hours', target: hours, hoursPerDay: defaultHoursPerDay };
+    if (days) return { mode: 'days', target: days, hoursPerDay: defaultHoursPerDay };
+    if (hours) return { mode: 'hours', target: hours, hoursPerDay: defaultHoursPerDay };
+    return null;
+  }, [planningDefaultsData]);
 
   // Preview: exact dates and times that will get slots (for display under "X eligible days" and on preview screen)
   const previewSlotLines = useMemo(
@@ -5441,9 +5624,10 @@ export default function PlanYearModal({
           .is('deleted_at', null);
         if (!countErr && count != null) setExistingPlaceholdersCount(count);
       }
+      const postApplyResult = { returnView: 'month', reason: 'plan_applied' };
       setTimeout(() => {
-        onCompleteRef.current?.();
-        onCloseRef.current?.();
+        onCompleteRef.current?.(postApplyResult);
+        onCloseRef.current?.(postApplyResult);
       }, 50);
     } catch (err) {
       const errMsg = err?.message || err?.detail || 'Failed to apply to calendar';
@@ -5662,6 +5846,19 @@ export default function PlanYearModal({
     },
     [familyId, toast, dispatchPlanningPrefsSynced],
   );
+  const adoptCurrentPlanningPreferencesTarget = useCallback(() => {
+    if (!adoptableOverallTargetFromSettings) return;
+    if (adoptableOverallTargetFromSettings.mode === 'days') {
+      setPlanConstraintMode('days');
+      setPlanTargetDays(adoptableOverallTargetFromSettings.target || '180');
+      return;
+    }
+    setPlanConstraintMode('hours');
+    setPlanTargetHours(adoptableOverallTargetFromSettings.target || '1000');
+    if (adoptableOverallTargetFromSettings.hoursPerDay) {
+      setHoursPerDay(adoptableOverallTargetFromSettings.hoursPerDay);
+    }
+  }, [adoptableOverallTargetFromSettings]);
 
   const schedulePersistSubjectPlanningTarget = useCallback(
     (subjectId, row) => {
@@ -9835,6 +10032,28 @@ export default function PlanYearModal({
                             </View>
                           )}
                         </View>
+                        {isEditingExistingPlanFlow && planConstraintMode === 'none' && adoptableOverallTargetFromSettings ? (
+                          <View style={{ marginTop: 10 }}>
+                            <Text style={{ fontSize: 12, color: TEXT_SECONDARY, lineHeight: 17, marginBottom: 4 }}>
+                              {t('planMyYear.planningTargetProgress.existingPlanNoTargetHint')}
+                            </Text>
+                            <TouchableOpacity
+                              onPress={adoptCurrentPlanningPreferencesTarget}
+                              activeOpacity={0.75}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text style={{ fontSize: 12, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
+                                {adoptableOverallTargetFromSettings.mode === 'days'
+                                  ? t('planMyYear.planningTargetProgress.adoptCurrentTargetCtaDays', {
+                                      n: adoptableOverallTargetFromSettings.target,
+                                    })
+                                  : t('planMyYear.planningTargetProgress.adoptCurrentTargetCtaHours', {
+                                      n: adoptableOverallTargetFromSettings.target,
+                                    })}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : null}
                       </View>
                     )}
                     {targetScopeFromSettings === 'per_subject' && (
@@ -10202,6 +10421,29 @@ export default function PlanYearModal({
                                       : t('planMyYear.planningTargetProgress.deltaMetHours')}
                                 </Text>
                               )}
+                              {schedulePotential.delta_hours != null &&
+                              schedulePotential.delta_hours < 0 &&
+                              overallHoursSuggestedEndDate ? (
+                                <>
+                                  <Text style={{ fontSize: 12, color: TEXT_SECONDARY, marginBottom: 4, lineHeight: 17 }}>
+                                    {t('planMyYear.planningTargetProgress.overallHoursSuggestedEnd', {
+                                      date: formatDateDisplay(overallHoursSuggestedEndDate),
+                                    })}
+                                  </Text>
+                                  <TouchableOpacity
+                                    onPress={() => applyExtendedPlanEndDate(overallHoursSuggestedEndDate)}
+                                    style={{ marginBottom: 6, alignSelf: 'flex-start' }}
+                                    activeOpacity={0.7}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    <Text style={{ fontSize: 12, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
+                                      {t('planMyYear.planningTargetProgress.overallHoursSuggestedEndCta', {
+                                        date: formatDateDisplay(overallHoursSuggestedEndDate),
+                                      })}
+                                    </Text>
+                                  </TouchableOpacity>
+                                </>
+                              ) : null}
                             </>
                           ) : null}
                         </View>
@@ -10212,27 +10454,64 @@ export default function PlanYearModal({
                               {t('planMyYear.planningTargetProgress.needCadence')}
                             </Text>
                           ) : (
-                            planningTargetPerSubjectLines.map((row) => (
-                              <Text
-                                key={row.key}
-                                style={{ fontSize: 13, color: FG, marginBottom: 6, lineHeight: 19 }}
-                              >
-                                {row.kind === 'days'
-                                  ? t('planMyYear.planningTargetProgress.subjectRowDays', {
-                                      name: row.name,
-                                      projected: row.projected,
-                                      target: row.target,
-                                    })
-                                  : t('planMyYear.planningTargetProgress.subjectRowHours', {
-                                      name: row.name,
-                                      projected: row.projected,
-                                      target: row.target,
-                                    })}
-                              </Text>
-                            ))
+                            planningTargetPerSubjectLines.map((row) => {
+                              const deficit = Number(row.target || 0) - Number(row.projected || 0);
+                              const suggestedEndYmd = planningTargetPerSubjectSuggestions[row.key] || null;
+                              return (
+                                <View key={row.key} style={{ marginBottom: 8 }}>
+                                  <Text style={{ fontSize: 13, color: FG, lineHeight: 19 }}>
+                                    {row.kind === 'days'
+                                      ? t('planMyYear.planningTargetProgress.subjectRowDays', {
+                                          name: row.name,
+                                          projected: row.projected,
+                                          target: row.target,
+                                        })
+                                      : t('planMyYear.planningTargetProgress.subjectRowHours', {
+                                          name: row.name,
+                                          projected: row.projected,
+                                          target: row.target,
+                                        })}
+                                  </Text>
+                                  {deficit > 0 ? (
+                                    <Text style={{ fontSize: 12, color: ERROR, lineHeight: 17, marginTop: 2 }}>
+                                      {(() => {
+                                        if (row.kind === 'days') {
+                                          const n = Math.ceil(deficit);
+                                          return n === 1
+                                            ? t('planMyYear.planningTargetProgress.subjectDeltaUnderDaysOne')
+                                            : t('planMyYear.planningTargetProgress.subjectDeltaUnderDaysMany', { n });
+                                        }
+                                        const n = Math.round(deficit * 10) / 10;
+                                        return n === 1
+                                          ? t('planMyYear.planningTargetProgress.subjectDeltaUnderHoursOne')
+                                          : t('planMyYear.planningTargetProgress.subjectDeltaUnderHoursMany', { n });
+                                      })()}
+                                    </Text>
+                                  ) : null}
+                                  {deficit > 0 && suggestedEndYmd ? (
+                                    <TouchableOpacity
+                                      onPress={() => applyExtendedPlanEndDate(suggestedEndYmd)}
+                                      style={{ marginTop: 4, alignSelf: 'flex-start' }}
+                                      activeOpacity={0.7}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                    >
+                                      <Text style={{ fontSize: 12, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
+                                        {t('planMyYear.planningTargetProgress.subjectSuggestedEndCta', {
+                                          date: formatDateDisplay(suggestedEndYmd),
+                                          name: row.name,
+                                        })}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ) : null}
+                                </View>
+                              );
+                            })
                           )}
                         </View>
                       )}
+                      <Text style={{ fontSize: 12, color: MUTED, marginTop: 6, lineHeight: 17 }}>
+                        {t('planMyYear.planningTargetProgress.applyAnywayHint')}
+                      </Text>
                     </View>
                   )}
 
