@@ -445,7 +445,6 @@ async def pull_events(body: PullRequest, user=Depends(get_current_user), _: None
                 "description": item.get("description") or None,
                 "start_ts": start_ts,
                 "end_ts": end_ts,
-                "all_day": is_all_day,
                 "status": "scheduled",
                 "source": "google",
                 "event_type": "Activity",
