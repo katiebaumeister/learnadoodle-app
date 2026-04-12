@@ -14,6 +14,17 @@ import AppLoader from './AppLoader';
 import { X, ChevronDown } from 'lucide-react';
 
 const LANDING_IMAGE_COUNT = 17;
+const LANDING_IMAGE_SOURCES = {
+  logo: require('../assets/icon.png'),
+  hero: require('../assets/landing.png'),
+  schedule: require('../assets/schedule.png'),
+  curriculum: require('../assets/curriculum.png'),
+  progress: require('../assets/progress.png'),
+  support: require('../assets/support.png'),
+  teach: require('../assets/teach.png'),
+  privacy: require('../assets/privacy.png'),
+  superdoodle: require('../assets/superdoodlesection.png'),
+};
 
 export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false }) {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -33,6 +44,7 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
   const headerFadeAnim = useRef(new Animated.Value(1)).current;
   const superDoodleRef = useRef(null);
   const loadedImageCount = useRef(0);
+  const [loadedLandingImages, setLoadedLandingImages] = useState({});
 
   const handleImageLoad = () => {
     if (Platform.OS !== 'web' || pageReady) return;
@@ -73,6 +85,59 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
       setIsMobile(true);
     }
   }, []);
+
+  const markLandingImageReady = (imageKey) => {
+    setLoadedLandingImages((prev) => (
+      prev[imageKey] ? prev : { ...prev, [imageKey]: true }
+    ));
+  };
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    Object.entries(LANDING_IMAGE_SOURCES).forEach(([imageKey, imageSource]) => {
+      const resolved = Image.resolveAssetSource?.(imageSource);
+      const uri = resolved?.uri;
+      if (!uri) {
+        markLandingImageReady(imageKey);
+        return;
+      }
+      const preloadImage = new window.Image();
+      preloadImage.decoding = 'async';
+      preloadImage.onload = () => markLandingImageReady(imageKey);
+      preloadImage.onerror = () => markLandingImageReady(imageKey);
+      preloadImage.src = uri;
+      if (typeof preloadImage.decode === 'function') {
+        preloadImage.decode().catch(() => {});
+      }
+    });
+  }, []);
+
+  const renderStableLandingImage = ({
+    imageKey,
+    source,
+    shellStyle,
+    resizeMode = 'contain',
+    placeholderStyle,
+  }) => {
+    const isLoaded = !!loadedLandingImages[imageKey];
+    return (
+      <View style={[styles.landingImageShell, shellStyle]}>
+        {!isLoaded && <View style={[styles.landingImagePlaceholder, placeholderStyle]} />}
+        <Image
+          source={source}
+          style={[styles.landingImageFill, !isLoaded && styles.landingImageHidden]}
+          resizeMode={resizeMode}
+          onLoad={() => {
+            markLandingImageReady(imageKey);
+            handleImageLoad();
+          }}
+          onError={() => markLandingImageReady(imageKey)}
+          fadeDuration={0}
+        />
+      </View>
+    );
+  };
 
   const handleScroll = (event) => {
     const scrollY = event.nativeEvent.contentOffset.y;
@@ -122,12 +187,13 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
         <View style={styles.headerMobile}>
           <View style={styles.headerContentMobile}>
             <View style={styles.logoContainer}>
-              <Image 
-                source={require('../assets/icon.png')} 
-                style={styles.logoImage}
-                resizeMode="contain"
-                onLoad={handleImageLoad}
-              />
+              {renderStableLandingImage({
+                imageKey: 'logo',
+                source: LANDING_IMAGE_SOURCES.logo,
+                shellStyle: styles.logoImage,
+                resizeMode: 'contain',
+                placeholderStyle: styles.logoImagePlaceholder,
+              })}
               <Text style={styles.logoText}>learnadoodle</Text>
             </View>
           </View>
@@ -136,12 +202,13 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
         <Animated.View style={[styles.header, isScrolled && styles.headerScrolled]}>
           <View style={styles.headerContent}>
             <View style={styles.logoContainer}>
-              <Image 
-                source={require('../assets/icon.png')} 
-                style={styles.logoImage}
-                resizeMode="contain"
-                onLoad={handleImageLoad}
-              />
+              {renderStableLandingImage({
+                imageKey: 'logo',
+                source: LANDING_IMAGE_SOURCES.logo,
+                shellStyle: styles.logoImage,
+                resizeMode: 'contain',
+                placeholderStyle: styles.logoImagePlaceholder,
+              })}
               <Text style={styles.logoText}>learnadoodle</Text>
             </View>
             <Animated.View style={[styles.headerButtons, { opacity: fadeAnim, pointerEvents: isScrolled ? 'auto' : 'none' }]}>
@@ -182,12 +249,12 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
           {!isMobile && (
             <View style={styles.heroRight}>
               <View style={styles.heroImageContainer}>
-                <Image 
-                  source={require('../assets/landing.png')} 
-                  style={styles.heroImage}
-                  resizeMode="contain"
-                  onLoad={handleImageLoad}
-                />
+                {renderStableLandingImage({
+                  imageKey: 'hero',
+                  source: LANDING_IMAGE_SOURCES.hero,
+                  shellStyle: styles.heroImage,
+                  resizeMode: 'contain',
+                })}
               </View>
             </View>
           )}
@@ -228,23 +295,25 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
           <View style={styles.featureRow}>
             {!isMobile && (
               <View style={styles.featureImageContainer}>
-                <Image
-                  source={require('../assets/schedule.png')}
-                  style={styles.featureImage}
-                  resizeMode="contain"
-                  onLoad={handleImageLoad}
-                />
+                {renderStableLandingImage({
+                  imageKey: 'schedule',
+                  source: LANDING_IMAGE_SOURCES.schedule,
+                  shellStyle: styles.featureImage,
+                  resizeMode: 'contain',
+                  placeholderStyle: styles.featureImagePlaceholder,
+                })}
               </View>
             )}
             <View style={styles.featureTextContainer}>
               {isMobile && (
                 <View style={styles.featureImageContainerMobile}>
-                  <Image
-                    source={require('../assets/schedule.png')}
-                    style={styles.featureImageMobile}
-                    resizeMode="contain"
-                    onLoad={handleImageLoad}
-                  />
+                  {renderStableLandingImage({
+                    imageKey: 'schedule',
+                    source: LANDING_IMAGE_SOURCES.schedule,
+                    shellStyle: styles.featureImageMobile,
+                    resizeMode: 'contain',
+                    placeholderStyle: styles.featureImagePlaceholder,
+                  })}
                 </View>
               )}
               <Text style={styles.featureTitle}>
@@ -264,12 +333,13 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             <View style={[styles.featureTextContainer, !isMobile && styles.featureTextContainerReversed]}>
               {isMobile && (
                 <View style={styles.featureImageContainerMobile}>
-                  <Image
-                    source={require('../assets/curriculum.png')}
-                    style={styles.featureImageMobile}
-                    resizeMode="contain"
-                    onLoad={handleImageLoad}
-                  />
+                  {renderStableLandingImage({
+                    imageKey: 'curriculum',
+                    source: LANDING_IMAGE_SOURCES.curriculum,
+                    shellStyle: styles.featureImageMobile,
+                    resizeMode: 'contain',
+                    placeholderStyle: styles.featureImagePlaceholder,
+                  })}
                 </View>
               )}
               <Text style={styles.featureTitle}>
@@ -281,12 +351,13 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             </View>
             {!isMobile && (
               <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
-                <Image
-                  source={require('../assets/curriculum.png')}
-                  style={styles.featureImage}
-                  resizeMode="contain"
-                  onLoad={handleImageLoad}
-                />
+                {renderStableLandingImage({
+                  imageKey: 'curriculum',
+                  source: LANDING_IMAGE_SOURCES.curriculum,
+                  shellStyle: styles.featureImage,
+                  resizeMode: 'contain',
+                  placeholderStyle: styles.featureImagePlaceholder,
+                })}
               </View>
             )}
           </View>
@@ -295,23 +366,25 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
           <View style={styles.featureRow}>
             {!isMobile && (
               <View style={styles.featureImageContainer}>
-                <Image
-                  source={require('../assets/progress.png')}
-                  style={styles.featureImage}
-                  resizeMode="contain"
-                  onLoad={handleImageLoad}
-                />
+                {renderStableLandingImage({
+                  imageKey: 'progress',
+                  source: LANDING_IMAGE_SOURCES.progress,
+                  shellStyle: styles.featureImage,
+                  resizeMode: 'contain',
+                  placeholderStyle: styles.featureImagePlaceholder,
+                })}
               </View>
             )}
             <View style={styles.featureTextContainer}>
               {isMobile && (
                 <View style={styles.featureImageContainerMobile}>
-                  <Image
-                    source={require('../assets/progress.png')}
-                    style={styles.featureImageMobile}
-                    resizeMode="contain"
-                    onLoad={handleImageLoad}
-                  />
+                  {renderStableLandingImage({
+                    imageKey: 'progress',
+                    source: LANDING_IMAGE_SOURCES.progress,
+                    shellStyle: styles.featureImageMobile,
+                    resizeMode: 'contain',
+                    placeholderStyle: styles.featureImagePlaceholder,
+                  })}
                 </View>
               )}
               <Text style={styles.featureTitle}>
@@ -328,12 +401,13 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             <View style={[styles.featureTextContainer, !isMobile && styles.featureTextContainerReversed]}>
               {isMobile && (
                 <View style={styles.featureImageContainerMobile}>
-                  <Image
-                    source={require('../assets/support.png')}
-                    style={styles.featureImageMobile}
-                    resizeMode="contain"
-                    onLoad={handleImageLoad}
-                  />
+                  {renderStableLandingImage({
+                    imageKey: 'support',
+                    source: LANDING_IMAGE_SOURCES.support,
+                    shellStyle: styles.featureImageMobile,
+                    resizeMode: 'contain',
+                    placeholderStyle: styles.featureImagePlaceholder,
+                  })}
                 </View>
               )}
               <Text style={styles.featureTitle}>
@@ -345,12 +419,13 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             </View>
             {!isMobile && (
               <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
-                <Image
-                  source={require('../assets/support.png')}
-                  style={styles.featureImage}
-                  resizeMode="contain"
-                  onLoad={handleImageLoad}
-                />
+                {renderStableLandingImage({
+                  imageKey: 'support',
+                  source: LANDING_IMAGE_SOURCES.support,
+                  shellStyle: styles.featureImage,
+                  resizeMode: 'contain',
+                  placeholderStyle: styles.featureImagePlaceholder,
+                })}
               </View>
             )}
           </View>
@@ -359,23 +434,25 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
           <View style={styles.featureRow}>
             {!isMobile && (
               <View style={styles.featureImageContainer}>
-                <Image
-                  source={require('../assets/teach.png')}
-                  style={styles.featureImage}
-                  resizeMode="contain"
-                  onLoad={handleImageLoad}
-                />
+                {renderStableLandingImage({
+                  imageKey: 'teach',
+                  source: LANDING_IMAGE_SOURCES.teach,
+                  shellStyle: styles.featureImage,
+                  resizeMode: 'contain',
+                  placeholderStyle: styles.featureImagePlaceholder,
+                })}
               </View>
             )}
             <View style={styles.featureTextContainer}>
               {isMobile && (
                 <View style={styles.featureImageContainerMobile}>
-                  <Image
-                    source={require('../assets/teach.png')}
-                    style={styles.featureImageMobile}
-                    resizeMode="contain"
-                    onLoad={handleImageLoad}
-                  />
+                  {renderStableLandingImage({
+                    imageKey: 'teach',
+                    source: LANDING_IMAGE_SOURCES.teach,
+                    shellStyle: styles.featureImageMobile,
+                    resizeMode: 'contain',
+                    placeholderStyle: styles.featureImagePlaceholder,
+                  })}
                 </View>
               )}
               <Text style={styles.featureTitle}>
@@ -392,12 +469,13 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             <View style={[styles.featureTextContainer, !isMobile && styles.featureTextContainerReversed]}>
               {isMobile && (
                 <View style={styles.featureImageContainerMobile}>
-                  <Image
-                    source={require('../assets/privacy.png')}
-                    style={styles.featureImageMobile}
-                    resizeMode="contain"
-                    onLoad={handleImageLoad}
-                  />
+                  {renderStableLandingImage({
+                    imageKey: 'privacy',
+                    source: LANDING_IMAGE_SOURCES.privacy,
+                    shellStyle: styles.featureImageMobile,
+                    resizeMode: 'contain',
+                    placeholderStyle: styles.featureImagePlaceholder,
+                  })}
                 </View>
               )}
               <Text style={styles.featureTitle}>
@@ -409,12 +487,13 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             </View>
             {!isMobile && (
               <View style={[styles.featureImageContainer, styles.featureImageContainerReversed]}>
-                <Image
-                  source={require('../assets/privacy.png')}
-                  style={styles.featureImage}
-                  resizeMode="contain"
-                  onLoad={handleImageLoad}
-                />
+                {renderStableLandingImage({
+                  imageKey: 'privacy',
+                  source: LANDING_IMAGE_SOURCES.privacy,
+                  shellStyle: styles.featureImage,
+                  resizeMode: 'contain',
+                  placeholderStyle: styles.featureImagePlaceholder,
+                })}
               </View>
             )}
           </View>
@@ -429,12 +508,12 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             style={styles.superDoodleSectionWrapper}
           >
             <View style={styles.superDoodleSection}>
-              <Image
-                source={require('../assets/superdoodlesection.png')}
-                style={styles.superDoodleSectionImage}
-                resizeMode="contain"
-                onLoad={handleImageLoad}
-              />
+              {renderStableLandingImage({
+                imageKey: 'superdoodle',
+                source: LANDING_IMAGE_SOURCES.superdoodle,
+                shellStyle: styles.superDoodleSectionImage,
+                resizeMode: 'contain',
+              })}
               <View style={styles.superDoodleButtonContainer}>
                 <TouchableOpacity
                   style={styles.superDoodleButton}
@@ -455,12 +534,12 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
             ref={superDoodleRef}
             style={styles.superDoodleSection}
           >
-            <Image
-              source={require('../assets/superdoodlesection.png')}
-              style={styles.superDoodleSectionImage}
-              resizeMode="contain"
-              onLoad={handleImageLoad}
-            />
+            {renderStableLandingImage({
+              imageKey: 'superdoodle',
+              source: LANDING_IMAGE_SOURCES.superdoodle,
+              shellStyle: styles.superDoodleSectionImage,
+              resizeMode: 'contain',
+            })}
             <View style={styles.superDoodleButtonContainer}>
               <TouchableOpacity
                 style={styles.superDoodleButton}
@@ -725,6 +804,9 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
   },
+  logoImagePlaceholder: {
+    borderRadius: 14,
+  },
   logoText: {
     fontSize: 26,
     fontWeight: '600',
@@ -963,6 +1045,9 @@ const styles = StyleSheet.create({
   heroImage: {
     width: '100%',
     height: '100%',
+  },
+  featureImagePlaceholder: {
+    borderRadius: 16,
   },
   ctaStrip: {
     backgroundColor: '#ffffff',
@@ -1437,5 +1522,23 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  landingImageShell: {
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  landingImageFill: {
+    width: '100%',
+    height: '100%',
+    ...(Platform.OS === 'web' && {
+      transition: 'opacity 0.18s ease',
+    }),
+  },
+  landingImagePlaceholder: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.08)',
+  },
+  landingImageHidden: {
+    opacity: 0,
   },
 });
