@@ -1380,6 +1380,49 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     },
   ];
 
+  const getConnectionIconStyles = (providerKey) => {
+    switch (providerKey) {
+      case 'google':
+      case 'google_calendar':
+        return {
+          containerStyle: styles.connectionRowIconContainerGoogle,
+        };
+      case 'dropbox':
+        return {
+          containerStyle: styles.connectionRowIconContainerDropbox,
+          imageStyle: styles.connectionRowImageDropbox,
+        };
+      case 'notion':
+        return {
+          containerStyle: styles.connectionRowIconContainerNotion,
+          imageStyle: styles.connectionRowImageNotion,
+        };
+      case 'youtube':
+        return {
+          containerStyle: styles.connectionRowIconContainerYoutube,
+          imageStyle: styles.connectionRowImageYoutube,
+        };
+      case 'quizlet':
+        return {
+          containerStyle: styles.connectionRowIconContainerQuizlet,
+          imageStyle: styles.connectionRowImageQuizlet,
+        };
+      case 'canvas':
+        return {
+          containerStyle: styles.connectionRowIconContainerCanvas,
+          imageStyle: styles.connectionRowImageCanvas,
+        };
+      case 'apple':
+      case 'apple_calendar':
+        return {
+          containerStyle: styles.connectionRowIconContainerApple,
+          imageStyle: styles.connectionRowImageApple,
+        };
+      default:
+        return {};
+    }
+  };
+
   const setProviderConnection = (providerKey, isConnected) => {
     setConnectedProviders((prev) => ({
       ...prev,
@@ -1829,6 +1872,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 const isBusy = connectingProvider === key;
                 const isRecommended = key === 'google';
                 const isHovered = hoveredConnectionKey === key;
+                const { containerStyle: iconContainerStyle, imageStyle: providerImageStyle } = getConnectionIconStyles(key);
 
                 return (
                   <React.Fragment key={key}>
@@ -1843,9 +1887,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       })}
                     >
                       <View style={styles.connectionRowLeft}>
-                        <View style={styles.connectionRowIconContainer}>
+                        <View style={[styles.connectionRowIconContainer, iconContainerStyle]}>
                           {image ? (
-                            <Image source={image} style={[styles.connectionRowImage, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
+                            <Image source={image} style={[styles.connectionRowImage, providerImageStyle, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
                           ) : Icon ? (
                             <Icon size={20} color={iconColor || '#0f172a'} />
                           ) : null}
@@ -1934,6 +1978,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 const isBusy = connectingProvider === key;
                 const isRecommended = key === 'google_calendar';
                 const isHovered = hoveredConnectionKey === key;
+                const { containerStyle: iconContainerStyle, imageStyle: providerImageStyle } = getConnectionIconStyles(key);
 
                 return (
                   <React.Fragment key={key}>
@@ -1948,9 +1993,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       })}
                     >
                       <View style={styles.connectionRowLeft}>
-                        <View style={styles.connectionRowIconContainer}>
+                        <View style={[styles.connectionRowIconContainer, iconContainerStyle]}>
                           {image ? (
-                            <Image source={image} style={[styles.connectionRowImage, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
+                            <Image source={image} style={[styles.connectionRowImage, providerImageStyle, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
                           ) : Icon ? (
                             <Icon size={20} color={iconColor || '#0f172a'} />
                           ) : null}
@@ -2037,6 +2082,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
                 const isHovered = hoveredConnectionKey === key;
+                const { containerStyle: iconContainerStyle, imageStyle: providerImageStyle } = getConnectionIconStyles(key);
 
                 return (
                   <React.Fragment key={key}>
@@ -2051,9 +2097,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       })}
                     >
                       <View style={styles.connectionRowLeft}>
-                        <View style={styles.connectionRowIconContainer}>
+                        <View style={[styles.connectionRowIconContainer, iconContainerStyle]}>
                           {image ? (
-                            <Image source={image} style={[styles.connectionRowImage, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
+                            <Image source={image} style={[styles.connectionRowImage, providerImageStyle, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
                           ) : Icon ? (
                             <Icon size={20} color={iconColor || '#0f172a'} />
                           ) : null}
@@ -5435,18 +5481,68 @@ function createStyles(tokens) {
       width: 48,
       height: 48,
       borderRadius: 24,
-      backgroundColor: '#f3f4f6',
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
       alignItems: 'center',
       justifyContent: 'center',
       marginRight: 16,
     },
+    connectionRowIconContainerGoogle: {
+      borderColor: '#bfdbfe',
+      backgroundColor: '#eff6ff',
+    },
+    connectionRowIconContainerDropbox: {
+      borderColor: '#bfdbfe',
+      backgroundColor: '#f0f7ff',
+    },
+    connectionRowIconContainerNotion: {
+      borderColor: '#d1d5db',
+      backgroundColor: '#f9fafb',
+    },
+    connectionRowIconContainerYoutube: {
+      borderColor: '#fecaca',
+      backgroundColor: '#fff1f2',
+    },
+    connectionRowIconContainerQuizlet: {
+      borderColor: '#bfdbfe',
+      backgroundColor: '#eff6ff',
+    },
+    connectionRowIconContainerCanvas: {
+      borderColor: '#fed7aa',
+      backgroundColor: '#fff7ed',
+    },
+    connectionRowIconContainerApple: {
+      borderColor: '#d1d5db',
+      backgroundColor: '#f9fafb',
+    },
     connectionRowImage: {
-      width: 28,
-      height: 28,
+      width: 24,
+      height: 24,
+    },
+    connectionRowImageDropbox: {
+      width: 22,
+      height: 22,
+    },
+    connectionRowImageNotion: {
+      width: 22,
+      height: 22,
+    },
+    connectionRowImageYoutube: {
+      width: 23,
+      height: 23,
+    },
+    connectionRowImageQuizlet: {
+      width: 22,
+      height: 22,
+    },
+    connectionRowImageCanvas: {
+      width: 21,
+      height: 21,
     },
     connectionRowImageApple: {
-      width: 34,
-      height: 34,
+      width: 24,
+      height: 24,
     },
     connectionRowText: {
       flex: 1,
