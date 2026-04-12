@@ -19,6 +19,16 @@ const avatarSources = {
   prof10: require('../assets/prof10.png'),
 };
 
+const SIDEBAR_BRAND_LOGO = require('../assets/learnadoodle-logo.png');
+const SIDEBAR_ICON_SOURCES = {
+  home: require('../assets/home.png'),
+  planner: require('../assets/planner.png'),
+  family: require('../assets/family.png'),
+  library: require('../assets/library.png'),
+  subjects: require('../assets/subject.png'),
+  more: require('../assets/more.png'),
+};
+
 const resolveAvatarSource = (avatarKey) => {
   if (!avatarKey) {
     return avatarSources.prof1;
@@ -67,6 +77,7 @@ export default function LeftRail({
   const [expandedChildren, setExpandedChildren] = useState(new Set());
   const [hoveredItem, setHoveredItem] = useState(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [loadedSidebarImages, setLoadedSidebarImages] = useState({});
   const moreButtonRef = useRef(null);
   const moreMenuTimeoutRef = useRef(null);
   
@@ -99,6 +110,61 @@ export default function LeftRail({
       }
     };
   }, []);
+
+  const markSidebarImageReady = useCallback((imageKey) => {
+    setLoadedSidebarImages((prev) => (
+      prev[imageKey] ? prev : { ...prev, [imageKey]: true }
+    ));
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const imageEntries = [
+      { key: 'brandLogo', source: SIDEBAR_BRAND_LOGO },
+      ...Object.entries(SIDEBAR_ICON_SOURCES).map(([key, source]) => ({ key, source })),
+    ];
+
+    imageEntries.forEach(({ key, source }) => {
+      const resolved = Image.resolveAssetSource?.(source);
+      const uri = resolved?.uri;
+      if (!uri) {
+        markSidebarImageReady(key);
+        return;
+      }
+      const preloadImage = new window.Image();
+      preloadImage.decoding = 'async';
+      preloadImage.onload = () => markSidebarImageReady(key);
+      preloadImage.onerror = () => markSidebarImageReady(key);
+      preloadImage.src = uri;
+      if (typeof preloadImage.decode === 'function') {
+        preloadImage.decode().catch(() => {});
+      }
+    });
+  }, [markSidebarImageReady]);
+
+  const renderStableSidebarImage = useCallback(({
+    imageKey,
+    source,
+    imageStyle,
+    resizeMode = 'contain',
+    placeholderStyle,
+  }) => {
+    const isLoaded = !!loadedSidebarImages[imageKey];
+    return (
+      <View style={styles.sidebarImageShell}>
+        {!isLoaded && <View style={[styles.sidebarImagePlaceholder, placeholderStyle]} />}
+        <Image
+          source={source}
+          style={[imageStyle, !isLoaded && styles.sidebarImageHidden]}
+          resizeMode={resizeMode}
+          onLoad={() => markSidebarImageReady(imageKey)}
+          onError={() => markSidebarImageReady(imageKey)}
+          fadeDuration={0}
+        />
+      </View>
+    );
+  }, [loadedSidebarImages, markSidebarImageReady]);
 
   const handleNewPress = useCallback(
     (event) => {
@@ -192,11 +258,13 @@ export default function LeftRail({
         {!isCollapsed && (
           <View style={styles.topIconContainer}>
             <View style={styles.topIconWrapper}>
-              <Image 
-                source={require('../assets/learnadoodle-logo.png')} 
-                style={styles.topIcon}
-                resizeMode="cover"
-              />
+              {renderStableSidebarImage({
+                imageKey: 'brandLogo',
+                source: SIDEBAR_BRAND_LOGO,
+                imageStyle: styles.topIcon,
+                resizeMode: 'cover',
+                placeholderStyle: styles.topIconPlaceholder,
+              })}
             </View>
           </View>
         )}
@@ -278,67 +346,67 @@ export default function LeftRail({
                 <View style={styles.iconWrapper}>
                   {isHome ? (
                     <View style={styles.homeIconContainer}>
-                      <Image 
-                        source={require('../assets/home.png')} 
-                        style={styles.homeIcon}
-                        resizeMode="contain"
-                      />
+                      {renderStableSidebarImage({
+                        imageKey: 'home',
+                        source: SIDEBAR_ICON_SOURCES.home,
+                        imageStyle: styles.homeIcon,
+                      })}
                     </View>
                   ) : isPlanner ? (
                     <View style={styles.plannerIconContainer}>
-                      <Image 
-                        source={require('../assets/planner.png')} 
-                        style={styles.plannerIcon}
-                        resizeMode="contain"
-                      />
+                      {renderStableSidebarImage({
+                        imageKey: 'planner',
+                        source: SIDEBAR_ICON_SOURCES.planner,
+                        imageStyle: styles.plannerIcon,
+                      })}
                     </View>
                   ) : isNew ? (
                     <View style={styles.newIconContainer}>
-                      <Image 
-                        source={require('../assets/family.png')} 
-                        style={styles.newIcon}
-                        resizeMode="contain"
-                      />
+                      {renderStableSidebarImage({
+                        imageKey: 'family',
+                        source: SIDEBAR_ICON_SOURCES.family,
+                        imageStyle: styles.newIcon,
+                      })}
                     </View>
                   ) : isLibrary ? (
                     <View style={styles.libraryIconContainer}>
-                      <Image 
-                        source={require('../assets/library.png')} 
-                        style={styles.libraryIcon}
-                        resizeMode="contain"
-                      />
+                      {renderStableSidebarImage({
+                        imageKey: 'library',
+                        source: SIDEBAR_ICON_SOURCES.library,
+                        imageStyle: styles.libraryIcon,
+                      })}
                     </View>
                   ) : isSubjects ? (
                     <View style={styles.subjectsIconContainer}>
-                      <Image 
-                        source={require('../assets/subject.png')} 
-                        style={styles.subjectsIcon}
-                        resizeMode="contain"
-                      />
+                      {renderStableSidebarImage({
+                        imageKey: 'subjects',
+                        source: SIDEBAR_ICON_SOURCES.subjects,
+                        imageStyle: styles.subjectsIcon,
+                      })}
                     </View>
                   ) : isFamily ? (
                     <View style={styles.familyIconContainer}>
-                      <Image 
-                        source={require('../assets/family.png')} 
-                        style={styles.familyIcon}
-                        resizeMode="contain"
-                      />
+                      {renderStableSidebarImage({
+                        imageKey: 'family',
+                        source: SIDEBAR_ICON_SOURCES.family,
+                        imageStyle: styles.familyIcon,
+                      })}
                     </View>
                   ) : isIntelligence ? (
                     <View style={styles.subjectsIconContainer}>
-                      <Image 
-                        source={require('../assets/subject.png')} 
-                        style={styles.subjectsIcon}
-                        resizeMode="contain"
-                      />
+                      {renderStableSidebarImage({
+                        imageKey: 'subjects',
+                        source: SIDEBAR_ICON_SOURCES.subjects,
+                        imageStyle: styles.subjectsIcon,
+                      })}
                     </View>
                   ) : isMore ? (
                     <View style={styles.moreIconContainer}>
-                      <Image 
-                        source={require('../assets/more.png')} 
-                        style={styles.moreIcon}
-                        resizeMode="contain"
-                      />
+                      {renderStableSidebarImage({
+                        imageKey: 'more',
+                        source: SIDEBAR_ICON_SOURCES.more,
+                        imageStyle: styles.moreIcon,
+                      })}
                     </View>
                   ) : (
                     Icon && <View style={styles.iconContainer}>
@@ -541,6 +609,11 @@ const styles = StyleSheet.create({
     marginBottom: -12, // Crop bottom significantly
     // No left/right margins - only crop top and bottom
   },
+  topIconPlaceholder: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 4,
+  },
   settingsSection: {
     flexDirection: 'column',
     gap: 8,
@@ -634,6 +707,24 @@ const styles = StyleSheet.create({
     width: 52, // Fixed width - matches largest icon container (planner/library)
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  sidebarImageShell: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  sidebarImagePlaceholder: {
+    position: 'absolute',
+    width: '74%',
+    height: '74%',
+    borderRadius: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.08)',
+  },
+  sidebarImageHidden: {
+    opacity: 0,
   },
   iconContainer: {
     width: 52,

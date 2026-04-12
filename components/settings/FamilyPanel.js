@@ -163,6 +163,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [googleAccountEmail, setGoogleAccountEmail] = useState(null);
   const [googleCalendarAccountEmail, setGoogleCalendarAccountEmail] = useState(null);
   const [loadingConnections, setLoadingConnections] = useState(false);
+  const [loadedConnectionImages, setLoadedConnectionImages] = useState({});
   const [hoveredSubjectId, setHoveredSubjectId] = useState(null);
   
   // Active section for sidebar navigation
@@ -399,6 +400,54 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const quizletLogo = require('../../assets/quizlet.png');
   const canvasLogo = require('../../assets/canvas.png');
   const appleLogo = require('../../assets/apple.png');
+
+  const markConnectionImageReady = useCallback((providerKey) => {
+    setLoadedConnectionImages((prev) => (
+      prev[providerKey] ? prev : { ...prev, [providerKey]: true }
+    ));
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const providersToPreload = [
+      { key: 'google', image: googleLogo },
+      { key: 'google_calendar', image: googleLogo },
+      { key: 'dropbox', image: dropboxLogo },
+      { key: 'notion', image: notionLogo },
+      { key: 'youtube', image: youtubeLogo },
+      { key: 'quizlet', image: quizletLogo },
+      { key: 'canvas', image: canvasLogo },
+      { key: 'apple_calendar', image: appleLogo },
+    ];
+
+    providersToPreload.forEach(({ key, image }) => {
+      const resolved = Image.resolveAssetSource?.(image);
+      const uri = resolved?.uri;
+      if (!uri) {
+        markConnectionImageReady(key);
+        return;
+      }
+
+      const preloadImage = new window.Image();
+      preloadImage.decoding = 'async';
+      preloadImage.onload = () => markConnectionImageReady(key);
+      preloadImage.onerror = () => markConnectionImageReady(key);
+      preloadImage.src = uri;
+      if (typeof preloadImage.decode === 'function') {
+        preloadImage.decode().catch(() => {});
+      }
+    });
+  }, [
+    appleLogo,
+    canvasLogo,
+    dropboxLogo,
+    googleLogo,
+    markConnectionImageReady,
+    notionLogo,
+    quizletLogo,
+    youtubeLogo,
+  ]);
 
   // Update local state when prop changes
   useEffect(() => {
@@ -1423,6 +1472,43 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
+  const renderConnectionProviderIcon = (
+    providerKey,
+    image,
+    imageStyle,
+    imageResizeMode,
+    Icon,
+    iconColor
+  ) => {
+    const { containerStyle: iconContainerStyle, imageStyle: providerImageStyle } = getConnectionIconStyles(providerKey);
+    const isImageLoaded = !!loadedConnectionImages[providerKey];
+
+    return (
+      <View style={[styles.connectionRowIconContainer, iconContainerStyle]}>
+        {image ? (
+          <View style={[styles.connectionRowImageLayer, providerImageStyle, imageStyle]}>
+            {!isImageLoaded && <View style={styles.connectionRowImagePlaceholder} />}
+            <Image
+              source={image}
+              style={[
+                styles.connectionRowImage,
+                providerImageStyle,
+                imageStyle,
+                !isImageLoaded && styles.connectionRowImageHidden,
+              ]}
+              resizeMode={imageResizeMode || 'contain'}
+              onLoad={() => markConnectionImageReady(providerKey)}
+              onError={() => markConnectionImageReady(providerKey)}
+              fadeDuration={0}
+            />
+          </View>
+        ) : Icon ? (
+          <Icon size={20} color={iconColor || '#0f172a'} />
+        ) : null}
+      </View>
+    );
+  };
+
   const setProviderConnection = (providerKey, isConnected) => {
     setConnectedProviders((prev) => ({
       ...prev,
@@ -1872,7 +1958,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 const isBusy = connectingProvider === key;
                 const isRecommended = key === 'google';
                 const isHovered = hoveredConnectionKey === key;
-                const { containerStyle: iconContainerStyle, imageStyle: providerImageStyle } = getConnectionIconStyles(key);
 
                 return (
                   <React.Fragment key={key}>
@@ -1887,13 +1972,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       })}
                     >
                       <View style={styles.connectionRowLeft}>
-                        <View style={[styles.connectionRowIconContainer, iconContainerStyle]}>
-                          {image ? (
-                            <Image source={image} style={[styles.connectionRowImage, providerImageStyle, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
-                          ) : Icon ? (
-                            <Icon size={20} color={iconColor || '#0f172a'} />
-                          ) : null}
-                        </View>
+                        {renderConnectionProviderIcon(key, image, imageStyle, imageResizeMode, Icon, iconColor)}
                         <View style={styles.connectionRowText}>
                           <View style={styles.connectionRowHeader}>
                             <Text style={styles.connectionRowLabel}>{label}</Text>
@@ -1978,7 +2057,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 const isBusy = connectingProvider === key;
                 const isRecommended = key === 'google_calendar';
                 const isHovered = hoveredConnectionKey === key;
-                const { containerStyle: iconContainerStyle, imageStyle: providerImageStyle } = getConnectionIconStyles(key);
 
                 return (
                   <React.Fragment key={key}>
@@ -1993,13 +2071,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       })}
                     >
                       <View style={styles.connectionRowLeft}>
-                        <View style={[styles.connectionRowIconContainer, iconContainerStyle]}>
-                          {image ? (
-                            <Image source={image} style={[styles.connectionRowImage, providerImageStyle, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
-                          ) : Icon ? (
-                            <Icon size={20} color={iconColor || '#0f172a'} />
-                          ) : null}
-                        </View>
+                        {renderConnectionProviderIcon(key, image, imageStyle, imageResizeMode, Icon, iconColor)}
                         <View style={styles.connectionRowText}>
                           <View style={styles.connectionRowHeader}>
                             <Text style={styles.connectionRowLabel}>{label}</Text>
@@ -2082,7 +2154,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 const isConnected = !!connectedProviders[key];
                 const isBusy = connectingProvider === key;
                 const isHovered = hoveredConnectionKey === key;
-                const { containerStyle: iconContainerStyle, imageStyle: providerImageStyle } = getConnectionIconStyles(key);
 
                 return (
                   <React.Fragment key={key}>
@@ -2097,13 +2168,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       })}
                     >
                       <View style={styles.connectionRowLeft}>
-                        <View style={[styles.connectionRowIconContainer, iconContainerStyle]}>
-                          {image ? (
-                            <Image source={image} style={[styles.connectionRowImage, providerImageStyle, imageStyle]} resizeMode={imageResizeMode || 'contain'} />
-                          ) : Icon ? (
-                            <Icon size={20} color={iconColor || '#0f172a'} />
-                          ) : null}
-                        </View>
+                        {renderConnectionProviderIcon(key, image, imageStyle, imageResizeMode, Icon, iconColor)}
                         <View style={styles.connectionRowText}>
                           <View style={styles.connectionRowHeader}>
                             <Text style={styles.connectionRowLabel}>{label}</Text>
@@ -5517,8 +5582,26 @@ function createStyles(tokens) {
       backgroundColor: '#f9fafb',
     },
     connectionRowImage: {
+      width: '100%',
+      height: '100%',
+      ...(Platform.OS === 'web' && {
+        transition: 'opacity 0.18s ease',
+      }),
+    },
+    connectionRowImageLayer: {
       width: 24,
       height: 24,
+      position: 'relative',
+      overflow: 'hidden',
+      borderRadius: 8,
+    },
+    connectionRowImagePlaceholder: {
+      ...StyleSheet.absoluteFillObject,
+      borderRadius: 8,
+      backgroundColor: 'rgba(15, 23, 42, 0.08)',
+    },
+    connectionRowImageHidden: {
+      opacity: 0,
     },
     connectionRowImageDropbox: {
       width: 22,
