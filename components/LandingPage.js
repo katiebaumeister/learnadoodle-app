@@ -126,7 +126,7 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
         {!isLoaded && <View style={[styles.landingImagePlaceholder, placeholderStyle]} />}
         <Image
           source={source}
-          style={[styles.landingImageFill, !isLoaded && styles.landingImageHidden]}
+          style={styles.landingImageFill}
           resizeMode={resizeMode}
           onLoad={() => {
             markLandingImageReady(imageKey);
@@ -1537,8 +1537,5 @@ const styles = StyleSheet.create({
   landingImagePlaceholder: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(15, 23, 42, 0.08)',
-  },
-  landingImageHidden: {
-    opacity: 0,
   },
 });

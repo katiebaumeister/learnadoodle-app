@@ -156,7 +156,7 @@ export default function LeftRail({
         {!isLoaded && <View style={[styles.sidebarImagePlaceholder, placeholderStyle]} />}
         <Image
           source={source}
-          style={[imageStyle, !isLoaded && styles.sidebarImageHidden]}
+          style={imageStyle}
           resizeMode={resizeMode}
           onLoad={() => markSidebarImageReady(imageKey)}
           onError={() => markSidebarImageReady(imageKey)}
@@ -722,9 +722,6 @@ const styles = StyleSheet.create({
     height: '74%',
     borderRadius: 10,
     backgroundColor: 'rgba(15, 23, 42, 0.08)',
-  },
-  sidebarImageHidden: {
-    opacity: 0,
   },
   iconContainer: {
     width: 52,

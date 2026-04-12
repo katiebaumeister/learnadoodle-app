@@ -1494,7 +1494,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 styles.connectionRowImage,
                 providerImageStyle,
                 imageStyle,
-                !isImageLoaded && styles.connectionRowImageHidden,
               ]}
               resizeMode={imageResizeMode || 'contain'}
               onLoad={() => markConnectionImageReady(providerKey)}
@@ -5599,9 +5598,6 @@ function createStyles(tokens) {
       ...StyleSheet.absoluteFillObject,
       borderRadius: 8,
       backgroundColor: 'rgba(15, 23, 42, 0.08)',
-    },
-    connectionRowImageHidden: {
-      opacity: 0,
     },
     connectionRowImageDropbox: {
       width: 22,
