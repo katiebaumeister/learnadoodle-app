@@ -60,7 +60,6 @@ import PlanHealthIcon from './planner/PlanHealthIcon';
 import HelpPopover from './planner/HelpPopover';
 import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import OnboardingModal from './onboarding/OnboardingModal';
-import AvatarPreloader from './onboarding/AvatarPreloader';
 import ExplorerTourOverlay from './onboarding/ExplorerTourOverlay';
 import LearnerQuickStartModal from './onboarding/LearnerQuickStartModal';
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
@@ -352,27 +351,30 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [preloadedAcademicYears, setPreloadedAcademicYears] = useState(null);
   /** null = not loaded yet; rows seed EventModal help/submission strips without a blocking fetch */
   const [preloadedFamilyAssignments, setPreloadedFamilyAssignments] = useState(null);
+  const [forceHideLoader, setForceHideLoader] = useState(false);
   // Derived: must come after session/state used below (avoid TDZ)
   const onboardingBlocked = !!(
     session &&
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
-  // AppLoader until: onboarding resolved + modal ready if blocked + home tab session ready (not family preload).
-  const sessionFamilyId = familyId || session?.family_id || null;
-  // Home tab: never block on WebContent home fetch; allow session.family_id until familyId state syncs.
-  const homeReady =
-    activeTab !== 'home' ||
-    (sessionFamilyId && session && session.loading !== true) ||
-    (session && session.loading !== true && session.family_id == null);
+  // Fullscreen loader should be brief and fail-open quickly.
   const showLoader = !!(
     user &&
     session &&
-    ((!onboardingCheckDone) ||
-      (onboardingBlocked &&
-        (!onboardingUiReady || !onboardingModalReady)) ||
-      !homeReady)
+    ((session.loading === true) ||
+      (onboardingBlocked && !onboardingUiReady))
   );
+  const showLoaderEffective = showLoader && !forceHideLoader;
+
+  useEffect(() => {
+    if (!showLoader) {
+      setForceHideLoader(false);
+      return;
+    }
+    const timeoutId = setTimeout(() => setForceHideLoader(true), 1200);
+    return () => clearTimeout(timeoutId);
+  }, [showLoader]);
 
   useEffect(() => {
     if (!onboardingBlocked) setOnboardingModalReady(false);
@@ -2836,15 +2838,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   if (user && session) {
     return (
       <>
-        {showLoader && (
+        {showLoaderEffective && (
           <View style={[StyleSheet.absoluteFillObject, Platform.OS === 'web' && { position: 'fixed', zIndex: 99999 }, { pointerEvents: 'auto' }]}>
             <AppLoader spinnerOnly />
           </View>
         )}
-        {!onboardingCheckDone ? (
-          <AvatarPreloader />
-        ) : (
-          <ToastProvider>
+        <ToastProvider>
       <FiltersProvider>
         <PlannerDiffProvider>
         <AppShell
@@ -5268,8 +5267,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
         </PlannerDiffProvider>
       </FiltersProvider>
-    </ToastProvider>
-        )}
+          </ToastProvider>
       </>
     );
   }
