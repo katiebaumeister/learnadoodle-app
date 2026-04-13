@@ -19,6 +19,7 @@ import {
 } from '../../lib/services/childInviteStatus';
 import ChildDotCluster from '../ui/ChildDotCluster';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
+import StableImage from '../ui/StableImage';
 import EditChildModal from '../EditChildModal';
 import AddChildModal from '../AddChildModal';
 import InviteChildModal from '../InviteChildModal';
@@ -163,7 +164,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [googleAccountEmail, setGoogleAccountEmail] = useState(null);
   const [googleCalendarAccountEmail, setGoogleCalendarAccountEmail] = useState(null);
   const [loadingConnections, setLoadingConnections] = useState(false);
-  const [loadedConnectionImages, setLoadedConnectionImages] = useState({});
   const [hoveredSubjectId, setHoveredSubjectId] = useState(null);
   
   // Active section for sidebar navigation
@@ -400,54 +400,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const quizletLogo = require('../../assets/quizlet.png');
   const canvasLogo = require('../../assets/canvas.png');
   const appleLogo = require('../../assets/apple.png');
-
-  const markConnectionImageReady = useCallback((providerKey) => {
-    setLoadedConnectionImages((prev) => (
-      prev[providerKey] ? prev : { ...prev, [providerKey]: true }
-    ));
-  }, []);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-
-    const providersToPreload = [
-      { key: 'google', image: googleLogo },
-      { key: 'google_calendar', image: googleLogo },
-      { key: 'dropbox', image: dropboxLogo },
-      { key: 'notion', image: notionLogo },
-      { key: 'youtube', image: youtubeLogo },
-      { key: 'quizlet', image: quizletLogo },
-      { key: 'canvas', image: canvasLogo },
-      { key: 'apple_calendar', image: appleLogo },
-    ];
-
-    providersToPreload.forEach(({ key, image }) => {
-      const resolved = Image.resolveAssetSource?.(image);
-      const uri = resolved?.uri;
-      if (!uri) {
-        markConnectionImageReady(key);
-        return;
-      }
-
-      const preloadImage = new window.Image();
-      preloadImage.decoding = 'async';
-      preloadImage.onload = () => markConnectionImageReady(key);
-      preloadImage.onerror = () => markConnectionImageReady(key);
-      preloadImage.src = uri;
-      if (typeof preloadImage.decode === 'function') {
-        preloadImage.decode().catch(() => {});
-      }
-    });
-  }, [
-    appleLogo,
-    canvasLogo,
-    dropboxLogo,
-    googleLogo,
-    markConnectionImageReady,
-    notionLogo,
-    quizletLogo,
-    youtubeLogo,
-  ]);
 
   // Update local state when prop changes
   useEffect(() => {
@@ -1481,26 +1433,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     iconColor
   ) => {
     const { containerStyle: iconContainerStyle, imageStyle: providerImageStyle } = getConnectionIconStyles(providerKey);
-    const isImageLoaded = !!loadedConnectionImages[providerKey];
 
     return (
       <View style={[styles.connectionRowIconContainer, iconContainerStyle]}>
         {image ? (
-          <View style={[styles.connectionRowImageLayer, providerImageStyle, imageStyle]}>
-            {!isImageLoaded && <View style={styles.connectionRowImagePlaceholder} />}
-            <Image
-              source={image}
-              style={[
-                styles.connectionRowImage,
-                providerImageStyle,
-                imageStyle,
-              ]}
-              resizeMode={imageResizeMode || 'contain'}
-              onLoad={() => markConnectionImageReady(providerKey)}
-              onError={() => markConnectionImageReady(providerKey)}
-              fadeDuration={0}
-            />
-          </View>
+          <StableImage
+            source={image}
+            resizeMode={imageResizeMode || 'contain'}
+            shellStyle={[styles.connectionRowImageLayer, providerImageStyle, imageStyle]}
+            imageStyle={[styles.connectionRowImage, providerImageStyle, imageStyle]}
+            placeholderStyle={styles.connectionRowImagePlaceholder}
+            fadeDuration={0}
+          />
         ) : Icon ? (
           <Icon size={20} color={iconColor || '#0f172a'} />
         ) : null}
@@ -5595,7 +5539,6 @@ function createStyles(tokens) {
       borderRadius: 8,
     },
     connectionRowImagePlaceholder: {
-      ...StyleSheet.absoluteFillObject,
       borderRadius: 8,
       backgroundColor: 'rgba(15, 23, 42, 0.08)',
     },

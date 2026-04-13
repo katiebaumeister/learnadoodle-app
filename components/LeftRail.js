@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
 import { Plus, Home, CalendarDays, Compass, FileText, BookOpen, Brain, UserCircle, Settings, MessageSquare, Users } from 'lucide-react';
 import Dropdown, { DropdownItem } from './ui/Dropdown';
+import StableImage from './ui/StableImage';
 import { safeImageUri } from '../lib/safeImageUri';
 
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
@@ -77,7 +78,6 @@ export default function LeftRail({
   const [expandedChildren, setExpandedChildren] = useState(new Set());
   const [hoveredItem, setHoveredItem] = useState(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [loadedSidebarImages, setLoadedSidebarImages] = useState({});
   const moreButtonRef = useRef(null);
   const moreMenuTimeoutRef = useRef(null);
   
@@ -111,60 +111,20 @@ export default function LeftRail({
     };
   }, []);
 
-  const markSidebarImageReady = useCallback((imageKey) => {
-    setLoadedSidebarImages((prev) => (
-      prev[imageKey] ? prev : { ...prev, [imageKey]: true }
-    ));
-  }, []);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-
-    const imageEntries = [
-      { key: 'brandLogo', source: SIDEBAR_BRAND_LOGO },
-      ...Object.entries(SIDEBAR_ICON_SOURCES).map(([key, source]) => ({ key, source })),
-    ];
-
-    imageEntries.forEach(({ key, source }) => {
-      const resolved = Image.resolveAssetSource?.(source);
-      const uri = resolved?.uri;
-      if (!uri) {
-        markSidebarImageReady(key);
-        return;
-      }
-      const preloadImage = new window.Image();
-      preloadImage.decoding = 'async';
-      preloadImage.onload = () => markSidebarImageReady(key);
-      preloadImage.onerror = () => markSidebarImageReady(key);
-      preloadImage.src = uri;
-      if (typeof preloadImage.decode === 'function') {
-        preloadImage.decode().catch(() => {});
-      }
-    });
-  }, [markSidebarImageReady]);
-
   const renderStableSidebarImage = useCallback(({
-    imageKey,
     source,
     imageStyle,
     resizeMode = 'contain',
     placeholderStyle,
-  }) => {
-    const isLoaded = !!loadedSidebarImages[imageKey];
-    return (
-      <View style={styles.sidebarImageShell}>
-        {!isLoaded && <View style={[styles.sidebarImagePlaceholder, placeholderStyle]} />}
-        <Image
-          source={source}
-          style={imageStyle}
-          resizeMode={resizeMode}
-          onLoad={() => markSidebarImageReady(imageKey)}
-          onError={() => markSidebarImageReady(imageKey)}
-          fadeDuration={0}
-        />
-      </View>
-    );
-  }, [loadedSidebarImages, markSidebarImageReady]);
+  }) => (
+    <StableImage
+      source={source}
+      resizeMode={resizeMode}
+      imageStyle={imageStyle}
+      placeholderStyle={[styles.sidebarImagePlaceholder, placeholderStyle]}
+      fadeDuration={0}
+    />
+  ), []);
 
   const handleNewPress = useCallback(
     (event) => {
@@ -708,20 +668,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sidebarImageShell: {
-    width: '100%',
-    height: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    overflow: 'hidden',
-  },
   sidebarImagePlaceholder: {
-    position: 'absolute',
-    width: '74%',
-    height: '74%',
+    top: '13%',
+    left: '13%',
+    right: '13%',
+    bottom: '13%',
     borderRadius: 10,
-    backgroundColor: 'rgba(15, 23, 42, 0.08)',
   },
   iconContainer: {
     width: 52,

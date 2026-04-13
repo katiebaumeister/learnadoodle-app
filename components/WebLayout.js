@@ -358,9 +358,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
-  // AppLoader until: onboarding resolved + modal ready if blocked + shell/rail images preloaded + home tab session ready (not family preload).
-  const [shellAssetsReady, setShellAssetsReady] = useState(false);
-  const onShellGateReady = useCallback(() => setShellAssetsReady(true), []);
+  // AppLoader until: onboarding resolved + modal ready if blocked + home tab session ready (not family preload).
   const sessionFamilyId = familyId || session?.family_id || null;
   // Home tab: never block on WebContent home fetch; allow session.family_id until familyId state syncs.
   const homeReady =
@@ -373,7 +371,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     ((!onboardingCheckDone) ||
       (onboardingBlocked &&
         (!onboardingUiReady || !onboardingModalReady)) ||
-      !shellAssetsReady ||
       !homeReady)
   );
 
@@ -2841,7 +2838,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       <>
         {showLoader && (
           <View style={[StyleSheet.absoluteFillObject, Platform.OS === 'web' && { position: 'fixed', zIndex: 99999 }, { pointerEvents: 'auto' }]}>
-            <AppLoader spinnerOnly onShellAssetsReady={onShellGateReady} />
+            <AppLoader spinnerOnly />
           </View>
         )}
         {!onboardingCheckDone ? (

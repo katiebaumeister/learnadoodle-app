@@ -10,10 +10,9 @@ import {
   Animated,
   Modal,
 } from 'react-native';
-import AppLoader from './AppLoader';
 import { X, ChevronDown } from 'lucide-react';
+import StableImage from './ui/StableImage';
 
-const LANDING_IMAGE_COUNT = 17;
 const LANDING_IMAGE_SOURCES = {
   logo: require('../assets/icon.png'),
   hero: require('../assets/landing.png'),
@@ -26,12 +25,10 @@ const LANDING_IMAGE_SOURCES = {
   superdoodle: require('../assets/superdoodlesection.png'),
 };
 
-export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false }) {
+export default function LandingPage({ onGetStarted, onLogIn }) {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSuperDoodleVisible, setIsSuperDoodleVisible] = useState(false);
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
-  // On web, start ready so we go straight to landing with actual page load (no loading screen)
-  const [pageReady, setPageReady] = useState(true);
   const [isMobile, setIsMobile] = useState(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       return window.innerWidth <= 768;
@@ -43,16 +40,6 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
   const pageFadeAnim = useRef(new Animated.Value(1)).current;
   const headerFadeAnim = useRef(new Animated.Value(1)).current;
   const superDoodleRef = useRef(null);
-  const loadedImageCount = useRef(0);
-  const [loadedLandingImages, setLoadedLandingImages] = useState({});
-
-  const handleImageLoad = () => {
-    if (Platform.OS !== 'web' || pageReady) return;
-    loadedImageCount.current += 1;
-    if (loadedImageCount.current >= LANDING_IMAGE_COUNT) {
-      setPageReady(true);
-    }
-  };
 
 
   useEffect(() => {
@@ -86,58 +73,21 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
     }
   }, []);
 
-  const markLandingImageReady = (imageKey) => {
-    setLoadedLandingImages((prev) => (
-      prev[imageKey] ? prev : { ...prev, [imageKey]: true }
-    ));
-  };
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-
-    Object.entries(LANDING_IMAGE_SOURCES).forEach(([imageKey, imageSource]) => {
-      const resolved = Image.resolveAssetSource?.(imageSource);
-      const uri = resolved?.uri;
-      if (!uri) {
-        markLandingImageReady(imageKey);
-        return;
-      }
-      const preloadImage = new window.Image();
-      preloadImage.decoding = 'async';
-      preloadImage.onload = () => markLandingImageReady(imageKey);
-      preloadImage.onerror = () => markLandingImageReady(imageKey);
-      preloadImage.src = uri;
-      if (typeof preloadImage.decode === 'function') {
-        preloadImage.decode().catch(() => {});
-      }
-    });
-  }, []);
-
   const renderStableLandingImage = ({
-    imageKey,
     source,
     shellStyle,
     resizeMode = 'contain',
     placeholderStyle,
-  }) => {
-    const isLoaded = !!loadedLandingImages[imageKey];
-    return (
-      <View style={[styles.landingImageShell, shellStyle]}>
-        {!isLoaded && <View style={[styles.landingImagePlaceholder, placeholderStyle]} />}
-        <Image
-          source={source}
-          style={styles.landingImageFill}
-          resizeMode={resizeMode}
-          onLoad={() => {
-            markLandingImageReady(imageKey);
-            handleImageLoad();
-          }}
-          onError={() => markLandingImageReady(imageKey)}
-          fadeDuration={0}
-        />
-      </View>
-    );
-  };
+  }) => (
+    <StableImage
+      source={source}
+      resizeMode={resizeMode}
+      shellStyle={shellStyle}
+      imageStyle={styles.landingImageFill}
+      placeholderStyle={[styles.landingImagePlaceholder, placeholderStyle]}
+      fadeDuration={0}
+    />
+  );
 
   const handleScroll = (event) => {
     const scrollY = event.nativeEvent.contentOffset.y;
@@ -168,7 +118,7 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
   };
 
   const mainContent = (
-    <Animated.View style={[styles.landingContentWrapper, { opacity: pageFadeAnim }, Platform.OS === 'web' && !pageReady && styles.landingContentHidden]}>
+    <Animated.View style={[styles.landingContentWrapper, { opacity: pageFadeAnim }]}>
       {/* Corner Text - Only visible when not scrolled and not mobile */}
       {!isScrolled && !isMobile && (
         <View style={styles.cornerText}>
@@ -667,7 +617,6 @@ export default function LandingPage({ onGetStarted, onLogIn, skipLoader = false 
 
   return (
     <>
-      {Platform.OS === 'web' && !pageReady && !skipLoader && <AppLoader />}
       {mainContent}
     </>
   );
@@ -738,10 +687,6 @@ const styles = StyleSheet.create({
   },
   landingContentWrapper: {
     flex: 1,
-  },
-  landingContentHidden: {
-    opacity: 0,
-    pointerEvents: 'none',
   },
   contentContainer: {
     ...(Platform.OS === 'web' && {
@@ -1523,19 +1468,12 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  landingImageShell: {
-    position: 'relative',
-    overflow: 'hidden',
-  },
   landingImageFill: {
-    width: '100%',
-    height: '100%',
     ...(Platform.OS === 'web' && {
       transition: 'opacity 0.18s ease',
     }),
   },
   landingImagePlaceholder: {
-    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(15, 23, 42, 0.08)',
   },
 });
