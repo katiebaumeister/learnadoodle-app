@@ -17,7 +17,7 @@ import {
   mergeChildInviteSummaryMaps,
   mergeServerChildInviteSummaries,
 } from '../../lib/services/childInviteStatus';
-import ChildDotCluster from '../ui/ChildDotCluster';
+import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import StableImage from '../ui/StableImage';
 import EditChildModal from '../EditChildModal';
@@ -953,7 +953,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     return childIds.length === 1 ? '1 student' : `${childIds.length} students`;
   };
 
-  /** Child IDs for prof-color chips (whole family when subject applies to all). */
+  /** Child IDs for avatar cluster (whole family when subject applies to all). */
   const getSubjectChildIdsForDots = (subject) => {
     if (subject.child_id == null || String(subject.child_id).trim() === '') {
       return (familyChildrenForSubjectDots || []).map((c) => c.id).filter(Boolean);
@@ -2925,12 +2925,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                               <Text style={styles.subjectCardName}>{subject.name}</Text>
                               <View style={[styles.subjectCardMeta, styles.subjectCardChildrenRow]}>
                                 {studentChildIds.length > 0 ? (
-                                  <ChildDotCluster
+                                  <ChildAvatarCluster
                                     childIds={studentChildIds}
                                     familyChildren={familyChildrenForSubjectDots}
-                                    dotSize={8}
-                                    overlap={-3}
-                                    style={{ marginRight: 6 }}
+                                    size={30}
+                                    overlap={-9}
+                                    style={{ marginRight: 14 }}
                                   />
                                 ) : null}
                                 <Text style={[styles.subjectCardChildren, { flexShrink: 1 }]} numberOfLines={2}>

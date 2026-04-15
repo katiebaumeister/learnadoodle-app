@@ -67,6 +67,15 @@ class HolidaySettings(BaseModel):
 
 class RecalculateInput(BaseModel):
     academic_year_id: Optional[str] = None  # None for preview/draft
+    family_school_year_id: Optional[str] = None
+    family_school_term_id: Optional[str] = None
+    term_id: Optional[str] = None
+    run_scope_type: Optional[str] = "full_year"  # full_year | term
+    school_duration_scope: Optional[str] = None  # full_year | fall_term | spring_term | custom_duration
+    use_defaults: Optional[bool] = True
+    defaults_snapshot_json: Optional[Dict[str, Any]] = None
+    effective_config_json: Optional[Dict[str, Any]] = None
+    overrides_json: Optional[Dict[str, Any]] = None
     mode: str  # FIXED_END | TARGET_DAYS | TARGET_HOURS
     start_date: str  # YYYY-MM-DD
     end_date: Optional[str] = None  # Required for FIXED_END
@@ -107,6 +116,15 @@ class BlockEntry(BaseModel):
 
 class ApplyToCalendarInput(BaseModel):
     academic_year_id: Optional[str] = None
+    family_school_year_id: Optional[str] = None
+    family_school_term_id: Optional[str] = None
+    term_id: Optional[str] = None
+    run_scope_type: Optional[str] = "full_year"  # full_year | term
+    school_duration_scope: Optional[str] = None  # full_year | fall_term | spring_term | custom_duration
+    use_defaults: Optional[bool] = True
+    defaults_snapshot_json: Optional[Dict[str, Any]] = None
+    effective_config_json: Optional[Dict[str, Any]] = None
+    overrides_json: Optional[Dict[str, Any]] = None
     family_id: str
     start_date: str
     end_date: str
@@ -283,6 +301,281 @@ def validate_subject_targets(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"subject_targets: target_hours for {sid} must be >= 0.",
             )
+
+
+def resolve_school_scope(
+    supabase,
+    family_id: str,
+    run_scope_type: Optional[str],
+    family_school_year_id: Optional[str],
+    family_school_term_id: Optional[str],
+    term_id: Optional[str],
+    start_date_obj: Optional[date],
+    end_date_obj: Optional[date],
+) -> Dict[str, Any]:
+    """
+    Validate/resolve year-term scope invariants.
+    - run_scope_type='term' requires a term id and, when dates are provided, date range contained in the term.
+    - run_scope_type='full_year' must not include a term id.
+    - family_school_year_id / family_school_term_id must belong to this family.
+    Returns normalized ids + validated scope.
+    """
+    scope = (run_scope_type or "full_year").strip().lower()
+    if scope not in {"full_year", "term"}:
+        raise HTTPException(status_code=400, detail="run_scope_type must be 'full_year' or 'term'.")
+
+    selected_term_id = family_school_term_id or term_id
+    if scope == "full_year" and selected_term_id:
+        raise HTTPException(status_code=400, detail="term_id must be null when run_scope_type is 'full_year'.")
+    if scope == "term" and not selected_term_id:
+        raise HTTPException(status_code=400, detail="term_id is required when run_scope_type is 'term'.")
+
+    resolved_year_id = family_school_year_id
+    resolved_term_id = None
+    term_row = None
+
+    if selected_term_id:
+        term_resp = (
+            supabase.table("family_school_terms")
+            .select("id, family_school_year_id, name, start_date, end_date")
+            .eq("id", selected_term_id)
+            .maybe_single()
+            .execute()
+        )
+        term_row = term_resp.data
+        if not term_row:
+            raise HTTPException(status_code=400, detail="Selected term was not found.")
+        resolved_term_id = term_row["id"]
+        term_year_id = term_row.get("family_school_year_id")
+        if resolved_year_id and str(resolved_year_id) != str(term_year_id):
+            raise HTTPException(status_code=400, detail="Selected term does not belong to selected school year.")
+        resolved_year_id = term_year_id
+        term_start = date.fromisoformat(str(term_row["start_date"])[:10])
+        term_end = date.fromisoformat(str(term_row["end_date"])[:10])
+        if start_date_obj and end_date_obj and (start_date_obj < term_start or end_date_obj > term_end):
+            raise HTTPException(
+                status_code=400,
+                detail="Term-scoped plan date range must be within the selected term date range.",
+            )
+
+    year_row = None
+    if resolved_year_id:
+        year_resp = (
+            supabase.table("family_school_years")
+            .select("id, family_id, start_date, end_date")
+            .eq("id", resolved_year_id)
+            .maybe_single()
+            .execute()
+        )
+        year_row = year_resp.data
+        if not year_row:
+            raise HTTPException(status_code=400, detail="Selected school year was not found.")
+        if str(year_row.get("family_id")) != str(family_id):
+            raise HTTPException(status_code=403, detail="Selected school year does not belong to this family.")
+    if term_row and year_row and str(term_row.get("family_school_year_id")) != str(year_row.get("id")):
+        raise HTTPException(status_code=400, detail="Selected term/school year relation is invalid.")
+
+    return {
+        "run_scope_type": scope,
+        "family_school_year_id": resolved_year_id,
+        "family_school_term_id": resolved_term_id,
+        "family_school_year_start_date": (year_row or {}).get("start_date"),
+        "family_school_year_end_date": (year_row or {}).get("end_date"),
+        "family_school_term_start_date": (term_row or {}).get("start_date"),
+        "family_school_term_end_date": (term_row or {}).get("end_date"),
+    }
+
+
+def resolve_run_dates_for_scope(
+    scope_data: Dict[str, Any],
+    school_duration_scope: Optional[str],
+    use_defaults: Optional[bool],
+    client_start_date_obj: date,
+    client_end_date_obj: date,
+) -> Dict[str, Any]:
+    """
+    Resolve authoritative run date range.
+    - defaults unchecked: trust client-selected range.
+    - custom_duration: trust client-selected range.
+    - term-scoped runs: use selected term boundaries.
+    - full_year/fall_term/spring_term: derive from selected family school year.
+    """
+    duration_scope = (school_duration_scope or "").strip().lower()
+    if use_defaults is False or duration_scope in {"", "custom_duration"}:
+        if client_start_date_obj > client_end_date_obj:
+            raise HTTPException(status_code=400, detail="start_date must be <= end_date")
+        return {
+            "start_date_obj": client_start_date_obj,
+            "end_date_obj": client_end_date_obj,
+            "date_source": (
+                "client_manual_override"
+                if use_defaults is False
+                else ("client_custom_duration" if duration_scope == "custom_duration" else "client_legacy")
+            ),
+        }
+
+    term_start_raw = scope_data.get("family_school_term_start_date")
+    term_end_raw = scope_data.get("family_school_term_end_date")
+    if scope_data.get("run_scope_type") == "term" and term_start_raw and term_end_raw:
+        term_start = date.fromisoformat(str(term_start_raw)[:10])
+        term_end = date.fromisoformat(str(term_end_raw)[:10])
+        return {
+            "start_date_obj": term_start,
+            "end_date_obj": term_end,
+            "date_source": "term_bounds",
+        }
+
+    year_start_raw = scope_data.get("family_school_year_start_date")
+    year_end_raw = scope_data.get("family_school_year_end_date")
+    if not year_start_raw or not year_end_raw:
+        raise HTTPException(
+            status_code=400,
+            detail="Selected school year is required to derive dates from duration scope.",
+        )
+
+    year_start = date.fromisoformat(str(year_start_raw)[:10])
+    year_end = date.fromisoformat(str(year_end_raw)[:10])
+    school_start_year = year_start.year
+
+    if duration_scope == "full_year":
+        resolved_start = year_start
+        resolved_end = year_end
+    elif duration_scope == "fall_term":
+        resolved_start = date(school_start_year, 8, 1)
+        resolved_end = date(school_start_year, 12, 31)
+    elif duration_scope == "spring_term":
+        resolved_start = date(school_start_year + 1, 1, 1)
+        resolved_end = date(school_start_year + 1, 5, 1)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="school_duration_scope must be one of full_year, fall_term, spring_term, custom_duration.",
+        )
+
+    if resolved_start > resolved_end:
+        raise HTTPException(status_code=400, detail="Resolved date range is invalid.")
+
+    return {
+        "start_date_obj": resolved_start,
+        "end_date_obj": resolved_end,
+        "date_source": f"scope_{duration_scope}",
+    }
+
+
+def with_scope_validation_audit(
+    effective_config_json: Optional[Dict[str, Any]],
+    scope_data: Dict[str, Any],
+    source: str,
+) -> Dict[str, Any]:
+    """
+    Ensure effective_config_json always includes a stable scope-validation audit marker.
+    """
+    base = effective_config_json.copy() if isinstance(effective_config_json, dict) else {}
+    base["scope_validation"] = {
+        "version": "v1",
+        "validated_at": datetime.now(timezone.utc).isoformat(),
+        "source": source,
+        "run_scope_type": scope_data.get("run_scope_type"),
+        "family_school_year_id": scope_data.get("family_school_year_id"),
+        "family_school_term_id": scope_data.get("family_school_term_id"),
+    }
+    return base
+
+
+def deep_merge_dict(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(base or {})
+    for k, v in (override or {}).items():
+        if (
+            k in out
+            and isinstance(out[k], dict)
+            and isinstance(v, dict)
+        ):
+            out[k] = deep_merge_dict(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def resolve_effective_config_server(
+    supabase,
+    scope_data: Dict[str, Any],
+    use_defaults: Optional[bool],
+    defaults_snapshot_json: Optional[Dict[str, Any]],
+    overrides_json: Optional[Dict[str, Any]],
+    effective_config_json: Optional[Dict[str, Any]],
+    legacy_config: Optional[Dict[str, Any]],
+    source: str,
+) -> Dict[str, Any]:
+    """
+    Backend source-of-truth resolver:
+    school-year defaults -> term overrides -> run overrides -> explicit legacy fields.
+    Returns normalized defaults snapshot + effective config with audit metadata.
+    """
+    year_defaults = {}
+    term_overrides = {}
+
+    school_year_id = scope_data.get("family_school_year_id")
+    if school_year_id:
+        year_resp = (
+            supabase.table("family_school_years")
+            .select("year_defaults_json")
+            .eq("id", school_year_id)
+            .maybe_single()
+            .execute()
+        )
+        row = year_resp.data or {}
+        if isinstance(row.get("year_defaults_json"), dict):
+            year_defaults = row.get("year_defaults_json") or {}
+
+    term_id = scope_data.get("family_school_term_id")
+    if term_id:
+        term_resp = (
+            supabase.table("family_school_terms")
+            .select("term_overrides_json")
+            .eq("id", term_id)
+            .maybe_single()
+            .execute()
+        )
+        row = term_resp.data or {}
+        if isinstance(row.get("term_overrides_json"), dict):
+            term_overrides = row.get("term_overrides_json") or {}
+
+    resolved_defaults = deep_merge_dict(year_defaults, term_overrides)
+    run_overrides = overrides_json if isinstance(overrides_json, dict) else {}
+    legacy = legacy_config if isinstance(legacy_config, dict) else {}
+    client_effective = effective_config_json if isinstance(effective_config_json, dict) else {}
+
+    effective = deep_merge_dict(resolved_defaults, run_overrides)
+    effective = deep_merge_dict(effective, legacy)
+    # Preserve unknown client keys, but keep backend-resolved values authoritative.
+    effective = deep_merge_dict(client_effective, effective)
+
+    defaults_snapshot = (
+        defaults_snapshot_json
+        if isinstance(defaults_snapshot_json, dict)
+        else {
+            "school_year_defaults": year_defaults,
+            "term_overrides": term_overrides,
+            "resolved_defaults": resolved_defaults,
+        }
+    )
+    if isinstance(defaults_snapshot, dict):
+        defaults_snapshot["resolved_defaults"] = resolved_defaults
+
+    if use_defaults is False:
+        # Keep snapshot useful for auditing even when defaults are unchecked.
+        defaults_snapshot = defaults_snapshot or {}
+
+    effective = with_scope_validation_audit(
+        effective_config_json=effective,
+        scope_data=scope_data,
+        source=source,
+    )
+    return {
+        "defaults_snapshot_json": defaults_snapshot,
+        "effective_config_json": effective,
+        "resolved_defaults": resolved_defaults,
+    }
 
 
 def get_holidays_for_year(
@@ -466,6 +759,58 @@ async def recalculate_academic_year(
     
     try:
         supabase = get_admin_client()
+        family_id = get_family_id_for_user(user["id"])
+        if not family_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Family not found"
+            )
+        start_date_obj = date.fromisoformat(body.start_date)
+        end_date_obj = date.fromisoformat(body.end_date) if body.end_date else None
+        holiday_settings_local = body.holiday_settings
+        recalc_mode = body.mode
+        target_days_local = body.target_instructional_days
+        target_hours_local = body.target_instructional_hours
+        planned_hours_per_day_local = body.planned_hours_per_day
+
+        if body.family_school_year_id or body.family_school_term_id or body.term_id:
+            scope_data = resolve_school_scope(
+                supabase=supabase,
+                family_id=family_id,
+                run_scope_type=body.run_scope_type,
+                family_school_year_id=body.family_school_year_id,
+                family_school_term_id=body.family_school_term_id,
+                term_id=body.term_id,
+                start_date_obj=start_date_obj,
+                end_date_obj=end_date_obj or start_date_obj,
+            )
+            resolved_config = resolve_effective_config_server(
+                supabase=supabase,
+                scope_data=scope_data,
+                use_defaults=body.use_defaults,
+                defaults_snapshot_json=body.defaults_snapshot_json,
+                overrides_json=body.overrides_json,
+                effective_config_json=body.effective_config_json,
+                legacy_config={},
+                source="academic_year.recalculate",
+            )
+            resolved_defaults = resolved_config.get("resolved_defaults") or {}
+            if body.use_defaults:
+                hs = resolved_defaults.get("holiday_settings") if isinstance(resolved_defaults, dict) else None
+                if isinstance(hs, dict):
+                    holiday_settings_local = HolidaySettings(
+                        follow_global_holidays=bool(hs.get("follow_global_holidays", False)),
+                        holiday_country_code=hs.get("holiday_country_code"),
+                        holiday_region=hs.get("holiday_region"),
+                        provider=hs.get("provider") or "NAGER_DATE",
+                        excluded_holiday_dates=hs.get("excluded_holiday_dates") or [],
+                    )
+                planning = resolved_defaults.get("planning") if isinstance(resolved_defaults, dict) else None
+                if isinstance(planning, dict):
+                    if target_days_local is None and planning.get("target_days") is not None:
+                        target_days_local = int(planning.get("target_days"))
+                    if target_hours_local is None and planning.get("target_hours") is not None:
+                        target_hours_local = int(planning.get("target_hours"))
         
         # Get holidays (custom + global if enabled)
         holiday_dates = set()
@@ -475,10 +820,10 @@ async def recalculate_academic_year(
             holidays = get_holidays_for_year(
                 supabase,
                 body.academic_year_id,
-                include_global=body.holiday_settings.follow_global_holidays if body.holiday_settings else False,
-                country_code=body.holiday_settings.holiday_country_code if body.holiday_settings else None,
-                region=body.holiday_settings.holiday_region if body.holiday_settings else None,
-                provider=body.holiday_settings.provider if body.holiday_settings else "NAGER_DATE"
+                include_global=holiday_settings_local.follow_global_holidays if holiday_settings_local else False,
+                country_code=holiday_settings_local.holiday_country_code if holiday_settings_local else None,
+                region=holiday_settings_local.holiday_region if holiday_settings_local else None,
+                provider=holiday_settings_local.provider if holiday_settings_local else "NAGER_DATE"
             )
             
             # Add custom holidays from request
@@ -499,10 +844,7 @@ async def recalculate_academic_year(
                 holiday_dates.add(date.fromisoformat(ch.date))
             
             # If global holidays enabled, fetch them
-            if body.holiday_settings and body.holiday_settings.follow_global_holidays:
-                start_date_obj = date.fromisoformat(body.start_date)
-                end_date_obj = date.fromisoformat(body.end_date) if body.end_date else None
-                
+            if holiday_settings_local and holiday_settings_local.follow_global_holidays:
                 if end_date_obj:
                     years_to_fetch = set([start_date_obj.year, end_date_obj.year])
                 else:
@@ -510,10 +852,10 @@ async def recalculate_academic_year(
                 
                 for year in years_to_fetch:
                     global_holidays = fetch_global_holidays(
-                        body.holiday_settings.holiday_country_code or "US",
+                        holiday_settings_local.holiday_country_code or "US",
                         year,
-                        body.holiday_settings.provider,
-                        body.holiday_settings.holiday_region,
+                        holiday_settings_local.provider,
+                        holiday_settings_local.holiday_region,
                         None
                     )
                     
@@ -522,18 +864,14 @@ async def recalculate_academic_year(
                             if not end_date_obj or gh.date <= end_date_obj:
                                 holiday_dates.add(gh.date)
         
-        # Parse dates
-        start_date_obj = date.fromisoformat(body.start_date)
-        end_date_obj = date.fromisoformat(body.end_date) if body.end_date else None
-        
         # Call calculation engine
         result = recalculate_year(
-            mode=body.mode,
+            mode=recalc_mode,
             start_date=start_date_obj,
             end_date=end_date_obj,
-            target_instructional_days=body.target_instructional_days,
-            target_instructional_hours=body.target_instructional_hours,
-            planned_hours_per_day=body.planned_hours_per_day,
+            target_instructional_days=target_days_local,
+            target_instructional_hours=target_hours_local,
+            planned_hours_per_day=planned_hours_per_day_local,
             allowed_weekdays=body.allowed_weekdays,
             holiday_dates=holiday_dates
         )
@@ -579,9 +917,30 @@ async def save_academic_year(
         
         supabase = get_admin_client()
         
-        # Parse dates
-        start_date_obj = date.fromisoformat(body.start_date)
-        end_date_obj = date.fromisoformat(body.end_date) if body.end_date else None
+        # Parse client dates (used directly only for custom duration; otherwise backend derives).
+        client_start_date_obj = date.fromisoformat(body.start_date)
+        client_end_date_obj = date.fromisoformat(body.end_date) if body.end_date else client_start_date_obj
+        duration_scope = (body.school_duration_scope or "").strip().lower()
+
+        scope_data = resolve_school_scope(
+            supabase=supabase,
+            family_id=family_id,
+            run_scope_type=body.run_scope_type,
+            family_school_year_id=body.family_school_year_id,
+            family_school_term_id=body.family_school_term_id,
+            term_id=body.term_id,
+            start_date_obj=client_start_date_obj if duration_scope in {"", "custom_duration"} else None,
+            end_date_obj=client_end_date_obj if duration_scope in {"", "custom_duration"} else None,
+        )
+        resolved_dates = resolve_run_dates_for_scope(
+            scope_data=scope_data,
+            school_duration_scope=body.school_duration_scope,
+            use_defaults=body.use_defaults,
+            client_start_date_obj=client_start_date_obj,
+            client_end_date_obj=client_end_date_obj,
+        )
+        start_date_obj = resolved_dates["start_date_obj"]
+        end_date_obj = resolved_dates["end_date_obj"]
         
         # Recalculate to get end_date if needed
         holiday_dates = set()
@@ -621,6 +980,50 @@ async def save_academic_year(
         # Use computed end_date if mode was TARGET_DAYS or TARGET_HOURS
         if result.get("end_date"):
             end_date_obj = date.fromisoformat(result["end_date"])
+        if not end_date_obj:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="end_date is required after recalculation.",
+            )
+
+        custom_holidays_dict = [{"date": h.date, "name": h.name, "type": getattr(h, "type", "CUSTOM_HOLIDAY")} for h in body.custom_holidays]
+        custom_breaks_dict = [{"start": b.start, "end": b.end, "name": b.name} for b in body.custom_breaks]
+
+        resolved_config = resolve_effective_config_server(
+            supabase=supabase,
+            scope_data=scope_data,
+            use_defaults=body.use_defaults,
+            defaults_snapshot_json=body.defaults_snapshot_json,
+            overrides_json=body.overrides_json,
+            effective_config_json=body.effective_config_json,
+            legacy_config={
+                "calendar": {
+                    "mode": body.mode,
+                    "start_date": start_date_obj.isoformat(),
+                    "end_date": end_date_obj.isoformat(),
+                },
+                "planning": {
+                    "constraint_mode": body.mode.lower().replace("target_", "").replace("fixed_end", "days"),
+                    "target_days": body.target_instructional_days,
+                    "target_hours": body.target_instructional_hours,
+                    "planned_hours_per_day": body.planned_hours_per_day,
+                },
+                "holiday_settings": {
+                    "follow_global_holidays": body.holiday_settings.follow_global_holidays if body.holiday_settings else False,
+                    "holiday_country_code": body.holiday_settings.holiday_country_code if body.holiday_settings else None,
+                    "holiday_region": body.holiday_settings.holiday_region if body.holiday_settings else None,
+                    "provider": body.holiday_settings.provider if body.holiday_settings else "NAGER_DATE",
+                    "excluded_holiday_dates": body.holiday_settings.excluded_holiday_dates if body.holiday_settings else [],
+                },
+                "custom_holidays": [
+                    {"date": h.date, "name": h.name, "type": h.type}
+                    for h in (body.custom_holidays or [])
+                ],
+            },
+            source="academic_year.save",
+        )
+        effective_config_json = resolved_config["effective_config_json"]
+        defaults_snapshot_json = resolved_config["defaults_snapshot_json"]
         
         # Upsert academic year
         year_name = (body.year_name and body.year_name.strip()) or f"{start_date_obj.year}-{end_date_obj.year}"
@@ -634,7 +1037,14 @@ async def save_academic_year(
             "target_instructional_hours": body.target_instructional_hours,
             "planned_hours_per_day": body.planned_hours_per_day,
             "allowed_weekdays": body.allowed_weekdays,
-            "is_draft": False
+            "is_draft": False,
+            "family_school_year_id": scope_data["family_school_year_id"],
+            "family_school_term_id": scope_data["family_school_term_id"],
+            "run_scope_type": scope_data["run_scope_type"],
+            "use_defaults": True if body.use_defaults is None else bool(body.use_defaults),
+            "defaults_snapshot_json": defaults_snapshot_json,
+            "effective_config_json": effective_config_json,
+            "overrides_json": body.overrides_json,
         }
         
         if body.academic_year_id:
@@ -2231,14 +2641,37 @@ async def apply_to_calendar(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Family ID mismatch")
         require_onboarding_complete(family_id)
         supabase = get_admin_client()
-        start_date_obj = date.fromisoformat(body.start_date)
-        end_date_obj = date.fromisoformat(body.end_date)
+        client_start_date_obj = date.fromisoformat(body.start_date)
+        client_end_date_obj = date.fromisoformat(body.end_date)
+        duration_scope = (body.school_duration_scope or "").strip().lower()
+        # When editing a plan: only regenerate events from this date forward (inclusive)
+        scope_data = resolve_school_scope(
+            supabase=supabase,
+            family_id=family_id,
+            run_scope_type=body.run_scope_type,
+            family_school_year_id=body.family_school_year_id,
+            family_school_term_id=body.family_school_term_id,
+            term_id=body.term_id,
+            start_date_obj=client_start_date_obj if duration_scope in {"", "custom_duration"} else None,
+            end_date_obj=client_end_date_obj if duration_scope in {"", "custom_duration"} else None,
+        )
+        resolved_dates = resolve_run_dates_for_scope(
+            scope_data=scope_data,
+            school_duration_scope=body.school_duration_scope,
+            use_defaults=body.use_defaults,
+            client_start_date_obj=client_start_date_obj,
+            client_end_date_obj=client_end_date_obj,
+        )
+        start_date_obj = resolved_dates["start_date_obj"]
+        end_date_obj = resolved_dates["end_date_obj"]
         if start_date_obj > end_date_obj:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="start_date must be <= end_date",
             )
-        # When editing a plan: only regenerate events from this date forward (inclusive)
+        resolved_start_date = start_date_obj.isoformat()
+        resolved_end_date = end_date_obj.isoformat()
+
         regen_start_date = start_date_obj
         if body.apply_from_date:
             try:
@@ -2255,8 +2688,40 @@ async def apply_to_calendar(
                     detail="apply_from_date must be a valid date (YYYY-MM-DD)",
                 )
 
-        custom_holidays_dict = [{"date": h.date, "name": h.name, "type": getattr(h, "type", "CUSTOM_HOLIDAY")} for h in body.custom_holidays]
-        custom_breaks_dict = [{"start": b.start, "end": b.end, "name": b.name} for b in body.custom_breaks]
+        resolved_config = resolve_effective_config_server(
+            supabase=supabase,
+            scope_data=scope_data,
+            use_defaults=body.use_defaults,
+            defaults_snapshot_json=body.defaults_snapshot_json,
+            overrides_json=body.overrides_json,
+            effective_config_json=body.effective_config_json,
+            legacy_config={
+                "calendar": {
+                    "mode": body.constraint_mode or "days",
+                    "start_date": resolved_start_date,
+                    "end_date": resolved_end_date,
+                },
+                "planning": {
+                    "constraint_mode": body.constraint_mode,
+                    "target_days": body.target_days,
+                    "target_hours": body.target_hours,
+                    "subject_targets": body.subject_targets,
+                },
+                "holiday_settings": {
+                    "follow_global_holidays": body.follow_public_holidays,
+                    "holiday_country_code": (body.holiday_region.split(":")[0] if body.holiday_region and ":" in body.holiday_region else body.holiday_region),
+                    "holiday_region": body.holiday_region,
+                    "provider": "NAGER_DATE",
+                    "excluded_holiday_dates": body.excluded_holiday_dates or [],
+                },
+                "custom_holidays": custom_holidays_dict,
+                "custom_breaks": custom_breaks_dict,
+                "subjects": body.subjects or [],
+            },
+            source="academic_year.apply_to_calendar",
+        )
+        effective_config_json = resolved_config["effective_config_json"]
+        defaults_snapshot_json = resolved_config["defaults_snapshot_json"]
 
         holiday_dates = _build_holiday_dates_for_apply(
             start_date_obj,
@@ -2332,16 +2797,26 @@ async def apply_to_calendar(
                 supabase.table("academic_years")
                 .select("id")
                 .eq("family_id", body.family_id)
-                .eq("start_date", body.start_date)
-                .eq("end_date", body.end_date)
+                .eq("start_date", resolved_start_date)
+                .eq("end_date", resolved_end_date)
                 .order("updated_at", desc=True)
                 .limit(1)
                 .execute()
             )
             if reuse_existing and existing.data and len(existing.data) > 0:
                 academic_year_id = existing.data[0]["id"]
+                year_updates = {
+                    "family_school_year_id": scope_data["family_school_year_id"],
+                    "family_school_term_id": scope_data["family_school_term_id"],
+                    "run_scope_type": scope_data["run_scope_type"],
+                    "use_defaults": True if body.use_defaults is None else bool(body.use_defaults),
+                    "defaults_snapshot_json": defaults_snapshot_json,
+                    "effective_config_json": effective_config_json,
+                    "overrides_json": body.overrides_json,
+                }
                 if body.year_name and body.year_name.strip():
-                    supabase.table("academic_years").update({"year_name": body.year_name.strip()}).eq("id", academic_year_id).execute()
+                    year_updates["year_name"] = body.year_name.strip()
+                supabase.table("academic_years").update(year_updates).eq("id", academic_year_id).execute()
             else:
                 year_name_apply = (body.year_name and body.year_name.strip()) or f"{start_date_obj.year}-{end_date_obj.year}"
                 year_row = (
@@ -2350,12 +2825,19 @@ async def apply_to_calendar(
                         {
                             "family_id": body.family_id,
                             "year_name": year_name_apply,
-                            "start_date": body.start_date,
-                            "end_date": body.end_date,
+                            "start_date": resolved_start_date,
+                            "end_date": resolved_end_date,
                             "is_draft": False,
                             "mode": "FIXED_END",
                             "allowed_weekdays": allowed_weekdays_for_persist,
                             "is_current": True,
+                            "family_school_year_id": scope_data["family_school_year_id"],
+                            "family_school_term_id": scope_data["family_school_term_id"],
+                            "run_scope_type": scope_data["run_scope_type"],
+                            "use_defaults": True if body.use_defaults is None else bool(body.use_defaults),
+                            "defaults_snapshot_json": defaults_snapshot_json,
+                            "effective_config_json": effective_config_json,
+                            "overrides_json": body.overrides_json,
                         }
                     )
                     .execute()
@@ -2373,8 +2855,18 @@ async def apply_to_calendar(
                     )
         else:
             # Reapply: academic_year_id was provided — still update year_name if sent so the plan label stays current
+            year_updates = {
+                "family_school_year_id": scope_data["family_school_year_id"],
+                "family_school_term_id": scope_data["family_school_term_id"],
+                "run_scope_type": scope_data["run_scope_type"],
+                "use_defaults": True if body.use_defaults is None else bool(body.use_defaults),
+                "defaults_snapshot_json": defaults_snapshot_json,
+                "effective_config_json": effective_config_json,
+                "overrides_json": body.overrides_json,
+            }
             if body.year_name and body.year_name.strip():
-                supabase.table("academic_years").update({"year_name": body.year_name.strip()}).eq("id", academic_year_id).execute()
+                year_updates["year_name"] = body.year_name.strip()
+            supabase.table("academic_years").update(year_updates).eq("id", academic_year_id).execute()
 
         generation_batch_id = str(uuid.uuid4())
         events_to_insert = []
@@ -2390,8 +2882,8 @@ async def apply_to_calendar(
             plan_data = {
                 "academic_year_id": academic_year_id,
                 "family_id": body.family_id,
-                "start_date": body.start_date,
-                "end_date": body.end_date,
+                "start_date": resolved_start_date,
+                "end_date": resolved_end_date,
                 "constraint_mode": constraint_mode,
                 "target_days": body.target_days if constraint_mode == "days" else None,
                 "target_hours": float(body.target_hours) if constraint_mode == "hours" and body.target_hours is not None else None,

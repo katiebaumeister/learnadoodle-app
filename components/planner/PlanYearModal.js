@@ -19,6 +19,7 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
+  Dimensions,
 } from 'react-native';
 
 const TARGET_INSTRUCTIONAL_DAYS_DEFAULT = 180;
@@ -897,6 +898,58 @@ function buildPlanYearName(options) {
   return [studentName, subjectLabel || 'Subjects', dateRange].filter(Boolean).join(' · ');
 }
 
+function getSchoolYearOptionLabel(academicYearRow) {
+  if (!academicYearRow) return 'School year';
+  const startDate = String(academicYearRow.start_date || '').trim();
+  const endDate = String(academicYearRow.end_date || '').trim();
+  const startYear = /^\d{4}/.test(startDate) ? startDate.slice(0, 4) : '';
+  const endYear = /^\d{4}/.test(endDate) ? endDate.slice(0, 4) : '';
+  if (startYear && endYear) return `${startYear}-${endYear}`;
+  if (startYear) return `${startYear}-${String(Number(startYear) + 1)}`;
+  const fallbackName = String(academicYearRow.year_name || '').trim();
+  return fallbackName || 'School year';
+}
+
+function buildStaticSchoolYearOptions(startYear = 2025, years = 12) {
+  const out = [];
+  const total = Math.max(1, Number(years) || 12);
+  for (let i = 0; i < total; i += 1) {
+    const y = Number(startYear) + i;
+    const endYear = y + 1;
+    out.push({
+      id: `static-${y}`,
+      label: `${y}/${String(endYear).slice(-2)}`,
+      start_date: `${y}-08-01`,
+      end_date: `${endYear}-05-31`,
+      family_school_year_id: null,
+    });
+  }
+  return out;
+}
+
+function deepMergeObjects(base, override) {
+  if (!base || typeof base !== 'object') return override ?? base;
+  if (!override || typeof override !== 'object') return base;
+  const out = { ...base };
+  Object.keys(override).forEach((key) => {
+    const a = base[key];
+    const b = override[key];
+    if (
+      a &&
+      b &&
+      typeof a === 'object' &&
+      typeof b === 'object' &&
+      !Array.isArray(a) &&
+      !Array.isArray(b)
+    ) {
+      out[key] = deepMergeObjects(a, b);
+    } else {
+      out[key] = b;
+    }
+  });
+  return out;
+}
+
 function toLocalYYYYMMDD(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -1481,7 +1534,27 @@ export default function PlanYearModal({
   const [newHolidayDate, setNewHolidayDate] = useState('');
   const [newHolidayName, setNewHolidayName] = useState('');
   const [academicYearId, setAcademicYearId] = useState(initialAcademicYearId || null);
+  const [selectedTermId, setSelectedTermId] = useState(null);
+  const [buildWithDefaults, setBuildWithDefaults] = useState(true);
+  const [showResolvedDefaults, setShowResolvedDefaults] = useState(false);
+  const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
+  const [schoolYearDropdownAnchor, setSchoolYearDropdownAnchor] = useState(null);
+  const [schoolDurationScope, setSchoolDurationScope] = useState('full_year'); // full_year | fall_term | spring_term | custom_duration
+  const [selectedFamilySchoolYear, setSelectedFamilySchoolYear] = useState(null);
+  const [predefinedSchoolYearOptions, setPredefinedSchoolYearOptions] = useState([]);
+  const [loadingPredefinedSchoolYears, setLoadingPredefinedSchoolYears] = useState(false);
+  const [selectedSchoolYearTemplateId, setSelectedSchoolYearTemplateId] = useState(null);
+  const [schoolTermOptions, setSchoolTermOptions] = useState([]);
+  const [loadingSchoolTermOptions, setLoadingSchoolTermOptions] = useState(false);
+  const [creatingDefaultTerms, setCreatingDefaultTerms] = useState(false);
+  const [editingSelectedTerm, setEditingSelectedTerm] = useState(false);
+  const [termDraftName, setTermDraftName] = useState('');
+  const [termDraftStartDate, setTermDraftStartDate] = useState('');
+  const [termDraftEndDate, setTermDraftEndDate] = useState('');
+  const [savingTermEdits, setSavingTermEdits] = useState(false);
   const [focusedInput, setFocusedInput] = useState(null);
+  const schoolYearOpenInitRef = useRef(false);
+  const schoolYearDropdownTriggerRef = useRef(null);
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [startDateCalendarMonth, setStartDateCalendarMonth] = useState(() => new Date());
@@ -1492,6 +1565,41 @@ export default function PlanYearModal({
   const [newHolidayDateCalendarMonth, setNewHolidayDateCalendarMonth] = useState(() => new Date());
   const [newBreakStartCalendarMonth, setNewBreakStartCalendarMonth] = useState(() => new Date());
   const [newBreakEndCalendarMonth, setNewBreakEndCalendarMonth] = useState(() => new Date());
+
+  const handleOpenPlannerSettingsFromDefaults = useCallback(() => {
+    if (typeof onOpenPlannerSettings === 'function') {
+      onOpenPlannerSettings();
+      return;
+    }
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.__ldSearchNavigate === 'function') {
+      window.__ldSearchNavigate('settings', 'planner-settings');
+    }
+  }, [onOpenPlannerSettings]);
+
+  const getDropdownMenuPosition = useCallback((anchor, minWidth) => {
+    const windowWidth = Dimensions.get('window').width || 0;
+    const width = Math.max(Number(anchor?.width) || minWidth, minWidth);
+    const left = Math.max(8, Math.min(Number(anchor?.x) || 8, windowWidth - width - 8));
+    const top = Math.max(8, (Number(anchor?.y) || 8) + (Number(anchor?.height) || 40) + 4);
+    return { top, left, width };
+  }, []);
+
+  const toggleAnchoredDropdown = useCallback((triggerRef, currentlyOpen, setAnchor, setOpen) => {
+    if (currentlyOpen) {
+      setOpen(false);
+      return;
+    }
+    const node = triggerRef?.current;
+    if (node && typeof node.measureInWindow === 'function') {
+      node.measureInWindow((x, y, width, height) => {
+        setAnchor({ x, y, width, height });
+        setOpen(true);
+      });
+      return;
+    }
+    setAnchor({ x: 16, y: 180, width: 160, height: 40 });
+    setOpen(true);
+  }, []);
 
   // Modal can stay mounted with visible=false; reset clears dates — restore cache or a local default before paint (no empty date range).
   useLayoutEffect(() => {
@@ -1516,6 +1624,7 @@ export default function PlanYearModal({
   
   // Phase 2: Which subjects / replace prompt (assignees removed — child_ids come from each subject on submit)
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([]); // one or more subject ids (multi-subject cadence)
+  const [allSubjectsChipSelected, setAllSubjectsChipSelected] = useState(false);
   /** When set (e.g. from cadence row), method → unit pipeline uses this subject even if multiple subjects are selected. */
   const [unitFocusSubjectId, setUnitFocusSubjectId] = useState(null);
   /** Set when curriculum is committed from unit structure (shown on Review). */
@@ -1558,7 +1667,6 @@ export default function PlanYearModal({
 
   // Plan health (includes manual counted events for "Manual instructional events counted" panel)
   const [planHealth, setPlanHealth] = useState(null);
-  const [holidaysCollapsed, setHolidaysCollapsed] = useState(true);
   const [showAddExclusionForm, setShowAddExclusionForm] = useState(false);
   const [complianceCollapsed, setComplianceCollapsed] = useState(true);
   const [progressBreakdownExpanded, setProgressBreakdownExpanded] = useState(false);
@@ -3187,6 +3295,74 @@ export default function PlanYearModal({
     }
   }, [familyId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingPredefinedSchoolYears(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from('school_year_templates')
+        .select('id, start_year, end_year, label')
+        .order('start_year', { ascending: true });
+      if (cancelled) return;
+      if (error) {
+        setPredefinedSchoolYearOptions(buildStaticSchoolYearOptions(2025, 12));
+        setLoadingPredefinedSchoolYears(false);
+        return;
+      }
+      const rows = Array.isArray(data) ? data : [];
+      const mapped = rows
+        .map((row) => {
+          const startYear = Number(row.start_year);
+          const endYear = Number(row.end_year);
+          if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return null;
+          return {
+            id: String(row.id),
+            label: String(row.label || `${startYear}/${String(endYear).slice(-2)}`),
+            start_date: `${startYear}-08-01`,
+            end_date: `${endYear}-05-31`,
+            family_school_year_id: null,
+          };
+        })
+        .filter(Boolean);
+      setPredefinedSchoolYearOptions(mapped.length > 0 ? mapped : buildStaticSchoolYearOptions(2025, 12));
+      setLoadingPredefinedSchoolYears(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!visible) {
+      schoolYearOpenInitRef.current = false;
+      return;
+    }
+    if (schoolYearOpenInitRef.current) return;
+    if (initialAcademicYearId) {
+      schoolYearOpenInitRef.current = true;
+      return;
+    }
+    if (!Array.isArray(predefinedSchoolYearOptions) || predefinedSchoolYearOptions.length === 0) return;
+    schoolYearOpenInitRef.current = true;
+    const currentYear = new Date().getFullYear();
+    const preferred =
+      predefinedSchoolYearOptions.find((opt) => String(opt.label || '').startsWith(`${currentYear}/`)) ||
+      predefinedSchoolYearOptions.find((opt) => String(opt.start_date || '').startsWith(`${currentYear}-`)) ||
+      predefinedSchoolYearOptions[0];
+    if (!preferred) return;
+    setSelectedSchoolYearTemplateId(preferred.id);
+    if (preferred.start_date) setStartDate(preferred.start_date);
+    if (preferred.end_date) setEndDate(preferred.end_date);
+    setSelectedTermId(null);
+    setSchoolDurationScope('full_year');
+    setFollowGlobalHolidays(true);
+    setCountryCode('US');
+    setRegionCode(null);
+    setPlanConstraintMode('none');
+    setCustomHolidays([]);
+    setCustomBreaks([]);
+  }, [visible, predefinedSchoolYearOptions, initialAcademicYearId]);
+
   const editPlanListRows = useMemo(() => {
     const rows = (Array.isArray(previousPlans) ? previousPlans : []).filter((ay) =>
       planRowSubjectsStillExist(ay, baseSubjectList, familyId),
@@ -3243,6 +3419,371 @@ export default function PlanYearModal({
       .filter(Boolean);
   }, [familyId, selectedSubjectIds, baseSubjectList, editPlanListRows]);
 
+  const schoolYearOptions = useMemo(() => {
+    if (Array.isArray(predefinedSchoolYearOptions) && predefinedSchoolYearOptions.length > 0) {
+      return predefinedSchoolYearOptions;
+    }
+    const rows = Array.isArray(previousPlans) ? previousPlans : [];
+    return rows
+      .filter((row) => row?.id)
+      .map((row) => ({
+        id: String(row.id),
+        label: getSchoolYearOptionLabel(row),
+        family_school_year_id: row.family_school_year_id || null,
+        start_date: row.start_date || null,
+        end_date: row.end_date || null,
+      }));
+  }, [predefinedSchoolYearOptions, previousPlans]);
+  const durationOptions = useMemo(
+    () => [
+      { id: 'full_year', label: 'Full year' },
+      { id: 'fall_term', label: 'Fall term' },
+      { id: 'spring_term', label: 'Spring term' },
+      { id: 'custom_duration', label: 'Custom duration' },
+    ],
+    [],
+  );
+  const selectedAcademicYearRow = useMemo(
+    () => (Array.isArray(previousPlans) ? previousPlans.find((row) => String(row?.id) === String(academicYearId || '')) || null : null),
+    [previousPlans, academicYearId],
+  );
+  const selectedSchoolYearOption = useMemo(
+    () => {
+      const byTemplate = schoolYearOptions.find((opt) => String(opt.id) === String(selectedSchoolYearTemplateId || ''));
+      if (byTemplate) return byTemplate;
+      return schoolYearOptions.find((opt) => String(opt.id) === String(academicYearId || '')) || null;
+    },
+    [schoolYearOptions, selectedSchoolYearTemplateId, academicYearId],
+  );
+  useEffect(() => {
+    if (!selectedSchoolYearOption) return;
+    if (schoolDurationScope === 'custom_duration') return;
+    const startYmd = selectedSchoolYearOption.start_date || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startYmd)) return;
+    const startYear = Number(startYmd.slice(0, 4));
+    if (!Number.isFinite(startYear)) return;
+    if (schoolDurationScope === 'full_year') {
+      setStartDate(`${startYear}-08-01`);
+      setEndDate(`${startYear + 1}-05-31`);
+      return;
+    }
+    if (schoolDurationScope === 'fall_term') {
+      setStartDate(`${startYear}-08-01`);
+      setEndDate(`${startYear}-12-31`);
+      return;
+    }
+    if (schoolDurationScope === 'spring_term') {
+      setStartDate(`${startYear + 1}-01-01`);
+      setEndDate(`${startYear + 1}-05-01`);
+    }
+  }, [selectedSchoolYearOption, schoolDurationScope]);
+  const selectedTermOption = useMemo(
+    () => schoolTermOptions.find((opt) => String(opt.id) === String(selectedTermId || '')) || null,
+    [schoolTermOptions, selectedTermId],
+  );
+  const resolvedDefaultsFromModel = useMemo(() => {
+    const yearDefaults =
+      selectedFamilySchoolYear?.year_defaults_json && typeof selectedFamilySchoolYear.year_defaults_json === 'object'
+        ? selectedFamilySchoolYear.year_defaults_json
+        : {};
+    const termOverrides =
+      selectedTermOption?.term_overrides_json && typeof selectedTermOption.term_overrides_json === 'object'
+        ? selectedTermOption.term_overrides_json
+        : {};
+    return deepMergeObjects(yearDefaults, termOverrides);
+  }, [selectedFamilySchoolYear, selectedTermOption]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const familySchoolYearId =
+      selectedAcademicYearRow?.family_school_year_id ||
+      selectedSchoolYearOption?.family_school_year_id ||
+      null;
+
+    if (!familySchoolYearId) {
+      setSelectedFamilySchoolYear(null);
+      setSchoolTermOptions([]);
+      setLoadingSchoolTermOptions(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setLoadingSchoolTermOptions(true);
+    (async () => {
+      const { data: schoolYearRow, error: schoolYearError } = await supabase
+        .from('family_school_years')
+        .select('id, family_id, label, start_date, end_date, timezone, year_defaults_json')
+        .eq('id', familySchoolYearId)
+        .maybeSingle();
+      if (schoolYearError) {
+        if (!cancelled) {
+          setSelectedFamilySchoolYear(null);
+          setSchoolTermOptions([]);
+          setLoadingSchoolTermOptions(false);
+        }
+        return;
+      }
+
+      const { data: termRows, error: termError } = await supabase
+        .from('family_school_terms')
+        .select('id, family_school_year_id, term_index, name, start_date, end_date, term_overrides_json')
+        .eq('family_school_year_id', familySchoolYearId)
+        .order('term_index', { ascending: true });
+
+      if (cancelled) return;
+
+      setSelectedFamilySchoolYear(schoolYearRow || null);
+      if (termError) {
+        setSchoolTermOptions([]);
+      } else {
+        const nextTerms = Array.isArray(termRows) ? termRows : [];
+        setSchoolTermOptions(nextTerms);
+        if (selectedTermId && !nextTerms.some((term) => String(term.id) === String(selectedTermId))) {
+          setSelectedTermId(null);
+        }
+      }
+      setLoadingSchoolTermOptions(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAcademicYearRow, selectedSchoolYearOption, selectedTermId]);
+
+  const buildDefaultTermsForRange = useCallback((startYmd, endYmd) => {
+    if (!startYmd || !endYmd) return [];
+    const start = new Date(`${startYmd}T12:00:00`);
+    const end = new Date(`${endYmd}T12:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
+    const totalDays = Math.max(1, Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1);
+    const firstSpan = Math.max(1, Math.floor(totalDays / 2));
+    const term1End = new Date(start);
+    term1End.setDate(term1End.getDate() + firstSpan - 1);
+    const term2Start = new Date(term1End);
+    term2Start.setDate(term2Start.getDate() + 1);
+    const terms = [
+      {
+        term_index: 1,
+        name: 'Term 1',
+        start_date: toLocalYYYYMMDD(start),
+        end_date: toLocalYYYYMMDD(term1End > end ? end : term1End),
+        term_overrides_json: {},
+      },
+    ];
+    if (term2Start <= end) {
+      terms.push({
+        term_index: 2,
+        name: 'Term 2',
+        start_date: toLocalYYYYMMDD(term2Start),
+        end_date: toLocalYYYYMMDD(end),
+        term_overrides_json: {},
+      });
+    }
+    return terms;
+  }, []);
+
+  const handleCreateDefaultTerms = useCallback(async () => {
+    if (!familyId || !academicYearId) return;
+    setCreatingDefaultTerms(true);
+    setError(null);
+    try {
+      let familySchoolYear = selectedFamilySchoolYear;
+      let familySchoolYearId =
+        selectedFamilySchoolYear?.id ||
+        selectedAcademicYearRow?.family_school_year_id ||
+        selectedSchoolYearOption?.family_school_year_id ||
+        null;
+
+      if (!familySchoolYearId) {
+        const start = selectedAcademicYearRow?.start_date || startDate || null;
+        const end = selectedAcademicYearRow?.end_date || endDate || null;
+        if (!start || !end) {
+          throw new Error('Select a school year with dates before creating default terms.');
+        }
+        const timezone =
+          typeof Intl !== 'undefined' && Intl.DateTimeFormat
+            ? Intl.DateTimeFormat().resolvedOptions().timeZone || null
+            : null;
+        const yearDefaults = {
+          holiday_settings: {
+            follow_global_holidays: followGlobalHolidays,
+            holiday_country_code: countryCode,
+            holiday_region: regionCode,
+            provider: 'NAGER_DATE',
+            excluded_holiday_dates: excludedPublicHolidayDates || [],
+          },
+          planning: {
+            target_scope: targetScopeFromSettings,
+            constraint_mode: effectivePlanTarget.constraint_mode,
+            target_days: effectivePlanTarget.target_days ?? null,
+            target_hours: effectivePlanTarget.target_hours ?? null,
+            subject_targets: effectiveSubjectTargetsForApply ?? effectiveSubjectTargets ?? null,
+          },
+        };
+        const { data: createdYear, error: createdYearError } = await supabase
+          .from('family_school_years')
+          .insert({
+            family_id: familyId,
+            school_year_template_id: null,
+            label: selectedSchoolYearOption?.label || selectedAcademicYearRow?.year_name || 'School year',
+            start_date: start,
+            end_date: end,
+            timezone,
+            year_defaults_json: yearDefaults,
+          })
+          .select('id, family_id, label, start_date, end_date, timezone, year_defaults_json')
+          .single();
+        if (createdYearError) throw createdYearError;
+        familySchoolYear = createdYear;
+        familySchoolYearId = createdYear?.id || null;
+        if (familySchoolYearId) {
+          await supabase
+            .from('academic_years')
+            .update({ family_school_year_id: familySchoolYearId })
+            .eq('id', academicYearId);
+        }
+      }
+
+      if (!familySchoolYearId) {
+        throw new Error('Unable to create or locate school year instance.');
+      }
+
+      const { data: existingTerms, error: existingTermsError } = await supabase
+        .from('family_school_terms')
+        .select('id, family_school_year_id, term_index, name, start_date, end_date, term_overrides_json')
+        .eq('family_school_year_id', familySchoolYearId)
+        .order('term_index', { ascending: true });
+      if (existingTermsError) throw existingTermsError;
+      if (Array.isArray(existingTerms) && existingTerms.length > 0) {
+        setSchoolTermOptions(existingTerms);
+        toast?.push?.('Terms already exist for this school year.', 'success');
+        return;
+      }
+
+      const start = familySchoolYear?.start_date || selectedAcademicYearRow?.start_date || startDate || null;
+      const end = familySchoolYear?.end_date || selectedAcademicYearRow?.end_date || endDate || null;
+      const seedTerms = buildDefaultTermsForRange(start, end);
+      if (seedTerms.length === 0) {
+        throw new Error('Unable to derive term ranges from this school year.');
+      }
+      const rows = seedTerms.map((term) => ({
+        ...term,
+        family_school_year_id: familySchoolYearId,
+      }));
+      const { data: insertedTerms, error: insertTermsError } = await supabase
+        .from('family_school_terms')
+        .insert(rows)
+        .select('id, family_school_year_id, term_index, name, start_date, end_date, term_overrides_json')
+        .order('term_index', { ascending: true });
+      if (insertTermsError) throw insertTermsError;
+
+      setSelectedFamilySchoolYear(familySchoolYear || null);
+      setSchoolTermOptions(Array.isArray(insertedTerms) ? insertedTerms : []);
+      if (Array.isArray(insertedTerms) && insertedTerms.length > 0) {
+        setSelectedTermId(insertedTerms[0].id);
+      }
+      toast?.push?.('Created default terms for this school year.', 'success');
+    } catch (err) {
+      setError(err?.message || 'Failed to create default terms.');
+    } finally {
+      setCreatingDefaultTerms(false);
+    }
+  }, [
+    familyId,
+    academicYearId,
+    selectedFamilySchoolYear,
+    selectedAcademicYearRow,
+    selectedSchoolYearOption,
+    startDate,
+    endDate,
+    followGlobalHolidays,
+    countryCode,
+    regionCode,
+    excludedPublicHolidayDates,
+    targetScopeFromSettings,
+    effectivePlanTarget,
+    effectiveSubjectTargetsForApply,
+    effectiveSubjectTargets,
+    buildDefaultTermsForRange,
+    toast,
+  ]);
+
+  useEffect(() => {
+    if (!buildWithDefaults) return;
+    const nextStart = selectedTermOption?.start_date || selectedFamilySchoolYear?.start_date || null;
+    const nextEnd = selectedTermOption?.end_date || selectedFamilySchoolYear?.end_date || null;
+    if (nextStart && String(startDate || '') !== String(nextStart)) {
+      setStartDate(nextStart);
+    }
+    if (nextEnd && String(endDate || '') !== String(nextEnd)) {
+      setEndDate(nextEnd);
+    }
+  }, [buildWithDefaults, selectedTermOption, selectedFamilySchoolYear, startDate, endDate]);
+
+  useEffect(() => {
+    if (!selectedTermOption) {
+      setEditingSelectedTerm(false);
+      setTermDraftName('');
+      setTermDraftStartDate('');
+      setTermDraftEndDate('');
+      return;
+    }
+    setTermDraftName(String(selectedTermOption.name || ''));
+    setTermDraftStartDate(String(selectedTermOption.start_date || ''));
+    setTermDraftEndDate(String(selectedTermOption.end_date || ''));
+    setEditingSelectedTerm(false);
+  }, [selectedTermOption]);
+
+  const handleSaveSelectedTermEdits = useCallback(async () => {
+    if (!selectedTermOption?.id) return;
+    const nextName = String(termDraftName || '').trim();
+    const nextStart = String(termDraftStartDate || '').trim();
+    const nextEnd = String(termDraftEndDate || '').trim();
+    if (!nextName) {
+      setError('Please enter a term name.');
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextStart) || !/^\d{4}-\d{2}-\d{2}$/.test(nextEnd)) {
+      setError('Use YYYY-MM-DD format for term start and end dates.');
+      return;
+    }
+    if (nextEnd < nextStart) {
+      setError('Term end date must be on or after start date.');
+      return;
+    }
+    setSavingTermEdits(true);
+    setError(null);
+    try {
+      const { data: updated, error: updateError } = await supabase
+        .from('family_school_terms')
+        .update({
+          name: nextName,
+          start_date: nextStart,
+          end_date: nextEnd,
+        })
+        .eq('id', selectedTermOption.id)
+        .select('id, family_school_year_id, term_index, name, start_date, end_date, term_overrides_json')
+        .single();
+      if (updateError) throw updateError;
+      if (updated) {
+        setSchoolTermOptions((prev) =>
+          (prev || []).map((term) =>
+            String(term.id) === String(updated.id)
+              ? { ...term, ...updated }
+              : term,
+          ),
+        );
+      }
+      setEditingSelectedTerm(false);
+      toast?.push?.('Term updated.', 'success');
+    } catch (err) {
+      setError(err?.message || 'Failed to update term.');
+    } finally {
+      setSavingTermEdits(false);
+    }
+  }, [selectedTermOption, termDraftName, termDraftStartDate, termDraftEndDate, toast]);
+
   const prefetchYearSummaryForEditList = useCallback((yearId, cancelledRef) => {
     if (!familyId || !yearId) return;
     const fromModule = getPlanYearFullDataFromCache(familyId, yearId);
@@ -3280,7 +3821,7 @@ export default function PlanYearModal({
     if (!familyId) return;
     const { data: rows, error: err } = await supabase
       .from('academic_years')
-      .select('id, year_name, start_date, end_date, updated_at')
+      .select('id, year_name, start_date, end_date, updated_at, family_school_year_id, run_scope_type, use_defaults')
       .eq('family_id', familyId)
       .order('start_date', { ascending: false });
     if (err) return;
@@ -4085,6 +4626,7 @@ export default function PlanYearModal({
             )
           );
           if (subjectIdsFromPlan.length > 0) {
+            setAllSubjectsChipSelected(false);
             setSelectedSubjectIds(subjectIdsFromPlan);
           }
         }
@@ -4383,6 +4925,7 @@ export default function PlanYearModal({
     if (!visible || !initialSubjectId) return;
     const subjectExists = baseSubjectList.some((s) => String(s.id) === String(initialSubjectId));
     if (subjectExists) {
+      setAllSubjectsChipSelected(false);
       setSelectedSubjectIds([initialSubjectId]);
     }
   }, [visible, initialSubjectId, baseSubjectList]);
@@ -4399,6 +4942,7 @@ export default function PlanYearModal({
     const subjectExists = baseSubjectList.some((s) => String(s.id) === String(initialSubjectId));
     if (!subjectExists) return;
     const method = String(initialUnitStructureMethod);
+    setAllSubjectsChipSelected(false);
     setSelectedSubjectIds([initialSubjectId]);
     setUnitFocusSubjectId(initialSubjectId);
     setParsedContent(null);
@@ -4441,14 +4985,16 @@ export default function PlanYearModal({
     setStartCreatingNew(true);
   }, [visible, initialUnitStructureMethod, initialSubjectId, baseSubjectList]);
 
-  // When modal opens for new plan (no existing plan): no selection until the user picks, unless there is exactly one subject.
+  // When modal opens for new plan: no selection until the user picks, unless there is exactly one subject.
   const prevVisibleRef = useRef(false);
   useEffect(() => {
     if (visible && !prevVisibleRef.current && !initialAcademicYearId) {
       if (baseSubjectList.length > 0 && !initialSubjectId) {
         if (baseSubjectList.length === 1) {
+          setAllSubjectsChipSelected(false);
           setSelectedSubjectIds([baseSubjectList[0].id]);
         } else {
+          setAllSubjectsChipSelected(false);
           setSelectedSubjectIds([]);
         }
       }
@@ -4481,10 +5027,45 @@ export default function PlanYearModal({
     prevVisibleRef.current = visible;
   }, [visible, baseSubjectList, initialAcademicYearId]);
 
+  // If the family has no existing plans, default to "All subjects" once plan list fetch completes.
+  useEffect(() => {
+    if (!visible || initialAcademicYearId || initialSubjectId) return;
+    if (!previousPlansListFetched) return;
+    if ((previousPlans || []).length > 0) return;
+    if (!Array.isArray(baseSubjectList) || baseSubjectList.length === 0) return;
+    const allSubjectIds = baseSubjectList.map((s) => s.id).filter(Boolean);
+    if (allSubjectIds.length === 0) return;
+    setSelectedSubjectIds((prev) => (prev.length > 0 ? prev : allSubjectIds));
+    setAllSubjectsChipSelected(true);
+  }, [
+    visible,
+    initialAcademicYearId,
+    initialSubjectId,
+    previousPlansListFetched,
+    previousPlans,
+    baseSubjectList,
+  ]);
+
+  useEffect(() => {
+    if (!allSubjectsChipSelected) return;
+    const allSubjectIds = subjectsForCurrentSelection.map((s) => s.id).filter(Boolean);
+    if (allSubjectIds.length === 0) {
+      setAllSubjectsChipSelected(false);
+      return;
+    }
+    setSelectedSubjectIds((prev) => {
+      if (prev.length === allSubjectIds.length && allSubjectIds.every((id) => prev.includes(id))) {
+        return prev;
+      }
+      return allSubjectIds;
+    });
+  }, [allSubjectsChipSelected, subjectsForCurrentSelection]);
+
   const singleSubjectDefaultId = baseSubjectList.length === 1 ? baseSubjectList[0].id : null;
   useEffect(() => {
     if (!visible || initialAcademicYearId || initialSubjectId) return;
     if (singleSubjectDefaultId == null) return;
+    setAllSubjectsChipSelected(false);
     setSelectedSubjectIds((prev) => {
       if (prev.length > 0) return prev;
       return [singleSubjectDefaultId];
@@ -5421,11 +6002,277 @@ export default function PlanYearModal({
     console.log('[PlanYearModal] Backfilled plan events as family-level slots:', familyLevelRows.length);
   }, [familyId, normalizeSlotTimeTo24h, baseSubjectList, children, allFamilyChildIds]);
 
+  const runScopeType = selectedTermId ? 'term' : 'full_year';
+  const resolvedRunStartDate = buildWithDefaults
+    ? selectedTermOption?.start_date || selectedFamilySchoolYear?.start_date || startDate || null
+    : startDate || null;
+  const resolvedRunEndDate = buildWithDefaults
+    ? selectedTermOption?.end_date ||
+      selectedFamilySchoolYear?.end_date ||
+      (mode === 'FIXED_END' ? endDate || null : calculatedResult?.end_date || endDate || null)
+    : (mode === 'FIXED_END' ? endDate || null : calculatedResult?.end_date || endDate || null);
+  const defaultsSnapshotForRun = useMemo(
+    () => ({
+      school_year: {
+        school_year_id: academicYearId || null,
+        family_school_year_id: selectedFamilySchoolYear?.id || selectedSchoolYearOption?.family_school_year_id || null,
+        school_year_label: selectedSchoolYearOption?.label || null,
+        holiday_settings: {
+          follow_global_holidays:
+            resolvedDefaultsFromModel?.holiday_settings?.follow_global_holidays ?? followGlobalHolidays,
+          holiday_country_code:
+            resolvedDefaultsFromModel?.holiday_settings?.holiday_country_code ?? countryCode,
+          holiday_region:
+            resolvedDefaultsFromModel?.holiday_settings?.holiday_region ?? regionCode,
+          provider: 'NAGER_DATE',
+          excluded_holiday_dates:
+            resolvedDefaultsFromModel?.holiday_settings?.excluded_holiday_dates ?? excludedPublicHolidayDates ?? [],
+        },
+        planning_preferences: {
+          target_scope: resolvedDefaultsFromModel?.planning?.target_scope ?? targetScopeFromSettings,
+          constraint_mode:
+            resolvedDefaultsFromModel?.planning?.constraint_mode ?? effectivePlanTarget.constraint_mode,
+          target_days:
+            resolvedDefaultsFromModel?.planning?.target_days ?? effectivePlanTarget.target_days ?? null,
+          target_hours:
+            resolvedDefaultsFromModel?.planning?.target_hours ?? effectivePlanTarget.target_hours ?? null,
+          subject_targets:
+            resolvedDefaultsFromModel?.planning?.subject_targets ??
+            effectiveSubjectTargetsForApply ??
+            effectiveSubjectTargets ??
+            null,
+        },
+      },
+      term: selectedTermId
+        ? {
+            term_id: selectedTermId,
+            term_name: selectedTermOption?.name || null,
+            term_date_range: {
+              start_date: selectedTermOption?.start_date || null,
+              end_date: selectedTermOption?.end_date || null,
+            },
+            term_overrides: selectedTermOption?.term_overrides_json || {},
+          }
+        : null,
+    }),
+    [
+      academicYearId,
+      selectedFamilySchoolYear,
+      selectedSchoolYearOption,
+      selectedTermOption,
+      resolvedDefaultsFromModel,
+      followGlobalHolidays,
+      countryCode,
+      regionCode,
+      excludedPublicHolidayDates,
+      targetScopeFromSettings,
+      effectivePlanTarget,
+      effectiveSubjectTargetsForApply,
+      effectiveSubjectTargets,
+      selectedTermId,
+    ],
+  );
+  const runOverridesForRun = useMemo(
+    () =>
+      buildWithDefaults
+        ? null
+        : {
+            calendar: {
+              mode,
+              start_date: startDate || null,
+              end_date: mode === 'FIXED_END' ? endDate || null : calculatedResult?.end_date || endDate || null,
+            },
+            planning: {
+              target_scope: targetScopeFromSettings,
+              constraint_mode: effectivePlanTarget.constraint_mode,
+              target_days: effectivePlanTarget.target_days ?? null,
+              target_hours: effectivePlanTarget.target_hours ?? null,
+              planned_hours_per_day: mode === 'TARGET_HOURS' ? parseFloat(hoursPerDay) || null : null,
+              subject_targets: effectiveSubjectTargetsForApply ?? effectiveSubjectTargets ?? null,
+            },
+            holidays: {
+              holiday_settings: {
+                follow_global_holidays: followGlobalHolidays,
+                holiday_country_code: countryCode,
+                holiday_region: regionCode,
+                provider: 'NAGER_DATE',
+                excluded_holiday_dates: excludedPublicHolidayDates || [],
+              },
+              custom_holidays: customHolidays.map((h) => ({ date: h.date, name: h.name, type: h.type || 'CUSTOM_HOLIDAY' })),
+              custom_breaks: (customBreaks || []).map((b) => ({ start: b.start, end: b.end, name: b.name || 'Break' })),
+            },
+          },
+    [
+      buildWithDefaults,
+      mode,
+      startDate,
+      endDate,
+      calculatedResult,
+      targetScopeFromSettings,
+      effectivePlanTarget,
+      hoursPerDay,
+      effectiveSubjectTargetsForApply,
+      effectiveSubjectTargets,
+      followGlobalHolidays,
+      countryCode,
+      regionCode,
+      excludedPublicHolidayDates,
+      customHolidays,
+      customBreaks,
+    ],
+  );
+  const effectiveConfigForRun = useMemo(
+    () => ({
+      scope: {
+        run_scope_type: runScopeType,
+        term_id: selectedTermId || null,
+      },
+      use_defaults: buildWithDefaults,
+      school_year_id: academicYearId || null,
+      family_school_year_id: selectedFamilySchoolYear?.id || selectedSchoolYearOption?.family_school_year_id || null,
+      school_year_label: selectedSchoolYearOption?.label || null,
+      calendar: {
+        mode,
+        start_date: resolvedRunStartDate,
+        end_date: resolvedRunEndDate,
+      },
+      planning: {
+        target_scope:
+          (buildWithDefaults ? resolvedDefaultsFromModel?.planning?.target_scope : null) ??
+          targetScopeFromSettings,
+        constraint_mode:
+          (buildWithDefaults ? resolvedDefaultsFromModel?.planning?.constraint_mode : null) ??
+          effectivePlanTarget.constraint_mode,
+        target_days:
+          (buildWithDefaults ? resolvedDefaultsFromModel?.planning?.target_days : null) ??
+          effectivePlanTarget.target_days ??
+          null,
+        target_hours:
+          (buildWithDefaults ? resolvedDefaultsFromModel?.planning?.target_hours : null) ??
+          effectivePlanTarget.target_hours ??
+          null,
+        planned_hours_per_day: mode === 'TARGET_HOURS' ? parseFloat(hoursPerDay) || null : null,
+        subject_targets:
+          (buildWithDefaults ? resolvedDefaultsFromModel?.planning?.subject_targets : null) ??
+          effectiveSubjectTargetsForApply ??
+          effectiveSubjectTargets ??
+          null,
+      },
+      holiday_settings: {
+        follow_global_holidays:
+          (buildWithDefaults ? resolvedDefaultsFromModel?.holiday_settings?.follow_global_holidays : null) ??
+          followGlobalHolidays,
+        holiday_country_code:
+          (buildWithDefaults ? resolvedDefaultsFromModel?.holiday_settings?.holiday_country_code : null) ??
+          countryCode,
+        holiday_region:
+          (buildWithDefaults ? resolvedDefaultsFromModel?.holiday_settings?.holiday_region : null) ??
+          regionCode,
+        provider: 'NAGER_DATE',
+        excluded_holiday_dates:
+          (buildWithDefaults ? resolvedDefaultsFromModel?.holiday_settings?.excluded_holiday_dates : null) ??
+          excludedPublicHolidayDates ??
+          [],
+      },
+      custom_holidays: customHolidays.map((h) => ({ date: h.date, name: h.name, type: h.type || 'CUSTOM_HOLIDAY' })),
+      custom_breaks: (customBreaks || []).map((b) => ({ start: b.start, end: b.end, name: b.name || 'Break' })),
+      subjects: selectedSubjectIds || [],
+      generated_at: new Date().toISOString(),
+    }),
+    [
+      runScopeType,
+      selectedTermId,
+      buildWithDefaults,
+      academicYearId,
+      selectedFamilySchoolYear,
+      selectedSchoolYearOption,
+      resolvedDefaultsFromModel,
+      mode,
+      resolvedRunStartDate,
+      resolvedRunEndDate,
+      targetScopeFromSettings,
+      effectivePlanTarget,
+      hoursPerDay,
+      effectiveSubjectTargetsForApply,
+      effectiveSubjectTargets,
+      followGlobalHolidays,
+      countryCode,
+      regionCode,
+      excludedPublicHolidayDates,
+      customHolidays,
+      customBreaks,
+      selectedSubjectIds,
+    ],
+  );
+
+  const defaultsSummarySentence = useMemo(() => {
+    const cfg = effectiveConfigForRun && typeof effectiveConfigForRun === 'object' ? effectiveConfigForRun : {};
+    const holidaySettings = cfg.holiday_settings && typeof cfg.holiday_settings === 'object' ? cfg.holiday_settings : {};
+    const planning = cfg.planning && typeof cfg.planning === 'object' ? cfg.planning : {};
+    const subjectTargets =
+      planning.subject_targets && typeof planning.subject_targets === 'object' ? planning.subject_targets : {};
+    const customBreakList = Array.isArray(cfg.custom_breaks) ? cfg.custom_breaks : [];
+
+    const holidayCountry = String(holidaySettings.holiday_country_code || 'US').toUpperCase();
+    const followsHolidays = holidaySettings.follow_global_holidays !== false;
+    const holidaySegment = followsHolidays
+      ? `Following ${holidayCountry} bank holidays`
+      : `Not following ${holidayCountry} bank holidays`;
+
+    let targetsSegment = 'no class targets';
+    if (planning.target_scope === 'per_subject') {
+      const subjectTargetSegments = Object.entries(subjectTargets)
+        .map(([subjectId, targetObj]) => {
+          const target = targetObj && typeof targetObj === 'object' ? targetObj : {};
+          const subjectName = baseSubjectList.find((s) => String(s.id) === String(subjectId))?.name || 'this subject';
+          if (target.target_days != null) {
+            return `${target.target_days} target class days for ${subjectName}`;
+          }
+          if (target.target_hours != null) {
+            return `${target.target_hours} target class hours for ${subjectName}`;
+          }
+          return null;
+        })
+        .filter(Boolean);
+      if (subjectTargetSegments.length > 0) {
+        targetsSegment = subjectTargetSegments.join(', ');
+      }
+    } else if (planning.constraint_mode === 'days' && planning.target_days != null) {
+      targetsSegment = `${planning.target_days} target class days`;
+    } else if (planning.constraint_mode === 'hours' && planning.target_hours != null) {
+      targetsSegment = `${planning.target_hours} target class hours`;
+    }
+
+    const monthShortFromYmd = (ymd) => {
+      const m = String(ymd || '').slice(5, 7);
+      const months = {
+        '01': 'Jan', '02': 'Feb', '03': 'Mar', '04': 'Apr',
+        '05': 'May', '06': 'Jun', '07': 'Jul', '08': 'Aug',
+        '09': 'Sep', '10': 'Oct', '11': 'Nov', '12': 'Dec',
+      };
+      return months[m] || null;
+    };
+    let breaksSegment = 'no custom breaks';
+    if (customBreakList.length === 1) {
+      const month = monthShortFromYmd(customBreakList[0]?.start);
+      breaksSegment = month ? '1 custom break in ' + month : '1 custom break';
+    } else if (customBreakList.length > 1) {
+      const months = [...new Set(customBreakList.map((b) => monthShortFromYmd(b?.start)).filter(Boolean))];
+      breaksSegment =
+        months.length > 0
+          ? `${customBreakList.length} custom breaks in ${months.join(', ')}`
+          : `${customBreakList.length} custom breaks`;
+    }
+
+    return `${holidaySegment}, ${targetsSegment}, and ${breaksSegment}`;
+  }, [effectiveConfigForRun, baseSubjectList]);
+
   const runApplyToCalendar = async (replacePlaceholdersChoice) => {
     setSaving(true);
     setError(null);
     try {
-      const effectiveEndDate = mode === 'FIXED_END' ? endDate : (calculatedResult?.end_date || endDate);
+      const effectiveStartDate = resolvedRunStartDate || startDate;
+      const effectiveEndDate = resolvedRunEndDate || endDate;
       const effectiveTargetInstructionalDays = effectivePlanTarget.constraint_mode === 'days'
         ? (effectivePlanTarget.target_days ?? TARGET_INSTRUCTIONAL_DAYS_DEFAULT)
         : TARGET_INSTRUCTIONAL_DAYS_DEFAULT;
@@ -5434,13 +6281,22 @@ export default function PlanYearModal({
         subjects: baseSubjectList,
         blocks,
         selectedSubjectIds,
-        startDate,
+        startDate: effectiveStartDate,
         endDate: effectiveEndDate,
       });
       const payload = {
         academic_year_id: academicYearId || undefined,
+        family_school_year_id: selectedFamilySchoolYear?.id || selectedSchoolYearOption?.family_school_year_id || undefined,
+        family_school_term_id: selectedTermId || undefined,
+        term_id: selectedTermId || undefined,
+        run_scope_type: runScopeType,
+        school_duration_scope: schoolDurationScope,
+        use_defaults: buildWithDefaults,
+        defaults_snapshot_json: buildWithDefaults ? defaultsSnapshotForRun : undefined,
+        effective_config_json: effectiveConfigForRun,
+        overrides_json: buildWithDefaults ? undefined : runOverridesForRun,
         family_id: familyId,
-        start_date: startDate,
+        start_date: effectiveStartDate,
         end_date: effectiveEndDate,
         follow_public_holidays: followGlobalHolidays,
         holiday_region: regionCode ? `${countryCode}:${regionCode}` : countryCode,
@@ -5478,8 +6334,8 @@ export default function PlanYearModal({
         ...(cadenceDirty && resolvedApplyFromDateForPayload
           ? { apply_from_date: resolvedApplyFromDateForPayload }
           : {}),
-        // When user chose "Create new plan" from picker, always create a new academic year so it appears in the list
-        force_new_plan: startCreatingNew,
+        // Only force-create when "New school year" is selected (never when an existing year is selected).
+        force_new_plan: startCreatingNew && !academicYearId,
         // Always send timezone so plan times (e.g. 9 AM) are stored correctly; never fall back to UTC
         timezone: (function getClientTimezone() {
           try {
@@ -5919,22 +6775,22 @@ export default function PlanYearModal({
       setError(isPlaceholderOnlyScope ? 'Add at least 1 child and at least one learning block.' : 'Add at least 1 child and 1 subject to generate a year plan.');
       return;
     }
-    if (isHomeschool && !startDate) {
+    if (isHomeschool && !buildWithDefaults && !startDate) {
       setError('Please select a start date in the Dates & Requirements section.');
       scrollToDatesSection();
       return;
     }
-    if (isHomeschool && mode === 'FIXED_END' && !endDate) {
+    if (isHomeschool && !buildWithDefaults && mode === 'FIXED_END' && !endDate) {
       setError('Please select an end date. With "End date" selected as your planning goal, an end date is required.');
       scrollToDatesSection();
       return;
     }
-    if (isHomeschool && mode === 'TARGET_DAYS' && !targetDays) {
+    if (isHomeschool && !buildWithDefaults && mode === 'TARGET_DAYS' && !targetDays) {
       setError('Please enter the number of target instructional days in the Dates & Requirements section.');
       scrollToDatesSection();
       return;
     }
-    if (isHomeschool && mode === 'TARGET_HOURS' && (!targetHours || !hoursPerDay)) {
+    if (isHomeschool && !buildWithDefaults && mode === 'TARGET_HOURS' && (!targetHours || !hoursPerDay)) {
       setError('Please enter both target instructional hours and hours per instructional day.');
       scrollToDatesSection();
       return;
@@ -6126,22 +6982,22 @@ export default function PlanYearModal({
   };
 
   const handleSave = async (isDraft = false) => {
-    if (isHomeschool && !startDate) {
+    if (isHomeschool && !buildWithDefaults && !startDate) {
       setError('Please select a start date in the Dates & Requirements section.');
       scrollToDatesSection();
       return;
     }
-    if (isHomeschool && mode === 'FIXED_END' && !endDate) {
+    if (isHomeschool && !buildWithDefaults && mode === 'FIXED_END' && !endDate) {
       setError('Please select an end date. With "End date" selected as your planning goal, an end date is required.');
       scrollToDatesSection();
       return;
     }
-    if (isHomeschool && mode === 'TARGET_DAYS' && !targetDays) {
+    if (isHomeschool && !buildWithDefaults && mode === 'TARGET_DAYS' && !targetDays) {
       setError('Please enter the number of target instructional days in the Dates & Requirements section.');
       scrollToDatesSection();
       return;
     }
-    if (isHomeschool && mode === 'TARGET_HOURS' && (!targetHours || !hoursPerDay)) {
+    if (isHomeschool && !buildWithDefaults && mode === 'TARGET_HOURS' && (!targetHours || !hoursPerDay)) {
       setError('Please enter both target instructional hours and hours per instructional day.');
       scrollToDatesSection();
       return;
@@ -6172,19 +7028,29 @@ export default function PlanYearModal({
           if (saveErr) throw saveErr;
         }
       } else {
-        const effectiveEnd = mode === 'FIXED_END' ? endDate : calculatedResult?.end_date;
+        const effectiveStart = resolvedRunStartDate || startDate;
+        const effectiveEnd = resolvedRunEndDate || endDate;
         const year_name = buildPlanYearName({
           children,
           subjects: baseSubjectList,
           blocks,
           selectedSubjectIds,
-          startDate,
+          startDate: effectiveStart,
           endDate: effectiveEnd,
         });
         const input = {
           academic_year_id: academicYearId,
+          family_school_year_id: selectedFamilySchoolYear?.id || selectedSchoolYearOption?.family_school_year_id || undefined,
+          family_school_term_id: selectedTermId || undefined,
+          term_id: selectedTermId || undefined,
+          run_scope_type: runScopeType,
+          school_duration_scope: schoolDurationScope,
+          use_defaults: buildWithDefaults,
+          defaults_snapshot_json: buildWithDefaults ? defaultsSnapshotForRun : undefined,
+          effective_config_json: effectiveConfigForRun,
+          overrides_json: buildWithDefaults ? undefined : runOverridesForRun,
           mode,
-          start_date: startDate,
+          start_date: effectiveStart,
           end_date: effectiveEnd,
           target_instructional_days: mode === 'TARGET_DAYS' ? parseInt(targetDays) : undefined,
           target_instructional_hours: mode === 'TARGET_HOURS' ? parseInt(targetHours) : undefined,
@@ -9193,7 +10059,6 @@ export default function PlanYearModal({
               {previousPlansListFetched ? (
                 <View style={styles.planYearGlanceHeaderWrap}>
                   <Text style={styles.planYearGlanceTitle}>{t('planMyYear.modal.editPlanTitle')}</Text>
-                  <Text style={styles.planYearGlanceHelp}>{t('planMyYear.modal.editPlanListHelp')}</Text>
                 </View>
               ) : null}
               {loadError && (
@@ -9307,6 +10172,9 @@ export default function PlanYearModal({
                         setShowPlanManagerView(false);
                         setStartCreatingNew(true);
                         setPlanStep(getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST));
+                        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                          window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'plan-year' }));
+                        }
                       }}
                       accessibilityRole="link"
                       accessibilityLabel={t('planMyYear.modal.emptyPlanListStartBuildingLink')}
@@ -9688,7 +10556,6 @@ export default function PlanYearModal({
             {PLAN_MY_YEAR_LOGISTICS_FIRST && !hideStructuredClassPlansIntro && (
               <View style={styles.planYearGlanceHeaderWrap}>
                 <Text style={styles.planYearGlanceTitle}>{t('planMyYear.modal.structuredClassPlansTitle')}</Text>
-                <Text style={styles.planYearGlanceHelp}>{t('planMyYear.modal.structuredClassPlansHelp')}</Text>
               </View>
             )}
             {PLAN_MY_YEAR_LOGISTICS_FIRST && unitHeaderSubtitle ? (
@@ -9726,110 +10593,271 @@ export default function PlanYearModal({
             ) : (
               // Homeschool Constraint Solver
               <View>
+                <View style={[styles.fieldSection, { marginTop: 0, marginBottom: 12 }]}>
                 <View style={{ marginBottom: 10 }}>
-                <View style={[styles.inputGroup, { marginBottom: 0 }]}>
-                  <Text style={[styles.logisticsLabel]}>Subjects <Text style={{ color: ERROR }}>*</Text></Text>
-                  {subjectsForCurrentSelection?.length === 0 && (
-                    <Text style={{ fontSize: 13, color: MUTED, marginTop: 8 }}>No subjects yet — add subjects in your family settings.</Text>
-                  )}
-                  {subjectsForCurrentSelection?.length > 0 && (
-                      <View style={[styles.childChips, styles.subjectsChipsRow, { marginTop: 8 }]}>
-                        {subjectsForCurrentSelection.map((s) => {
-                          const isSelected = selectedSubjectIds.includes(s.id);
-                          const childIdsForDots =
-                            Array.isArray(s.assignedChildren) && s.assignedChildren.length > 0
-                              ? s.assignedChildren
-                              : getChildIdsForSubject(s, children);
-                          const childDots = childIdsForDots
-                            .map((id) => children.find((c) => c && String(c.id) === String(id)))
-                            .filter(Boolean);
+                <View
+                  style={[
+                    styles.inputGroup,
+                    {
+                      marginBottom: 10,
+                      position: 'relative',
+                      zIndex: 1,
+                      elevation: 0,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontWeight: '700',
+                      letterSpacing: 0.6,
+                      color: TEXT_SECONDARY,
+                      textTransform: 'uppercase',
+                      marginBottom: 6,
+                      ...(Platform.OS === 'web' && {
+                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      }),
+                    }}
+                  >
+                    STEP 1 — WHAT ARE WE PLANNING FOR?
+                  </Text>
+                  <View
+                    style={{
+                      marginTop: 8,
+                      flexDirection: 'row',
+                      alignItems: 'flex-start',
+                      gap: 12,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <View style={{ minWidth: 180 }}>
+                      <Text style={[styles.logisticsLabel]}>
+                        School year <Text style={{ color: ERROR }}>*</Text>
+                      </Text>
+                      {loadingPredefinedSchoolYears ? (
+                        <Text style={{ marginTop: 8, fontSize: 12, color: MUTED }}>Loading school years...</Text>
+                      ) : (
+                        <View
+                          style={{
+                            marginTop: 8,
+                            position: 'relative',
+                            alignSelf: 'flex-start',
+                            overflow: 'visible',
+                            zIndex: 1,
+                          }}
+                        >
+                          <TouchableOpacity
+                            ref={schoolYearDropdownTriggerRef}
+                            onPress={() => {
+                              toggleAnchoredDropdown(
+                                schoolYearDropdownTriggerRef,
+                                showSchoolYearDropdown,
+                                setSchoolYearDropdownAnchor,
+                                setShowSchoolYearDropdown
+                              );
+                            }}
+                            style={[
+                              styles.datePickerTrigger,
+                              {
+                                minHeight: 40,
+                                paddingVertical: 8,
+                                paddingHorizontal: 12,
+                                backgroundColor: '#ffffff',
+                                alignSelf: 'flex-start',
+                                minWidth: 120,
+                              },
+                            ]}
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={styles.datePickerTriggerText}>
+                              {selectedSchoolYearOption?.label || 'Select school year'}
+                            </Text>
+                            {showSchoolYearDropdown ? <ChevronUp size={18} color={SUB} /> : <ChevronDown size={18} color={SUB} />}
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                    <View style={{ flex: 1, minWidth: 280 }}>
+                      <Text style={[styles.logisticsLabel]}>
+                        Term <Text style={{ color: ERROR }}>*</Text>
+                      </Text>
+                      <View style={[styles.chipRow, { marginTop: 8 }]}>
+                        {durationOptions.map((durationOpt) => {
+                          const isSelected = durationOpt.id === schoolDurationScope;
                           return (
                             <TouchableOpacity
-                              key={s.id}
-                              style={[styles.childChip, isSelected && styles.childChipActive]}
+                              key={durationOpt.id}
+                              style={[styles.weekdayChipSmall, isSelected && styles.weekdayChipSmallActive]}
                               onPress={() => {
-                                if (isSelected) {
-                                  setSelectedSubjectIds(selectedSubjectIds.filter((id) => id !== s.id));
-                                } else {
-                                  setSelectedSubjectIds([...selectedSubjectIds, s.id]);
-                                }
+                                setShowSchoolYearDropdown(false);
+                                setSchoolDurationScope(durationOpt.id);
                               }}
+                              activeOpacity={0.85}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                             >
-                              <View style={styles.subjectChipInnerRow}>
-                                {childDots.length > 0 ? (
-                                  <View style={styles.subjectChipDotsCluster} accessibilityLabel="Assigned students">
-                                    {childDots.map((child, index) => {
-                                      const childColor = getChildColorFromAvatar(child.avatar);
-                                      return (
-                                        <View
-                                          key={String(child.id)}
-                                          style={[
-                                            styles.subjectChipChildDot,
-                                            {
-                                              backgroundColor: childColor,
-                                              marginLeft: index > 0 ? -4 : 0,
-                                              zIndex: childDots.length - index,
-                                            },
-                                          ]}
-                                        />
-                                      );
-                                    })}
-                                  </View>
-                                ) : null}
-                                <Text
-                                  style={[styles.childChipText, isSelected && styles.childChipTextActive, styles.subjectChipLabelText]}
-                                  numberOfLines={1}
-                                >
-                                  {s.name}
-                                </Text>
-                              </View>
+                              <Text style={[styles.weekdayChipSmallText, isSelected && styles.weekdayChipSmallTextActive]}>
+                                {durationOpt.label}
+                              </Text>
                             </TouchableOpacity>
                           );
                         })}
                       </View>
-                  )}
-                  {openForNewPlan && !academicYearId && existingPlansForSelectedSubjects.length > 0 ? (
-                    <View
-                      style={{
-                        marginTop: 10,
-                        paddingVertical: 10,
-                        paddingHorizontal: 12,
-                        backgroundColor: ELIGIBILITY_CARD_BG,
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: ELIGIBILITY_CARD_BORDER,
-                      }}
-                    >
-                      <Text style={{ fontSize: 12, color: FG, lineHeight: 18 }}>
-                        {existingPlansForSelectedSubjects.length === 1
-                          ? `A plan already exists for ${existingPlansForSelectedSubjects[0].matchedSubjectNames.join(', ')}. `
-                          : `Plans already exist for ${existingPlansForSelectedSubjects
-                              .flatMap((p) => p.matchedSubjectNames)
-                              .filter(Boolean)
-                              .slice(0, 3)
-                              .join(', ')}. `}
-                        <Text
-                          onPress={() => {
-                            const existingPlan = existingPlansForSelectedSubjects[0];
-                            if (!existingPlan) return;
-                            setStartCreatingNew(false);
-                            setShowPlanManagerView(true);
-                            setPlanSummaryData(existingPlan.cached || planSummaryCacheRef.current.get(existingPlan.id) || null);
-                            setPlanSummaryError(null);
-                            setPlanSummaryYearId(existingPlan.id);
+                    </View>
+                  </View>
+                  <View style={{ marginTop: 14 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <TouchableOpacity
+                        onPress={() => setBuildWithDefaults((prev) => !prev)}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                        activeOpacity={0.8}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <View
+                          style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: 5,
+                            borderWidth: 1.5,
+                            borderColor: buildWithDefaults ? ACCENT : BORDER,
+                            backgroundColor: buildWithDefaults ? ACCENT : '#ffffff',
+                            alignItems: 'center',
+                            justifyContent: 'center',
                           }}
-                          style={{ color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}
+                        >
+                          {buildWithDefaults ? <Check size={12} color="#ffffff" strokeWidth={2.5} /> : null}
+                        </View>
+                      </TouchableOpacity>
+                      <Text style={{ fontSize: 13, color: FG, fontWeight: '600' }}>
+                        Build with{' '}
+                        <Text
+                          onPress={() => setShowResolvedDefaults((prev) => !prev)}
+                          style={{ color: ACCENT, textDecorationLine: 'underline', fontWeight: '600' }}
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
-                          Open it in Edit Plan.
+                          term defaults
                         </Text>
-                        <Text style={{ color: TEXT_SECONDARY }}> You can still continue building a new one.</Text>
                       </Text>
                     </View>
-                  ) : null}
+                    {showResolvedDefaults ? (
+                      <View
+                        style={{
+                          marginTop: 10,
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          borderWidth: 1,
+                          borderColor: BORDER_SUBTLE,
+                          borderRadius: 10,
+                          backgroundColor: ELIGIBILITY_CARD_BG,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, color: FG, lineHeight: 18 }}>
+                          {selectedSchoolYearOption?.label || 'New school year'} ·{' '}
+                          {selectedTermOption?.name ? `${selectedTermOption.name} · ` : ''}
+                          {resolvedRunStartDate ? formatDateDisplay(resolvedRunStartDate) : 'Start not set'} -{' '}
+                          {resolvedRunEndDate ? formatDateDisplay(resolvedRunEndDate) : 'End not set'}
+                        </Text>
+                        <Text style={{ marginTop: 4, fontSize: 12, color: MUTED, lineHeight: 18 }}>
+                          {defaultsSummarySentence}
+                        </Text>
+                        <TouchableOpacity
+                          onPress={handleOpenPlannerSettingsFromDefaults}
+                          style={{ marginTop: 8, alignSelf: 'flex-start' }}
+                          activeOpacity={0.8}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={{ fontSize: 12, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
+                            Change defaults
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
                 </View>
                 </View>
 
+                <Modal
+                  transparent
+                  visible={showSchoolYearDropdown && !!schoolYearDropdownAnchor}
+                  animationType="none"
+                  onRequestClose={() => setShowSchoolYearDropdown(false)}
+                >
+                  <View style={{ flex: 1 }}>
+                    <TouchableOpacity
+                      style={StyleSheet.absoluteFill}
+                      activeOpacity={1}
+                      onPress={() => setShowSchoolYearDropdown(false)}
+                    />
+                    <View
+                      style={{
+                        position: 'absolute',
+                        ...(getDropdownMenuPosition(schoolYearDropdownAnchor, 140)),
+                        borderWidth: 1,
+                        borderColor: BORDER_SUBTLE,
+                        borderRadius: 10,
+                        backgroundColor: '#ffffff',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {schoolYearOptions.map((yearOption) => {
+                        const isSelected = String(selectedSchoolYearTemplateId || '') === String(yearOption.id);
+                        return (
+                          <TouchableOpacity
+                            key={yearOption.id}
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              borderBottomWidth: schoolYearOptions[schoolYearOptions.length - 1]?.id === yearOption.id ? 0 : 1,
+                              borderBottomColor: BORDER_SUBTLE,
+                              backgroundColor: isSelected ? ACCENT_LIGHT : '#ffffff',
+                            }}
+                            onPress={() => {
+                              setSelectedSchoolYearTemplateId(yearOption.id);
+                              setShowSchoolYearDropdown(false);
+                              setAcademicYearId(null);
+                              setSelectedTermId(null);
+                              setStartCreatingNew(false);
+                              const startYmd = yearOption.start_date || '';
+                              const startYear = /^\d{4}-\d{2}-\d{2}$/.test(startYmd) ? Number(startYmd.slice(0, 4)) : null;
+                              if (startYear != null && Number.isFinite(startYear)) {
+                                if (schoolDurationScope === 'full_year') {
+                                  setStartDate(`${startYear}-08-01`);
+                                  setEndDate(`${startYear + 1}-05-31`);
+                                } else if (schoolDurationScope === 'fall_term') {
+                                  setStartDate(`${startYear}-08-01`);
+                                  setEndDate(`${startYear}-12-31`);
+                                } else if (schoolDurationScope === 'spring_term') {
+                                  setStartDate(`${startYear + 1}-01-01`);
+                                  setEndDate(`${startYear + 1}-05-01`);
+                                } else {
+                                  setStartDate(yearOption.start_date || '');
+                                  setEndDate(yearOption.end_date || '');
+                                }
+                              } else {
+                                setStartDate(yearOption.start_date || '');
+                                setEndDate(yearOption.end_date || '');
+                              }
+                              setFollowGlobalHolidays(true);
+                              setCountryCode('US');
+                              setRegionCode(null);
+                              setPlanConstraintMode('none');
+                              setCustomHolidays([]);
+                              setCustomBreaks([]);
+                            }}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={{ fontSize: 13, color: isSelected ? ACCENT : FG, fontWeight: isSelected ? '600' : '500' }}>
+                              {yearOption.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                </Modal>
+
+                {(!buildWithDefaults || schoolDurationScope === 'custom_duration') && (
                 <View style={[styles.inputGroup, { marginBottom: 0 }]}>
                   <Text style={[styles.logisticsLabel]}>Date range <Text style={{ color: ERROR }}>*</Text></Text>
                   <View style={styles.dateRangeCard} onLayout={(e) => { datesSectionYRef.current = e.nativeEvent.layout.y; }}>
@@ -9862,9 +10890,10 @@ export default function PlanYearModal({
                   </View>
                   </View>
                 </View>
+                )}
 
                 {/* Target Days (TARGET_DAYS mode) */}
-                {mode === 'TARGET_DAYS' && (
+                {!buildWithDefaults && mode === 'TARGET_DAYS' && (
                   <View style={styles.inputGroup}>
                     <Text style={[styles.logisticsLabel]}>Target Instructional Days</Text>
                     <TextInput
@@ -9881,7 +10910,7 @@ export default function PlanYearModal({
                 )}
 
                 {/* Target Hours (TARGET_HOURS mode) */}
-                {mode === 'TARGET_HOURS' && (
+                {!buildWithDefaults && mode === 'TARGET_HOURS' && (
                   <>
                     <View style={styles.inputGroup}>
                       <Text style={[styles.logisticsLabel]}>Target Instructional Hours</Text>
@@ -9913,18 +10942,11 @@ export default function PlanYearModal({
                 )}
 
                 {/* Card 3: Planning Preferences — holidays/breaks summary-first, from settings vs added for this plan */}
+                {!buildWithDefaults && (
                 <View style={[styles.fieldSection, { marginTop: 8, marginBottom: 0 }]}>
-                  <TouchableOpacity
-                    style={styles.collapsibleSectionHeader}
-                    onPress={() => setHolidaysCollapsed(!holidaysCollapsed)}
-                    activeOpacity={0.7}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={[styles.fieldSectionLabel, { marginBottom: 0, fontSize: 12 }]}>{STRINGS.planMyYear?.sections?.breaks?.title ?? 'Planning Preferences'}</Text>
-                    {holidaysCollapsed ? <ChevronDown size={20} color={MUTED} /> : <ChevronUp size={20} color={MUTED} />}
-                  </TouchableOpacity>
-                  {!holidaysCollapsed && (
-                  <>
+                  <Text style={[styles.fieldSectionLabel, { marginBottom: 0, fontSize: 12 }]}>
+                    {STRINGS.planMyYear?.sections?.breaks?.title ?? 'Planning Preferences'}
+                  </Text>
                   <View style={{ marginBottom: 14, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: BORDER_SUBTLE }}>
                     <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 6 }]}>Learning goals</Text>
                     <View style={[styles.radioRow, { flexWrap: 'wrap', marginBottom: 12 }]}>
@@ -10061,7 +11083,7 @@ export default function PlanYearModal({
                         <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 6 }]}>Subject targets</Text>
                         {effectiveSubjectIds.length === 0 ? (
                           <Text style={[styles.mutedText, { fontSize: 12, lineHeight: 18 }]}>
-                            Select one or more subjects above to set targets per subject.
+                            Select one or more subjects to set targets per subject.
                           </Text>
                         ) : (
                           effectiveSubjectIds.map((subjectId) => {
@@ -10274,11 +11296,11 @@ export default function PlanYearModal({
                       </View>
                     </View>
                   )}
-                  </>
-                  )}
                 </View>
+                )}
 
                 {PLAN_MY_YEAR_LOGISTICS_FIRST &&
+                  !buildWithDefaults &&
                   planStep === 'logistics' &&
                   hasPlanningPreferenceTargets &&
                   startDate &&
@@ -10515,36 +11537,187 @@ export default function PlanYearModal({
                     </View>
                   )}
 
+                <View style={[styles.inputGroup, { marginBottom: 0, marginTop: buildWithDefaults ? 2 : 12 }]}>
+                  <Text style={[styles.logisticsLabel]}>Subjects <Text style={{ color: ERROR }}>*</Text></Text>
+                  {subjectsForCurrentSelection?.length === 0 && (
+                    <Text style={{ fontSize: 13, color: MUTED, marginTop: 8 }}>No subjects yet — add subjects in your family settings.</Text>
+                  )}
+                  {subjectsForCurrentSelection?.length > 0 && (
+                    <View style={[styles.childChips, styles.subjectsChipsRow, { marginTop: 8 }]}>
+                      {(() => {
+                        const allSubjectIds = subjectsForCurrentSelection.map((subjectRow) => subjectRow.id);
+                        const allSubjectsSelected = allSubjectsChipSelected;
+                        return (
+                          <TouchableOpacity
+                            key="all-subjects-chip"
+                            style={[styles.childChip, allSubjectsSelected && styles.childChipActive]}
+                            onPress={() => {
+                              setAllSubjectsChipSelected(true);
+                              setSelectedSubjectIds(allSubjectIds);
+                            }}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <View style={styles.subjectChipInnerRow}>
+                              <Text
+                                style={[
+                                  styles.childChipText,
+                                  allSubjectsSelected && styles.childChipTextActive,
+                                  styles.subjectChipLabelText,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                All subjects
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })()}
+                      {subjectsForCurrentSelection.map((s) => {
+                        const isSelected = !allSubjectsChipSelected && selectedSubjectIds.includes(s.id);
+                        const childIdsForDots =
+                          Array.isArray(s.assignedChildren) && s.assignedChildren.length > 0
+                            ? s.assignedChildren
+                            : getChildIdsForSubject(s, children);
+                        const childMatches = childIdsForDots
+                          .map((id) => children.find((c) => c && String(c.id) === String(id)))
+                          .filter(Boolean);
+                        const childNames = childMatches
+                          .map((child) => String(child?.first_name || child?.name || '').trim())
+                          .filter(Boolean);
+                        const cornerDotChildren = childMatches.slice(0, 4);
+                        return (
+                          <TouchableOpacity
+                            key={s.id}
+                            style={[
+                              styles.childChip,
+                              cornerDotChildren.length > 0 && styles.subjectChipWithCornerDots,
+                              isSelected && styles.childChipActive,
+                            ]}
+                            onPress={() => {
+                              if (allSubjectsChipSelected) {
+                                setAllSubjectsChipSelected(false);
+                                setSelectedSubjectIds([s.id]);
+                                return;
+                              }
+                              if (isSelected) {
+                                setSelectedSubjectIds(selectedSubjectIds.filter((id) => id !== s.id));
+                              } else {
+                                setSelectedSubjectIds([...selectedSubjectIds, s.id]);
+                              }
+                            }}
+                          >
+                            {cornerDotChildren.length > 0 ? (
+                              <View style={styles.subjectChipCornerDots} accessibilityLabel="Assigned students">
+                                {cornerDotChildren.map((child, index) => {
+                                  const childColor = getChildColorFromAvatar(child.avatar);
+                                  return (
+                                    <View
+                                      key={`corner-${String(child.id)}`}
+                                      style={[
+                                        styles.subjectChipCornerDot,
+                                        {
+                                          backgroundColor: childColor,
+                                          marginLeft: index > 0 ? -5 : 0,
+                                          zIndex: cornerDotChildren.length - index,
+                                        },
+                                      ]}
+                                    />
+                                  );
+                                })}
+                              </View>
+                            ) : null}
+                            <View style={styles.subjectChipBody}>
+                              <View style={styles.subjectChipInnerRow}>
+                                <Text
+                                  style={[styles.childChipText, isSelected && styles.childChipTextActive, styles.subjectChipLabelText]}
+                                  numberOfLines={1}
+                                >
+                                  {s.name}
+                                </Text>
+                              </View>
+                              {childNames.length > 0 ? (
+                                <View style={styles.subjectChipNamesRow}>
+                                  <Text
+                                    style={[
+                                      styles.subjectChipChildrenText,
+                                      isSelected && styles.subjectChipChildrenTextActive,
+                                    ]}
+                                    numberOfLines={1}
+                                  >
+                                    {childNames.join(', ')}
+                                  </Text>
+                                </View>
+                              ) : null}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+                  {openForNewPlan && !academicYearId && existingPlansForSelectedSubjects.length > 0 ? (
+                    <View
+                      style={{
+                        marginTop: 10,
+                        paddingVertical: 10,
+                        paddingHorizontal: 12,
+                        backgroundColor: ELIGIBILITY_CARD_BG,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: ELIGIBILITY_CARD_BORDER,
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, color: FG, lineHeight: 18 }}>
+                        {existingPlansForSelectedSubjects.length === 1
+                          ? `A plan already exists for ${existingPlansForSelectedSubjects[0].matchedSubjectNames.join(', ')}. `
+                          : `Plans already exist for ${existingPlansForSelectedSubjects
+                              .flatMap((p) => p.matchedSubjectNames)
+                              .filter(Boolean)
+                              .slice(0, 3)
+                              .join(', ')}. `}
+                        <Text
+                          onPress={() => {
+                            const existingPlan = existingPlansForSelectedSubjects[0];
+                            if (!existingPlan) return;
+                            setStartCreatingNew(false);
+                            setShowPlanManagerView(true);
+                            setPlanSummaryData(existingPlan.cached || planSummaryCacheRef.current.get(existingPlan.id) || null);
+                            setPlanSummaryError(null);
+                            setPlanSummaryYearId(existingPlan.id);
+                          }}
+                          style={{ color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          Open it in Edit Plan.
+                        </Text>
+                        <Text style={{ color: TEXT_SECONDARY }}> You can still continue building a new one.</Text>
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+                </View>
+
                 {/* Scheduled class days / cadence — show when subjects selected OR placeholder-only scope */}
                 {(effectiveSubjectIds.length > 0 || isPlaceholderOnlyScope) && (
-                  <View style={[styles.fieldSection, { marginTop: 16, marginBottom: 8 }]} onLayout={(e) => { scheduleSectionYRef.current = e.nativeEvent.layout.y; }}>
+                  <View style={[styles.fieldSection, { marginTop: 0, marginBottom: 12 }]} onLayout={(e) => { scheduleSectionYRef.current = e.nativeEvent.layout.y; }}>
                       <View style={styles.scheduleBlocksInner}>
                       {PLAN_MY_YEAR_LOGISTICS_FIRST && (
                         <Text
                           style={{
-                            fontSize: 11,
+                            fontSize: 13,
                             fontWeight: '700',
                             letterSpacing: 0.6,
                             color: TEXT_SECONDARY,
                             textTransform: 'uppercase',
                             marginBottom: 6,
+                            ...(Platform.OS === 'web' && {
+                              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                            }),
                           }}
                         >
-                          {s('planMyYear.multiSubjectUnits.step1SetSchedule')}
+                          STEP 2 — WHEN ARE WE LEARNING?
                         </Text>
                       )}
                       <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 8 }]}>Cadence <Text style={{ color: ERROR }}>*</Text></Text>
-                      {PLAN_MY_YEAR_MULTI_SUBJECT_CADENCE &&
-                        showMultiSubjectCadenceHint(PLAN_MY_YEAR_LOGISTICS_FIRST, effectiveSubjectIds.length) && (
-                          <Text style={[styles.mutedText, { marginBottom: 10, fontSize: 12, lineHeight: 18 }]}>
-                            {s('planMyYear.multiSubjectUnits.cadenceRowHint')}
-                          </Text>
-                        )}
-                      {loadingCalendarEventsForConflicts ? (
-                        <Text style={[styles.mutedText, { marginBottom: 10, fontSize: 12 }]}>
-                          {t('planMyYear.cadenceConflicts.loadingCalendar')}
-                        </Text>
-                      ) : null}
                       {blocks.map((block, idx) => {
                       const subj = block.subject_id ? baseSubjectList.find((s) => s.id === block.subject_id) : null;
                       const blockSubjectLabel = subj?.name ?? (block.placeholder_label || (STRINGS.planMyYear?.sections?.blocks?.genericSlotLabel ?? 'Learning block'));
@@ -10717,26 +11890,24 @@ export default function PlanYearModal({
                         <Text style={styles.editButtonText}>Add learning block</Text>
                       </TouchableOpacity>
                     )}
-                    {PLAN_MY_YEAR_LOGISTICS_FIRST && (
-                      <View
-                        style={{
-                          borderTopWidth: 1,
-                          borderTopColor: BORDER_SUBTLE,
-                          paddingTop: 16,
-                          marginTop: 12,
-                        }}
-                      >
+                  </View>
+                )}
+                {PLAN_MY_YEAR_LOGISTICS_FIRST && (effectiveSubjectIds.length > 0 || isPlaceholderOnlyScope) && (
+                  <View style={[styles.fieldSection, { marginTop: 0, marginBottom: 12 }]}>
                         <Text
                           style={{
-                            fontSize: 11,
+                            fontSize: 13,
                             fontWeight: '700',
                             letterSpacing: 0.6,
                             color: TEXT_SECONDARY,
                             textTransform: 'uppercase',
                             marginBottom: 6,
+                            ...(Platform.OS === 'web' && {
+                              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                            }),
                           }}
                         >
-                          {s('planMyYear.multiSubjectUnits.step2AddContent')}
+                          STEP 3 — WHAT ARE WE LEARNING?
                         </Text>
                         {blocks
                           .filter((b) => b.subject_id)
@@ -10812,8 +11983,6 @@ export default function PlanYearModal({
                             </Text>
                           </View>
                         )}
-                      </View>
-                    )}
                   </View>
                 )}
 
@@ -13394,13 +14563,17 @@ const styles = StyleSheet.create({
   },
   /** Match attendance YearHeatmapGrid “Year at a glance” title + help (TOKENS.sectionTitle / sectionHelp). */
   planYearGlanceHeaderWrap: {
-    marginBottom: 20,
+    marginBottom: 10,
   },
   planYearGlanceTitle: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '700',
     color: 'rgba(15, 23, 42, 0.92)',
     marginBottom: 8,
+    letterSpacing: 0.6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   planYearGlanceHelp: {
     fontSize: 12,
@@ -14434,20 +15607,50 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     flexShrink: 1,
   },
-  subjectChipDotsCluster: {
+  subjectChipBody: {
+    maxWidth: '100%',
+    flexShrink: 1,
+  },
+  subjectChipWithCornerDots: {
+    position: 'relative',
+    paddingRight: 16,
+  },
+  subjectChipCornerDots: {
+    position: 'absolute',
+    top: 4,
+    right: 8,
     flexDirection: 'row',
     alignItems: 'center',
   },
-  subjectChipChildDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 1.5,
+  subjectChipCornerDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1,
     borderColor: '#FFFFFF',
+  },
+  subjectChipNamesRow: {
+    marginTop: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: '100%',
   },
   subjectChipLabelText: {
     flexShrink: 1,
     minWidth: 0,
+  },
+  subjectChipChildrenText: {
+    fontSize: 11,
+    color: '#6b7280',
+    lineHeight: 14,
+    flexShrink: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectChipChildrenTextActive: {
+    color: CHIP_SELECTED_TEXT,
   },
   childChipActive: {
     backgroundColor: CHIP_SELECTED_BG,

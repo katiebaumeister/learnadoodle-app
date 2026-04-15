@@ -1111,9 +1111,13 @@ const styles = StyleSheet.create({
   },
   drilldownTitle: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '700',
     color: TOKENS.text,
     marginBottom: 8,
+    letterSpacing: 0.6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   drilldownHelp: {
     fontSize: TOKENS.fontSizeCaption,

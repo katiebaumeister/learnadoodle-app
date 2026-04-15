@@ -349,7 +349,7 @@ export const STRINGS = {
         "Choose which subject you’re adding units for—pick a chip below, or go back to Cadence and tap Manual, Paste, Upload, or Generate under that subject’s row.",
       cadenceRowHint:
         "Each subject has its own row—set weekdays and class times per subject.",
-      cadenceAddUnitsInlinePrompt: "Add units",
+      cadenceAddUnitsInlinePrompt: "Add units (optional)",
       cadenceChangeUnitsInlinePrompt: "Change units",
       cadenceDifferentMethodBanner:
         "You previously saved units and lessons using {method}. Open that method to edit your previous inputs, or build a new unit structure below. Your calendar stays as-is until you save.",

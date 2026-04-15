@@ -4314,6 +4314,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setRebalanceYearPlanId(params?.yearPlanId ?? null);
           setShowRebalanceModal(true);
         }}
+        onOpenPlannerSettings={() => handleTabChange('settings', 'planner-settings')}
         onOpenManualCurriculumBuilder={(detail) => {
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.dispatchEvent(
