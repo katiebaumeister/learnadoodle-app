@@ -1539,6 +1539,8 @@ export default function PlanYearModal({
   const [showResolvedDefaults, setShowResolvedDefaults] = useState(false);
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [schoolYearDropdownAnchor, setSchoolYearDropdownAnchor] = useState(null);
+  const [showPlanningScopeDropdown, setShowPlanningScopeDropdown] = useState(false);
+  const [planningScopeDropdownAnchor, setPlanningScopeDropdownAnchor] = useState(null);
   const [schoolDurationScope, setSchoolDurationScope] = useState('full_year'); // full_year | fall_term | spring_term | custom_duration
   const [selectedFamilySchoolYear, setSelectedFamilySchoolYear] = useState(null);
   const [predefinedSchoolYearOptions, setPredefinedSchoolYearOptions] = useState([]);
@@ -1555,6 +1557,7 @@ export default function PlanYearModal({
   const [focusedInput, setFocusedInput] = useState(null);
   const schoolYearOpenInitRef = useRef(false);
   const schoolYearDropdownTriggerRef = useRef(null);
+  const planningScopeDropdownTriggerRef = useRef(null);
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [startDateCalendarMonth, setStartDateCalendarMonth] = useState(() => new Date());
@@ -3442,6 +3445,10 @@ export default function PlanYearModal({
       { id: 'custom_duration', label: 'Custom duration' },
     ],
     [],
+  );
+  const selectedDurationOption = useMemo(
+    () => durationOptions.find((opt) => opt.id === schoolDurationScope) || durationOptions[0],
+    [durationOptions, schoolDurationScope],
   );
   const selectedAcademicYearRow = useMemo(
     () => (Array.isArray(previousPlans) ? previousPlans.find((row) => String(row?.id) === String(academicYearId || '')) || null : null),
@@ -6204,6 +6211,54 @@ export default function PlanYearModal({
       selectedSubjectIds,
     ],
   );
+  const planningModeSummary = useMemo(() => {
+    const startYmd = resolvedRunStartDate || startDate || null;
+    const endYmd = resolvedRunEndDate || endDate || null;
+    const startObj = startYmd ? dateStringToDate(startYmd) : null;
+    const endObj = endYmd ? dateStringToDate(endYmd) : null;
+    const hasValidRange =
+      startObj &&
+      endObj &&
+      !Number.isNaN(startObj.getTime()) &&
+      !Number.isNaN(endObj.getTime()) &&
+      endObj >= startObj;
+    const totalDays = hasValidRange ? Math.max(1, Math.floor((endObj - startObj) / (24 * 60 * 60 * 1000)) + 1) : null;
+    const holidaySettings =
+      effectiveConfigForRun?.holiday_settings && typeof effectiveConfigForRun.holiday_settings === 'object'
+        ? effectiveConfigForRun.holiday_settings
+        : {};
+    const holidayCountry = String(holidaySettings.holiday_country_code || countryCode || 'US').toUpperCase();
+    const followsHolidays = (holidaySettings.follow_global_holidays ?? followGlobalHolidays) !== false;
+
+    const scopeLabel = selectedTermOption?.name
+      ? `${selectedTermOption.name}:`
+      : schoolDurationScope === 'fall_term'
+        ? 'Term 1:'
+        : schoolDurationScope === 'spring_term'
+          ? 'Term 2:'
+          : schoolDurationScope === 'custom_duration'
+            ? 'Custom range:'
+            : 'Full year:';
+    const rangeLabel = hasValidRange ? `${formatDateShort(startYmd)} – ${formatDateShort(endYmd)}` : 'Set dates';
+    const dayLabel = totalDays != null ? `${totalDays} days` : null;
+    const holidayLabel = followsHolidays ? `${holidayCountry} holidays` : `No ${holidayCountry} holidays`;
+
+    return {
+      scopeLabel,
+      details: [rangeLabel, dayLabel, holidayLabel].filter(Boolean).join(' · '),
+    };
+  }, [
+    resolvedRunStartDate,
+    resolvedRunEndDate,
+    startDate,
+    endDate,
+    effectiveConfigForRun,
+    countryCode,
+    followGlobalHolidays,
+    selectedTermOption,
+    selectedDurationOption,
+    schoolDurationScope,
+  ]);
 
   const defaultsSummarySentence = useMemo(() => {
     const cfg = effectiveConfigForRun && typeof effectiveConfigForRun === 'object' ? effectiveConfigForRun : {};
@@ -10621,136 +10676,106 @@ export default function PlanYearModal({
                   >
                     STEP 1 — WHAT ARE WE PLANNING FOR?
                   </Text>
-                  <View
-                    style={{
-                      marginTop: 8,
-                      flexDirection: 'row',
-                      alignItems: 'flex-start',
-                      gap: 12,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <View style={{ minWidth: 180 }}>
-                      <Text style={[styles.logisticsLabel]}>
-                        School year <Text style={{ color: ERROR }}>*</Text>
-                      </Text>
+                  <View style={styles.planningModeHeaderRow}>
+                    <View style={styles.planningModeHeaderCell}>
                       {loadingPredefinedSchoolYears ? (
                         <Text style={{ marginTop: 8, fontSize: 12, color: MUTED }}>Loading school years...</Text>
                       ) : (
-                        <View
-                          style={{
-                            marginTop: 8,
-                            position: 'relative',
-                            alignSelf: 'flex-start',
-                            overflow: 'visible',
-                            zIndex: 1,
+                        <TouchableOpacity
+                          ref={schoolYearDropdownTriggerRef}
+                          onPress={() => {
+                            setShowPlanningScopeDropdown(false);
+                            toggleAnchoredDropdown(
+                              schoolYearDropdownTriggerRef,
+                              showSchoolYearDropdown,
+                              setSchoolYearDropdownAnchor,
+                              setShowSchoolYearDropdown
+                            );
                           }}
+                          style={[styles.planningModeHeaderTrigger, styles.planningModeHeaderTriggerWide]}
+                          activeOpacity={0.8}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
-                          <TouchableOpacity
-                            ref={schoolYearDropdownTriggerRef}
-                            onPress={() => {
-                              toggleAnchoredDropdown(
-                                schoolYearDropdownTriggerRef,
-                                showSchoolYearDropdown,
-                                setSchoolYearDropdownAnchor,
-                                setShowSchoolYearDropdown
-                              );
-                            }}
-                            style={[
-                              styles.datePickerTrigger,
-                              {
-                                minHeight: 40,
-                                paddingVertical: 8,
-                                paddingHorizontal: 12,
-                                backgroundColor: '#ffffff',
-                                alignSelf: 'flex-start',
-                                minWidth: 120,
-                              },
-                            ]}
-                            activeOpacity={0.8}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                          >
-                            <Text style={styles.datePickerTriggerText}>
-                              {selectedSchoolYearOption?.label || 'Select school year'}
-                            </Text>
-                            {showSchoolYearDropdown ? <ChevronUp size={18} color={SUB} /> : <ChevronDown size={18} color={SUB} />}
-                          </TouchableOpacity>
-                        </View>
+                          <Text style={styles.planningModeHeaderTriggerText} numberOfLines={1}>
+                            {selectedSchoolYearOption?.label
+                              ? (/school\s*year/i.test(selectedSchoolYearOption.label)
+                                ? selectedSchoolYearOption.label
+                                : `${selectedSchoolYearOption.label} School Year`)
+                              : 'Select School Year'}
+                          </Text>
+                          {showSchoolYearDropdown ? <ChevronUp size={18} color={SUB} /> : <ChevronDown size={18} color={SUB} />}
+                        </TouchableOpacity>
                       )}
                     </View>
-                    <View style={{ flex: 1, minWidth: 280 }}>
-                      <Text style={[styles.logisticsLabel]}>
-                        Term <Text style={{ color: ERROR }}>*</Text>
-                      </Text>
-                      <View style={[styles.chipRow, { marginTop: 8 }]}>
-                        {durationOptions.map((durationOpt) => {
-                          const isSelected = durationOpt.id === schoolDurationScope;
-                          return (
-                            <TouchableOpacity
-                              key={durationOpt.id}
-                              style={[styles.weekdayChipSmall, isSelected && styles.weekdayChipSmallActive]}
-                              onPress={() => {
-                                setShowSchoolYearDropdown(false);
-                                setSchoolDurationScope(durationOpt.id);
-                              }}
-                              activeOpacity={0.85}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={[styles.weekdayChipSmallText, isSelected && styles.weekdayChipSmallTextActive]}>
-                                {durationOpt.label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    </View>
-                  </View>
-                  <View style={{ marginTop: 14 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <View style={styles.planningModeHeaderCell}>
                       <TouchableOpacity
-                        onPress={() => setBuildWithDefaults((prev) => !prev)}
-                        style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                        ref={planningScopeDropdownTriggerRef}
+                        onPress={() => {
+                          setShowSchoolYearDropdown(false);
+                          toggleAnchoredDropdown(
+                            planningScopeDropdownTriggerRef,
+                            showPlanningScopeDropdown,
+                            setPlanningScopeDropdownAnchor,
+                            setShowPlanningScopeDropdown
+                          );
+                        }}
+                        style={styles.planningModeHeaderTrigger}
                         activeOpacity={0.8}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <View
-                          style={{
-                            width: 18,
-                            height: 18,
-                            borderRadius: 5,
-                            borderWidth: 1.5,
-                            borderColor: buildWithDefaults ? ACCENT : BORDER,
-                            backgroundColor: buildWithDefaults ? ACCENT : '#ffffff',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          {buildWithDefaults ? <Check size={12} color="#ffffff" strokeWidth={2.5} /> : null}
-                        </View>
+                        <Text style={styles.planningModeHeaderTriggerText} numberOfLines={1}>
+                          {selectedDurationOption?.label || 'Select scope'}
+                        </Text>
+                        {showPlanningScopeDropdown ? <ChevronUp size={18} color={SUB} /> : <ChevronDown size={18} color={SUB} />}
                       </TouchableOpacity>
-                      <Text style={{ fontSize: 13, color: FG, fontWeight: '600' }}>
-                        Build with{' '}
-                        <Text
+                    </View>
+                  </View>
+                  <View style={styles.planningModeCard}>
+                    <TouchableOpacity
+                      onPress={() => setBuildWithDefaults((prev) => !prev)}
+                      style={styles.planningModeToggleRow}
+                      activeOpacity={0.8}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <View
+                        style={[
+                          styles.planningModeCheckbox,
+                          buildWithDefaults && styles.planningModeCheckboxActive,
+                        ]}
+                      >
+                        {buildWithDefaults ? <Check size={12} color="#ffffff" strokeWidth={2.5} /> : null}
+                      </View>
+                      <Text style={styles.planningModeToggleText}>Using term defaults</Text>
+                    </TouchableOpacity>
+                    {buildWithDefaults ? (
+                      <View style={styles.planningModeSummaryWrap}>
+                        <Text style={styles.planningModeSummaryText}>
+                          <Text style={styles.planningModeSummaryLead}>{planningModeSummary.scopeLabel} </Text>
+                          {planningModeSummary.details}
+                        </Text>
+                        <TouchableOpacity
                           onPress={() => setShowResolvedDefaults((prev) => !prev)}
-                          style={{ color: ACCENT, textDecorationLine: 'underline', fontWeight: '600' }}
+                          style={styles.planningModeSecondaryCta}
+                          activeOpacity={0.8}
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
-                          term defaults
-                        </Text>
-                      </Text>
-                    </View>
-                    {showResolvedDefaults ? (
-                      <View
-                        style={{
-                          marginTop: 10,
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                          borderWidth: 1,
-                          borderColor: BORDER_SUBTLE,
-                          borderRadius: 10,
-                          backgroundColor: ELIGIBILITY_CARD_BG,
-                        }}
+                          <Text style={styles.planningModeSecondaryCtaText}>
+                            {showResolvedDefaults ? 'Hide default details' : 'View default details'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        onPress={handleOpenPlannerSettingsFromDefaults}
+                        style={styles.planningModePrimaryCta}
+                        activeOpacity={0.8}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
+                        <Text style={styles.planningModePrimaryCtaText}>Customize plan settings ▾</Text>
+                      </TouchableOpacity>
+                    )}
+                    {buildWithDefaults && showResolvedDefaults ? (
+                      <View style={styles.planningModeExpandedDefaults}>
                         <Text style={{ fontSize: 12, color: FG, lineHeight: 18 }}>
                           {selectedSchoolYearOption?.label || 'New school year'} ·{' '}
                           {selectedTermOption?.name ? `${selectedTermOption.name} · ` : ''}
@@ -10849,6 +10874,59 @@ export default function PlanYearModal({
                           >
                             <Text style={{ fontSize: 13, color: isSelected ? ACCENT : FG, fontWeight: isSelected ? '600' : '500' }}>
                               {yearOption.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                </Modal>
+
+                <Modal
+                  transparent
+                  visible={showPlanningScopeDropdown && !!planningScopeDropdownAnchor}
+                  animationType="none"
+                  onRequestClose={() => setShowPlanningScopeDropdown(false)}
+                >
+                  <View style={{ flex: 1 }}>
+                    <TouchableOpacity
+                      style={StyleSheet.absoluteFill}
+                      activeOpacity={1}
+                      onPress={() => setShowPlanningScopeDropdown(false)}
+                    />
+                    <View
+                      style={{
+                        position: 'absolute',
+                        ...(getDropdownMenuPosition(planningScopeDropdownAnchor, 170)),
+                        borderWidth: 1,
+                        borderColor: BORDER_SUBTLE,
+                        borderRadius: 10,
+                        backgroundColor: '#ffffff',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {durationOptions.map((durationOpt) => {
+                        const isSelected = durationOpt.id === schoolDurationScope;
+                        return (
+                          <TouchableOpacity
+                            key={durationOpt.id}
+                            style={{
+                              paddingVertical: 10,
+                              paddingHorizontal: 12,
+                              borderBottomWidth: durationOptions[durationOptions.length - 1]?.id === durationOpt.id ? 0 : 1,
+                              borderBottomColor: BORDER_SUBTLE,
+                              backgroundColor: isSelected ? ACCENT_LIGHT : '#ffffff',
+                            }}
+                            onPress={() => {
+                              setSchoolDurationScope(durationOpt.id);
+                              setShowPlanningScopeDropdown(false);
+                              setShowSchoolYearDropdown(false);
+                            }}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={{ fontSize: 13, color: isSelected ? ACCENT : FG, fontWeight: isSelected ? '600' : '500' }}>
+                              {durationOpt.label}
                             </Text>
                           </TouchableOpacity>
                         );
@@ -15574,6 +15652,137 @@ const styles = StyleSheet.create({
   radioLabelActive: {
     color: CHIP_SELECTED_TEXT,
     fontWeight: '700',
+  },
+  planningModeHeaderRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  planningModeHeaderCell: {
+    minWidth: 170,
+    flexGrow: 1,
+  },
+  planningModeHeaderTrigger: {
+    minHeight: 40,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  planningModeHeaderTriggerWide: {
+    minWidth: 200,
+  },
+  planningModeHeaderTriggerText: {
+    fontSize: 13,
+    color: FG,
+    flexShrink: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planningModeCard: {
+    marginTop: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    backgroundColor: ELIGIBILITY_CARD_BG,
+  },
+  planningModeToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  planningModeCheckbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: BORDER,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  planningModeCheckboxActive: {
+    borderColor: ACCENT,
+    backgroundColor: ACCENT,
+  },
+  planningModeToggleText: {
+    fontSize: 13,
+    color: FG,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planningModeSummaryWrap: {
+    marginTop: 8,
+    marginLeft: 26,
+    gap: 4,
+  },
+  planningModeSummaryText: {
+    fontSize: 12,
+    color: FG,
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planningModeSummaryLead: {
+    fontWeight: '600',
+  },
+  planningModeSecondaryCta: {
+    alignSelf: 'flex-start',
+  },
+  planningModeSecondaryCtaText: {
+    fontSize: 12,
+    color: ACCENT,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planningModePrimaryCta: {
+    marginTop: 8,
+    marginLeft: 26,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+  },
+  planningModePrimaryCtaText: {
+    fontSize: 12,
+    color: ACCENT,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planningModeExpandedDefaults: {
+    marginTop: 10,
+    marginLeft: 26,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
   },
   childSelectRow: {
     marginTop: 12,
