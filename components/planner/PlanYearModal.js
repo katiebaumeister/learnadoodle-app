@@ -2897,7 +2897,6 @@ export default function PlanYearModal({
   const cadenceConflictDayCount = cadenceConflictDates.size;
   const cadenceConflictEntryCount =
     (cadenceConflictReport?.internal?.length ?? 0) + (cadenceConflictReport?.external?.length ?? 0);
-
   /** Suggested window for “Move all” — matches bulk fix algorithm. */
   const cadenceBulkSuggestedTimeLabel = useMemo(() => {
     if (!hasCadenceConflicts || !blocks?.length) return null;
@@ -5518,7 +5517,6 @@ export default function PlanYearModal({
 
   const hasOnlyGenericBlocks = blocks.length > 0 && blocks.every((b) => !b.subject_id);
   const isPlaceholderOnlyScope = planningScope === 'placeholders_only' || (planningScope === 'full_year' && planSource === 'placeholders') || hasOnlyGenericBlocks;
-
   // Auto-sync blocks to required subjects: one block per effective subject (require all). Skip when placeholder-only scope — user adds generic blocks manually.
   const effectiveSubjectIdsKey = effectiveSubjectIds.slice().sort().join(',');
   const syncBlocksFromEffectiveSubjects = useCallback(() => {
