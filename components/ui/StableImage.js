@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Image, StyleSheet } from 'react-native';
+import { View, Image, StyleSheet, Platform } from 'react-native';
 
 export default function StableImage({
   source,
@@ -11,13 +11,42 @@ export default function StableImage({
   imageStyle,
   placeholderStyle,
   fadeDuration = 0,
+  webLoading = 'auto',
+  webFetchPriority = 'auto',
+  webDecoding = 'auto',
 }) {
+  const imageStyles = [styles.image, imageStyle];
+  const resolvedSource = Platform.OS === 'web' ? Image.resolveAssetSource(source) : null;
+  const resolvedUri = resolvedSource?.uri;
+
+  if (Platform.OS === 'web' && resolvedUri) {
+    const flattenedStyle = StyleSheet.flatten(imageStyles) || {};
+    const objectFit =
+      resizeMode === 'cover' ? 'cover' : resizeMode === 'stretch' ? 'fill' : 'contain';
+
+    return (
+      <View style={[styles.shell, shellStyle]}>
+        {!isLoaded && <View style={[styles.placeholder, placeholderStyle]} />}
+        <img
+          src={resolvedUri}
+          alt=""
+          style={{ ...flattenedStyle, objectFit }}
+          loading={webLoading}
+          fetchPriority={webFetchPriority}
+          decoding={webDecoding}
+          onLoad={onLoad}
+          onError={onError}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.shell, shellStyle]}>
       {!isLoaded && <View style={[styles.placeholder, placeholderStyle]} />}
       <Image
         source={source}
-        style={[styles.image, imageStyle]}
+        style={imageStyles}
         resizeMode={resizeMode}
         onLoad={onLoad}
         onError={onError}

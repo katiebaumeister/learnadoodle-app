@@ -41,6 +41,35 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
   const headerFadeAnim = useRef(new Animated.Value(1)).current;
   const superDoodleRef = useRef(null);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') {
+      return undefined;
+    }
+
+    const heroUri = Image.resolveAssetSource(LANDING_IMAGE_SOURCES.hero)?.uri;
+    if (!heroUri) {
+      return undefined;
+    }
+
+    const existingPreload = document.querySelector('link[data-landing-hero-preload="true"]');
+    if (existingPreload) {
+      return undefined;
+    }
+
+    const preloadLink = document.createElement('link');
+    preloadLink.rel = 'preload';
+    preloadLink.as = 'image';
+    preloadLink.href = heroUri;
+    preloadLink.setAttribute('data-landing-hero-preload', 'true');
+    document.head.appendChild(preloadLink);
+
+    return () => {
+      if (preloadLink.parentNode) {
+        preloadLink.parentNode.removeChild(preloadLink);
+      }
+    };
+  }, []);
+
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -78,6 +107,9 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
     shellStyle,
     resizeMode = 'contain',
     placeholderStyle,
+    webLoading = 'auto',
+    webFetchPriority = 'auto',
+    webDecoding = 'auto',
   }) => (
     <StableImage
       source={source}
@@ -86,6 +118,9 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
       imageStyle={styles.landingImageFill}
       placeholderStyle={[styles.landingImagePlaceholder, placeholderStyle]}
       fadeDuration={0}
+      webLoading={webLoading}
+      webFetchPriority={webFetchPriority}
+      webDecoding={webDecoding}
     />
   );
 
@@ -143,6 +178,8 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                 shellStyle: styles.logoImage,
                 resizeMode: 'contain',
                 placeholderStyle: styles.logoImagePlaceholder,
+                webLoading: 'eager',
+                webFetchPriority: 'high',
               })}
               <Text style={styles.logoText}>learnadoodle</Text>
             </View>
@@ -158,6 +195,8 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                 shellStyle: styles.logoImage,
                 resizeMode: 'contain',
                 placeholderStyle: styles.logoImagePlaceholder,
+                webLoading: 'eager',
+                webFetchPriority: 'high',
               })}
               <Text style={styles.logoText}>learnadoodle</Text>
             </View>
@@ -204,6 +243,9 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
                   source: LANDING_IMAGE_SOURCES.hero,
                   shellStyle: styles.heroImage,
                   resizeMode: 'contain',
+                  webLoading: 'eager',
+                  webFetchPriority: 'high',
+                  webDecoding: 'sync',
                 })}
               </View>
             </View>
