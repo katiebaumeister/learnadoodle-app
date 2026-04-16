@@ -46,7 +46,12 @@ export default function LandingPage({ onGetStarted, onLogIn }) {
       return undefined;
     }
 
-    const heroUri = Image.resolveAssetSource(LANDING_IMAGE_SOURCES.hero)?.uri;
+    const heroUri =
+      typeof LANDING_IMAGE_SOURCES.hero === 'object' && typeof LANDING_IMAGE_SOURCES.hero?.uri === 'string'
+        ? LANDING_IMAGE_SOURCES.hero.uri
+        : typeof Image.resolveAssetSource === 'function'
+          ? Image.resolveAssetSource(LANDING_IMAGE_SOURCES.hero)?.uri
+          : null;
     if (!heroUri) {
       return undefined;
     }

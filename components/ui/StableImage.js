@@ -16,8 +16,18 @@ export default function StableImage({
   webDecoding = 'auto',
 }) {
   const imageStyles = [styles.image, imageStyle];
-  const resolvedSource = Platform.OS === 'web' ? Image.resolveAssetSource(source) : null;
-  const resolvedUri = resolvedSource?.uri;
+  const resolvedUri =
+    Platform.OS === 'web'
+      ? (() => {
+          if (!source) return null;
+          if (typeof source === 'string') return source;
+          if (typeof source === 'object' && typeof source.uri === 'string') return source.uri;
+          if (typeof source === 'number' && typeof Image.resolveAssetSource === 'function') {
+            return Image.resolveAssetSource(source)?.uri || null;
+          }
+          return null;
+        })()
+      : null;
 
   if (Platform.OS === 'web' && resolvedUri) {
     const flattenedStyle = StyleSheet.flatten(imageStyles) || {};
