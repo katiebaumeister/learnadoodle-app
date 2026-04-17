@@ -96,6 +96,8 @@ import {
   conflictCounterpartyTimeLabel,
   findConflictsForPreviewLine,
   getNextCadenceTimeShift,
+  groupCadenceConflictsForSummary,
+  mergeCadenceSummaryGroupsByPattern,
   getSuggestedTimeForConflict,
 } from '../../lib/utils/planCadenceConflicts';
 import {
@@ -1544,7 +1546,6 @@ export default function PlanYearModal({
   const [schoolDurationScope, setSchoolDurationScope] = useState('full_year'); // full_year | fall_term | spring_term | custom_duration
   const [selectedFamilySchoolYear, setSelectedFamilySchoolYear] = useState(null);
   const [predefinedSchoolYearOptions, setPredefinedSchoolYearOptions] = useState([]);
-  const [loadingPredefinedSchoolYears, setLoadingPredefinedSchoolYears] = useState(false);
   const [selectedSchoolYearTemplateId, setSelectedSchoolYearTemplateId] = useState(null);
   const [schoolTermOptions, setSchoolTermOptions] = useState([]);
   const [loadingSchoolTermOptions, setLoadingSchoolTermOptions] = useState(false);
@@ -1639,6 +1640,7 @@ export default function PlanYearModal({
   /** When true, conflict summary + Move all are hidden; user can reopen via amber dot on a row. */
   /** Brief success line after user accepts suggested times and overlaps clear. */
   const [cadenceConflictsResolvedFeedback, setCadenceConflictsResolvedFeedback] = useState(false);
+  const [showFullSchedulePreview, setShowFullSchedulePreview] = useState(false);
   const pendingCadenceResolveAckRef = useRef(false);
   const [replacePlaceholders, setReplacePlaceholders] = useState(true);
   const [applyFromMode, setApplyFromMode] = useState('entire'); // 'entire' | 'today' | 'date'
@@ -2897,6 +2899,131 @@ export default function PlanYearModal({
   const cadenceConflictDayCount = cadenceConflictDates.size;
   const cadenceConflictEntryCount =
     (cadenceConflictReport?.internal?.length ?? 0) + (cadenceConflictReport?.external?.length ?? 0);
+  const previewSummaryRangeLabel = useMemo(() => {
+    if (!startDate || !endDate) return 'Dates not set';
+    const start = dateStringToDate(startDate);
+    const end = dateStringToDate(endDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'Dates not set';
+    const startMonth = start.toLocaleDateString('en-US', { month: 'short' });
+    const endMonth = end.toLocaleDateString('en-US', { month: 'short' });
+    return `${startMonth} → ${endMonth}`;
+  }, [startDate, endDate]);
+  const previewWeeklyCadenceSummary = useMemo(() => {
+    const withWeekdays = (blocks || []).filter((b) => Array.isArray(b.weekdays) && b.weekdays.length > 0);
+    if (!withWeekdays.length) return { daysPerWeek: 0, hoursPerDay: 0 };
+    const uniqueDays = new Set(withWeekdays.flatMap((b) => b.weekdays || []));
+    const mins = withWeekdays
+      .map((b) => blockMinutesForPlanYearBlock(b))
+      .filter((m) => m > 0);
+    const avgMins = mins.length ? (mins.reduce((sum, n) => sum + n, 0) / mins.length) : 0;
+    return {
+      daysPerWeek: uniqueDays.size,
+      hoursPerDay: avgMins / 60,
+    };
+  }, [blocks]);
+  const topConflictHotspotLabel = useMemo(() => {
+    if (!cadenceConflictReport) return null;
+    const bucket = new Map();
+    const addBucket = (dateYmd, timeLabel) => {
+      if (!dateYmd || !timeLabel) return;
+      const d = dateStringToDate(dateYmd);
+      const weekday = WEEKDAY_LABELS[d.getDay()];
+      const timeStart = String(timeLabel).split('–')[0] || String(timeLabel).split('-')[0] || timeLabel;
+      const k = `${weekday}|${timeStart}`;
+      bucket.set(k, (bucket.get(k) || 0) + 1);
+    };
+    (cadenceConflictReport.internal || []).forEach((c) => addBucket(c.date, c.timeLabel));
+    (cadenceConflictReport.external || []).forEach((c) => addBucket(c.date, c.slotTimeLabel));
+    if (bucket.size === 0) return null;
+    const [bestKey] = [...bucket.entries()].sort((a, b) => b[1] - a[1])[0];
+    const [weekday, hhmm] = bestKey.split('|');
+    const m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return `${weekday} at ${hhmm}`;
+    let h = parseInt(m[1], 10);
+    const min = m[2];
+    const suffix = h >= 12 ? 'pm' : 'am';
+    if (h === 0) h = 12;
+    if (h > 12) h -= 12;
+    return `${weekday}s at ${h}:${min}${suffix}`;
+  }, [cadenceConflictReport]);
+  const previewConflictPatternGroups = useMemo(() => {
+    if (!cadenceConflictReport) return [];
+    const grouped = groupCadenceConflictsForSummary(cadenceConflictReport, blocks, cadenceConflictContext);
+    return mergeCadenceSummaryGroupsByPattern(grouped);
+  }, [cadenceConflictReport, blocks, cadenceConflictContext]);
+  const cadenceInlineConflictByBlockId = useMemo(() => {
+    const map = new Map();
+    if (!cadenceConflictReport || !blocks?.length) return map;
+    const dayOrder = new Map(WEEKDAY_LABELS.map((label, idx) => [label, idx]));
+    const collect = (blockId, conflict, counterpartyLabel) => {
+      if (blockId == null) return;
+      const key = String(blockId);
+      const existing = map.get(key) || {
+        conflicts: [],
+        daySet: new Set(),
+        counterpartyCounts: new Map(),
+      };
+      existing.conflicts.push(conflict);
+      if (counterpartyLabel) {
+        existing.counterpartyCounts.set(
+          counterpartyLabel,
+          (existing.counterpartyCounts.get(counterpartyLabel) || 0) + 1,
+        );
+      }
+      if (conflict?.date) {
+        const d = dateStringToDate(conflict.date);
+        if (!Number.isNaN(d.getTime())) existing.daySet.add(WEEKDAY_LABELS[d.getDay()]);
+      }
+      map.set(key, existing);
+    };
+    (cadenceConflictReport.internal || []).forEach((conflict) => {
+      collect(conflict.blockIdA, conflict, conflict.subjectB || 'Other subject');
+      collect(conflict.blockIdB, conflict, conflict.subjectA || 'Other subject');
+    });
+    (cadenceConflictReport.external || []).forEach((conflict) => {
+      collect(conflict.blockId, conflict, (conflict.eventTitle || 'Event').trim() || 'Event');
+    });
+
+    const final = new Map();
+    map.forEach((entry, blockId) => {
+      const conflicts = entry.conflicts || [];
+      if (!conflicts.length) return;
+      let preferredConflict = null;
+      let preferredPatch = null;
+      for (const conflict of conflicts) {
+        const patch = applyCadenceFixForConflict(conflict, blocks, cadenceConflictContext);
+        if (!patch) continue;
+        const targetBlockId = blocks[patch.blockIndex]?.block_id;
+        if (targetBlockId != null && String(targetBlockId) === blockId) {
+          preferredConflict = conflict;
+          preferredPatch = patch;
+          break;
+        }
+      }
+      if (!preferredConflict) preferredConflict = conflicts[0];
+      if (!preferredPatch) {
+        const patch = applyCadenceFixForConflict(preferredConflict, blocks, cadenceConflictContext);
+        const targetBlockId = patch ? blocks[patch.blockIndex]?.block_id : null;
+        preferredPatch =
+          patch && targetBlockId != null && String(targetBlockId) === blockId
+            ? patch
+            : null;
+      }
+      const dayLabels = [...entry.daySet].sort((a, b) => (dayOrder.get(a) ?? 9) - (dayOrder.get(b) ?? 9));
+      const sortedCounterparties = [...entry.counterpartyCounts.entries()].sort((a, b) => b[1] - a[1]);
+      final.set(blockId, {
+        conflict: preferredConflict,
+        patch: preferredPatch,
+        counterpartyLabel: sortedCounterparties[0]?.[0] || 'another item',
+        dayLabels,
+        suggestedTimeLabel:
+          preferredPatch?.start_time && preferredPatch?.end_time
+            ? formatTimeRange(preferredPatch.start_time, preferredPatch.end_time)
+            : null,
+      });
+    });
+    return final;
+  }, [cadenceConflictReport, blocks, cadenceConflictContext]);
   /** Suggested window for “Move all” — matches bulk fix algorithm. */
   const cadenceBulkSuggestedTimeLabel = useMemo(() => {
     if (!hasCadenceConflicts || !blocks?.length) return null;
@@ -3110,26 +3237,31 @@ export default function PlanYearModal({
   }, [blocks]);
 
   const [savedCurriculumHasLessonsBySubjectId, setSavedCurriculumHasLessonsBySubjectId] = useState({});
+  const [savedCurriculumStatsBySubjectId, setSavedCurriculumStatsBySubjectId] = useState({});
 
   useEffect(() => {
     if (!PLAN_MY_YEAR_LOGISTICS_FIRST || planStep !== 'logistics') return;
     if (!familyId) return;
     if (openForNewPlan) {
       setSavedCurriculumHasLessonsBySubjectId({});
+      setSavedCurriculumStatsBySubjectId({});
       return;
     }
     if (!initialAcademicYearId && !academicYearId) {
       setSavedCurriculumHasLessonsBySubjectId({});
+      setSavedCurriculumStatsBySubjectId({});
       return;
     }
     const subjectIds = subjectIdsKeyForCadenceFetch.split(',').filter(Boolean);
     if (subjectIds.length === 0) {
       setSavedCurriculumHasLessonsBySubjectId({});
+      setSavedCurriculumStatsBySubjectId({});
       return;
     }
     let cancelled = false;
     (async () => {
-      const next = {};
+      const nextHasLessons = {};
+      const nextStats = {};
       await Promise.all(
         subjectIds.map(async (sid) => {
           try {
@@ -3141,21 +3273,37 @@ export default function PlanYearModal({
             );
             if (cancelled) return;
             if (error) {
-              next[sid] = false;
+              nextHasLessons[sid] = false;
+              nextStats[sid] = { lessonCount: 0, unitCount: 0 };
               return;
             }
             const units = Array.isArray(data?.units) ? data.units : [];
-            next[sid] = units.some((u) => (u.lessons || []).length > 0);
+            const lessonCount = units.reduce(
+              (total, unit) => total + ((Array.isArray(unit?.lessons) ? unit.lessons : []).length),
+              0,
+            );
+            nextHasLessons[sid] = lessonCount > 0;
+            nextStats[sid] = { lessonCount, unitCount: units.length };
           } catch (_) {
-            if (!cancelled) next[sid] = false;
+            if (!cancelled) {
+              nextHasLessons[sid] = false;
+              nextStats[sid] = { lessonCount: 0, unitCount: 0 };
+            }
           }
         }),
       );
       if (!cancelled) {
         setSavedCurriculumHasLessonsBySubjectId((prev) => {
           const merged = { ...prev };
-          Object.keys(next).forEach((k) => {
-            merged[k] = next[k];
+          Object.keys(nextHasLessons).forEach((k) => {
+            merged[k] = nextHasLessons[k];
+          });
+          return merged;
+        });
+        setSavedCurriculumStatsBySubjectId((prev) => {
+          const merged = { ...prev };
+          Object.keys(nextStats).forEach((k) => {
+            merged[k] = nextStats[k];
           });
           return merged;
         });
@@ -3176,11 +3324,22 @@ export default function PlanYearModal({
 
   useEffect(() => {
     if (!lastSavedUnitSubjectId) return;
+    const lessonCount = (unitStructureData?.units || []).reduce(
+      (total, unit) => total + ((Array.isArray(unit?.lessons) ? unit.lessons : []).length),
+      0,
+    );
     setSavedCurriculumHasLessonsBySubjectId((prev) => ({
       ...prev,
       [String(lastSavedUnitSubjectId)]: true,
     }));
-  }, [lastSavedUnitSubjectId]);
+    setSavedCurriculumStatsBySubjectId((prev) => ({
+      ...prev,
+      [String(lastSavedUnitSubjectId)]: {
+        lessonCount,
+        unitCount: Array.isArray(unitStructureData?.units) ? unitStructureData.units.length : 0,
+      },
+    }));
+  }, [lastSavedUnitSubjectId, unitStructureData]);
 
   const cadenceShowChangeUnitsForSubject = useCallback(
     (subjectId) => {
@@ -3205,6 +3364,45 @@ export default function PlanYearModal({
       ),
     [lessonSchedulePreviewPlan],
   );
+
+  const step3CurriculumCards = useMemo(() => {
+    const subjectById = new Map((baseSubjectList || []).map((subject) => [String(subject.id), subject]));
+    const seen = new Set();
+    const cards = [];
+    (blocks || []).forEach((block) => {
+      if (!block?.subject_id) return;
+      const sid = String(block.subject_id);
+      if (seen.has(sid)) return;
+      seen.add(sid);
+      const subject = subjectById.get(sid);
+      const label =
+        subject?.name ||
+        block.placeholder_label ||
+        (STRINGS.planMyYear?.sections?.blocks?.genericSlotLabel ?? 'Learning block');
+      const sameSubjectBlocks = (blocks || []).filter((entry) => String(entry?.subject_id || '') === sid);
+      const daySet = new Set();
+      sameSubjectBlocks.forEach((entry) => {
+        (Array.isArray(entry?.weekdays) ? entry.weekdays : []).forEach((day) => daySet.add(String(day)));
+      });
+      const daysPerWeek = daySet.size;
+      const savedStructureLessons = flattenUnitLessonsForPreview(planSummaryCurriculumBySubjectId?.[sid]?.units || []).length;
+      const lessonCount = Math.max(savedStructureLessons, savedCurriculumStatsBySubjectId?.[sid]?.lessonCount || 0);
+      cards.push({
+        subjectId: sid,
+        label,
+        hasCurriculum: lessonCount > 0 || cadenceShowChangeUnitsForSubject(sid),
+        lessonCount,
+        daysPerWeek,
+      });
+    });
+    return cards;
+  }, [
+    blocks,
+    baseSubjectList,
+    planSummaryCurriculumBySubjectId,
+    savedCurriculumStatsBySubjectId,
+    cadenceShowChangeUnitsForSubject,
+  ]);
 
   const handleOpenCadenceUnitMethod = useCallback(
     (subjectId, method) => {
@@ -3299,7 +3497,6 @@ export default function PlanYearModal({
 
   useEffect(() => {
     let cancelled = false;
-    setLoadingPredefinedSchoolYears(true);
     (async () => {
       const { data, error } = await supabase
         .from('school_year_templates')
@@ -3308,7 +3505,6 @@ export default function PlanYearModal({
       if (cancelled) return;
       if (error) {
         setPredefinedSchoolYearOptions(buildStaticSchoolYearOptions(2025, 12));
-        setLoadingPredefinedSchoolYears(false);
         return;
       }
       const rows = Array.isArray(data) ? data : [];
@@ -3327,7 +3523,6 @@ export default function PlanYearModal({
         })
         .filter(Boolean);
       setPredefinedSchoolYearOptions(mapped.length > 0 ? mapped : buildStaticSchoolYearOptions(2025, 12));
-      setLoadingPredefinedSchoolYears(false);
     })();
     return () => {
       cancelled = true;
@@ -3346,24 +3541,58 @@ export default function PlanYearModal({
     }
     if (!Array.isArray(predefinedSchoolYearOptions) || predefinedSchoolYearOptions.length === 0) return;
     schoolYearOpenInitRef.current = true;
-    const currentYear = new Date().getFullYear();
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const month = now.getMonth() + 1; // 1-12
+    const isNewBuildPlanFlow =
+      !initialAcademicYearId && (openForNewPlan || startCreatingNew || !academicYearId);
+    const useNextTermDefaults = !!isNewBuildPlanFlow;
+    const defaultScope = useNextTermDefaults
+      ? (month >= 8 ? 'spring_term' : 'fall_term')
+      : 'full_year';
+    const targetStartYear = useNextTermDefaults
+      ? (month >= 8 ? currentYear : currentYear)
+      : currentYear;
     const preferred =
-      predefinedSchoolYearOptions.find((opt) => String(opt.label || '').startsWith(`${currentYear}/`)) ||
-      predefinedSchoolYearOptions.find((opt) => String(opt.start_date || '').startsWith(`${currentYear}-`)) ||
+      predefinedSchoolYearOptions.find((opt) => String(opt.start_date || '').startsWith(`${targetStartYear}-`)) ||
+      predefinedSchoolYearOptions.find((opt) => String(opt.label || '').startsWith(`${targetStartYear}/`)) ||
       predefinedSchoolYearOptions[0];
     if (!preferred) return;
+    const preferredStartYmd = String(preferred.start_date || '');
+    const preferredStartYear =
+      /^\d{4}-\d{2}-\d{2}$/.test(preferredStartYmd) ? Number(preferredStartYmd.slice(0, 4)) : null;
     setSelectedSchoolYearTemplateId(preferred.id);
-    if (preferred.start_date) setStartDate(preferred.start_date);
-    if (preferred.end_date) setEndDate(preferred.end_date);
+    if (preferredStartYear != null && Number.isFinite(preferredStartYear)) {
+      if (defaultScope === 'fall_term') {
+        setStartDate(`${preferredStartYear}-08-01`);
+        setEndDate(`${preferredStartYear}-12-31`);
+      } else if (defaultScope === 'spring_term') {
+        setStartDate(`${preferredStartYear + 1}-01-01`);
+        setEndDate(`${preferredStartYear + 1}-05-01`);
+      } else {
+        if (preferred.start_date) setStartDate(preferred.start_date);
+        if (preferred.end_date) setEndDate(preferred.end_date);
+      }
+    } else {
+      if (preferred.start_date) setStartDate(preferred.start_date);
+      if (preferred.end_date) setEndDate(preferred.end_date);
+    }
     setSelectedTermId(null);
-    setSchoolDurationScope('full_year');
+    setSchoolDurationScope(defaultScope);
     setFollowGlobalHolidays(true);
     setCountryCode('US');
     setRegionCode(null);
     setPlanConstraintMode('none');
     setCustomHolidays([]);
     setCustomBreaks([]);
-  }, [visible, predefinedSchoolYearOptions, initialAcademicYearId]);
+  }, [
+    visible,
+    predefinedSchoolYearOptions,
+    initialAcademicYearId,
+    openForNewPlan,
+    startCreatingNew,
+    academicYearId,
+  ]);
 
   const editPlanListRows = useMemo(() => {
     const rows = (Array.isArray(previousPlans) ? previousPlans : []).filter((ay) =>
@@ -6209,55 +6438,6 @@ export default function PlanYearModal({
       selectedSubjectIds,
     ],
   );
-  const planningModeSummary = useMemo(() => {
-    const startYmd = resolvedRunStartDate || startDate || null;
-    const endYmd = resolvedRunEndDate || endDate || null;
-    const startObj = startYmd ? dateStringToDate(startYmd) : null;
-    const endObj = endYmd ? dateStringToDate(endYmd) : null;
-    const hasValidRange =
-      startObj &&
-      endObj &&
-      !Number.isNaN(startObj.getTime()) &&
-      !Number.isNaN(endObj.getTime()) &&
-      endObj >= startObj;
-    const totalDays = hasValidRange ? Math.max(1, Math.floor((endObj - startObj) / (24 * 60 * 60 * 1000)) + 1) : null;
-    const holidaySettings =
-      effectiveConfigForRun?.holiday_settings && typeof effectiveConfigForRun.holiday_settings === 'object'
-        ? effectiveConfigForRun.holiday_settings
-        : {};
-    const holidayCountry = String(holidaySettings.holiday_country_code || countryCode || 'US').toUpperCase();
-    const followsHolidays = (holidaySettings.follow_global_holidays ?? followGlobalHolidays) !== false;
-
-    const scopeLabel = selectedTermOption?.name
-      ? `${selectedTermOption.name}:`
-      : schoolDurationScope === 'fall_term'
-        ? 'Term 1:'
-        : schoolDurationScope === 'spring_term'
-          ? 'Term 2:'
-          : schoolDurationScope === 'custom_duration'
-            ? 'Custom range:'
-            : 'Full year:';
-    const rangeLabel = hasValidRange ? `${formatDateShort(startYmd)} – ${formatDateShort(endYmd)}` : 'Set dates';
-    const dayLabel = totalDays != null ? `${totalDays} days` : null;
-    const holidayLabel = followsHolidays ? `${holidayCountry} holidays` : `No ${holidayCountry} holidays`;
-
-    return {
-      scopeLabel,
-      details: [rangeLabel, dayLabel, holidayLabel].filter(Boolean).join(' · '),
-    };
-  }, [
-    resolvedRunStartDate,
-    resolvedRunEndDate,
-    startDate,
-    endDate,
-    effectiveConfigForRun,
-    countryCode,
-    followGlobalHolidays,
-    selectedTermOption,
-    selectedDurationOption,
-    schoolDurationScope,
-  ]);
-
   const defaultsSummarySentence = useMemo(() => {
     const cfg = effectiveConfigForRun && typeof effectiveConfigForRun === 'object' ? effectiveConfigForRun : {};
     const holidaySettings = cfg.holiday_settings && typeof cfg.holiday_settings === 'object' ? cfg.holiday_settings : {};
@@ -7307,6 +7487,7 @@ export default function PlanYearModal({
       setShowApplyFromDatePicker(false);
       setCalendarEventsForConflicts([]);
       setCadenceConflictsResolvedFeedback(false);
+      setShowFullSchedulePreview(false);
       pendingCadenceResolveAckRef.current = false;
       setCadenceWeekdayHighlightIndices([]);
     }
@@ -10001,7 +10182,7 @@ export default function PlanYearModal({
                   </Text>
                   <Text
                     style={{
-                      fontSize: 13,
+                      fontSize: 14,
                       color: TEXT_SECONDARY,
                       marginBottom: lessonSchedulePreviewPlan.hasCurriculumMapping ? 4 : 12,
                       lineHeight: 18,
@@ -10554,7 +10735,12 @@ export default function PlanYearModal({
             renderPlanYearUnitStructureScroll()
           ) : (
             <>
-          <ScrollView ref={scrollRef} style={styles.content} contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.content}
+            contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator={false}
+          >
             {loadError && (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{loadError}</Text>
@@ -10661,7 +10847,7 @@ export default function PlanYearModal({
                 >
                   <Text
                     style={{
-                      fontSize: 13,
+                      fontSize: 14,
                       fontWeight: '700',
                       letterSpacing: 0.6,
                       color: TEXT_SECONDARY,
@@ -10676,34 +10862,30 @@ export default function PlanYearModal({
                   </Text>
                   <View style={styles.planningModeHeaderRow}>
                     <View style={styles.planningModeHeaderCell}>
-                      {loadingPredefinedSchoolYears ? (
-                        <Text style={{ marginTop: 8, fontSize: 12, color: MUTED }}>Loading school years...</Text>
-                      ) : (
-                        <TouchableOpacity
-                          ref={schoolYearDropdownTriggerRef}
-                          onPress={() => {
-                            setShowPlanningScopeDropdown(false);
-                            toggleAnchoredDropdown(
-                              schoolYearDropdownTriggerRef,
-                              showSchoolYearDropdown,
-                              setSchoolYearDropdownAnchor,
-                              setShowSchoolYearDropdown
-                            );
-                          }}
-                          style={[styles.planningModeHeaderTrigger, styles.planningModeHeaderTriggerWide]}
-                          activeOpacity={0.8}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={styles.planningModeHeaderTriggerText} numberOfLines={1}>
-                            {selectedSchoolYearOption?.label
-                              ? (/school\s*year/i.test(selectedSchoolYearOption.label)
-                                ? selectedSchoolYearOption.label
-                                : `${selectedSchoolYearOption.label} School Year`)
-                              : 'Select School Year'}
-                          </Text>
-                          {showSchoolYearDropdown ? <ChevronUp size={18} color={SUB} /> : <ChevronDown size={18} color={SUB} />}
-                        </TouchableOpacity>
-                      )}
+                      <TouchableOpacity
+                        ref={schoolYearDropdownTriggerRef}
+                        onPress={() => {
+                          setShowPlanningScopeDropdown(false);
+                          toggleAnchoredDropdown(
+                            schoolYearDropdownTriggerRef,
+                            showSchoolYearDropdown,
+                            setSchoolYearDropdownAnchor,
+                            setShowSchoolYearDropdown
+                          );
+                        }}
+                        style={[styles.planningModeHeaderTrigger, styles.planningModeHeaderTriggerWide]}
+                        activeOpacity={0.8}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={styles.planningModeHeaderTriggerText} numberOfLines={1}>
+                          {selectedSchoolYearOption?.label
+                            ? (/school\s*year/i.test(selectedSchoolYearOption.label)
+                              ? selectedSchoolYearOption.label
+                              : `${selectedSchoolYearOption.label} School Year`)
+                            : 'School Year'}
+                        </Text>
+                        {showSchoolYearDropdown ? <ChevronUp size={18} color={SUB} /> : <ChevronDown size={18} color={SUB} />}
+                      </TouchableOpacity>
                     </View>
                     <View style={styles.planningModeHeaderCell}>
                       <TouchableOpacity
@@ -10729,40 +10911,33 @@ export default function PlanYearModal({
                     </View>
                   </View>
                   <View style={styles.planningModeCard}>
-                    <TouchableOpacity
-                      onPress={() => setBuildWithDefaults((prev) => !prev)}
-                      style={styles.planningModeToggleRow}
-                      activeOpacity={0.8}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <View
-                        style={[
-                          styles.planningModeCheckbox,
-                          buildWithDefaults && styles.planningModeCheckboxActive,
-                        ]}
+                    <View style={styles.planningModeToggleRow}>
+                      <TouchableOpacity
+                        onPress={() => setBuildWithDefaults((prev) => !prev)}
+                        activeOpacity={0.8}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        {buildWithDefaults ? <Check size={12} color="#ffffff" strokeWidth={2.5} /> : null}
-                      </View>
-                      <Text style={styles.planningModeToggleText}>Using term defaults</Text>
-                    </TouchableOpacity>
-                    {buildWithDefaults ? (
-                      <View style={styles.planningModeSummaryWrap}>
-                        <Text style={styles.planningModeSummaryText}>
-                          <Text style={styles.planningModeSummaryLead}>{planningModeSummary.scopeLabel} </Text>
-                          {planningModeSummary.details}
-                        </Text>
-                        <TouchableOpacity
+                        <View
+                          style={[
+                            styles.planningModeCheckbox,
+                            buildWithDefaults && styles.planningModeCheckboxActive,
+                          ]}
+                        >
+                          {buildWithDefaults ? <Check size={12} color="#ffffff" strokeWidth={2.5} /> : null}
+                        </View>
+                      </TouchableOpacity>
+                      <Text style={styles.planningModeToggleText}>
+                        Using{' '}
+                        <Text
                           onPress={() => setShowResolvedDefaults((prev) => !prev)}
-                          style={styles.planningModeSecondaryCta}
-                          activeOpacity={0.8}
+                          style={styles.planningModeSecondaryCtaText}
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
-                          <Text style={styles.planningModeSecondaryCtaText}>
-                            {showResolvedDefaults ? 'Hide default details' : 'View default details'}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
+                          term defaults
+                        </Text>
+                      </Text>
+                    </View>
+                    {!buildWithDefaults ? (
                       <TouchableOpacity
                         onPress={handleOpenPlannerSettingsFromDefaults}
                         style={styles.planningModePrimaryCta}
@@ -10771,7 +10946,7 @@ export default function PlanYearModal({
                       >
                         <Text style={styles.planningModePrimaryCtaText}>Customize plan settings ▾</Text>
                       </TouchableOpacity>
-                    )}
+                    ) : null}
                     {buildWithDefaults && showResolvedDefaults ? (
                       <View style={styles.planningModeExpandedDefaults}>
                         <Text style={{ fontSize: 12, color: FG, lineHeight: 18 }}>
@@ -11614,121 +11789,106 @@ export default function PlanYearModal({
                   )}
 
                 <View style={[styles.inputGroup, { marginBottom: 0, marginTop: buildWithDefaults ? 2 : 12 }]}>
-                  <Text style={[styles.logisticsLabel]}>Subjects <Text style={{ color: ERROR }}>*</Text></Text>
-                  {subjectsForCurrentSelection?.length === 0 && (
-                    <Text style={{ fontSize: 13, color: MUTED, marginTop: 8 }}>No subjects yet — add subjects in your family settings.</Text>
-                  )}
-                  {subjectsForCurrentSelection?.length > 0 && (
-                    <View style={[styles.childChips, styles.subjectsChipsRow, { marginTop: 8 }]}>
-                      {(() => {
-                        const allSubjectIds = subjectsForCurrentSelection.map((subjectRow) => subjectRow.id);
-                        const allSubjectsSelected = allSubjectsChipSelected;
-                        return (
-                          <TouchableOpacity
-                            key="all-subjects-chip"
-                            style={[styles.childChip, allSubjectsSelected && styles.childChipActive]}
-                            onPress={() => {
-                              setAllSubjectsChipSelected(true);
-                              setSelectedSubjectIds(allSubjectIds);
-                            }}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                          >
-                            <View style={styles.subjectChipInnerRow}>
-                              <Text
-                                style={[
-                                  styles.childChipText,
-                                  allSubjectsSelected && styles.childChipTextActive,
-                                  styles.subjectChipLabelText,
-                                ]}
-                                numberOfLines={1}
-                              >
-                                All subjects
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })()}
-                      {subjectsForCurrentSelection.map((s) => {
-                        const isSelected = !allSubjectsChipSelected && selectedSubjectIds.includes(s.id);
-                        const childIdsForDots =
-                          Array.isArray(s.assignedChildren) && s.assignedChildren.length > 0
-                            ? s.assignedChildren
-                            : getChildIdsForSubject(s, children);
-                        const childMatches = childIdsForDots
-                          .map((id) => children.find((c) => c && String(c.id) === String(id)))
-                          .filter(Boolean);
-                        const childNames = childMatches
-                          .map((child) => String(child?.first_name || child?.name || '').trim())
-                          .filter(Boolean);
-                        const cornerDotChildren = childMatches.slice(0, 4);
-                        return (
-                          <TouchableOpacity
-                            key={s.id}
-                            style={[
-                              styles.childChip,
-                              cornerDotChildren.length > 0 && styles.subjectChipWithCornerDots,
-                              isSelected && styles.childChipActive,
-                            ]}
-                            onPress={() => {
-                              if (allSubjectsChipSelected) {
-                                setAllSubjectsChipSelected(false);
-                                setSelectedSubjectIds([s.id]);
-                                return;
-                              }
-                              if (isSelected) {
-                                setSelectedSubjectIds(selectedSubjectIds.filter((id) => id !== s.id));
-                              } else {
-                                setSelectedSubjectIds([...selectedSubjectIds, s.id]);
-                              }
-                            }}
-                          >
-                            {cornerDotChildren.length > 0 ? (
-                              <View style={styles.subjectChipCornerDots} accessibilityLabel="Assigned students">
-                                {cornerDotChildren.map((child, index) => {
-                                  const childColor = getChildColorFromAvatar(child.avatar);
-                                  return (
-                                    <View
-                                      key={`corner-${String(child.id)}`}
-                                      style={[
-                                        styles.subjectChipCornerDot,
-                                        {
-                                          backgroundColor: childColor,
-                                          marginLeft: index > 0 ? -5 : 0,
-                                          zIndex: cornerDotChildren.length - index,
-                                        },
-                                      ]}
-                                    />
-                                  );
-                                })}
-                              </View>
-                            ) : null}
-                            <View style={styles.subjectChipBody}>
+                  <View style={styles.subjectsInlineRow}>
+                    <Text style={[styles.logisticsLabel, { marginBottom: 0, marginTop: 6 }]}>Subjects</Text>
+                    {subjectsForCurrentSelection?.length > 0 ? (
+                      <View style={[styles.childChips, styles.subjectsChipsRow]}>
+                        {(() => {
+                          const allSubjectIds = subjectsForCurrentSelection.map((subjectRow) => subjectRow.id);
+                          const allSubjectsSelected = allSubjectsChipSelected;
+                          return (
+                            <TouchableOpacity
+                              key="all-subjects-chip"
+                              style={[styles.childChip, allSubjectsSelected && styles.childChipActive]}
+                              onPress={() => {
+                                setAllSubjectsChipSelected(true);
+                                setSelectedSubjectIds(allSubjectIds);
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
                               <View style={styles.subjectChipInnerRow}>
                                 <Text
-                                  style={[styles.childChipText, isSelected && styles.childChipTextActive, styles.subjectChipLabelText]}
+                                  style={[
+                                    styles.childChipText,
+                                    allSubjectsSelected && styles.childChipTextActive,
+                                    styles.subjectChipLabelText,
+                                  ]}
                                   numberOfLines={1}
                                 >
-                                  {s.name}
+                                  All subjects
                                 </Text>
                               </View>
-                              {childNames.length > 0 ? (
-                                <View style={styles.subjectChipNamesRow}>
+                            </TouchableOpacity>
+                          );
+                        })()}
+                        {subjectsForCurrentSelection.map((s) => {
+                          const isSelected = !allSubjectsChipSelected && selectedSubjectIds.includes(s.id);
+                          const childIdsForDots =
+                            Array.isArray(s.assignedChildren) && s.assignedChildren.length > 0
+                              ? s.assignedChildren
+                              : getChildIdsForSubject(s, children);
+                          const childMatches = childIdsForDots
+                            .map((id) => children.find((c) => c && String(c.id) === String(id)))
+                            .filter(Boolean);
+                          const inlineDotChildren = childMatches.slice(0, 4);
+                          return (
+                            <TouchableOpacity
+                              key={s.id}
+                              style={[
+                                styles.childChip,
+                                isSelected && styles.childChipActive,
+                              ]}
+                              onPress={() => {
+                                if (allSubjectsChipSelected) {
+                                  setAllSubjectsChipSelected(false);
+                                  setSelectedSubjectIds([s.id]);
+                                  return;
+                                }
+                                if (isSelected) {
+                                  setSelectedSubjectIds(selectedSubjectIds.filter((id) => id !== s.id));
+                                } else {
+                                  setSelectedSubjectIds([...selectedSubjectIds, s.id]);
+                                }
+                              }}
+                            >
+                              <View style={styles.subjectChipBody}>
+                                <View style={styles.subjectChipInnerRow}>
+                                  {inlineDotChildren.length > 0 ? (
+                                    <View style={styles.subjectChipInlineDots} accessibilityLabel="Assigned students">
+                                      {inlineDotChildren.map((child, index) => {
+                                        const childColor = getChildColorFromAvatar(child.avatar);
+                                        return (
+                                          <View
+                                            key={`inline-dot-${String(child.id)}`}
+                                            style={[
+                                              styles.subjectChipCornerDot,
+                                              {
+                                                backgroundColor: childColor,
+                                                marginLeft: index > 0 ? -5 : 0,
+                                                zIndex: inlineDotChildren.length - index,
+                                              },
+                                            ]}
+                                          />
+                                        );
+                                      })}
+                                    </View>
+                                  ) : null}
                                   <Text
-                                    style={[
-                                      styles.subjectChipChildrenText,
-                                      isSelected && styles.subjectChipChildrenTextActive,
-                                    ]}
+                                    style={[styles.childChipText, isSelected && styles.childChipTextActive, styles.subjectChipLabelText]}
                                     numberOfLines={1}
                                   >
-                                    {childNames.join(', ')}
+                                    {s.name}
                                   </Text>
                                 </View>
-                              ) : null}
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+                  </View>
+                  {subjectsForCurrentSelection?.length === 0 && (
+                    <Text style={{ fontSize: 13, color: MUTED, marginTop: 8 }}>No subjects yet — add subjects in your family settings.</Text>
                   )}
                   {openForNewPlan && !academicYearId && existingPlansForSelectedSubjects.length > 0 ? (
                     <View
@@ -11779,7 +11939,7 @@ export default function PlanYearModal({
                       {PLAN_MY_YEAR_LOGISTICS_FIRST && (
                         <Text
                           style={{
-                            fontSize: 13,
+                            fontSize: 14,
                             fontWeight: '700',
                             letterSpacing: 0.6,
                             color: TEXT_SECONDARY,
@@ -11793,7 +11953,6 @@ export default function PlanYearModal({
                           STEP 2 — WHEN ARE WE LEARNING?
                         </Text>
                       )}
-                      <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 8 }]}>Cadence <Text style={{ color: ERROR }}>*</Text></Text>
                       {blocks.map((block, idx) => {
                       const subj = block.subject_id ? baseSubjectList.find((s) => s.id === block.subject_id) : null;
                       const blockSubjectLabel = subj?.name ?? (block.placeholder_label || (STRINGS.planMyYear?.sections?.blocks?.genericSlotLabel ?? 'Learning block'));
@@ -11805,7 +11964,7 @@ export default function PlanYearModal({
                           key={block.block_id}
                           style={[
                             styles.blockRow,
-                            blocks.length === 1 && styles.blockRowNoDivider,
+                            idx === blocks.length - 1 && styles.blockRowNoDivider,
                             isHighlighted && { backgroundColor: 'rgba(66, 133, 244, 0.08)', borderRadius: 8, padding: 12, marginBottom: 12 },
                             cadenceWeekdayHighlight && {
                               borderWidth: 2,
@@ -11948,6 +12107,23 @@ export default function PlanYearModal({
                               Select a day of week chip to continue.
                             </Text>
                           ) : null}
+                          {(() => {
+                            const conflict = cadenceInlineConflictByBlockId.get(String(block.block_id));
+                            if (!conflict) return null;
+                            return (
+                              <View style={styles.step2InlineConflictCard}>
+                                <Text style={styles.step2InlineConflictTitle}>
+                                  ⚠ Conflicts with {conflict.counterpartyLabel}
+                                  {conflict.dayLabels.length > 0 ? ` (${conflict.dayLabels.join(', ')})` : ''}
+                                </Text>
+                                {conflict.suggestedTimeLabel ? (
+                                  <Text style={styles.step2InlineConflictSuggestion}>
+                                    → Suggest: {conflict.suggestedTimeLabel}
+                                  </Text>
+                                ) : null}
+                              </View>
+                            );
+                          })()}
                         </View>
                       );
                     })}
@@ -11972,7 +12148,7 @@ export default function PlanYearModal({
                   <View style={[styles.fieldSection, { marginTop: 0, marginBottom: 12 }]}>
                         <Text
                           style={{
-                            fontSize: 13,
+                            fontSize: 14,
                             fontWeight: '700',
                             letterSpacing: 0.6,
                             color: TEXT_SECONDARY,
@@ -11985,62 +12161,69 @@ export default function PlanYearModal({
                         >
                           STEP 3 — WHAT ARE WE LEARNING?
                         </Text>
-                        {blocks
-                          .filter((b) => b.subject_id)
-                          .map((block) => {
-                            const subj = baseSubjectList.find((s) => s.id === block.subject_id);
-                            const blockSubjectLabel = subj?.name ?? (block.placeholder_label || (STRINGS.planMyYear?.sections?.blocks?.genericSlotLabel ?? 'Learning block'));
-                            const linkColor = cadenceYieldsInstructionalSlots ? ACCENT : MUTED;
-                            return (
-                              <View
-                                key={`step2-add-${block.block_id}`}
-                                style={{
-                                  marginBottom: 10,
-                                  flexDirection: 'row',
-                                  flexWrap: 'wrap',
-                                  alignItems: 'center',
-                                  alignSelf: 'flex-start',
-                                  maxWidth: '100%',
-                                }}
-                              >
-                                {blocks.filter((b) => b.subject_id).length > 1 ? (
-                                  <Text style={{ fontSize: 12, fontWeight: '600', color: FG, marginRight: 6, marginBottom: 4 }}>{blockSubjectLabel}</Text>
-                                ) : null}
-                                <Text style={{ fontSize: 12, color: MUTED, marginRight: 6, marginBottom: 4 }}>
-                                  {cadenceShowChangeUnitsForSubject(block.subject_id)
-                                    ? s('planMyYear.multiSubjectUnits.cadenceChangeUnitsInlinePrompt')
-                                    : s('planMyYear.multiSubjectUnits.cadenceAddUnitsInlinePrompt')}
-                                </Text>
-                                {[
-                                  { method: 'paste', label: s('planMyYear.sections.useASource.options.paste.label') },
-                                  { method: 'paste_plain', label: s('planMyYear.sections.useASource.options.pastePlain.label') },
-                                  { method: 'upload', label: s('planMyYear.sections.useASource.options.upload.label') },
-                                  { method: 'generate', label: s('planMyYear.multiSubjectUnits.cadenceGenerateLabel') },
-                                ].map((opt, optIdx) => (
-                                  <React.Fragment key={`${block.block_id}-${opt.method}`}>
-                                    {optIdx > 0 ? (
-                                      <Text style={{ fontSize: 12, color: MUTED, marginHorizontal: 6, marginBottom: 4 }}>
-                                        ·
-                                      </Text>
-                                    ) : null}
-                                    <TouchableOpacity
-                                      onPress={() => handleOpenCadenceUnitMethod(block.subject_id, opt.method)}
-                                      activeOpacity={0.7}
-                                      accessibilityRole="button"
-                                      accessibilityLabel={t('planMyYear.multiSubjectUnits.a11yCadenceAddUnitsMethod', {
-                                        methodLabel: opt.label,
-                                        subjectName: blockSubjectLabel,
-                                      })}
-                                      style={{ marginBottom: 4, paddingVertical: 2 }}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      <Text style={{ fontSize: 13, color: linkColor, textDecorationLine: 'underline' }}>{opt.label}</Text>
-                                    </TouchableOpacity>
-                                  </React.Fragment>
-                                ))}
+                        {step3CurriculumCards.map((card, idx) => {
+                          const quickActions = [
+                            { key: 'add', label: 'Add units', method: 'paste', icon: Plus },
+                            { key: 'generate', label: s('planMyYear.multiSubjectUnits.cadenceGenerateLabel'), method: 'generate', icon: Sparkles },
+                            { key: 'upload', label: s('planMyYear.sections.useASource.options.upload.label'), method: 'upload', icon: Upload },
+                            { key: 'paste', label: s('planMyYear.sections.useASource.options.paste.label'), method: 'paste', icon: Pencil },
+                          ];
+                          return (
+                            <View
+                              key={`step3-card-${card.subjectId}`}
+                              style={[
+                                styles.step3SubjectCard,
+                                idx === step3CurriculumCards.length - 1 && styles.step3SubjectCardNoDivider,
+                              ]}
+                            >
+                              <Text style={styles.step3SubjectTitle}>{card.label}</Text>
+                              <View style={styles.step3ActionRow}>
+                                {quickActions.map((action) => {
+                                  const Icon = action.icon;
+                                  return (
+                                  <TouchableOpacity
+                                    key={`${card.subjectId}-${action.key}`}
+                                    onPress={() => handleOpenCadenceUnitMethod(card.subjectId, action.method)}
+                                    activeOpacity={0.8}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={t('planMyYear.multiSubjectUnits.a11yCadenceAddUnitsMethod', {
+                                      methodLabel: action.label,
+                                      subjectName: card.label,
+                                    })}
+                                    style={styles.step3ActionPill}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    <View style={styles.step3ActionPillInner}>
+                                      <Icon size={12} color={SUB} />
+                                      <Text style={styles.step3ActionPillText}>{action.label}</Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                  );
+                                })}
                               </View>
-                            );
-                          })}
+                              {card.hasCurriculum ? (
+                                <View style={styles.step3SecondaryActionRow}>
+                                  <TouchableOpacity
+                                    onPress={() => handleOpenCadenceUnitMethod(card.subjectId, 'paste')}
+                                    activeOpacity={0.8}
+                                    style={styles.step3SecondaryAction}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    <Text style={styles.step3SecondaryActionText}>View structure</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    onPress={() => handleOpenCadenceUnitMethod(card.subjectId, 'paste')}
+                                    activeOpacity={0.8}
+                                    style={styles.step3SecondaryAction}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    <Text style={styles.step3SecondaryActionText}>Edit</Text>
+                                  </TouchableOpacity>
+                                </View>
+                              ) : null}
+                            </View>
+                          );
+                        })}
                         {addContentCadenceInlineHint && !cadenceYieldsInstructionalSlots && (
                           <View
                             style={{
@@ -12119,110 +12302,181 @@ export default function PlanYearModal({
                 )}
 
                 {PLAN_MY_YEAR_LOGISTICS_FIRST && (
-                  <View style={{ marginTop: 8 }}>
-                    {cadenceYieldsInstructionalSlots && (
-                      <>
-                        <View style={{ paddingHorizontal: 14, paddingVertical: 8 }}>
-                          <Text
-                            style={{
-                              fontSize: 17,
-                              fontWeight: '700',
-                              color: FG,
-                              marginBottom: 6,
-                              lineHeight: 22,
-                              ...(Platform.OS === 'web' && {
-                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                              }),
-                            }}
-                          >
-                            {t('planMyYear.cadenceConflicts.previewDominantTitle')}
-                          </Text>
-                          <Text
-                            style={{
-                              fontSize: 13,
-                              color: TEXT_SECONDARY,
-                              marginBottom: lessonSchedulePreviewPlan.hasCurriculumMapping ? 4 : 12,
-                              lineHeight: 18,
-                            }}
-                          >
-                            {previewSlotLines.length} slot{previewSlotLines.length !== 1 ? 's' : ''} based on your date range and holidays & breaks.
-                          </Text>
-                          {lessonSchedulePreviewPlan.hasCurriculumMapping ? (
-                            <Text style={{ fontSize: 12, color: MUTED, marginBottom: 10, lineHeight: 16 }}>
-                              {s('planMyYear.multiSubjectUnits.lessonSchedulePreviewHeading')}
+                  <View style={[styles.fieldSection, { marginTop: 0, marginBottom: 12 }]}>
+                    <View style={{ paddingHorizontal: 14, paddingVertical: 8 }}>
+                      <Text
+                        style={{
+                          fontSize: 14,
+                          fontWeight: '700',
+                          letterSpacing: 0.6,
+                          color: TEXT_SECONDARY,
+                          textTransform: 'uppercase',
+                          marginBottom: 6,
+                          ...(Platform.OS === 'web' && {
+                            fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          }),
+                        }}
+                      >
+                        STEP 4 — DOES THIS SCHEDULE MAKE SENSE?
+                      </Text>
+                      {cadenceYieldsInstructionalSlots && hasAnySavedCurriculumUnits ? (
+                        <>
+                          <View style={styles.previewSummaryCard}>
+                            <Text style={styles.previewSummaryPrimary}>
+                              {previewSlotLines.length} sessions · {previewSummaryRangeLabel}
                             </Text>
+                            <Text style={styles.previewSummarySecondary}>
+                              {previewWeeklyCadenceSummary.daysPerWeek} days/week ·{' '}
+                              {previewWeeklyCadenceSummary.hoursPerDay % 1 === 0
+                                ? `${Math.max(0, previewWeeklyCadenceSummary.hoursPerDay)} hr/day`
+                                : `${Math.max(0, previewWeeklyCadenceSummary.hoursPerDay).toFixed(1)} hr/day`}
+                            </Text>
+                            {hasCadenceConflicts ? (
+                              <View style={styles.previewSummaryConflictRow}>
+                                <Text style={styles.previewSummaryConflictText}>
+                                  {'\u26A0'} {cadenceConflictEntryCount} conflicts
+                                  {topConflictHotspotLabel ? ` · Mostly ${topConflictHotspotLabel}` : ''}
+                                </Text>
+                                {canMoveAllCadenceFix ? (
+                                  <TouchableOpacity
+                                    onPress={handleFixAllCadenceConflicts}
+                                    style={styles.previewSummaryFixButton}
+                                    activeOpacity={0.85}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    <Text style={styles.previewSummaryFixButtonText}>Fix automatically</Text>
+                                  </TouchableOpacity>
+                                ) : null}
+                              </View>
+                            ) : null}
+                          </View>
+                          {previewConflictPatternGroups.length > 0 ? (
+                            <View style={styles.previewPatternConflictCard}>
+                              <Text style={styles.previewPatternConflictTitle}>Conflict patterns</Text>
+                              {previewConflictPatternGroups.slice(0, 2).map((group) => (
+                                <View key={group.key} style={styles.previewPatternConflictRow}>
+                                  <Text style={styles.previewPatternConflictText}>
+                                    {'\u26A0'} {group.kind === 'internal'
+                                      ? `${group.subjectA} ↔ ${group.subjectB}`
+                                      : `${group.subjectName} ↔ ${group.eventTitle}`}{' '}
+                                    ({group.occurrenceCount} occurrences)
+                                  </Text>
+                                  {group.suggestedTimeLabel ? (
+                                    <Text style={styles.previewPatternConflictSuggestion}>
+                                      Suggested fix: {group.suggestedTimeLabel}
+                                    </Text>
+                                  ) : null}
+                                </View>
+                              ))}
+                              <View style={styles.previewPatternConflictActions}>
+                                {canMoveAllCadenceFix ? (
+                                  <TouchableOpacity
+                                    onPress={handleFixAllCadenceConflicts}
+                                    style={styles.previewPatternApplyAllBtn}
+                                    activeOpacity={0.85}
+                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                  >
+                                    <Text style={styles.previewPatternApplyAllBtnText}>Apply to all</Text>
+                                  </TouchableOpacity>
+                                ) : null}
+                                <TouchableOpacity
+                                  onPress={() => setShowFullSchedulePreview((prev) => !prev)}
+                                  style={styles.previewPatternReviewBtn}
+                                  activeOpacity={0.85}
+                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                >
+                                  <Text style={styles.previewPatternReviewBtnText}>
+                                    {showFullSchedulePreview ? 'Hide detailed rows' : 'Review individually'}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+                            </View>
                           ) : null}
                           <CadenceConflictsResolvedLine visible={cadenceConflictsResolvedFeedback} />
-                          {lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => {
-                            const rowKey =
-                              line.blockId && line.date ? `${line.date}|${String(line.blockId)}` : '';
-                            const conflictDetail = rowKey ? previewLineConflictDetailsByKey.get(rowKey) ?? null : null;
-                            return (
-                              <CadencePreviewSlotRow
-                                key={`ls-inline-${line.date}-${line.subjectId}-${idx}`}
-                                line={line}
-                                detailLine={detailLine}
-                                conflictDetail={conflictDetail}
-                                showResolvedTint={cadenceConflictsResolvedFeedback && !conflictDetail}
-                                isLast={idx === lessonSchedulePreviewPlan.rows.length - 1}
-                                onMoveRowPress={
-                                  conflictDetail?.suggestedTimeLabel
-                                    ? () => handleApplyCadenceRowFix(line)
-                                    : undefined
-                                }
-                              />
-                            );
-                          })}
-                        </View>
-                        <LessonOverflowFollowUp
-                          textStyle={[styles.mutedText, { fontSize: 12, color: TEXT_SECONDARY }]}
-                          overflowCount={lessonSchedulePreviewPlan.overflowCount}
-                          extendEndYmd={lessonOverflowExtendEndDate}
-                          curriculumSubjectId={lessonSchedulePreviewPlan.curriculumSubjectId}
-                          hasCurriculumMapping={lessonSchedulePreviewPlan.hasCurriculumMapping}
-                          onApplyExtend={applyExtendedPlanEndDate}
-                          t={t}
-                        />
-                      </>
-                    )}
-                    {academicYearId && !showPlanEditingModeBanner && cadenceDirty ? renderApplyFromScopeCard() : null}
-                    {hasCadenceConflicts && canMoveAllCadenceFix ? (
-                      <View style={{ paddingHorizontal: 14, marginTop: 8 }}>
-                        <CadencePreviewConflictBulkBar
-                          conflictCount={cadenceConflictEntryCount}
-                          suggestedTimeLabel={cadenceBulkSuggestedTimeLabel}
-                          canMoveAll={canMoveAllCadenceFix}
-                          onMoveAll={handleFixAllCadenceConflicts}
-                        />
-                      </View>
-                    ) : null}
-                    <TouchableOpacity
-                      style={[
-                        styles.primaryButton,
-                        styles.planYearGenerateCta,
-                        cadenceYieldsInstructionalSlots && { marginTop: 20 },
-                        (saving || loading) && styles.buttonDisabled,
-                      ]}
-                      onPress={handleApplyToCalendar}
-                      disabled={saving || loading}
-                      {...(Platform.OS === 'web' && {
-                        cursor: saving || loading ? 'wait' : 'pointer',
-                      })}
-                    >
-                      {saving ? (
-                        <ActivityIndicator size="small" color={BG} />
+                          <TouchableOpacity
+                            onPress={() => setShowFullSchedulePreview((prev) => !prev)}
+                            style={styles.previewExpandToggle}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={styles.previewExpandToggleText}>
+                              {showFullSchedulePreview ? 'Hide full schedule' : 'Expand full schedule'}
+                            </Text>
+                          </TouchableOpacity>
+                          {showFullSchedulePreview
+                            ? lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => {
+                                const rowKey =
+                                  line.blockId && line.date ? `${line.date}|${String(line.blockId)}` : '';
+                                const conflictDetail = rowKey ? previewLineConflictDetailsByKey.get(rowKey) ?? null : null;
+                                return (
+                                  <CadencePreviewSlotRow
+                                    key={`ls-inline-${line.date}-${line.subjectId}-${idx}`}
+                                    line={line}
+                                    detailLine={detailLine}
+                                    conflictDetail={conflictDetail}
+                                    showResolvedTint={cadenceConflictsResolvedFeedback && !conflictDetail}
+                                    isLast={idx === lessonSchedulePreviewPlan.rows.length - 1}
+                                    onMoveRowPress={
+                                      conflictDetail?.suggestedTimeLabel
+                                        ? () => handleApplyCadenceRowFix(line)
+                                        : undefined
+                                    }
+                                  />
+                                );
+                              })
+                            : null}
+                        </>
                       ) : (
-                        <Text style={[styles.primaryButtonText, styles.primaryButtonTextAllCaps]}>
-                          {academicYearId
-                            ? STRINGS.planMyYear.primaryActions.updateSlots
-                            : STRINGS.planMyYear.primaryActions.generateSlots}
-                        </Text>
+                        <View style={styles.previewStepPlaceholderCard}>
+                          <Text style={styles.previewStepPlaceholderText}>
+                            Add curriculum in Step 3 to preview your schedule summary.
+                          </Text>
+                        </View>
                       )}
-                    </TouchableOpacity>
+                    </View>
+                    {cadenceYieldsInstructionalSlots && hasAnySavedCurriculumUnits ? (
+                      <LessonOverflowFollowUp
+                        textStyle={[styles.mutedText, { fontSize: 12, color: TEXT_SECONDARY }]}
+                        overflowCount={lessonSchedulePreviewPlan.overflowCount}
+                        extendEndYmd={lessonOverflowExtendEndDate}
+                        curriculumSubjectId={lessonSchedulePreviewPlan.curriculumSubjectId}
+                        hasCurriculumMapping={lessonSchedulePreviewPlan.hasCurriculumMapping}
+                        onApplyExtend={applyExtendedPlanEndDate}
+                        t={t}
+                      />
+                    ) : null}
+                    {academicYearId && !showPlanEditingModeBanner && cadenceDirty ? renderApplyFromScopeCard() : null}
                   </View>
                 )}
               </View>
             )}
+            {PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'logistics' ? (
+              <View style={styles.previewCommitBar}>
+                <TouchableOpacity
+                  style={[
+                    styles.primaryButton,
+                    styles.planYearGenerateCtaFooter,
+                    { marginTop: 12 },
+                    (saving || loading) && styles.buttonDisabled,
+                  ]}
+                  onPress={handleApplyToCalendar}
+                  disabled={saving || loading}
+                  {...(Platform.OS === 'web' && {
+                    cursor: saving || loading ? 'wait' : 'pointer',
+                  })}
+                >
+                  {saving ? (
+                    <ActivityIndicator size="small" color={BG} />
+                  ) : (
+                    <Text style={[styles.primaryButtonText, styles.primaryButtonTextAllCaps]}>
+                      {academicYearId
+                        ? STRINGS.planMyYear.primaryActions.updateSlots
+                        : STRINGS.planMyYear.primaryActions.generateSlots}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </ScrollView>
           {PLAN_MY_YEAR_LOGISTICS_FIRST &&
             planStep === 'unit_structure' &&
@@ -15688,12 +15942,6 @@ const styles = StyleSheet.create({
   },
   planningModeCard: {
     marginTop: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: BORDER_SUBTLE,
-    backgroundColor: ELIGIBILITY_CARD_BG,
   },
   planningModeToggleRow: {
     flexDirection: 'row',
@@ -15721,25 +15969,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  planningModeSummaryWrap: {
-    marginTop: 8,
-    marginLeft: 26,
-    gap: 4,
-  },
-  planningModeSummaryText: {
-    fontSize: 12,
-    color: FG,
-    lineHeight: 18,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  planningModeSummaryLead: {
-    fontWeight: '600',
-  },
-  planningModeSecondaryCta: {
-    alignSelf: 'flex-start',
   },
   planningModeSecondaryCtaText: {
     fontSize: 12,
@@ -15782,6 +16011,92 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: '#ffffff',
   },
+  step2InlineConflictCard: {
+    marginTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(217, 119, 6, 0.24)',
+    backgroundColor: 'rgba(217, 119, 6, 0.06)',
+  },
+  step2InlineConflictTitle: {
+    fontSize: 12,
+    color: FG,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  step2InlineConflictSuggestion: {
+    marginTop: 2,
+    fontSize: 12,
+    color: TEXT_SECONDARY,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  step3SubjectCard: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER_SUBTLE,
+  },
+  step3SubjectCardNoDivider: {
+    borderBottomWidth: 0,
+  },
+  step3SubjectTitle: {
+    fontSize: 14,
+    color: FG,
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  step3ActionRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  step3ActionPill: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  step3ActionPillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  step3ActionPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: SUB,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  step3SecondaryActionRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  step3SecondaryAction: {
+    paddingVertical: 2,
+  },
+  step3SecondaryActionText: {
+    fontSize: 12,
+    color: ACCENT,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   childSelectRow: {
     marginTop: 12,
   },
@@ -15794,8 +16109,15 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
+  subjectsInlineRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
   subjectsChipsRow: {
-    marginTop: 10,
+    marginTop: 0,
+    flex: 1,
+    minWidth: 0,
   },
   childChip: {
     paddingVertical: 6,
@@ -15828,6 +16150,11 @@ const styles = StyleSheet.create({
     right: 8,
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  subjectChipInlineDots: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 4,
   },
   subjectChipCornerDot: {
     width: 8,
@@ -15995,9 +16322,142 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
     fontWeight: '700',
   },
-  planYearGenerateCta: {
-    alignSelf: 'center',
-    marginTop: 20,
+  previewSummaryCard: {
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    borderRadius: 12,
+    backgroundColor: '#f9fafb',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+    gap: 4,
+  },
+  previewSummaryPrimary: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+  },
+  previewSummarySecondary: {
+    fontSize: 12,
+    color: MUTED,
+  },
+  previewStepPlaceholderCard: {
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    borderRadius: 12,
+    backgroundColor: '#f9fafb',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+  },
+  previewStepPlaceholderText: {
+    fontSize: 12,
+    color: MUTED,
+    lineHeight: 18,
+  },
+  previewSummaryConflictRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  previewSummaryConflictText: {
+    fontSize: 12,
+    color: '#92400e',
+    lineHeight: 18,
+  },
+  previewSummaryFixButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    backgroundColor: '#fffbeb',
+  },
+  previewSummaryFixButtonText: {
+    fontSize: 12,
+    color: '#b45309',
+    fontWeight: '700',
+  },
+  previewPatternConflictCard: {
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    borderRadius: 12,
+    backgroundColor: '#fffbeb',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+    gap: 6,
+  },
+  previewPatternConflictTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#92400e',
+  },
+  previewPatternConflictRow: {
+    gap: 2,
+  },
+  previewPatternConflictText: {
+    fontSize: 12,
+    color: FG,
+    lineHeight: 18,
+  },
+  previewPatternConflictSuggestion: {
+    fontSize: 12,
+    color: '#92400e',
+    lineHeight: 18,
+  },
+  previewPatternConflictActions: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  previewPatternApplyAllBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: ACCENT,
+  },
+  previewPatternApplyAllBtnText: {
+    fontSize: 12,
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  previewPatternReviewBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    backgroundColor: '#ffffff',
+  },
+  previewPatternReviewBtnText: {
+    fontSize: 12,
+    color: FG,
+    fontWeight: '600',
+  },
+  previewExpandToggle: {
+    marginTop: 6,
+    marginBottom: 8,
+    alignSelf: 'flex-start',
+  },
+  previewExpandToggleText: {
+    fontSize: 12,
+    color: ACCENT,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  previewCommitBar: {
+    marginTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: BORDER_SUBTLE,
+    paddingTop: 12,
+    alignItems: 'center',
+    gap: 6,
   },
   /** Preview footer: left Back + centered primary (equal flex sides). */
   planYearPreviewFooterRow: {
