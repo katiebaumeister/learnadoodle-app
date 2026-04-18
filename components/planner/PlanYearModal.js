@@ -12116,11 +12116,6 @@ export default function PlanYearModal({
                                   ⚠ Conflicts with {conflict.counterpartyLabel}
                                   {conflict.dayLabels.length > 0 ? ` (${conflict.dayLabels.join(', ')})` : ''}
                                 </Text>
-                                {conflict.suggestedTimeLabel ? (
-                                  <Text style={styles.step2InlineConflictSuggestion}>
-                                    → Suggest: {conflict.suggestedTimeLabel}
-                                  </Text>
-                                ) : null}
                               </View>
                             );
                           })()}
@@ -12159,7 +12154,7 @@ export default function PlanYearModal({
                             }),
                           }}
                         >
-                          STEP 3 — WHAT ARE WE LEARNING?
+                          STEP 3 — WHAT ARE WE LEARNING? (OPTIONAL)
                         </Text>
                         {step3CurriculumCards.map((card, idx) => {
                           const quickActions = [
@@ -12319,7 +12314,7 @@ export default function PlanYearModal({
                       >
                         STEP 4 — DOES THIS SCHEDULE MAKE SENSE?
                       </Text>
-                      {cadenceYieldsInstructionalSlots && hasAnySavedCurriculumUnits ? (
+                      {cadenceYieldsInstructionalSlots ? (
                         <>
                           <View style={styles.previewSummaryCard}>
                             <Text style={styles.previewSummaryPrimary}>
@@ -16024,14 +16019,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: FG,
     fontWeight: '600',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  step2InlineConflictSuggestion: {
-    marginTop: 2,
-    fontSize: 12,
-    color: TEXT_SECONDARY,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
