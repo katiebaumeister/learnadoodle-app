@@ -19,11 +19,15 @@ const BANNER_BORDER_INFO = '#3b82f6';
 const BANNER_TEXT_INFO = '#1e40af';
 
 const SUPPRESS_BANNER_AFTER_APPLY_MS = 35000; // Hide "under" banner for 35s after Fix-It or Apply so backend/DB can catch up
+/** In-memory only: cleared on full page refresh. */
+const planHealthBannerDismissedSession = new Set();
 
 export default function PlanHealthBanner({ familyId, visible = true, initialHealth = null }) {
   const [health, setHealth] = useState(initialHealth ?? null);
   const [loading, setLoading] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(() =>
+    familyId ? planHealthBannerDismissedSession.has(String(familyId)) : false,
+  );
   const [showFixItModal, setShowFixItModal] = useState(false);
   const [fixItHealth, setFixItHealth] = useState(null); // health used by Fix-It modal (refetched when opening)
   const [suppressBannerUntil, setSuppressBannerUntil] = useState(null);
@@ -36,7 +40,6 @@ export default function PlanHealthBanner({ familyId, visible = true, initialHeal
       if (!error && data != null) {
         if (data.plan_exists) {
           setHealth(data);
-          setDismissed(false);
         } else {
           setHealth(null);
         }
@@ -50,6 +53,14 @@ export default function PlanHealthBanner({ familyId, visible = true, initialHeal
   useEffect(() => {
     if (initialHealth != null) setHealth(initialHealth);
   }, [initialHealth]);
+
+  useEffect(() => {
+    if (!familyId) {
+      setDismissed(false);
+      return;
+    }
+    setDismissed(planHealthBannerDismissedSession.has(String(familyId)));
+  }, [familyId]);
 
   useEffect(() => {
     fetchHealth();
@@ -175,7 +186,10 @@ export default function PlanHealthBanner({ familyId, visible = true, initialHeal
           </TouchableOpacity>
         )}
         <TouchableOpacity
-          onPress={() => setDismissed(true)}
+          onPress={() => {
+            if (familyId) planHealthBannerDismissedSession.add(String(familyId));
+            setDismissed(true);
+          }}
           style={{ padding: 4 }}
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >

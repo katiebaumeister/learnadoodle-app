@@ -71,7 +71,7 @@ import {
   computeSchedulePotential,
   getPublicHolidaysForRange,
 } from '../../lib/services/academicYearClient';
-import { getPlanDefaultsFromSettings, getAcademicYearExclusions, getFamilyPlannerSettings, addExclusion, saveExcludedPublicHolidayDates, saveFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
+import { getPlanDefaultsFromSettings, getAcademicYearExclusions, getFamilyPlannerSettings, addExclusion, saveExcludedPublicHolidayDates, saveFamilyPlannerSettings, syncFamilyHolidayBreakExclusions } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
 import { deleteEvent as deletePlannerEventSoft, restoreEventFromTrash } from '../../lib/services/plannerClientWithOffline';
 import { t, s, STRINGS } from '../../lib/i18n/strings';
@@ -1538,6 +1538,7 @@ export default function PlanYearModal({
   const [academicYearId, setAcademicYearId] = useState(initialAcademicYearId || null);
   const [selectedTermId, setSelectedTermId] = useState(null);
   const [buildWithDefaults, setBuildWithDefaults] = useState(true);
+  const [showDefaultsEditor, setShowDefaultsEditor] = useState(false);
   const [showResolvedDefaults, setShowResolvedDefaults] = useState(false);
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [schoolYearDropdownAnchor, setSchoolYearDropdownAnchor] = useState(null);
@@ -1571,14 +1572,16 @@ export default function PlanYearModal({
   const [newBreakEndCalendarMonth, setNewBreakEndCalendarMonth] = useState(() => new Date());
 
   const handleOpenPlannerSettingsFromDefaults = useCallback(() => {
-    if (typeof onOpenPlannerSettings === 'function') {
-      onOpenPlannerSettings();
-      return;
-    }
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.__ldSearchNavigate === 'function') {
-      window.__ldSearchNavigate('settings', 'planner-settings');
-    }
-  }, [onOpenPlannerSettings]);
+    setShowDefaultsEditor(true);
+    setShowResolvedDefaults(false);
+    setSectionDatesExpanded(true);
+    setTimeout(() => {
+      const y = datesSectionYRef.current;
+      if (typeof y === 'number' && scrollRef.current) {
+        scrollRef.current.scrollTo({ y: Math.max(0, y - 24), animated: true });
+      }
+    }, 150);
+  }, []);
 
   const getDropdownMenuPosition = useCallback((anchor, minWidth) => {
     const windowWidth = Dimensions.get('window').width || 0;
@@ -2175,6 +2178,9 @@ export default function PlanYearModal({
   });
   const planPrefsFamilySaveTimerRef = useRef(null);
   const planPrefsSubjectTimersRef = useRef({});
+  const planPrefsHolidaySaveTimerRef = useRef(null);
+  const planPrefsExclusionsSaveTimerRef = useRef(null);
+  const planPrefsExcludedDatesSaveTimerRef = useRef(null);
 
   const baseSubjectListRaw = Array.isArray(fullSubjects) && fullSubjects.length > 0 ? fullSubjects : subjects;
   const initialSubjectChildIdString = useMemo(() => {
@@ -2921,6 +2927,59 @@ export default function PlanYearModal({
       hoursPerDay: avgMins / 60,
     };
   }, [blocks]);
+  const previewAttendanceCalendar = useMemo(() => {
+    if (!previewSlotLines.length || !startDate || !endDate) {
+      return { months: [], uniqueLearningDayCount: 0 };
+    }
+    const start = dateStringToDate(startDate);
+    const end = dateStringToDate(endDate);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+      return { months: [], uniqueLearningDayCount: 0 };
+    }
+    const learningCountByDate = new Map();
+    (previewSlotLines || []).forEach((line) => {
+      const ymd = typeof line?.date === 'string' ? line.date.slice(0, 10) : '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return;
+      learningCountByDate.set(ymd, (learningCountByDate.get(ymd) || 0) + 1);
+    });
+    const rangeStartYmd = toLocalYYYYMMDD(start);
+    const rangeEndYmd = toLocalYYYYMMDD(end);
+    const months = [];
+    const monthCursor = new Date(start.getFullYear(), start.getMonth(), 1, 12);
+    const lastMonth = new Date(end.getFullYear(), end.getMonth(), 1, 12);
+    while (monthCursor.getTime() <= lastMonth.getTime()) {
+      const monthStart = new Date(monthCursor.getFullYear(), monthCursor.getMonth(), 1, 12);
+      const monthEnd = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 0, 12);
+      const gridStart = new Date(monthStart);
+      gridStart.setDate(gridStart.getDate() - gridStart.getDay());
+      const gridEnd = new Date(monthEnd);
+      gridEnd.setDate(gridEnd.getDate() + (6 - gridEnd.getDay()));
+      const days = [];
+      const dayCursor = new Date(gridStart);
+      while (dayCursor.getTime() <= gridEnd.getTime()) {
+        const ymd = toLocalYYYYMMDD(dayCursor);
+        const learningCount = learningCountByDate.get(ymd) || 0;
+        const isInMonth = dayCursor.getMonth() === monthStart.getMonth();
+        const isInRange = ymd >= rangeStartYmd && ymd <= rangeEndYmd;
+        days.push({
+          key: ymd,
+          dayNumber: dayCursor.getDate(),
+          isInMonth,
+          isInRange,
+          learningCount,
+          isLearningDay: learningCount > 0,
+        });
+        dayCursor.setDate(dayCursor.getDate() + 1);
+      }
+      months.push({
+        key: `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}`,
+        label: monthStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+        days,
+      });
+      monthCursor.setMonth(monthCursor.getMonth() + 1);
+    }
+    return { months, uniqueLearningDayCount: learningCountByDate.size };
+  }, [startDate, endDate, previewSlotLines]);
   const topConflictHotspotLabel = useMemo(() => {
     if (!cadenceConflictReport) return null;
     const bucket = new Map();
@@ -3215,6 +3274,56 @@ export default function PlanYearModal({
       }
     },
     [familyId, startDate],
+  );
+
+  const handleStartDateChange = useCallback(
+    (nextStartYmd) => {
+      if (!nextStartYmd || !/^\d{4}-\d{2}-\d{2}$/.test(nextStartYmd)) return;
+      const prevStartYmd = startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : null;
+      const prevEndYmd = endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : null;
+      setStartDate(nextStartYmd);
+      if (prevEndYmd && prevEndYmd < nextStartYmd) {
+        let nextEndYmd = nextStartYmd;
+        if (prevStartYmd) {
+          const prevStartDate = dateStringToDate(prevStartYmd);
+          const prevEndDate = dateStringToDate(prevEndYmd);
+          const nextStartDate = dateStringToDate(nextStartYmd);
+          if (prevStartDate && prevEndDate && nextStartDate) {
+            const shiftMs = nextStartDate.getTime() - prevStartDate.getTime();
+            const shiftedEndDate = new Date(prevEndDate.getTime() + shiftMs);
+            nextEndYmd = toLocalYYYYMMDD(shiftedEndDate);
+            if (nextEndYmd < nextStartYmd) nextEndYmd = nextStartYmd;
+          }
+        }
+        setEndDate(nextEndYmd);
+      }
+    },
+    [startDate, endDate],
+  );
+
+  const handleEndDateChange = useCallback(
+    (nextEndYmd) => {
+      if (!nextEndYmd || !/^\d{4}-\d{2}-\d{2}$/.test(nextEndYmd)) return;
+      const prevStartYmd = startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : null;
+      const prevEndYmd = endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) ? endDate : null;
+      setEndDate(nextEndYmd);
+      if (prevStartYmd && prevStartYmd > nextEndYmd) {
+        let nextStartYmd = nextEndYmd;
+        if (prevEndYmd) {
+          const prevStartDate = dateStringToDate(prevStartYmd);
+          const prevEndDate = dateStringToDate(prevEndYmd);
+          const nextEndDate = dateStringToDate(nextEndYmd);
+          if (prevStartDate && prevEndDate && nextEndDate) {
+            const shiftMs = nextEndDate.getTime() - prevEndDate.getTime();
+            const shiftedStartDate = new Date(prevStartDate.getTime() + shiftMs);
+            nextStartYmd = toLocalYYYYMMDD(shiftedStartDate);
+            if (nextStartYmd > nextEndYmd) nextStartYmd = nextEndYmd;
+          }
+        }
+        setStartDate(nextStartYmd);
+      }
+    },
+    [startDate, endDate],
   );
 
   /** YYYY-MM-DD sent to apply_to_calendar when applying partial updates; null = full range. */
@@ -4985,6 +5094,7 @@ export default function PlanYearModal({
       loadedYearIdRef.current = null;
       invalidYearIdRef.current.clear();
       savedTargetsAppliedRef.current = false;
+      setShowDefaultsEditor(false);
       setCadenceBaselineKey(null);
       setLoadError(null);
       setPlanCreatedAt(null);
@@ -6873,7 +6983,7 @@ export default function PlanYearModal({
     );
   }, [academicYearId, applyFromMode, applyFromDate, onApplyFromModePress, t]);
 
-  const scrollToDatesSection = useCallback(() => {
+  function scrollToDatesSection() {
     setSectionDatesExpanded(true);
     setTimeout(() => {
       const y = datesSectionYRef.current;
@@ -6881,16 +6991,16 @@ export default function PlanYearModal({
         scrollRef.current.scrollTo({ y: Math.max(0, y - 24), animated: true });
       }
     }, 150);
-  }, []);
+  }
 
-  const scrollToCadenceSection = useCallback(() => {
+  function scrollToCadenceSection() {
     setTimeout(() => {
       const y = scheduleSectionYRef.current;
       if (typeof y === 'number' && scrollRef.current) {
         scrollRef.current.scrollTo({ y: Math.max(0, y - 24), animated: true });
       }
     }, 150);
-  }, []);
+  }
 
   /** Keep Family settings, subject modals, and subject detail in sync after planner saves. */
   const dispatchPlanningPrefsSynced = useCallback(() => {
@@ -6920,6 +7030,78 @@ export default function PlanYearModal({
       }
     }, 400);
   }, [familyId, toast, dispatchPlanningPrefsSynced]);
+
+  const persistFamilyHolidaySettingsDebounced = useCallback(
+    (followValue) => {
+      if (!familyId) return;
+      if (planPrefsHolidaySaveTimerRef.current) clearTimeout(planPrefsHolidaySaveTimerRef.current);
+      planPrefsHolidaySaveTimerRef.current = setTimeout(async () => {
+        planPrefsHolidaySaveTimerRef.current = null;
+        try {
+          const { error } = await saveFamilyPlannerSettings(familyId, {
+            follow_public_holidays: followValue !== false,
+            holiday_country: countryCode || 'US',
+            holiday_region: regionCode ?? null,
+          });
+          if (error) throw error;
+          dispatchPlanningPrefsSynced();
+        } catch (e) {
+          toast?.push?.(e?.message || 'Failed to save holiday settings', 'error');
+        }
+      }, 350);
+    },
+    [familyId, toast, countryCode, regionCode, dispatchPlanningPrefsSynced],
+  );
+
+  const persistFamilyHolidayBreakExclusionsDebounced = useCallback(
+    (nextCustomHolidays, nextCustomBreaks) => {
+      if (!familyId) return;
+      if (planPrefsExclusionsSaveTimerRef.current) clearTimeout(planPrefsExclusionsSaveTimerRef.current);
+      planPrefsExclusionsSaveTimerRef.current = setTimeout(async () => {
+        planPrefsExclusionsSaveTimerRef.current = null;
+        try {
+          const { error } = await syncFamilyHolidayBreakExclusions(
+            familyId,
+            nextCustomHolidays || [],
+            nextCustomBreaks || [],
+          );
+          if (error) throw error;
+          dispatchPlanningPrefsSynced();
+        } catch (e) {
+          toast?.push?.(e?.message || 'Failed to save custom days off', 'error');
+        }
+      }, 400);
+    },
+    [familyId, toast, dispatchPlanningPrefsSynced],
+  );
+
+  const persistExcludedPublicHolidayDatesDebounced = useCallback(
+    (nextExcludedDates, nextPublicHolidaysList) => {
+      if (!familyId) return;
+      if (planPrefsExcludedDatesSaveTimerRef.current) clearTimeout(planPrefsExcludedDatesSaveTimerRef.current);
+      planPrefsExcludedDatesSaveTimerRef.current = setTimeout(async () => {
+        planPrefsExcludedDatesSaveTimerRef.current = null;
+        try {
+          const datesWithNames = (nextExcludedDates || []).map((d) => {
+            const match = (nextPublicHolidaysList || []).find((h) => (h?.date || '').slice(0, 10) === d);
+            return { date: d, name: match?.name || 'Holiday' };
+          });
+          const { error } = await saveExcludedPublicHolidayDates(familyId, datesWithNames);
+          if (error) throw error;
+          dispatchPlanningPrefsSynced();
+        } catch (e) {
+          toast?.push?.(e?.message || 'Failed to save excluded holidays', 'error');
+        }
+      }, 350);
+    },
+    [familyId, toast, dispatchPlanningPrefsSynced],
+  );
+
+  const handleToggleFollowGlobalHolidays = useCallback(() => {
+    const nextValue = !followGlobalHolidays;
+    setFollowGlobalHolidays(nextValue);
+    persistFamilyHolidaySettingsDebounced(nextValue);
+  }, [followGlobalHolidays, persistFamilyHolidaySettingsDebounced]);
 
   const handlePlanningPrefsTargetScopeChange = useCallback(
     async (scope) => {
@@ -6980,6 +7162,9 @@ export default function PlanYearModal({
   useEffect(() => {
     return () => {
       if (planPrefsFamilySaveTimerRef.current) clearTimeout(planPrefsFamilySaveTimerRef.current);
+      if (planPrefsHolidaySaveTimerRef.current) clearTimeout(planPrefsHolidaySaveTimerRef.current);
+      if (planPrefsExclusionsSaveTimerRef.current) clearTimeout(planPrefsExclusionsSaveTimerRef.current);
+      if (planPrefsExcludedDatesSaveTimerRef.current) clearTimeout(planPrefsExcludedDatesSaveTimerRef.current);
       Object.keys(planPrefsSubjectTimersRef.current).forEach((k) => {
         const t = planPrefsSubjectTimersRef.current[k];
         if (t) clearTimeout(t);
@@ -6993,6 +7178,18 @@ export default function PlanYearModal({
       if (planPrefsFamilySaveTimerRef.current) {
         clearTimeout(planPrefsFamilySaveTimerRef.current);
         planPrefsFamilySaveTimerRef.current = null;
+      }
+      if (planPrefsHolidaySaveTimerRef.current) {
+        clearTimeout(planPrefsHolidaySaveTimerRef.current);
+        planPrefsHolidaySaveTimerRef.current = null;
+      }
+      if (planPrefsExclusionsSaveTimerRef.current) {
+        clearTimeout(planPrefsExclusionsSaveTimerRef.current);
+        planPrefsExclusionsSaveTimerRef.current = null;
+      }
+      if (planPrefsExcludedDatesSaveTimerRef.current) {
+        clearTimeout(planPrefsExcludedDatesSaveTimerRef.current);
+        planPrefsExcludedDatesSaveTimerRef.current = null;
       }
       Object.keys(planPrefsSubjectTimersRef.current).forEach((k) => {
         const t = planPrefsSubjectTimersRef.current[k];
@@ -7329,19 +7526,23 @@ export default function PlanYearModal({
       setError('Please enter both a date and a name for the custom holiday.');
       return;
     }
-    
-    setCustomHolidays([...customHolidays, {
+
+    const nextCustomHolidays = [...customHolidays, {
       date: newHolidayDate,
       name: newHolidayName,
       type: 'CUSTOM_HOLIDAY',
-    }]);
-    
+    }];
+    setCustomHolidays(nextCustomHolidays);
+    persistFamilyHolidayBreakExclusionsDebounced(nextCustomHolidays, customBreaks);
+
     setNewHolidayDate('');
     setNewHolidayName('');
   };
 
   const removeCustomHoliday = (index) => {
-    setCustomHolidays(customHolidays.filter((_, i) => i !== index));
+    const nextCustomHolidays = customHolidays.filter((_, i) => i !== index);
+    setCustomHolidays(nextCustomHolidays);
+    persistFamilyHolidayBreakExclusionsDebounced(nextCustomHolidays, customBreaks);
   };
 
   const addCustomBreak = () => {
@@ -7353,14 +7554,18 @@ export default function PlanYearModal({
       setError('Break end date must be on or after the start date.');
       return;
     }
-    setCustomBreaks([...customBreaks, { start: newBreakStart, end: newBreakEnd, name: newBreakName }]);
+    const nextCustomBreaks = [...customBreaks, { start: newBreakStart, end: newBreakEnd, name: newBreakName }];
+    setCustomBreaks(nextCustomBreaks);
+    persistFamilyHolidayBreakExclusionsDebounced(customHolidays, nextCustomBreaks);
     setNewBreakStart('');
     setNewBreakEnd('');
     setNewBreakName('');
   };
 
   const removeCustomBreak = (index) => {
-    setCustomBreaks(customBreaks.filter((_, i) => i !== index));
+    const nextCustomBreaks = customBreaks.filter((_, i) => i !== index);
+    setCustomBreaks(nextCustomBreaks);
+    persistFamilyHolidayBreakExclusionsDebounced(customHolidays, nextCustomBreaks);
   };
 
   const addBlock = () => {
@@ -10820,7 +11025,7 @@ export default function PlanYearModal({
                     <Text style={styles.settingText}>Follow public holidays</Text>
                   <TouchableOpacity
                     style={[styles.customToggleTrack, followGlobalHolidays && styles.customToggleTrackOn]}
-                    onPress={() => setFollowGlobalHolidays(!followGlobalHolidays)}
+                    onPress={handleToggleFollowGlobalHolidays}
                     activeOpacity={0.8}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
@@ -10913,7 +11118,13 @@ export default function PlanYearModal({
                   <View style={styles.planningModeCard}>
                     <View style={styles.planningModeToggleRow}>
                       <TouchableOpacity
-                        onPress={() => setBuildWithDefaults((prev) => !prev)}
+                        onPress={() =>
+                          setBuildWithDefaults((prev) => {
+                            const next = !prev;
+                            if (next) setShowDefaultsEditor(false);
+                            return next;
+                          })
+                        }
                         activeOpacity={0.8}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
@@ -10927,7 +11138,7 @@ export default function PlanYearModal({
                         </View>
                       </TouchableOpacity>
                       <Text style={styles.planningModeToggleText}>
-                        Using{' '}
+                        Use{' '}
                         <Text
                           onPress={() => setShowResolvedDefaults((prev) => !prev)}
                           style={styles.planningModeSecondaryCtaText}
@@ -11108,32 +11319,32 @@ export default function PlanYearModal({
                   </View>
                 </Modal>
 
-                {(!buildWithDefaults || schoolDurationScope === 'custom_duration') && (
+                {(showDefaultsEditor || !buildWithDefaults || schoolDurationScope === 'custom_duration') && (
                 <View style={[styles.inputGroup, { marginBottom: 0 }]}>
                   <Text style={[styles.logisticsLabel]}>Date range <Text style={{ color: ERROR }}>*</Text></Text>
                   <View style={styles.dateRangeCard} onLayout={(e) => { datesSectionYRef.current = e.nativeEvent.layout.y; }}>
                   <View style={styles.dateRangeRow}>
                     <View style={styles.dateRangeSide}>
-                      <TouchableOpacity onPress={() => { if (!startDate) return; const d = new Date(startDate + 'T12:00:00'); d.setDate(d.getDate() - 1); setStartDate(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!startDate} {...(Platform.OS === 'web' && { cursor: startDate ? 'pointer' : 'default' })}>
+                      <TouchableOpacity onPress={() => { if (!startDate) return; const d = new Date(startDate + 'T12:00:00'); d.setDate(d.getDate() - 1); handleStartDateChange(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!startDate} {...(Platform.OS === 'web' && { cursor: startDate ? 'pointer' : 'default' })}>
                         <ChevronLeft size={20} color={startDate ? FG : MUTED} />
                       </TouchableOpacity>
                       <TouchableOpacity style={styles.dateRangeDateWrap} onPress={() => { setStartDateCalendarMonth(startDate ? dateStringToDate(startDate) : new Date()); setShowStartDatePicker(true); }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                         <Text style={styles.dateRangeDate}>{startDate ? formatDateDisplay(startDate) : 'Select date'}</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => { if (!startDate) return; const d = new Date(startDate + 'T12:00:00'); d.setDate(d.getDate() + 1); setStartDate(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!startDate} {...(Platform.OS === 'web' && { cursor: startDate ? 'pointer' : 'default' })}>
+                      <TouchableOpacity onPress={() => { if (!startDate) return; const d = new Date(startDate + 'T12:00:00'); d.setDate(d.getDate() + 1); handleStartDateChange(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!startDate} {...(Platform.OS === 'web' && { cursor: startDate ? 'pointer' : 'default' })}>
                         <ChevronRight size={20} color={startDate ? FG : MUTED} />
                       </TouchableOpacity>
                     </View>
                     <Text style={styles.dateRangeArrowLabel}>→</Text>
                     {mode === 'FIXED_END' ? (
                       <View style={styles.dateRangeSide}>
-                        <TouchableOpacity onPress={() => { if (!endDate) return; const d = new Date(endDate + 'T12:00:00'); d.setDate(d.getDate() - 1); setEndDate(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!endDate} {...(Platform.OS === 'web' && { cursor: endDate ? 'pointer' : 'default' })}>
+                        <TouchableOpacity onPress={() => { if (!endDate) return; const d = new Date(endDate + 'T12:00:00'); d.setDate(d.getDate() - 1); handleEndDateChange(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!endDate} {...(Platform.OS === 'web' && { cursor: endDate ? 'pointer' : 'default' })}>
                           <ChevronLeft size={20} color={endDate ? FG : MUTED} />
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.dateRangeDateWrap} onPress={() => { setEndDateCalendarMonth(endDate ? dateStringToDate(endDate) : new Date()); setShowEndDatePicker(true); }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                           <Text style={styles.dateRangeDate}>{endDate ? formatDateDisplay(endDate) : 'Select date'}</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={() => { if (!endDate) return; const d = new Date(endDate + 'T12:00:00'); d.setDate(d.getDate() + 1); setEndDate(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!endDate} {...(Platform.OS === 'web' && { cursor: endDate ? 'pointer' : 'default' })}>
+                        <TouchableOpacity onPress={() => { if (!endDate) return; const d = new Date(endDate + 'T12:00:00'); d.setDate(d.getDate() + 1); handleEndDateChange(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!endDate} {...(Platform.OS === 'web' && { cursor: endDate ? 'pointer' : 'default' })}>
                           <ChevronRight size={20} color={endDate ? FG : MUTED} />
                         </TouchableOpacity>
                       </View>
@@ -11144,7 +11355,7 @@ export default function PlanYearModal({
                 )}
 
                 {/* Target Days (TARGET_DAYS mode) */}
-                {!buildWithDefaults && mode === 'TARGET_DAYS' && (
+                {(showDefaultsEditor || !buildWithDefaults) && mode === 'TARGET_DAYS' && (
                   <View style={styles.inputGroup}>
                     <Text style={[styles.logisticsLabel]}>Target Instructional Days</Text>
                     <TextInput
@@ -11161,7 +11372,7 @@ export default function PlanYearModal({
                 )}
 
                 {/* Target Hours (TARGET_HOURS mode) */}
-                {!buildWithDefaults && mode === 'TARGET_HOURS' && (
+                {(showDefaultsEditor || !buildWithDefaults) && mode === 'TARGET_HOURS' && (
                   <>
                     <View style={styles.inputGroup}>
                       <Text style={[styles.logisticsLabel]}>Target Instructional Hours</Text>
@@ -11193,7 +11404,7 @@ export default function PlanYearModal({
                 )}
 
                 {/* Card 3: Planning Preferences — holidays/breaks summary-first, from settings vs added for this plan */}
-                {!buildWithDefaults && (
+                {(showDefaultsEditor || !buildWithDefaults) && (
                 <View style={[styles.fieldSection, { marginTop: 8, marginBottom: 0 }]}>
                   <Text style={[styles.fieldSectionLabel, { marginBottom: 0, fontSize: 12 }]}>
                     {STRINGS.planMyYear?.sections?.breaks?.title ?? 'Planning Preferences'}
@@ -11418,7 +11629,7 @@ export default function PlanYearModal({
                   <View style={[styles.settingRowInline, { flexDirection: 'row', alignItems: 'center', marginTop: 10, marginBottom: 10, flexWrap: 'wrap', gap: 10 }]}>
                     <TouchableOpacity
                       style={[styles.customToggleTrack, followGlobalHolidays && styles.customToggleTrackOn]}
-                      onPress={() => setFollowGlobalHolidays(!followGlobalHolidays)}
+                      onPress={handleToggleFollowGlobalHolidays}
                       activeOpacity={0.8}
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
@@ -11788,7 +11999,7 @@ export default function PlanYearModal({
                     </View>
                   )}
 
-                <View style={[styles.inputGroup, { marginBottom: 0, marginTop: buildWithDefaults ? 2 : 12 }]}>
+                <View style={[styles.inputGroup, { marginBottom: 0, marginTop: buildWithDefaults && !showDefaultsEditor ? 2 : 12 }]}>
                   <View style={styles.subjectsInlineRow}>
                     <Text style={[styles.logisticsLabel, { marginBottom: 0, marginTop: 6 }]}>Subjects</Text>
                     {subjectsForCurrentSelection?.length > 0 ? (
@@ -12381,7 +12592,7 @@ export default function PlanYearModal({
                                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                 >
                                   <Text style={styles.previewPatternReviewBtnText}>
-                                    {showFullSchedulePreview ? 'Hide detailed rows' : 'Review individually'}
+                                    {showFullSchedulePreview ? 'Hide summary' : 'View summary'}
                                   </Text>
                                 </TouchableOpacity>
                               </View>
@@ -12395,31 +12606,52 @@ export default function PlanYearModal({
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                           >
                             <Text style={styles.previewExpandToggleText}>
-                              {showFullSchedulePreview ? 'Hide full schedule' : 'Expand full schedule'}
+                              {showFullSchedulePreview ? 'Hide full summary' : 'Expand full summary'}
                             </Text>
                           </TouchableOpacity>
-                          {showFullSchedulePreview
-                            ? lessonSchedulePreviewPlan.rows.map(({ line, detailLine }, idx) => {
-                                const rowKey =
-                                  line.blockId && line.date ? `${line.date}|${String(line.blockId)}` : '';
-                                const conflictDetail = rowKey ? previewLineConflictDetailsByKey.get(rowKey) ?? null : null;
-                                return (
-                                  <CadencePreviewSlotRow
-                                    key={`ls-inline-${line.date}-${line.subjectId}-${idx}`}
-                                    line={line}
-                                    detailLine={detailLine}
-                                    conflictDetail={conflictDetail}
-                                    showResolvedTint={cadenceConflictsResolvedFeedback && !conflictDetail}
-                                    isLast={idx === lessonSchedulePreviewPlan.rows.length - 1}
-                                    onMoveRowPress={
-                                      conflictDetail?.suggestedTimeLabel
-                                        ? () => handleApplyCadenceRowFix(line)
-                                        : undefined
-                                    }
-                                  />
-                                );
-                              })
-                            : null}
+                          {showFullSchedulePreview ? (
+                            <View style={styles.previewAttendanceCalendarCard}>
+                              <Text style={styles.previewAttendanceCalendarLabel}>
+                                {previewAttendanceCalendar.uniqueLearningDayCount} learning days highlighted
+                              </Text>
+                              {previewAttendanceCalendar.months.map((month) => (
+                                <View key={month.key} style={styles.previewAttendanceMonthBlock}>
+                                  <Text style={styles.previewAttendanceMonthTitle}>{month.label}</Text>
+                                  <View style={styles.previewAttendanceWeekdayRow}>
+                                    {WEEKDAY_LABELS.map((weekday) => (
+                                      <Text key={`${month.key}-${weekday}`} style={styles.previewAttendanceWeekdayText}>
+                                        {weekday}
+                                      </Text>
+                                    ))}
+                                  </View>
+                                  <View style={styles.previewAttendanceGrid}>
+                                    {month.days.map((day) => (
+                                      <View
+                                        key={`${month.key}-${day.key}`}
+                                        style={[
+                                          styles.previewAttendanceDayCell,
+                                          !day.isInMonth && styles.previewAttendanceDayCellOutsideMonth,
+                                          !day.isInRange && styles.previewAttendanceDayCellOutsideRange,
+                                          day.isLearningDay && styles.previewAttendanceDayCellLearning,
+                                        ]}
+                                      >
+                                        <Text
+                                          style={[
+                                            styles.previewAttendanceDayText,
+                                            !day.isInMonth && styles.previewAttendanceDayTextOutsideMonth,
+                                            !day.isInRange && styles.previewAttendanceDayTextOutsideRange,
+                                            day.isLearningDay && styles.previewAttendanceDayTextLearning,
+                                          ]}
+                                        >
+                                          {day.dayNumber}
+                                        </Text>
+                                      </View>
+                                    ))}
+                                  </View>
+                                </View>
+                              ))}
+                            </View>
+                          ) : null}
                         </>
                       ) : (
                         <View style={styles.previewStepPlaceholderCard}>
@@ -13057,7 +13289,7 @@ export default function PlanYearModal({
                       onPress={() => {
                         const today = new Date();
                         setStartDateCalendarMonth(today);
-                        setStartDate(toLocalYYYYMMDD(today));
+                        handleStartDateChange(toLocalYYYYMMDD(today));
                         setShowStartDatePicker(false);
                       }}
                       style={styles.calendarNavButton}
@@ -13107,7 +13339,7 @@ export default function PlanYearModal({
                                 <TouchableOpacity
                                   key={idx}
                                   onPress={() => {
-                                    setStartDate(ymd);
+                                    handleStartDateChange(ymd);
                                     setShowStartDatePicker(false);
                                   }}
                                   style={[
@@ -13190,7 +13422,7 @@ export default function PlanYearModal({
                       onPress={() => {
                         const today = new Date();
                         setEndDateCalendarMonth(today);
-                        setEndDate(toLocalYYYYMMDD(today));
+                        handleEndDateChange(toLocalYYYYMMDD(today));
                         setShowEndDatePicker(false);
                       }}
                       style={styles.calendarNavButton}
@@ -13240,7 +13472,7 @@ export default function PlanYearModal({
                                 <TouchableOpacity
                                   key={idx}
                                   onPress={() => {
-                                    setEndDate(ymd);
+                                    handleEndDateChange(ymd);
                                     setShowEndDatePicker(false);
                                   }}
                                   style={[
@@ -13329,11 +13561,14 @@ export default function PlanYearModal({
                           <TouchableOpacity
                             key={`${dateStr}-${h.name}`}
                             onPress={() => {
+                              let nextExcludedDates = excludedPublicHolidayDates;
                               if (isIncluded) {
-                                setExcludedPublicHolidayDates((prev) => [...prev, dateStr]);
+                                nextExcludedDates = [...excludedPublicHolidayDates, dateStr];
                               } else {
-                                setExcludedPublicHolidayDates((prev) => prev.filter((d) => d !== dateStr));
+                                nextExcludedDates = excludedPublicHolidayDates.filter((d) => d !== dateStr);
                               }
+                              setExcludedPublicHolidayDates(nextExcludedDates);
+                              persistExcludedPublicHolidayDatesDebounced(nextExcludedDates, publicHolidaysList);
                             }}
                             style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 8, borderBottomWidth: 1, borderBottomColor: BORDER }}
                             activeOpacity={0.7}
@@ -13353,15 +13588,7 @@ export default function PlanYearModal({
                     </ScrollView>
                   )}
                   <TouchableOpacity
-                    onPress={async () => {
-                      const datesWithNames = excludedPublicHolidayDates.map((d) => {
-                        const h = publicHolidaysList.find((x) => (x.date || '').slice(0, 10) === d);
-                        return { date: d, name: h?.name || 'Holiday' };
-                      });
-                      await saveExcludedPublicHolidayDates(familyId, datesWithNames);
-                      dispatchPlanningPrefsSynced();
-                      setShowPublicHolidaysPicker(false);
-                    }}
+                    onPress={() => setShowPublicHolidaysPicker(false)}
                     style={[styles.primaryButton, { marginTop: 16 }]}
                     activeOpacity={0.9}
                   >
@@ -16437,6 +16664,86 @@ const styles = StyleSheet.create({
     color: ACCENT,
     fontWeight: '700',
     textDecorationLine: 'underline',
+  },
+  previewAttendanceCalendarCard: {
+    marginTop: 4,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    gap: 10,
+  },
+  previewAttendanceCalendarLabel: {
+    fontSize: 12,
+    color: MUTED,
+    fontWeight: '600',
+  },
+  previewAttendanceMonthBlock: {
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    backgroundColor: '#f9fafb',
+  },
+  previewAttendanceMonthTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: FG,
+    marginBottom: 6,
+  },
+  previewAttendanceWeekdayRow: {
+    flexDirection: 'row',
+    marginBottom: 4,
+  },
+  previewAttendanceWeekdayText: {
+    width: '14.2857%',
+    textAlign: 'center',
+    fontSize: 10,
+    color: MUTED,
+    fontWeight: '600',
+  },
+  previewAttendanceGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  previewAttendanceDayCell: {
+    width: '14.2857%',
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    marginBottom: 3,
+  },
+  previewAttendanceDayCellOutsideMonth: {
+    opacity: 0.35,
+  },
+  previewAttendanceDayCellOutsideRange: {
+    opacity: 0.35,
+  },
+  previewAttendanceDayCellLearning: {
+    backgroundColor: ACCENT_LIGHT,
+    borderWidth: 1,
+    borderColor: '#93c5fd',
+    opacity: 1,
+  },
+  previewAttendanceDayText: {
+    fontSize: 11,
+    color: FG,
+    fontWeight: '500',
+  },
+  previewAttendanceDayTextOutsideMonth: {
+    color: MUTED,
+  },
+  previewAttendanceDayTextOutsideRange: {
+    color: MUTED,
+  },
+  previewAttendanceDayTextLearning: {
+    color: ACCENT,
+    fontWeight: '700',
   },
   previewCommitBar: {
     marginTop: 14,
