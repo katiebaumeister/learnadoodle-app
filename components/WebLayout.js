@@ -2941,7 +2941,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   >
                     <View>
                       <Text style={{
-                        fontSize: 22,
+                        fontSize: 26,
                         color: '#1E293B',
                         fontWeight: '600',
                         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

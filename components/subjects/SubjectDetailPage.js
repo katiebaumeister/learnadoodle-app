@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Platform,
   Modal,
+  Image,
 } from 'react-native';
 import {
   ArrowLeft,
@@ -25,12 +26,12 @@ import {
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
-import { deriveRoleFromTags, DOCUMENT_ROLES } from '../../lib/docs/roles';
 import { useSession } from '../../contexts/SessionContext';
 import MaterialDocViewerModal, {
   resolveMaterialDocViewerUrl,
   getMaterialFileTypeLabel,
 } from '../materials/MaterialDocViewerModal';
+import { safeImageUri } from '../../lib/safeImageUri';
 import { useToast } from '../Toast';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import SubjectProgressPlanSection from './SubjectProgressPlanSection';
@@ -242,14 +243,6 @@ export default function SubjectDetailPage({
   // Extract data
   const subject = subjectData?.subject;
   const materials = subjectData?.materials || [];
-  const syllabusMaterials = useMemo(
-    () => materials.filter((m) => deriveRoleFromTags(m?.tags) === DOCUMENT_ROLES.SYLLABUS),
-    [materials]
-  );
-  const lessonPlanMaterials = useMemo(
-    () => materials.filter((m) => deriveRoleFromTags(m?.tags) === DOCUMENT_ROLES.LESSON_PLAN),
-    [materials]
-  );
   const upcomingItems = subjectData?.upcomingItems || [];
   const overdueItems = subjectData?.overdueItems || [];
   const nextItem = subjectData?.nextItem;
@@ -273,22 +266,19 @@ export default function SubjectDetailPage({
 
   const childrenNames = assignedChildren.map(getChildName).filter(Boolean);
 
-  const openAddMaterialModalForRole = useCallback(
-    (role) => {
-      if (!subject?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
-      window.dispatchEvent(
-        new CustomEvent('openAddMaterialModal', {
-          detail: {
-            subjectId: subject.id,
-            subjectName: subject.name || null,
-            childIds: assignedChildren,
-            role,
-          },
-        })
-      );
-    },
-    [subject?.id, subject?.name, assignedChildren]
-  );
+  const openAddMaterialModal = useCallback(() => {
+    if (!subject?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    window.dispatchEvent(
+      new CustomEvent('openAddMaterialModal', {
+        detail: {
+          subjectId: subject.id,
+          subjectName: subject.name || null,
+          childIds: assignedChildren,
+          role: null,
+        },
+      })
+    );
+  }, [subject?.id, subject?.name, assignedChildren]);
 
   const handleAddLesson = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -711,83 +701,55 @@ export default function SubjectDetailPage({
           <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials Snapshot</Text>
           </View>
-          <View style={styles.materialsSubsections}>
-            <View style={styles.materialsSubsection}>
-              <Text style={styles.materialsSubsectionLabel}>Syllabus</Text>
-              {syllabusMaterials.length > 0 ? (
-                <View style={styles.materialsGrid}>
-                  {syllabusMaterials.map((material) => {
-                    const baseName = material.title || material.provider_name || 'Material';
-                    const typeLabel = getMaterialFileTypeLabel(material);
-                    const chipLabel = typeLabel ? `${baseName} (${typeLabel})` : baseName;
-                    return (
-                      <TouchableOpacity
-                        key={material.id}
-                        style={styles.materialChip}
-                        onPress={() => handleMaterialChipPress(material)}
-                        activeOpacity={0.7}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={styles.materialChipText} numberOfLines={1}>
-                          {chipLabel}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.materialsStrip}
+          >
+            <TouchableOpacity
+              style={[styles.materialsAddCta, styles.materialsAddCtaCard]}
+              onPress={openAddMaterialModal}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Add material"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={18} color="#6BB3E8" />
+              <Text style={styles.materialsAddCtaText}>Add material</Text>
+            </TouchableOpacity>
+            {materials.map((material) => {
+              const baseName = material.title || material.provider_name || 'Material';
+              const typeLabel = getMaterialFileTypeLabel(material);
+              const previewUri = safeImageUri(material.cover_image_url);
+              return (
                 <TouchableOpacity
-                  style={styles.materialsAddCta}
-                  onPress={() => openAddMaterialModalForRole(DOCUMENT_ROLES.SYLLABUS)}
+                  key={material.id}
+                  style={styles.materialPreviewCard}
+                  onPress={() => handleMaterialChipPress(material)}
                   activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Add syllabus"
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color="#6BB3E8" />
-                  <Text style={styles.materialsAddCtaText}>Add Syllabus</Text>
+                  <View style={styles.materialPreviewThumb}>
+                    {previewUri ? (
+                      <Image source={{ uri: previewUri }} style={styles.materialPreviewImage} resizeMode="cover" />
+                    ) : (
+                      <View style={styles.materialPreviewFallback}>
+                        <FileText size={18} color="#64748b" />
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.materialPreviewTitle} numberOfLines={2}>
+                    {baseName}
+                  </Text>
+                  {typeLabel ? (
+                    <Text style={styles.materialPreviewType} numberOfLines={1}>
+                      {typeLabel}
+                    </Text>
+                  ) : null}
                 </TouchableOpacity>
-              )}
-            </View>
-
-            <View style={styles.materialsSubsection}>
-              <Text style={styles.materialsSubsectionLabel}>Lesson plan</Text>
-              {lessonPlanMaterials.length > 0 ? (
-                <View style={styles.materialsGrid}>
-                  {lessonPlanMaterials.map((material) => {
-                    const baseName = material.title || material.provider_name || 'Material';
-                    const typeLabel = getMaterialFileTypeLabel(material);
-                    const chipLabel = typeLabel ? `${baseName} (${typeLabel})` : baseName;
-                    return (
-                      <TouchableOpacity
-                        key={material.id}
-                        style={styles.materialChip}
-                        onPress={() => handleMaterialChipPress(material)}
-                        activeOpacity={0.7}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={styles.materialChipText} numberOfLines={1}>
-                          {chipLabel}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              ) : (
-                <TouchableOpacity
-                  style={styles.materialsAddCta}
-                  onPress={() => openAddMaterialModalForRole(DOCUMENT_ROLES.LESSON_PLAN)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Add lesson plan"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={16} color="#6BB3E8" />
-                  <Text style={styles.materialsAddCtaText}>Add Lesson Plan</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
+              );
+            })}
+          </ScrollView>
         </View>
 
         {/* Section 1: Progress — plan summary, curriculum */}
@@ -1518,22 +1480,9 @@ const styles = StyleSheet.create({
   materialsSectionHeader: {
     marginBottom: 2,
   },
-  materialsSubsections: {
+  materialsStrip: {
     marginTop: 8,
-    gap: 20,
-  },
-  materialsSubsection: {
     gap: 8,
-  },
-  materialsSubsectionLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6B7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   materialsAddCta: {
     flexDirection: 'row',
@@ -1548,6 +1497,13 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     backgroundColor: '#F4FAFF',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  materialsAddCtaCard: {
+    minHeight: 124,
+    minWidth: 164,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    alignSelf: 'stretch',
   },
   materialsAddCtaText: {
     fontSize: 13,
@@ -2034,29 +1990,49 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  materialsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  materialChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+  materialPreviewCard: {
+    width: 164,
+    minHeight: 124,
     backgroundColor: '#F9FAFB',
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.12)',
-    maxWidth: 200,
+    borderColor: 'rgba(148, 163, 184, 0.18)',
+    padding: 10,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
   },
-  materialChipText: {
+  materialPreviewThumb: {
+    width: '100%',
+    height: 58,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#EEF2F7',
+    marginBottom: 8,
+  },
+  materialPreviewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  materialPreviewFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEF2F7',
+  },
+  materialPreviewTitle: {
     fontSize: 13,
-    color: '#374151',
+    fontWeight: '600',
+    color: '#334155',
+    minHeight: 33,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  materialPreviewType: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

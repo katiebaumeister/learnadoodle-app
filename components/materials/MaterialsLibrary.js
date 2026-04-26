@@ -28,7 +28,7 @@ import MaterialDetailsModal from './MaterialDetailsModal';
 import GoogleDriveImportModal from '../settings/GoogleDriveImportModal';
 import { calculateReusePotential } from '../../lib/utils/materialReuseLogic';
 import { supabase } from '../../lib/supabase';
-import { getIntegrationStatus, shouldSuppressError } from '../../lib/apiClient';
+import { shouldSuppressError } from '../../lib/apiClient';
 import { DOCUMENT_ROLE_CHIPS, normalizeMaterial, normalizeUpload, matchesRole, roleLabel, mediaTypeLabel } from '../../lib/docs/roles';
 import { useToast } from '../Toast';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
@@ -39,11 +39,6 @@ import { getSubjectIdsAffectedByMaterial } from '../../lib/materialsSubjectLinkU
 
 // Single visible chip row everywhere: role-first
 const ROLE_CHIPS = DOCUMENT_ROLE_CHIPS;
-const CONNECTION_CHIPS = [
-  { value: 'google', label: 'Google' },
-  { value: 'dropbox', label: 'Dropbox' },
-  { value: 'notion', label: 'Notion' },
-];
 
 /**
  * Web-only: invalidate subject detail caches + broadcast refreshes.
@@ -161,8 +156,6 @@ export default function MaterialsLibrary({
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjects, setSubjects] = useState(preloadedSubjects || []); // Deduplicated for filter display
   const [allSubjectsForModal, setAllSubjectsForModal] = useState([]); // Full list with child_id for AddMaterialModal
-  // null = "All" (default); otherwise list of selected provider keys
-  const [selectedConnections, setSelectedConnections] = useState(null);
   const [sortBy, setSortBy] = useState('date'); // 'date' | 'alphabetical'
   const [sortDirection, setSortDirection] = useState('desc'); // 'asc' | 'desc'
   const [hoveredItemId, setHoveredItemId] = useState(null);
@@ -179,17 +172,10 @@ export default function MaterialsLibrary({
     setSelectedChildId((prev) => (prev === forcedChildId ? prev : forcedChildId));
   }, [isChildViewer, forcedChildId]);
 
-  /** Deduped subjects for linking materials by name (subject_key) on Subject detail. */
-  const mergedSubjectsForMaterialLookup = useMemo(() => {
-    const byId = new Map();
-    for (const s of [...subjects, ...allSubjectsForModal]) {
-      if (s?.id) byId.set(String(s.id), s);
-    }
-    return [...byId.values()];
-  }, [subjects, allSubjectsForModal]);
-
-  const connectedAccountProviders = useMemo(() => {
-    const allowed = new Set(CONNECTION_CHIPS.map((chip) => chip.value));
+  // Keep provider awareness for Import Drive + AddMaterialModal props,
+  // even though the visible Connections filter row was removed.
+  const resolvedConnectedAccountProviders = useMemo(() => {
+    const allowed = new Set(['google', 'dropbox', 'notion']);
     const found = new Set();
     const addProvider = (value) => {
       const key = String(value || '').trim().toLowerCase();
@@ -231,49 +217,15 @@ export default function MaterialsLibrary({
     });
     return Array.from(found);
   }, [session?.connected_accounts, session?.integrations, session?.provider_connections]);
-  const [resolvedConnectedAccountProviders, setResolvedConnectedAccountProviders] = useState([]);
 
-  useEffect(() => {
-    setResolvedConnectedAccountProviders(connectedAccountProviders);
-  }, [connectedAccountProviders]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const refreshConnectedProviders = async () => {
-      const { data, error } = await getIntegrationStatus();
-      if (cancelled || error || !Array.isArray(data)) return;
-      const liveProviders = data
-        .filter((integration) => integration?.connected)
-        .map((integration) => String(integration?.provider || '').trim().toLowerCase())
-        .filter(Boolean);
-      const merged = Array.from(new Set([...connectedAccountProviders, ...liveProviders])).sort((a, b) =>
-        a.localeCompare(b)
-      );
-      if (!cancelled) setResolvedConnectedAccountProviders(merged);
-    };
-    refreshConnectedProviders();
-    return () => {
-      cancelled = true;
-    };
-  }, [connectedAccountProviders]);
-
-  const handleConnectionChipPress = (providerValue) => {
-    if (!resolvedConnectedAccountProviders.includes(providerValue)) {
-      toast.push(
-        'No connected accounts yet, please connect from the Family tab under Connected Accounts',
-        'info'
-      );
-      return;
+  /** Deduped subjects for linking materials by name (subject_key) on Subject detail. */
+  const mergedSubjectsForMaterialLookup = useMemo(() => {
+    const byId = new Map();
+    for (const s of [...subjects, ...allSubjectsForModal]) {
+      if (s?.id) byId.set(String(s.id), s);
     }
-    setSelectedConnections((prev) => {
-      const current = Array.isArray(prev) ? prev : [];
-      if (current.includes(providerValue)) {
-        const next = current.filter((value) => value !== providerValue);
-        return next.length > 0 ? next : null;
-      }
-      return [...current, providerValue];
-    });
-  };
+    return [...byId.values()];
+  }, [subjects, allSubjectsForModal]);
 
   // Sync from parent snapshot (including []) when filters are default — keeps list + TOTAL count stable.
   useEffect(() => {
@@ -1145,38 +1097,6 @@ export default function MaterialsLibrary({
         </ScrollView>
       </View>
 
-      <View style={styles.connectionsFilterRow}>
-        <Text style={styles.connectionsLabelText}>Connections</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.connectionsFilterScroll}
-          contentContainerStyle={styles.connectionsFilterScrollContent}
-        >
-          <TouchableOpacity
-            style={[styles.childrenFilterChip, selectedConnections === null && styles.childrenFilterChipActive]}
-            onPress={() => setSelectedConnections(null)}
-          >
-            <Text style={[styles.childrenFilterChipText, selectedConnections === null && styles.childrenFilterChipTextActive]}>
-              All
-            </Text>
-          </TouchableOpacity>
-          {CONNECTION_CHIPS.map((connection) => {
-            const isActive = Array.isArray(selectedConnections) && selectedConnections.includes(connection.value);
-            return (
-              <TouchableOpacity
-                key={connection.value}
-                style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
-                onPress={() => handleConnectionChipPress(connection.value)}
-              >
-                <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]}>
-                  {connection.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
     </>
   );
 
