@@ -31,7 +31,7 @@ const TEMP_ENABLE_SCHEDULE_POTENTIAL = true;
 const TEMP_ENABLE_TARGET_PROGRESS = false;
 const TEMP_ENABLE_CONFLICT_ANALYSIS = true;
 const TEMP_ENABLE_CONFLICT_SUGGESTIONS = false;
-const ENABLE_CONFLICT_PERF_LOGS = true;
+const ENABLE_CONFLICT_PERF_LOGS = false;
 
 const ENABLE_STEP4_PREVIEW_SUMMARY =
   !DISABLE_STRUCTURED_PLAN_CALCULATIONS || TEMP_ENABLE_STEP4_PREVIEW_SUMMARY;
@@ -12810,7 +12810,7 @@ export default function PlanYearModal({
                       ) : (
                         <View style={styles.previewStepPlaceholderCard}>
                           <Text style={styles.previewStepPlaceholderText}>
-                            Add curriculum in Step 3 to preview your schedule summary.
+                            Add schedule in Step 2 to preview your schedule summary.
                           </Text>
                         </View>
                       )}
@@ -15966,9 +15966,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderWidth: 1,
-    borderColor: BORDER_SUBTLE,
+    borderColor: '#e5e7eb',
     borderRadius: 20,
-    backgroundColor: SURFACE_SUBTLE,
+    backgroundColor: '#fff',
   },
   weekdayChipSmallActive: {
     borderColor: CHIP_SELECTED_BORDER,
@@ -16694,7 +16694,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BORDER_SUBTLE,
     borderRadius: 12,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#ffffff',
     paddingVertical: 10,
     paddingHorizontal: 12,
     marginBottom: 10,
@@ -16713,7 +16713,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BORDER_SUBTLE,
     borderRadius: 12,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#ffffff',
     paddingVertical: 12,
     paddingHorizontal: 12,
     marginBottom: 10,
