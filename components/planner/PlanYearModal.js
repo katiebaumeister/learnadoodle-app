@@ -23,6 +23,40 @@ import {
 } from 'react-native';
 
 const TARGET_INSTRUCTIONAL_DAYS_DEFAULT = 180;
+// Temporary performance fallback: disable heavy build-time schedule calculations/conflict analysis.
+const DISABLE_STRUCTURED_PLAN_CALCULATIONS = true;
+// Temporary incremental re-enable toggles for glitch isolation.
+const TEMP_ENABLE_STEP4_PREVIEW_SUMMARY = true;
+const TEMP_ENABLE_SCHEDULE_POTENTIAL = true;
+const TEMP_ENABLE_TARGET_PROGRESS = false;
+const TEMP_ENABLE_CONFLICT_ANALYSIS = true;
+const TEMP_ENABLE_CONFLICT_SUGGESTIONS = false;
+const ENABLE_CONFLICT_PERF_LOGS = true;
+
+const ENABLE_STEP4_PREVIEW_SUMMARY =
+  !DISABLE_STRUCTURED_PLAN_CALCULATIONS || TEMP_ENABLE_STEP4_PREVIEW_SUMMARY;
+const ENABLE_SCHEDULE_POTENTIAL_CALCULATIONS =
+  !DISABLE_STRUCTURED_PLAN_CALCULATIONS || TEMP_ENABLE_SCHEDULE_POTENTIAL;
+const ENABLE_TARGET_PROGRESS_CALCULATIONS =
+  ENABLE_SCHEDULE_POTENTIAL_CALCULATIONS &&
+  (!DISABLE_STRUCTURED_PLAN_CALCULATIONS || TEMP_ENABLE_TARGET_PROGRESS);
+const ENABLE_CONFLICT_ANALYSIS =
+  !DISABLE_STRUCTURED_PLAN_CALCULATIONS || TEMP_ENABLE_CONFLICT_ANALYSIS;
+const ENABLE_CONFLICT_SUGGESTIONS =
+  ENABLE_CONFLICT_ANALYSIS &&
+  (!DISABLE_STRUCTURED_PLAN_CALCULATIONS || TEMP_ENABLE_CONFLICT_SUGGESTIONS);
+const conflictPerfNow =
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? () => performance.now()
+    : () => Date.now();
+const logConflictPerf = (label, startMs, meta = {}) => {
+  if (!ENABLE_CONFLICT_PERF_LOGS) return;
+  if (!(typeof __DEV__ !== 'undefined' && __DEV__)) return;
+  const durationMs = Math.round((conflictPerfNow() - startMs) * 10) / 10;
+  // Keep dev console focused on meaningful work.
+  if (durationMs < 4) return;
+  console.debug('[PlanYearModal][conflict-perf]', `${label}: ${durationMs}ms`, meta);
+};
 import { 
   X, 
   Calendar, 
@@ -98,7 +132,6 @@ import {
   getNextCadenceTimeShift,
   groupCadenceConflictsForSummary,
   mergeCadenceSummaryGroupsByPattern,
-  getSuggestedTimeForConflict,
 } from '../../lib/utils/planCadenceConflicts';
 import {
   getAcademicYearsPickerCache,
@@ -2167,6 +2200,10 @@ export default function PlanYearModal({
   const scheduleSectionYRef = useRef(0);
   const datesSectionYRef = useRef(0);
   const schedulePotentialFetchedRef = useRef(false);
+  const schedulePotentialInFlightRef = useRef(false);
+  const schedulePotentialLastRequestAtRef = useRef(0);
+  const schedulePotentialBackoffUntilRef = useRef(0);
+  const schedulePotentialLastRequestKeyRef = useRef('');
   const planSummaryCacheRef = useRef(new Map()); // yearId -> full academic year data for instant summary display
   const summaryFetchInFlightRef = useRef(new Set());
   const subjectPlanResolvedRef = useRef(false); // when from subject details, avoid re-running plan-for-subject search
@@ -2629,6 +2666,7 @@ export default function PlanYearModal({
 
   /** Per-subject lines for inline target vs plan (per_subject scope). */
   const planningTargetPerSubjectLines = useMemo(() => {
+    if (!ENABLE_TARGET_PROGRESS_CALCULATIONS) return [];
     if (targetScopeFromSettings !== 'per_subject' || !effectiveSubjectTargetsForApply) return [];
     const sp = schedulePotential;
     if (!sp) return [];
@@ -2660,6 +2698,7 @@ export default function PlanYearModal({
   ]);
 
   const overallHoursSuggestedEndDate = useMemo(() => {
+    if (!ENABLE_TARGET_PROGRESS_CALCULATIONS) return null;
     if (targetScopeFromSettings !== 'overall') return null;
     if (planConstraintMode !== 'hours') return null;
     if (!effectivePlanTarget.target_hours || effectivePlanTarget.target_hours <= 0) return null;
@@ -2685,6 +2724,7 @@ export default function PlanYearModal({
   ]);
 
   const planningTargetPerSubjectSuggestions = useMemo(() => {
+    if (!ENABLE_TARGET_PROGRESS_CALCULATIONS) return {};
     if (!startDate || !endDate || targetScopeFromSettings !== 'per_subject') return {};
     const map = {};
     planningTargetPerSubjectLines.forEach((row) => {
@@ -2856,10 +2896,14 @@ export default function PlanYearModal({
       academicYearId,
     ],
   );
+  const conflictPipelinePerfStartRef = useRef(0);
 
   const cadenceConflictReport = useMemo(() => {
+    if (!ENABLE_CONFLICT_ANALYSIS) return null;
     if (!startDate || !endDate || !blocks.length) return null;
-    return analyzePlanCadenceConflicts({
+    const perfStart = conflictPerfNow();
+    conflictPipelinePerfStartRef.current = perfStart;
+    const report = analyzePlanCadenceConflicts({
       blocks,
       startDate,
       endDate,
@@ -2871,6 +2915,12 @@ export default function PlanYearModal({
       existingEvents: calendarEventsForConflicts,
       academicYearId,
     });
+    logConflictPerf('analyzePlanCadenceConflicts', perfStart, {
+      blocks: blocks.length,
+      internal: report?.internal?.length ?? 0,
+      external: report?.external?.length ?? 0,
+    });
+    return report;
   }, [
     blocks,
     startDate,
@@ -3007,12 +3057,58 @@ export default function PlanYearModal({
   }, [cadenceConflictReport]);
   const previewConflictPatternGroups = useMemo(() => {
     if (!cadenceConflictReport) return [];
+    const perfStart = conflictPerfNow();
     const grouped = groupCadenceConflictsForSummary(cadenceConflictReport, blocks, cadenceConflictContext);
-    return mergeCadenceSummaryGroupsByPattern(grouped);
+    const merged = mergeCadenceSummaryGroupsByPattern(grouped);
+    logConflictPerf('previewConflictPatternGroups', perfStart, {
+      grouped: grouped.length,
+      merged: merged.length,
+    });
+    return merged;
   }, [cadenceConflictReport, blocks, cadenceConflictContext]);
+  const cadenceConflictPatchByConflict = useMemo(() => {
+    const cache = new Map();
+    if (!ENABLE_CONFLICT_SUGGESTIONS) return cache;
+    if (!cadenceConflictReport || !blocks?.length) return cache;
+    const perfStart = conflictPerfNow();
+    const allConflicts = [
+      ...(cadenceConflictReport.internal || []),
+      ...(cadenceConflictReport.external || []),
+    ];
+    allConflicts.forEach((conflict) => {
+      cache.set(conflict, applyCadenceFixForConflict(conflict, blocks, cadenceConflictContext) || null);
+    });
+    logConflictPerf('cadenceConflictPatchByConflict', perfStart, {
+      conflicts: allConflicts.length,
+      cachedPatches: cache.size,
+    });
+    return cache;
+  }, [cadenceConflictReport, blocks, cadenceConflictContext, ENABLE_CONFLICT_SUGGESTIONS]);
+  const previewConflictsByLineKey = useMemo(() => {
+    const byKey = new Map();
+    if (!cadenceConflictReport) return byKey;
+    const perfStart = conflictPerfNow();
+    const ensure = (key) => {
+      if (!byKey.has(key)) byKey.set(key, { internal: [], external: [] });
+      return byKey.get(key);
+    };
+    (cadenceConflictReport.external || []).forEach((conflict) => {
+      const key = `${conflict.date}|${String(conflict.blockId)}`;
+      ensure(key).external.push(conflict);
+    });
+    (cadenceConflictReport.internal || []).forEach((conflict) => {
+      const keyA = `${conflict.date}|${String(conflict.blockIdA)}`;
+      const keyB = `${conflict.date}|${String(conflict.blockIdB)}`;
+      ensure(keyA).internal.push(conflict);
+      ensure(keyB).internal.push(conflict);
+    });
+    logConflictPerf('previewConflictsByLineKey', perfStart, { keys: byKey.size });
+    return byKey;
+  }, [cadenceConflictReport]);
   const cadenceInlineConflictByBlockId = useMemo(() => {
     const map = new Map();
     if (!cadenceConflictReport || !blocks?.length) return map;
+    const perfStart = conflictPerfNow();
     const dayOrder = new Map(WEEKDAY_LABELS.map((label, idx) => [label, idx]));
     const collect = (blockId, conflict, counterpartyLabel) => {
       if (blockId == null) return;
@@ -3049,19 +3145,21 @@ export default function PlanYearModal({
       if (!conflicts.length) return;
       let preferredConflict = null;
       let preferredPatch = null;
-      for (const conflict of conflicts) {
-        const patch = applyCadenceFixForConflict(conflict, blocks, cadenceConflictContext);
-        if (!patch) continue;
-        const targetBlockId = blocks[patch.blockIndex]?.block_id;
-        if (targetBlockId != null && String(targetBlockId) === blockId) {
-          preferredConflict = conflict;
-          preferredPatch = patch;
-          break;
+      if (ENABLE_CONFLICT_SUGGESTIONS) {
+        for (const conflict of conflicts) {
+          const patch = cadenceConflictPatchByConflict.get(conflict) || null;
+          if (!patch) continue;
+          const targetBlockId = blocks[patch.blockIndex]?.block_id;
+          if (targetBlockId != null && String(targetBlockId) === blockId) {
+            preferredConflict = conflict;
+            preferredPatch = patch;
+            break;
+          }
         }
       }
       if (!preferredConflict) preferredConflict = conflicts[0];
-      if (!preferredPatch) {
-        const patch = applyCadenceFixForConflict(preferredConflict, blocks, cadenceConflictContext);
+      if (ENABLE_CONFLICT_SUGGESTIONS && !preferredPatch) {
+        const patch = cadenceConflictPatchByConflict.get(preferredConflict) || null;
         const targetBlockId = patch ? blocks[patch.blockIndex]?.block_id : null;
         preferredPatch =
           patch && targetBlockId != null && String(targetBlockId) === blockId
@@ -3081,22 +3179,30 @@ export default function PlanYearModal({
             : null,
       });
     });
+    logConflictPerf('cadenceInlineConflictByBlockId', perfStart, {
+      blocks: blocks.length,
+      internal: cadenceConflictReport.internal?.length ?? 0,
+      external: cadenceConflictReport.external?.length ?? 0,
+      mappedBlocks: final.size,
+    });
     return final;
-  }, [cadenceConflictReport, blocks, cadenceConflictContext]);
+  }, [cadenceConflictReport, blocks, cadenceConflictPatchByConflict, ENABLE_CONFLICT_SUGGESTIONS]);
   /** Suggested window for “Move all” — matches bulk fix algorithm. */
   const cadenceBulkSuggestedTimeLabel = useMemo(() => {
+    if (!ENABLE_CONFLICT_SUGGESTIONS) return null;
     if (!hasCadenceConflicts || !blocks?.length) return null;
     const shift = getNextCadenceTimeShift(blocks, cadenceConflictContext);
     if (!shift?.start_time || !shift?.end_time) return null;
     const a = String(shift.start_time).slice(0, 5);
     const b = String(shift.end_time).slice(0, 5);
     return `${a}–${b}`;
-  }, [hasCadenceConflicts, blocks, cadenceConflictContext]);
+  }, [hasCadenceConflicts, blocks, cadenceConflictContext, ENABLE_CONFLICT_SUGGESTIONS]);
 
   const canMoveAllCadenceFix = useMemo(() => {
+    if (!ENABLE_CONFLICT_SUGGESTIONS) return false;
     if (!hasCadenceConflicts || !blocks?.length) return false;
     return getNextCadenceTimeShift(blocks, cadenceConflictContext) != null;
-  }, [hasCadenceConflicts, blocks, cadenceConflictContext]);
+  }, [hasCadenceConflicts, blocks, cadenceConflictContext, ENABLE_CONFLICT_SUGGESTIONS]);
 
   /** `${date}|${blockId}` for preview rows that should show the conflict icon. */
   const previewLineConflictKeySet = useMemo(() => {
@@ -3212,29 +3318,44 @@ export default function PlanYearModal({
   const previewLineConflictDetailsByKey = useMemo(() => {
     const map = new Map();
     if (!cadenceConflictReport || !lessonSchedulePreviewPlan?.rows?.length) return map;
+    const perfStart = conflictPerfNow();
     for (const { line } of lessonSchedulePreviewPlan.rows) {
       if (!line?.blockId || !line?.date) continue;
       const key = `${line.date}|${String(line.blockId)}`;
       if (!previewLineConflictKeySet.has(key)) continue;
-      const { internal, external } = findConflictsForPreviewLine(line, cadenceConflictReport);
+      const indexed = previewConflictsByLineKey.get(key) || { internal: [], external: [] };
+      const { internal, external } = indexed;
       const first = external[0] || internal[0];
       if (!first) continue;
       const counterpartyLabel = conflictCounterpartyLabel(line, first);
       const counterpartyTimeLabel = conflictCounterpartyTimeLabel(line, first) || null;
-      const sug = getSuggestedTimeForConflict(first, blocks, cadenceConflictContext);
+      const patch = ENABLE_CONFLICT_SUGGESTIONS ? cadenceConflictPatchByConflict.get(first) || null : null;
       const suggestedTimeLabel =
-        sug?.start_time && sug?.end_time
-          ? `${String(sug.start_time).slice(0, 5)}–${String(sug.end_time).slice(0, 5)}`
+        patch?.start_time && patch?.end_time
+          ? `${String(patch.start_time).slice(0, 5)}–${String(patch.end_time).slice(0, 5)}`
           : null;
       map.set(key, { counterpartyLabel, counterpartyTimeLabel, suggestedTimeLabel });
+    }
+    logConflictPerf('previewLineConflictDetailsByKey', perfStart, {
+      previewRows: lessonSchedulePreviewPlan.rows.length,
+      flaggedRows: previewLineConflictKeySet.size,
+      detailRows: map.size,
+    });
+    if (conflictPipelinePerfStartRef.current > 0) {
+      logConflictPerf('conflictPipelineTotal', conflictPipelinePerfStartRef.current, {
+        previewRows: lessonSchedulePreviewPlan.rows.length,
+        detailRows: map.size,
+      });
+      conflictPipelinePerfStartRef.current = 0;
     }
     return map;
   }, [
     cadenceConflictReport,
     lessonSchedulePreviewPlan.rows,
     previewLineConflictKeySet,
-    blocks,
-    cadenceConflictContext,
+    previewConflictsByLineKey,
+    cadenceConflictPatchByConflict,
+    ENABLE_CONFLICT_SUGGESTIONS,
   ]);
 
   const lessonOverflowExtendEndDate = useMemo(
@@ -5937,6 +6058,13 @@ export default function PlanYearModal({
 
   // Compute schedule potential when block structure / dates / exclusions / targets change — not when only cadence (weekdays, times) changes
   const triggerSchedulePotential = useCallback((immediate = false) => {
+    if (!ENABLE_SCHEDULE_POTENTIAL_CALCULATIONS) {
+      if (schedulePotentialTimeoutRef.current) clearTimeout(schedulePotentialTimeoutRef.current);
+      schedulePotentialInFlightRef.current = false;
+      setSchedulePotential(null);
+      setComputingPotential(false);
+      return;
+    }
     if (schedulePotentialTimeoutRef.current) clearTimeout(schedulePotentialTimeoutRef.current);
     const delay = immediate || !schedulePotentialFetchedRef.current ? 0 : 120;
     schedulePotentialTimeoutRef.current = setTimeout(async () => {
@@ -5955,6 +6083,13 @@ export default function PlanYearModal({
       }
       const yearId = academicYearIdRef.current;
       const reqKey = schedulePotentialRequestKeyRef.current;
+      const nowMs = Date.now();
+      if (schedulePotentialInFlightRef.current) return;
+      if (schedulePotentialBackoffUntilRef.current > nowMs) return;
+      const isDuplicateBurst =
+        schedulePotentialLastRequestKeyRef.current === reqKey &&
+        nowMs - schedulePotentialLastRequestAtRef.current < 700;
+      if (isDuplicateBurst) return;
       if (isEditingExistingPlanFlow && yearId) {
         const cached = schedulePotentialSnapshotCacheRef.current.get(yearId);
         if (cached && cached.key === reqKey) {
@@ -5964,6 +6099,9 @@ export default function PlanYearModal({
           return;
         }
       }
+      schedulePotentialInFlightRef.current = true;
+      schedulePotentialLastRequestKeyRef.current = reqKey;
+      schedulePotentialLastRequestAtRef.current = nowMs;
       setComputingPotential(true);
       try {
         const planChildrenIds = allFamilyChildIds;
@@ -5992,6 +6130,7 @@ export default function PlanYearModal({
         if (!error && data) {
           setSchedulePotential(data);
           schedulePotentialFetchedRef.current = true;
+          schedulePotentialBackoffUntilRef.current = 0;
           const yid = academicYearIdRef.current;
           if (yid) {
             schedulePotentialSnapshotCacheRef.current.set(yid, {
@@ -6001,10 +6140,20 @@ export default function PlanYearModal({
           }
         } else {
           setSchedulePotential(null);
+          // Prevent immediate retry storms on transient/rate-limit responses.
+          schedulePotentialFetchedRef.current = true;
+          if (error?.status === 429) {
+            schedulePotentialBackoffUntilRef.current = Date.now() + 3000;
+          } else {
+            schedulePotentialBackoffUntilRef.current = Date.now() + 1000;
+          }
         }
       } catch {
         setSchedulePotential(null);
+        schedulePotentialFetchedRef.current = true;
+        schedulePotentialBackoffUntilRef.current = Date.now() + 1000;
       } finally {
+        schedulePotentialInFlightRef.current = false;
         setComputingPotential(false);
       }
     }, delay);
@@ -6029,6 +6178,8 @@ export default function PlanYearModal({
   useEffect(() => {
     if (!visible) {
       schedulePotentialFetchedRef.current = false;
+      schedulePotentialInFlightRef.current = false;
+      schedulePotentialBackoffUntilRef.current = 0;
     }
     if (visible && blocks.length > 0 && startDate && endDate) {
       triggerSchedulePotential(!schedulePotentialFetchedRef.current);
@@ -6222,7 +6373,9 @@ export default function PlanYearModal({
     ? cadenceWeekdaysSatisfied &&
       (effectivePlanTarget.constraint_mode === 'none'
         ? !!(startDate && endDate)
-        : hasAnyWeekdayInBlocks && schedulePotential
+        : !ENABLE_SCHEDULE_POTENTIAL_CALCULATIONS
+          ? !!(startDate && endDate)
+          : hasAnyWeekdayInBlocks && schedulePotential
           ? schedulePotential.projected_days > 0
           : false)
     : eligibleCount >= targetDaysNum;
@@ -11764,6 +11917,7 @@ export default function PlanYearModal({
                 {PLAN_MY_YEAR_LOGISTICS_FIRST &&
                   !buildWithDefaults &&
                   planStep === 'logistics' &&
+                  ENABLE_TARGET_PROGRESS_CALCULATIONS &&
                   hasPlanningPreferenceTargets &&
                   startDate &&
                   endDate && (
@@ -12507,7 +12661,7 @@ export default function PlanYearModal({
                   </View>
                 )}
 
-                {PLAN_MY_YEAR_LOGISTICS_FIRST && (
+                {PLAN_MY_YEAR_LOGISTICS_FIRST && ENABLE_STEP4_PREVIEW_SUMMARY && (
                   <View style={[styles.fieldSection, { marginTop: 0, marginBottom: 12 }]}>
                     <View style={{ paddingHorizontal: 14, paddingVertical: 8 }}>
                       <Text
@@ -15374,14 +15528,14 @@ const styles = StyleSheet.create({
     flex: 1,
     marginBottom: 0,
   },
-  /** Add Event–style container: rounded gray block for related fields (e.g. Compliance, Holidays) */
+  /** Step container: outlined card with transparent/white fill. */
   fieldSection: {
     borderWidth: 1,
     borderColor: BORDER,
     borderRadius: 12,
     padding: 12,
     marginBottom: 10,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#ffffff',
   },
   fieldSectionLabel: {
     fontSize: 12,
