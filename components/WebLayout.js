@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Settings } from 'lucide-react';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Download } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
@@ -2733,14 +2733,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       : (currentView === 'plan-year' ? 'build-plan' :
         currentView === 'edit-year' ? 'edit-plan' :
           currentView === 'attendance' ? 'attendance' :
+            currentView === 'attendance-drilldown' ? 'attendance-drilldown' :
             activeRightTool);
-  /** When true, Month/Week/To-do should not use purple (right bar or full-screen plan view is primary). */
+  /** When true, top segmented view chips should not use purple (full-screen plan/attendance view is primary). */
   const rightToolbarClaimsPlannerSegmentFocus =
     (activeRightTool != null && !['tasks', 'backlog'].includes(activeRightTool)) ||
     ['plan-year', 'edit-year', 'attendance'].includes(currentView);
-  /** Purple Month/Week/To-do segment only when that row is the active context. */
+  /** Purple segmented chip only when that row is the active context. */
   const showTopPlannerSegmentHighlight =
-    ['month', 'board', 'tasks'].includes(currentView) && !rightToolbarClaimsPlannerSegmentFocus;
+    ['month', 'board', 'tasks', 'attendance-drilldown'].includes(currentView) && !rightToolbarClaimsPlannerSegmentFocus;
 
   // Generate breadcrumbs with account name first
   const generateBreadcrumbs = useMemo(() => {
@@ -2775,10 +2776,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             'month': 'Month',
             'day': 'Day',
             'board': 'Board',
+            'attendance': 'Attendance',
+            'attendance-drilldown': 'Attendance drill-down',
             'Week': 'Week',
             'Month': 'Month',
             'Day': 'Day',
             'Board': 'Board',
+            'Attendance': 'Attendance',
           };
           const viewLabel = viewMap[view] || view.charAt(0).toUpperCase() + view.slice(1);
           crumbs.push({ label: viewLabel });
@@ -2941,33 +2945,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         color: '#1E293B',
                         fontWeight: '600',
                         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                        marginBottom: 2,
                       }}>
                         {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                      </Text>
-                      <Text style={{
-                        fontSize: 13,
-                        color: '#64748B',
-                        fontWeight: '400',
-                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      }}>
-                        {(() => {
-                          const month = currentMonth.getMonth();
-                          const year = currentMonth.getFullYear();
-                          let termName = 'Fall Term';
-                          if (month >= 0 && month <= 4) termName = 'Spring Term'; // January - May
-                          else if (month >= 5 && month <= 7) termName = 'Summer Term'; // June - August
-                          else if (month >= 8 && month <= 11) termName = 'Fall Term'; // September - December
-                          let schoolYearStart = year;
-                          if (month >= 8) {
-                            schoolYearStart = year;
-                          } else {
-                            schoolYearStart = year - 1;
-                          }
-                          const schoolYearEnd = schoolYearStart + 1;
-                          const schoolYearShort = `${String(schoolYearStart).slice(-2)}/${String(schoolYearEnd).slice(-2)}`;
-                          return `${termName} · ${schoolYearShort} School Year`;
-                        })()}
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -3025,8 +3004,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         visible={showPlannerSettingsPopover}
                         onClose={() => setShowPlannerSettingsPopover(false)}
                         position={plannerSettingsPopoverPosition}
-                        familyId={familyId}
-                        onOpenFullSettings={() => handleTabChange('settings', 'planner-settings')}
+                        connectedProviderIds={plannerConnectedProviderIds}
+                        onConnectProvider={handlePlannerProviderConnect}
+                        onOpenFullSettings={() => handleTabChange('settings', 'connections')}
                       />
                     </View>
                   )}
@@ -3044,7 +3024,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           borderColor: 'rgba(15,23,42,0.08)',
                           padding: 4,
                           minWidth: 200,
-                          maxWidth: 300,
+                          maxWidth: 350,
                           zIndex: 1000,
                           boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                         }}
@@ -3299,91 +3279,91 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           </Text>
                         </View>
 
-                        {connectedAccounts.length === 0 ? (
-                          <View style={{ paddingVertical: 8, paddingHorizontal: 10 }}>
-                            <Text style={{
-                              fontSize: 14,
-                              color: 'rgba(107,114,128,0.8)',
-                              fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                            }}>
-                              No connected accounts yet
-                            </Text>
-                          </View>
-                        ) : (
-                          <>
-                            <TouchableOpacity
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingVertical: 6,
-                                paddingHorizontal: 10,
-                                borderRadius: 4,
-                              }}
-                              onPress={() => setSelectedConnectedAccounts(null)}
-                            >
-                              <View style={{
-                                width: 14,
-                                height: 14,
-                                borderRadius: 3,
-                                borderWidth: 1.5,
-                                borderColor: selectedConnectedAccounts === null ? '#8B5CF6' : '#D1D5DB',
-                                backgroundColor: selectedConnectedAccounts === null ? '#8B5CF6' : 'transparent',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                              }}>
-                                {selectedConnectedAccounts === null && (
-                                  <Check size={10} color="#FFFFFF" />
+                        <View style={{ paddingVertical: 4, gap: 2 }}>
+                          {[
+                            { id: 'google', label: 'Google Calendar' },
+                            { id: 'apple', label: 'Apple Calendar' },
+                          ].map((provider) => {
+                            const isConnected = plannerConnectedProviderIds.includes(provider.id);
+                            const isSelected = !!selectedConnectedAccounts?.includes(provider.id);
+                            return (
+                              <View
+                                key={provider.id}
+                                style={{
+                                  paddingVertical: 6,
+                                  paddingHorizontal: 10,
+                                }}
+                              >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                  {isConnected ? (
+                                    <TouchableOpacity
+                                      onPress={() => {
+                                        const current = selectedConnectedAccounts || [];
+                                        const next = isSelected
+                                          ? current.filter((item) => item !== provider.id)
+                                          : [...current, provider.id];
+                                        setSelectedConnectedAccounts(next.length > 0 ? next : null);
+                                      }}
+                                      style={{
+                                        width: 14,
+                                        height: 14,
+                                        borderRadius: 3,
+                                        borderWidth: 1.5,
+                                        borderColor: isSelected ? '#8B5CF6' : '#D1D5DB',
+                                        backgroundColor: isSelected ? '#8B5CF6' : 'transparent',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                      }}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                    >
+                                      {isSelected && <Check size={10} color="#FFFFFF" />}
+                                    </TouchableOpacity>
+                                  ) : (
+                                    <View
+                                      style={{
+                                        width: 14,
+                                        height: 14,
+                                        borderRadius: 3,
+                                        borderWidth: 1.5,
+                                        borderColor: '#D1D5DB',
+                                        backgroundColor: '#F3F4F6',
+                                      }}
+                                    />
+                                  )}
+
+                                  <TouchableOpacity
+                                    onPress={() => handleTabChange('settings', 'connections')}
+                                    style={{ ...(Platform.OS === 'web' && { cursor: 'pointer' }) }}
+                                  >
+                                    <Text
+                                      style={{
+                                        fontSize: 15,
+                                        color: 'rgba(15,23,42,0.9)',
+                                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                                      }}
+                                    >
+                                      {provider.label}
+                                    </Text>
+                                  </TouchableOpacity>
+                                </View>
+
+                                {!isConnected && (
+                                  <View style={{ marginLeft: 22, marginTop: 4 }}>
+                                    <Text
+                                      style={{
+                                        fontSize: 12,
+                                        color: 'rgba(107,114,128,0.8)',
+                                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                                      }}
+                                    >
+                                      Account not connected
+                                    </Text>
+                                  </View>
                                 )}
                               </View>
-                              <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                                All Connected Accounts
-                              </Text>
-                            </TouchableOpacity>
-                            {connectedAccounts.map((provider) => {
-                              const isSelected = selectedConnectedAccounts?.includes(provider);
-                              const label = provider === 'google' ? 'Google' : 'Apple';
-                              return (
-                                <TouchableOpacity
-                                  key={provider}
-                                  style={{
-                                    flexDirection: 'row',
-                                    alignItems: 'center',
-                                    gap: 8,
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 10,
-                                    borderRadius: 4,
-                                  }}
-                                  onPress={() => {
-                                    const current = selectedConnectedAccounts || [];
-                                    const next = isSelected
-                                      ? current.filter((item) => item !== provider)
-                                      : [...current, provider];
-                                    setSelectedConnectedAccounts(next.length > 0 ? next : null);
-                                  }}
-                                >
-                                  <View style={{
-                                    width: 14,
-                                    height: 14,
-                                    borderRadius: 3,
-                                    borderWidth: 1.5,
-                                    borderColor: isSelected ? '#8B5CF6' : '#D1D5DB',
-                                    backgroundColor: isSelected ? '#8B5CF6' : 'transparent',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                  }}>
-                                    {isSelected && (
-                                      <Check size={10} color="#FFFFFF" />
-                                    )}
-                                  </View>
-                                  <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                                    {label}
-                                  </Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </>
-                        )}
+                            );
+                          })}
+                        </View>
                       </View>
                     )}
                   
@@ -3516,7 +3496,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     })}
                   </View>
                   
-                  {/* Help and Planning Preferences icons - right of Filters */}
+                  {/* Help + Export icons - right of Filters */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0 }}>
                     <TouchableOpacity
                       ref={helpButtonRef}
@@ -3539,34 +3519,62 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         setShowHelpPopover(true);
                       }}
                       style={{ padding: 4 }}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      {...(Platform.OS === 'web' && {
+                        cursor: 'pointer',
+                        onMouseEnter: () => {
+                          if (helpButtonRef.current) {
+                            const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
+                            if (node && typeof node.getBoundingClientRect === 'function') {
+                              const rect = node.getBoundingClientRect();
+                              setHelpPopoverPosition({
+                                top: rect.bottom + 4,
+                                left: rect.left,
+                              });
+                            }
+                          }
+                          setShowPlannerSettingsPopover(false);
+                          setShowHelpPopover(true);
+                        },
+                        onMouseLeave: () => {
+                          setShowHelpPopover(false);
+                        },
+                      })}
                     >
                       <HelpCircle size={22} color="rgba(15,23,42,0.7)" />
                     </TouchableOpacity>
                     <TouchableOpacity
-                      ref={settingsButtonRef}
                       onPress={() => {
-                        if (showPlannerSettingsPopover) {
-                          setShowPlannerSettingsPopover(false);
-                          return;
-                        }
-                        setShowHelpPopover(false);
-                        if (Platform.OS === 'web' && settingsButtonRef.current) {
-                          const node = settingsButtonRef.current._nativeNode || settingsButtonRef.current;
-                          if (node && typeof node.getBoundingClientRect === 'function') {
-                            const rect = node.getBoundingClientRect();
-                            setPlannerSettingsPopoverPosition({
-                              top: rect.bottom + 4,
-                              left: rect.left,
-                            });
-                          }
-                        }
-                        setShowPlannerSettingsPopover(true);
+                        setTooltip({ visible: false, text: '', x: 0, y: 0 });
+                        const m = currentMonth.getMonth();
+                        const y = currentMonth.getFullYear();
+                        const firstDay = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+                        const lastDay = new Date(y, m + 1, 0);
+                        const lastDayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
+                        setExportStartDate(firstDay);
+                        setExportEndDate(lastDayStr);
+                        setExportModalSubjectId(null);
+                        setExportModalSubjectName(null);
+                        setShowExportModal(true);
                       }}
                       style={{ padding: 4 }}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      {...(Platform.OS === 'web' && {
+                        cursor: 'pointer',
+                        onMouseEnter: (e) => {
+                          const node = e?.currentTarget || e?.target;
+                          if (node && typeof node.getBoundingClientRect === 'function') {
+                            const rect = node.getBoundingClientRect();
+                            setTooltip({
+                              visible: true,
+                              text: 'Export planner',
+                              x: rect.left + rect.width / 2,
+                              y: rect.bottom,
+                            });
+                          }
+                        },
+                        onMouseLeave: () => setTooltip((prev) => ({ ...prev, visible: false })),
+                      })}
                     >
-                      <Settings size={22} color="rgba(15,23,42,0.7)" />
+                      <Download size={20} color="rgba(15,23,42,0.7)" />
                     </TouchableOpacity>
                   </View>
                   
@@ -3849,16 +3857,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   left: tooltip.x,
                   top: tooltip.y,
                   transform: [{ translateX: -50 }], // Center horizontally
-                  marginTop: -32, // Position above button
+                  marginTop: 8, // Position below button
                 },
                 { pointerEvents: 'none' },
               ]}
             >
               <Text style={{
                 color: '#FFFFFF',
-                fontSize: 12,
+                fontSize: 14,
                 fontWeight: '500',
-                fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                 whiteSpace: 'nowrap',
               }}>
                 {tooltip.text}
@@ -4029,7 +4037,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 </View>
               ) : null}
             </View>
-            {isCalendarScreen && (
+            {activeTab === 'calendar' && (
               <View
                 {...(Platform.OS === 'web' ? { nativeID: 'explorer-tour-right-toolbar' } : {})}
                 style={{
@@ -4658,22 +4666,34 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setExportModalSubjectName(null);
         }}
       >
-        <View style={{
-          flex: 1,
-          backgroundColor: 'rgba(0,0,0,0.4)',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: 24,
-        }}>
-          <View style={{
-            backgroundColor: '#FFFFFF',
-            borderRadius: 12,
+        <TouchableOpacity
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.4)',
+            justifyContent: 'center',
+            alignItems: 'center',
             padding: 24,
-            width: '100%',
-            maxWidth: 480,
-            borderWidth: 1,
-            borderColor: '#E6EBF2',
-          }}>
+          }}
+          activeOpacity={1}
+          onPress={() => {
+            setShowExportModal(false);
+            setExportModalSubjectId(null);
+            setExportModalSubjectName(null);
+          }}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: 12,
+              padding: 24,
+              width: '100%',
+              maxWidth: 480,
+              borderWidth: 1,
+              borderColor: '#E6EBF2',
+            }}
+          >
             <Text style={{
               fontSize: 18,
               fontWeight: '600',
@@ -4750,8 +4770,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             <Text style={{ fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 8, fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Optional columns (include when checked)</Text>
             <ScrollView style={{ maxHeight: 220, marginBottom: 20 }} nestedScrollEnabled>
               {[
-                { key: 'instructionalTime', label: 'Count as instructional time' },
-                { key: 'plan', label: 'Build plan' },
                 { key: 'location', label: 'Location' },
                 { key: 'mode', label: 'Mode' },
                 { key: 'instructor', label: 'Instructor' },
@@ -4759,6 +4777,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 { key: 'grade', label: 'Grade' },
                 { key: 'unit', label: 'Unit' },
                 { key: 'percentOfTotal', label: '% of total' },
+                { key: 'instructionalTime', label: 'Counted as instructional time' },
+                { key: 'plan', label: 'Part of structured class plan' },
                 { key: 'attachmentTitle', label: 'Attachment title' },
                 { key: 'notes', label: 'Notes' },
               ].map(({ key, label }) => (
@@ -4833,8 +4853,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 <Text style={{ fontSize: 15, fontWeight: '500', color: '#FFFFFF', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>Export</Text>
               </TouchableOpacity>
             </View>
-            </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
       {/* Export start date calendar picker */}

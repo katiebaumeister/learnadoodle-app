@@ -758,6 +758,37 @@ export default function TasksView({
                 Backlog
               </Text>
             </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.sidebarItem, activeSection === 'completed' && styles.sidebarItemActive]}
+              onPress={() => {
+                setActiveSection('completed');
+                setSelectedList(null);
+              }}
+            >
+              <Text style={[
+                styles.sidebarItemText,
+                activeSection === 'completed' && styles.sidebarItemTextActive
+              ]}>
+                Completed
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.sidebarItem, activeSection === 'trash' && styles.sidebarItemActive]}
+              onPress={() => {
+                setActiveSection('trash');
+                setSelectedList(null);
+              }}
+            >
+              <Text style={[
+                styles.sidebarItemText,
+                activeSection === 'trash' && styles.sidebarItemTextActive
+              ]}>
+                Trash
+              </Text>
+            </TouchableOpacity>
+
           </View>
 
           {/* User Lists */}
@@ -790,25 +821,6 @@ export default function TasksView({
             </View>
           )}
 
-          {/* System Views */}
-          <View style={styles.sidebarSection}>
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'completed' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('completed');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'completed' && styles.sidebarItemTextActive
-              ]}>
-                Completed
-              </Text>
-            </TouchableOpacity>
-
-            {/* Trash view hidden for now - sidebar entry removed */}
-          </View>
         </ScrollView>
       </View>
 
@@ -832,16 +844,18 @@ export default function TasksView({
         </View>
 
         {/* Add Task Input or Clear Trash Button */}
-        {activeSection === 'trash' && trashEvents.length > 0 ? (
-          <TouchableOpacity
-            style={[styles.addTaskInput, styles.clearTrashButton]}
-            onPress={handlePermanentlyClearTrash}
-          >
-            <Trash2 size={18} color="#dc2626" />
-            <Text style={[styles.addTaskText, styles.clearTrashText]}>
-              Clear Trash ({trashEvents.length})
-            </Text>
-          </TouchableOpacity>
+        {activeSection === 'completed' ? null : activeSection === 'trash' ? (
+          trashEvents.length > 0 ? (
+            <TouchableOpacity
+              style={[styles.addTaskInput, styles.clearTrashButton]}
+              onPress={handlePermanentlyClearTrash}
+            >
+              <Trash2 size={18} color="#dc2626" />
+              <Text style={[styles.addTaskText, styles.clearTrashText]}>
+                Clear Trash ({trashEvents.length})
+              </Text>
+            </TouchableOpacity>
+          ) : null
         ) : (
           <TouchableOpacity
             style={styles.addTaskInput}

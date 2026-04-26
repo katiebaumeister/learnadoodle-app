@@ -432,21 +432,6 @@ export default function SubjectOverviewCard({
         <TouchableOpacity
           style={[
             styles.actionButtonPill,
-            hoveredButton === 'material' && styles.actionButtonPillHovered
-          ]}
-          onPress={handleAddMaterial}
-          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('material')}
-          onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
-        >
-          <Package size={16} color="#6B7280" />
-          <Text style={[
-            styles.actionButtonPillText,
-            hoveredButton === 'material' && styles.actionButtonPillTextHovered
-          ]}>Add Material</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.actionButtonPill,
             hoveredButton === 'lesson' && styles.actionButtonPillHovered
           ]}
           onPress={handleAddLesson}
@@ -458,6 +443,21 @@ export default function SubjectOverviewCard({
             styles.actionButtonPillText,
             hoveredButton === 'lesson' && styles.actionButtonPillTextHovered
           ]}>Add Lesson</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.actionButtonPill,
+            hoveredButton === 'material' && styles.actionButtonPillHovered
+          ]}
+          onPress={handleAddMaterial}
+          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('material')}
+          onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
+        >
+          <Package size={16} color="#6B7280" />
+          <Text style={[
+            styles.actionButtonPillText,
+            hoveredButton === 'material' && styles.actionButtonPillTextHovered
+          ]}>Add Material</Text>
         </TouchableOpacity>
       </View>
     </TouchableOpacity>

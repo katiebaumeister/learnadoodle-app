@@ -3385,70 +3385,73 @@ export default function TaskCreateModal({
                       ) : (
                         <>
                           <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Add to plan? (optional)</Text>
-                          <Text
-                            style={{
-                              fontSize: 12,
-                              color: MUTED,
-                              marginTop: 2,
-                              marginBottom: 6,
-                              lineHeight: 17,
-                              ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
-                            }}
-                          >
-                            New plans can be added from Build Plan in the right toolbar.
-                          </Text>
-                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                            <TouchableOpacity
-                              onPress={() => setSelectedAcademicYearId(null)}
-                              style={[
-                                styles.chipOption,
-                                selectedAcademicYearId === null && styles.chipOptionActive,
-                              ]}
+                          {academicYears.length === 0 ? (
+                            <Text
+                              style={{
+                                fontSize: 12,
+                                color: MUTED,
+                                marginTop: 4,
+                                marginBottom: 8,
+                                lineHeight: 17,
+                                ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
+                              }}
                             >
-                              <Text style={[styles.chipOptionText, selectedAcademicYearId === null && styles.chipOptionTextActive]}>
-                                No plan
-                              </Text>
-                            </TouchableOpacity>
-                            {(() => {
-                              const baseLabels = academicYears.map((ay) => {
-                                const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
-                                const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
-                                if (ay.year_name && String(ay.year_name).trim()) {
-                                  return String(ay.year_name).trim();
-                                }
-                                return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
-                              });
-                              const labelCounts = {};
-                              baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
-                              return academicYears.map((ay, idx) => {
-                                const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
-                                const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
-                                let base = ay.year_name && String(ay.year_name).trim()
-                                  ? String(ay.year_name).trim()
-                                  : (start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan');
-                                const needsDisambiguator = labelCounts[base] > 1;
-                                const monthRange = start && end
-                                  ? `${parseInt(start.slice(5, 7), 10)}/${start.slice(2, 4)}–${parseInt(end.slice(5, 7), 10)}/${end.slice(2, 4)}`
-                                  : '';
-                                const label = needsDisambiguator && monthRange ? `${base} (${monthRange})` : base;
-                                const isSelected = selectedAcademicYearId === ay.id;
-                                return (
-                                  <TouchableOpacity
-                                    key={ay.id}
-                                    onPress={() => setSelectedAcademicYearId(ay.id)}
-                                    style={[
-                                      styles.chipOption,
-                                      isSelected && styles.chipOptionActive,
-                                    ]}
-                                  >
-                                    <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>
-                                      {label}
-                                    </Text>
-                                  </TouchableOpacity>
-                                );
-                              });
-                            })()}
-                          </View>
+                              You don&apos;t have any family class plans yet. Build a structured class plan to see options here.
+                            </Text>
+                          ) : (
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                              <TouchableOpacity
+                                onPress={() => setSelectedAcademicYearId(null)}
+                                style={[
+                                  styles.chipOption,
+                                  selectedAcademicYearId === null && styles.chipOptionActive,
+                                ]}
+                              >
+                                <Text style={[styles.chipOptionText, selectedAcademicYearId === null && styles.chipOptionTextActive]}>
+                                  No plan
+                                </Text>
+                              </TouchableOpacity>
+                              {(() => {
+                                const baseLabels = academicYears.map((ay) => {
+                                  const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
+                                  const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
+                                  if (ay.year_name && String(ay.year_name).trim()) {
+                                    return String(ay.year_name).trim();
+                                  }
+                                  return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
+                                });
+                                const labelCounts = {};
+                                baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
+                                return academicYears.map((ay) => {
+                                  const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
+                                  const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
+                                  let base = ay.year_name && String(ay.year_name).trim()
+                                    ? String(ay.year_name).trim()
+                                    : (start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan');
+                                  const needsDisambiguator = labelCounts[base] > 1;
+                                  const monthRange = start && end
+                                    ? `${parseInt(start.slice(5, 7), 10)}/${start.slice(2, 4)}–${parseInt(end.slice(5, 7), 10)}/${end.slice(2, 4)}`
+                                    : '';
+                                  const label = needsDisambiguator && monthRange ? `${base} (${monthRange})` : base;
+                                  const isSelected = selectedAcademicYearId === ay.id;
+                                  return (
+                                    <TouchableOpacity
+                                      key={ay.id}
+                                      onPress={() => setSelectedAcademicYearId(ay.id)}
+                                      style={[
+                                        styles.chipOption,
+                                        isSelected && styles.chipOptionActive,
+                                      ]}
+                                    >
+                                      <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>
+                                        {label}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  );
+                                });
+                              })()}
+                            </View>
+                          )}
                         </>
                       )}
                     </>

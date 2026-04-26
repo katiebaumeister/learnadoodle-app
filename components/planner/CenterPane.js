@@ -20,6 +20,7 @@ const KNOWN_MODES = {
   board: 'Board',
   tasks: 'Tasks',
   attendance: 'Attendance',
+  'attendance-drilldown': 'AttendanceDrilldown',
 };
 
 function normalizeViewMode(raw) {
@@ -313,20 +314,21 @@ export default function CenterPane({
               style={{
                 flex: 1,
                 minHeight: 0,
-                ...(mode !== 'Attendance' ? { display: 'none' } : {}),
+                ...(!['Attendance', 'AttendanceDrilldown'].includes(mode) ? { display: 'none' } : {}),
               }}
             >
               <AttendanceView
                 familyId={familyId}
                 children={children}
-                events={mode === 'Attendance' ? filtered : []}
+                events={(mode === 'Attendance' || mode === 'AttendanceDrilldown') ? filtered : []}
                 onEventPress={onEventSelect}
                 onEditChild={readOnly ? undefined : onEditChild}
                 plannerInitialSnapshot={plannerAttendanceSnapshot}
+                mode={mode === 'AttendanceDrilldown' ? 'drilldown' : 'overview'}
               />
             </View>
           ) : (
-            mode === 'Attendance' && (
+            (mode === 'Attendance' || mode === 'AttendanceDrilldown') && (
               <AttendanceView
                 familyId={familyId}
                 children={children}
@@ -334,6 +336,7 @@ export default function CenterPane({
                 onEventPress={onEventSelect}
                 onEditChild={readOnly ? undefined : onEditChild}
                 plannerInitialSnapshot={plannerAttendanceSnapshot}
+                mode={mode === 'AttendanceDrilldown' ? 'drilldown' : 'overview'}
               />
             )
           )}

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, TouchableOpacity, StyleSheet, Platform, Text } from 'react-native';
 import {
-  Calendar,
   Target,
   Search,
   RefreshCw,

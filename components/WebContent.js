@@ -8458,12 +8458,20 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           );
           setCalendarEvents((prev) => ({ ...prev, [dateKey]: optimisticList }));
           try {
+            let operationResult = null;
             if (isCurrentlyDone) {
               const result = await updateEventStatus(event.id, 'scheduled');
               if (result.error) throw result.error;
+              operationResult = result.data;
             } else {
               const result = await completeEvent(event.id);
               if (result.error) throw result.error;
+              operationResult = result.data;
+            }
+            // If backend sync is known to be pending (local mismatch fallback),
+            // keep optimistic UI state and avoid immediate refresh that would revert it.
+            if (operationResult?.syncPending) {
+              return;
             }
             if (Platform.OS === 'web' && typeof window !== 'undefined') {
               window.dispatchEvent(new CustomEvent('refreshCalendar', {

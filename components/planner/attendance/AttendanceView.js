@@ -83,6 +83,21 @@ function formatDateLabel(dateStr) {
   return d.toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function getDateKeysInRange(startDate, endDate) {
+  if (!startDate || !endDate) return [];
+  const keys = [];
+  const current = new Date(startDate);
+  current.setHours(12, 0, 0, 0);
+  const end = new Date(endDate);
+  end.setHours(12, 0, 0, 0);
+  while (current <= end) {
+    keys.push(toLocalYYYYMMDD(current));
+    current.setDate(current.getDate() + 1);
+    if (keys.length > 800) break;
+  }
+  return keys;
+}
+
 /** Only events marked as counting toward instructional time are used for attendance. */
 function isInstructionalEvent(e) {
   const status = e.instructional_status;
@@ -98,6 +113,7 @@ export default function AttendanceView({
   onEventPress,
   onEditChild = null,
   plannerInitialSnapshot = null,
+  mode = 'overview',
 }) {
   const [loading, setLoading] = useState(true);
   const [academicYear, setAcademicYear] = useState(null);
@@ -115,10 +131,13 @@ export default function AttendanceView({
   const [startDateCalendarMonth, setStartDateCalendarMonth] = useState(() => new Date());
   const [endDateCalendarMonth, setEndDateCalendarMonth] = useState(() => new Date());
   const [rangeReady, setRangeReady] = useState(false);
+  const [markingRangeAttended, setMarkingRangeAttended] = useState(false);
+  const [confirmRangeVisible, setConfirmRangeVisible] = useState(false);
 
   const toast = useToast();
   const familyIdResolved = familyId || eventsProp[0]?.family_id || eventsProp[0]?.familyId;
   const children = childrenProp.length > 0 ? childrenProp : [];
+  const isDrilldownMode = mode === 'drilldown';
 
   const { minStart, maxEnd } = useMemo(() => getAttendanceMinMaxRange(), []);
   const minStartKey = toLocalYYYYMMDD(minStart);
@@ -760,6 +779,110 @@ export default function AttendanceView({
     // TODO: call API to mark all scheduled events in range as attended
   }, []);
 
+  const handleMarkAllRangeAttended = useCallback(async () => {
+    if (!familyIdResolved || markingRangeAttended || children.length === 0) return;
+    setMarkingRangeAttended(true);
+    try {
+      const dateKeys = getDateKeysInRange(yearRange.start, yearRange.end);
+      if (dateKeys.length === 0) return;
+
+      const childIds = children.map((c) => String(c.id));
+      const existingStandaloneByChildDay = new Map();
+      const existingByEventChildDay = new Map();
+      attendanceRecords.forEach((r) => {
+        const dayKey = String(r.day_date || '').slice(0, 10);
+        if (!dayKey) return;
+        const childKey = String(r.child_id);
+        if (r.event_id == null) {
+          existingStandaloneByChildDay.set(`${childKey}|${dayKey}`, r);
+          return;
+        }
+        existingByEventChildDay.set(`${String(r.event_id)}|${childKey}|${dayKey}`, r);
+      });
+
+      for (const dayKey of dateKeys) {
+        const dayOps = [];
+        const dayEventsByChild = eventsByDateChild[dayKey] || {};
+        const uniqueDayEvents = new Map();
+        Object.values(dayEventsByChild).forEach((list) => {
+          (Array.isArray(list) ? list : []).forEach((event) => {
+            if (event?.id != null) uniqueDayEvents.set(String(event.id), event);
+          });
+        });
+
+        childIds.forEach((childId) => {
+          const hasEventsForChild = (dayEventsByChild[childId] || []).length > 0;
+          const standaloneKey = `${childId}|${dayKey}`;
+          const standalone = existingStandaloneByChildDay.get(standaloneKey);
+          if (hasEventsForChild) {
+            if (standalone?.id) dayOps.push(deleteAttendanceLog(standalone.id));
+            return;
+          }
+          if (standalone?.id) {
+            if (standalone.status !== 'present') {
+              dayOps.push(updateAttendanceLog(standalone.id, { status: 'present', minutes: STANDALONE_DAY_ATTENDANCE_MINUTES }));
+            }
+            return;
+          }
+          dayOps.push(createAttendanceLog({
+            family_id: familyIdResolved,
+            child_id: childId,
+            event_id: null,
+            day_date: dayKey,
+            status: 'present',
+            minutes: STANDALONE_DAY_ATTENDANCE_MINUTES,
+          }));
+        });
+
+        for (const event of uniqueDayEvents.values()) {
+          const assignedIds = getChildIdsForEvent(event);
+          if (!assignedIds.length) continue;
+          const minutes = getEventMinutes(event);
+          assignedIds.forEach((assignedId) => {
+            const childId = String(assignedId);
+            const recordKey = `${String(event.id)}|${childId}|${dayKey}`;
+            const existing = existingByEventChildDay.get(recordKey);
+            if (existing?.id) {
+              dayOps.push(updateAttendanceLog(existing.id, { status: 'present', minutes }));
+            } else {
+              dayOps.push(createAttendanceLog({
+                family_id: familyIdResolved,
+                child_id: childId,
+                event_id: event.id,
+                day_date: dayKey,
+                status: 'present',
+                minutes,
+              }));
+            }
+          });
+          dayOps.push(updateEventStatus(event.id, 'done'));
+        }
+
+        if (dayOps.length > 0) await Promise.all(dayOps);
+      }
+
+      setAttendanceRefreshKey((k) => k + 1);
+      notifyAttendanceUpdated();
+      toast.push('Marked the selected attendance range as attended.', 'success');
+    } catch (_) {
+      toast.push('Could not mark the selected range attended.', 'error');
+      setAttendanceRefreshKey((k) => k + 1);
+    } finally {
+      setMarkingRangeAttended(false);
+    }
+  }, [
+    familyIdResolved,
+    markingRangeAttended,
+    children,
+    yearRange.start,
+    yearRange.end,
+    attendanceRecords,
+    eventsByDateChild,
+    getChildIdsForEvent,
+    getEventMinutes,
+    toast,
+  ]);
+
   if (loading && !familyIdResolved) {
     return (
       <View style={styles.centered}>
@@ -791,9 +914,10 @@ export default function AttendanceView({
   }, [minStartKey, maxEndKey, yearRange.start]);
 
   const rangeRow = (
-    <View style={styles.rangeRowWrap}>
-      <Text style={styles.rangeRowLabel}>Attendance range</Text>
-      <View style={styles.dateRangeRow}>
+    <View style={styles.rangeActionsWrap}>
+      <View style={styles.rangeRowWrap}>
+        <Text style={styles.rangeRowLabel}>Attendance range</Text>
+        <View style={styles.dateRangeRow}>
         <View style={styles.dateRangeSide}>
           <TouchableOpacity
             onPress={() => { if (!rangeStartStr) return; const d = new Date(rangeStartStr + 'T12:00:00'); d.setDate(d.getDate() - 1); setRangeStart(toLocalYYYYMMDD(d)); }}
@@ -845,7 +969,18 @@ export default function AttendanceView({
             <ChevronRight size={14} color={rangeEndStr && rangeEndStr !== maxEndKey ? TOKENS.text : TOKENS.textMuted} />
           </TouchableOpacity>
         </View>
+        </View>
       </View>
+      <TouchableOpacity
+        style={[styles.rangeBulkChip, (markingRangeAttended || children.length === 0) && styles.rangeBulkChipDisabled]}
+        onPress={() => setConfirmRangeVisible(true)}
+        disabled={markingRangeAttended || children.length === 0}
+        {...(Platform.OS === 'web' && { cursor: markingRangeAttended ? 'default' : 'pointer' })}
+      >
+        <Text style={styles.rangeBulkChipText}>
+          {markingRangeAttended ? 'Marking range…' : 'Mark entire range attended'}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -854,66 +989,69 @@ export default function AttendanceView({
       <HeaderSummaryStrip />
       {children.length > 0 ? (
         <>
-          <YearHeatmapGrid
-            yearStart={yearRange.start.toISOString().slice(0, 10)}
-            yearEnd={yearRange.end.toISOString().slice(0, 10)}
-            children={children}
-            childSummaries={summaryPerChild}
-            dayStatusByChild={dayStatusByChild}
-            onMarkDayAttended={handleMarkDayAttended}
-            onEditChild={onEditChild}
-            onExport={() => {
-              setExportModalChildId(null);
-              setExportModalVisible(true);
-            }}
-            onChildNamePress={(child) => {
-              setExportModalChildId(child.id);
-              setExportModalVisible(true);
-            }}
-          />
-          {rangeRow}
-          <View style={styles.drilldownSection}>
-            <View style={styles.drilldownDividerLine} />
-            <Text style={styles.drilldownTitle}>Month drill-down</Text>
-            <Text style={styles.drilldownHelp}>
-              Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended. Please note that only events marked as instructional time (e.g. lessons from your plan) count. Use the year heatmap above to mark a day attended even when nothing is scheduled. Same rules as the heatmap: shared events are marked for all children when you mark attended; unmarking affects only the selected context.
-            </Text>
-            <View style={styles.drilldownGrid}>
-              <View style={styles.calendarWithDivider}>
-                <View style={styles.calendarColumn}>
-                  <MonthlyCalendarView
-                    monthDate={calendarMonth}
-                    dayStatusByChild={dayStatusByChild}
-                    selectedChildId={selectedDay.childId}
-                    selectedDateKey={selectedDay.dateKey}
-                    children={children}
-                    onMonthChange={(delta) => setCalendarMonth((m) => {
-                      const next = new Date(m);
-                      next.setMonth(next.getMonth() + delta);
-                      return next;
-                    })}
-                    onDayPress={(dateKey) => handleDayPress(dateKey, null)}
+          {!isDrilldownMode && (
+            <YearHeatmapGrid
+              yearStart={yearRange.start.toISOString().slice(0, 10)}
+              yearEnd={yearRange.end.toISOString().slice(0, 10)}
+              children={children}
+              childSummaries={summaryPerChild}
+              dayStatusByChild={dayStatusByChild}
+              onMarkDayAttended={handleMarkDayAttended}
+              onEditChild={onEditChild}
+              onExport={() => {
+                setExportModalChildId(null);
+                setExportModalVisible(true);
+              }}
+              onChildNamePress={(child) => {
+                setExportModalChildId(child.id);
+                setExportModalVisible(true);
+              }}
+            />
+          )}
+          {!isDrilldownMode && rangeRow}
+          {isDrilldownMode && (
+            <View style={[styles.drilldownSection, styles.drilldownSectionStandalone]}>
+              <Text style={styles.drilldownTitle}>Month drill-down</Text>
+              <Text style={styles.drilldownHelp}>
+                Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended. Please note that only events marked as instructional time (e.g. lessons from your plan) count. Use the year heatmap above to mark a day attended even when nothing is scheduled. Same rules as the heatmap: shared events are marked for all children when you mark attended; unmarking affects only the selected context.
+              </Text>
+              <View style={styles.drilldownGrid}>
+                <View style={styles.calendarWithDivider}>
+                  <View style={styles.calendarColumn}>
+                    <MonthlyCalendarView
+                      monthDate={calendarMonth}
+                      dayStatusByChild={dayStatusByChild}
+                      selectedChildId={selectedDay.childId}
+                      selectedDateKey={selectedDay.dateKey}
+                      children={children}
+                      onMonthChange={(delta) => setCalendarMonth((m) => {
+                        const next = new Date(m);
+                        next.setMonth(next.getMonth() + delta);
+                        return next;
+                      })}
+                      onDayPress={(dateKey) => handleDayPress(dateKey, null)}
+                    />
+                  </View>
+                  <View style={styles.drilldownDivider} />
+                </View>
+                <View style={styles.detailColumn}>
+                  <DayEventsPanel
+                    dateLabel={selectedDay.dateKey ? formatDateLabel(selectedDay.dateKey) : null}
+                    childName={selectedDay.childId == null && selectedDay.dateKey ? 'All children' : (selectedDayChild?.first_name || selectedDayChild?.name || null)}
+                    events={selectedDayEvents}
+                    attendanceByEventId={selectedDayAttendanceByEventId}
+                    onToggleEventAttendance={handleToggleEventAttendance}
+                    onMarkAllAttended={selectedDay.dateKey ? (selectedDay.childId != null ? () => handleMarkDayAttended(selectedDay.dateKey, selectedDay.childId) : async () => {
+                      const withEvents = children.filter((c) => (eventsByDateChild[selectedDay.dateKey]?.[c.id] || []).length > 0);
+                      await Promise.all(withEvents.map((c) => handleMarkDayAttended(selectedDay.dateKey, c.id)));
+                    }) : null}
+                    onEventPress={onEventPress}
+                    getEventMinutes={getEventMinutes}
                   />
                 </View>
-                <View style={styles.drilldownDivider} />
-              </View>
-              <View style={styles.detailColumn}>
-                <DayEventsPanel
-                  dateLabel={selectedDay.dateKey ? formatDateLabel(selectedDay.dateKey) : null}
-                  childName={selectedDay.childId == null && selectedDay.dateKey ? 'All children' : (selectedDayChild?.first_name || selectedDayChild?.name || null)}
-                  events={selectedDayEvents}
-                  attendanceByEventId={selectedDayAttendanceByEventId}
-                  onToggleEventAttendance={handleToggleEventAttendance}
-                  onMarkAllAttended={selectedDay.dateKey ? (selectedDay.childId != null ? () => handleMarkDayAttended(selectedDay.dateKey, selectedDay.childId) : async () => {
-                    const withEvents = children.filter((c) => (eventsByDateChild[selectedDay.dateKey]?.[c.id] || []).length > 0);
-                    await Promise.all(withEvents.map((c) => handleMarkDayAttended(selectedDay.dateKey, c.id)));
-                  }) : null}
-                  onEventPress={onEventPress}
-                  getEventMinutes={getEventMinutes}
-                />
               </View>
             </View>
-          </View>
+          )}
         </>
       ) : (
         <View style={styles.empty}>
@@ -1067,6 +1205,38 @@ export default function AttendanceView({
           </TouchableOpacity>
         </Modal>
       )}
+      <Modal animationType="fade" transparent visible={confirmRangeVisible} onRequestClose={() => setConfirmRangeVisible(false)}>
+        <TouchableOpacity style={styles.calendarOverlay} activeOpacity={1} onPress={() => setConfirmRangeVisible(false)}>
+          <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.confirmModal}>
+            <Text style={styles.confirmTitle}>Mark full range attended?</Text>
+            <Text style={styles.confirmBody}>
+              This will mark all days from {rangeStartStr ? formatDateDisplay(rangeStartStr) : 'the start date'} to {rangeEndStr ? formatDateDisplay(rangeEndStr) : 'the end date'} as attended for all children.
+            </Text>
+            <View style={styles.confirmActions}>
+              <TouchableOpacity
+                style={styles.confirmCancelBtn}
+                onPress={() => setConfirmRangeVisible(false)}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.confirmPrimaryBtn, markingRangeAttended && styles.confirmPrimaryBtnDisabled]}
+                disabled={markingRangeAttended}
+                onPress={async () => {
+                  setConfirmRangeVisible(false);
+                  await handleMarkAllRangeAttended();
+                }}
+                {...(Platform.OS === 'web' && { cursor: markingRangeAttended ? 'default' : 'pointer' })}
+              >
+                <Text style={styles.confirmPrimaryText}>
+                  {markingRangeAttended ? 'Marking…' : 'Confirm'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
       <MarkRangeModal
         visible={markRangeVisible}
         children={children}
@@ -1128,6 +1298,10 @@ const styles = StyleSheet.create({
     marginTop: TOKENS.s5,
     paddingTop: 16,
   },
+  drilldownSectionStandalone: {
+    marginTop: TOKENS.s3,
+    paddingTop: 8,
+  },
   drilldownDividerLine: {
     position: 'absolute',
     left: 0,
@@ -1170,12 +1344,16 @@ const styles = StyleSheet.create({
   loadingText: { marginTop: 12, fontSize: 14, color: TOKENS.textMuted },
   empty: { padding: 24 },
   emptyText: { fontSize: 14, color: TOKENS.textMuted },
+  rangeActionsWrap: {
+    marginTop: TOKENS.s4,
+    alignItems: 'flex-start',
+    gap: 10,
+  },
   rangeRowWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 12,
-    marginTop: TOKENS.s4,
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 999,
@@ -1194,6 +1372,73 @@ const styles = StyleSheet.create({
   dateRangeDateWrap: { minWidth: 100, alignItems: 'center', justifyContent: 'center' },
   dateRangeDate: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted },
   dateRangeArrowLabel: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted },
+  rangeBulkChip: {
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: TOKENS.accent,
+    alignSelf: 'flex-start',
+  },
+  rangeBulkChipDisabled: {
+    opacity: 0.55,
+  },
+  rangeBulkChipText: {
+    fontSize: TOKENS.fontSizeCaption,
+    fontWeight: '700',
+    color: '#000',
+  },
+  confirmModal: {
+    width: Platform.OS === 'web' ? 420 : '90%',
+    maxWidth: 420,
+    borderRadius: 12,
+    padding: 18,
+    backgroundColor: TOKENS.bg ?? '#fff',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 10px 24px rgba(0, 0, 0, 0.2)' } : {}),
+  },
+  confirmTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: TOKENS.text,
+    marginBottom: 8,
+  },
+  confirmBody: {
+    fontSize: 13,
+    color: TOKENS.textMuted,
+    lineHeight: 19,
+    marginBottom: 16,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  confirmCancelBtn: {
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: TOKENS.bgSubtle,
+  },
+  confirmCancelText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: TOKENS.text,
+  },
+  confirmPrimaryBtn: {
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: TOKENS.accent,
+  },
+  confirmPrimaryBtnDisabled: {
+    opacity: 0.6,
+  },
+  confirmPrimaryText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+  },
   calendarOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
