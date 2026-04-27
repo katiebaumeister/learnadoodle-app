@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Platform,
   Modal,
-  Image,
 } from 'react-native';
 import {
   ArrowLeft,
@@ -31,7 +30,6 @@ import MaterialDocViewerModal, {
   resolveMaterialDocViewerUrl,
   getMaterialFileTypeLabel,
 } from '../materials/MaterialDocViewerModal';
-import { safeImageUri } from '../../lib/safeImageUri';
 import { useToast } from '../Toast';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import SubjectProgressPlanSection from './SubjectProgressPlanSection';
@@ -40,6 +38,7 @@ import SubjectAssignedToStudentModal from './SubjectAssignedToStudentModal';
 import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
 import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
 import { extractStudentHelpReason, formatDueShort } from '../tutor/tutorHelpUtils';
+import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 
@@ -701,55 +700,68 @@ export default function SubjectDetailPage({
           <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials Snapshot</Text>
           </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.materialsStrip}
-          >
+          <View style={styles.materialsActionsRow}>
             <TouchableOpacity
-              style={[styles.materialsAddCta, styles.materialsAddCtaCard]}
+              style={styles.materialsAddCta}
               onPress={openAddMaterialModal}
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel="Add material"
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Plus size={18} color="#6BB3E8" />
+              <Plus size={16} color="#6BB3E8" />
               <Text style={styles.materialsAddCtaText}>Add material</Text>
             </TouchableOpacity>
-            {materials.map((material) => {
-              const baseName = material.title || material.provider_name || 'Material';
-              const typeLabel = getMaterialFileTypeLabel(material);
-              const previewUri = safeImageUri(material.cover_image_url);
-              return (
-                <TouchableOpacity
-                  key={material.id}
-                  style={styles.materialPreviewCard}
-                  onPress={() => handleMaterialChipPress(material)}
-                  activeOpacity={0.7}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.materialPreviewThumb}>
-                    {previewUri ? (
-                      <Image source={{ uri: previewUri }} style={styles.materialPreviewImage} resizeMode="cover" />
-                    ) : (
-                      <View style={styles.materialPreviewFallback}>
-                        <FileText size={18} color="#64748b" />
+          </View>
+          {materials.length > 0 ? (
+            <View style={styles.materialsList}>
+              <View style={styles.materialsListHeader}>
+                <Text style={styles.materialsListHeaderTitle}>TITLE</Text>
+                <Text style={styles.materialsListHeaderDate}>DATE</Text>
+              </View>
+              {materials.map((material) => {
+                const baseName = material.title || material.provider_name || 'Material';
+                const typeLabel = getMaterialFileTypeLabel(material);
+                const roleTag = roleLabel(deriveRoleFromTags(material?.tags));
+                const createdDate = formatDate(material.created_at || material.updated_at);
+                return (
+                  <TouchableOpacity
+                    key={material.id}
+                    style={styles.materialListItem}
+                    onPress={() => handleMaterialChipPress(material)}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.materialListItemLeft}>
+                      <FileText size={16} color="#64748b" />
+                      <View style={styles.materialListItemTextWrap}>
+                        <Text style={styles.materialListItemTitle} numberOfLines={1}>
+                          {baseName}
+                        </Text>
+                        {(roleTag || typeLabel) ? (
+                          <View style={styles.materialListItemTagsRow}>
+                            {roleTag ? (
+                              <View style={styles.materialListItemTag}>
+                                <Text style={styles.materialListItemTagText}>{roleTag}</Text>
+                              </View>
+                            ) : null}
+                            {typeLabel ? (
+                              <View style={styles.materialListItemTag}>
+                                <Text style={styles.materialListItemTagText}>{typeLabel}</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                        ) : null}
                       </View>
-                    )}
-                  </View>
-                  <Text style={styles.materialPreviewTitle} numberOfLines={2}>
-                    {baseName}
-                  </Text>
-                  {typeLabel ? (
-                    <Text style={styles.materialPreviewType} numberOfLines={1}>
-                      {typeLabel}
-                    </Text>
-                  ) : null}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+                    </View>
+                    <Text style={styles.materialListItemDate}>{createdDate || '—'}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : (
+            <Text style={styles.materialsEmptyText}>No materials added yet.</Text>
+          )}
         </View>
 
         {/* Section 1: Progress — plan summary, curriculum */}
@@ -1480,9 +1492,9 @@ const styles = StyleSheet.create({
   materialsSectionHeader: {
     marginBottom: 2,
   },
-  materialsStrip: {
+  materialsActionsRow: {
     marginTop: 8,
-    gap: 8,
+    marginBottom: 10,
   },
   materialsAddCta: {
     flexDirection: 'row',
@@ -1498,19 +1510,116 @@ const styles = StyleSheet.create({
     backgroundColor: '#F4FAFF',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
-  materialsAddCtaCard: {
-    minHeight: 124,
-    minWidth: 164,
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    alignSelf: 'stretch',
-  },
   materialsAddCtaText: {
     fontSize: 13,
     fontWeight: '600',
     color: '#6BB3E8',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  materialsList: {
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.2)',
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  },
+  materialsListHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.2)',
+    backgroundColor: '#F8FAFC',
+  },
+  materialsListHeaderTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  materialsListHeaderDate: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  materialListItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.14)',
+  },
+  materialListItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+  },
+  materialListItemTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  materialListItemTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  materialListItemTagsRow: {
+    marginTop: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  materialListItemTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+  },
+  materialListItemTagText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  materialListItemDate: {
+    fontSize: 12,
+    color: '#64748B',
+    minWidth: 96,
+    textAlign: 'right',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  materialsEmptyText: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginTop: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   attendanceSectionHeader: {
@@ -1988,53 +2097,6 @@ const styles = StyleSheet.create({
     color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  materialPreviewCard: {
-    width: 164,
-    minHeight: 124,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.18)',
-    padding: 10,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  materialPreviewThumb: {
-    width: '100%',
-    height: 58,
-    borderRadius: 10,
-    overflow: 'hidden',
-    backgroundColor: '#EEF2F7',
-    marginBottom: 8,
-  },
-  materialPreviewImage: {
-    width: '100%',
-    height: '100%',
-  },
-  materialPreviewFallback: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#EEF2F7',
-  },
-  materialPreviewTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
-    minHeight: 33,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  materialPreviewType: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   benefitsList: {

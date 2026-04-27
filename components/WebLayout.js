@@ -272,6 +272,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [planYearInitialUnitStructureMethod, setPlanYearInitialUnitStructureMethod] = useState(null);
   /** When PlanYearModal opens as overlay from subject detail, refresh that subject on close. */
   const planYearModalReturnSubjectIdRef = useRef(null);
+  const showPlanningModalRef = useRef(false);
+  const planYearInitialAcademicYearIdRef = useRef(null);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
   const [rebalanceEvent, setRebalanceEvent] = useState(null);
   const [rebalanceYearPlanId, setRebalanceYearPlanId] = useState(null);
@@ -295,6 +297,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setPlanYearInitialMaterialId(null);
     setPlanYearInitialUnitStructureMethod(null);
   }, []);
+  useEffect(() => {
+    showPlanningModalRef.current = showPlanningModal;
+  }, [showPlanningModal]);
+  useEffect(() => {
+    planYearInitialAcademicYearIdRef.current = planYearInitialAcademicYearId;
+  }, [planYearInitialAcademicYearId]);
   const [showWhatIfModal, setShowWhatIfModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showPlanWeekModal, setShowPlanWeekModal] = useState(false);
@@ -2188,6 +2196,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         activeTabRef.current === 'planner' || activeTabRef.current === 'calendar';
       const effectiveOpenAsModal = fromEventDetails ? !onPlannerLikeShell : openAsModal;
       const openToEditList = openToEditListBase || (fromEventDetails && !yearIdFromEvent);
+      const hasExistingEditYearContext =
+        !!planYearInitialAcademicYearIdRef.current && showPlanningModalRef.current;
+      // EventDetails can emit a follow-up openPlanYearModal without academicYearId.
+      // Do not let that downgrade an already-opening edit-year modal into new-plan mode.
+      if (effectiveOpenAsModal && fromEventDetails && !yearIdFromEvent && hasExistingEditYearContext) {
+        console.log('[WebLayout] openPlanYearModal ignored downgrade event', {
+          from,
+          yearIdFromEvent,
+          existingYearId: planYearInitialAcademicYearIdRef.current,
+        });
+        return;
+      }
       console.log('[WebLayout] openPlanYearModal event', {
         from,
         yearIdFromEvent,
@@ -2227,7 +2247,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               from === 'generate_curriculum' ||
               from === 'magic_extract'
           );
-          setPlanYearOpenToEditList(false);
+          // Preserve explicit "Edit plan list" intent from subject detail / toolbar.
+          // Clearing this here incorrectly routes the modal into Build plan flow.
+          setPlanYearOpenToEditList(openToEditList);
         }
         setPlanYearOpenDirectlyToScope(!!detail.openDirectlyToScope && !openToEditList);
         setShowPlanningModal(true);

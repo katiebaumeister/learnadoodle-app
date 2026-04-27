@@ -42,6 +42,46 @@ const BORDER = '#E2E8F0';
 const CHIP_SELECTED_BORDER = designTokens.colors.primary;
 const CHIP_SELECTED_BG = designTokens.softAccents.core;
 
+const parsePositiveIntOrNull = (value) => {
+  const n = parseInt(String(value ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+const parsePositiveFloatOrNull = (value) => {
+  const n = parseFloat(String(value ?? '').trim());
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+const normalizeTargetMode = (mode) => (typeof mode === 'string' ? mode.toLowerCase() : '');
+
+const deriveSubjectTargetState = (subjectsList) => {
+  const st = {};
+  let firstActiveTarget = null;
+  (subjectsList || []).forEach((subj) => {
+    const modeRaw = normalizeTargetMode(subj.default_constraint_mode);
+    const daysNum = parsePositiveIntOrNull(subj.default_target_days);
+    const hoursNum = parsePositiveFloatOrNull(subj.default_target_hours);
+    let mode = 'none';
+    let days = '';
+    let hours = '';
+
+    if (modeRaw === 'days' && daysNum != null) {
+      mode = 'days';
+      days = String(daysNum);
+    } else if (modeRaw === 'hours' && hoursNum != null) {
+      mode = 'hours';
+      hours = String(hoursNum);
+    }
+
+    if (!firstActiveTarget && (mode === 'days' || mode === 'hours')) {
+      firstActiveTarget = { mode, days, hours };
+    }
+
+    st[subj.id] = { mode, days, hours };
+  });
+  return { subjectTargetsMap: st, firstActiveTarget };
+};
+
 export default function PlannerSettingsContent({ familyId, onSave, initialData, readOnly = false }) {
   const toast = useToast();
   const [loading, setLoading] = useState(!initialData);
@@ -120,16 +160,14 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
     setExcludedPublicHolidayDates(Array.isArray(initialData.excluded_holiday_dates) ? initialData.excluded_holiday_dates : []);
     const subjectsList = initialData.subjects || [];
     setSubjects(subjectsList);
-    const st = {};
-    subjectsList.forEach((subj) => {
-      const mode = subj.default_constraint_mode || (subj.default_target_days != null ? 'days' : subj.default_target_hours != null ? 'hours' : 'none');
-      st[subj.id] = {
-        mode,
-        days: subj.default_target_days != null ? String(subj.default_target_days) : '',
-        hours: subj.default_target_hours != null ? String(subj.default_target_hours) : '',
-      };
-    });
-    setSubjectTargets(st);
+    const { subjectTargetsMap, firstActiveTarget } = deriveSubjectTargetState(subjectsList);
+    setSubjectTargets(subjectTargetsMap);
+    if (firstActiveTarget) {
+      setTargetScope('per_subject');
+      setGoalMode(firstActiveTarget.mode);
+      if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '180');
+      if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
+    }
     setLoading(false);
   }, [initialData]);
 
@@ -175,16 +213,22 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
         .eq('family_id', familyId)
         .order('name');
       setSubjects(subjectsData || []);
-      const st = {};
-      (subjectsData || []).forEach((s) => {
-        const mode = s.default_constraint_mode || (s.default_target_days != null ? 'days' : s.default_target_hours != null ? 'hours' : 'none');
-        st[s.id] = {
-          mode,
-          days: s.default_target_days != null ? String(s.default_target_days) : '',
-          hours: s.default_target_hours != null ? String(s.default_target_hours) : '',
-        };
-      });
-      setSubjectTargets(st);
+      const { subjectTargetsMap, firstActiveTarget } = deriveSubjectTargetState(subjectsData || []);
+      setSubjectTargets(subjectTargetsMap);
+      if (firstActiveTarget) {
+        setTargetScope('per_subject');
+        setGoalMode(firstActiveTarget.mode);
+        if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '180');
+        if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
+        if (!readOnly) {
+          saveFamilyPlannerSettings(familyId, {
+            target_scope: 'per_subject',
+            default_constraint_mode: firstActiveTarget.mode,
+            default_target_days: firstActiveTarget.mode === 'days' ? parsePositiveIntOrNull(firstActiveTarget.days) : null,
+            default_target_hours: firstActiveTarget.mode === 'hours' ? parsePositiveFloatOrNull(firstActiveTarget.hours) : null,
+          }).catch(() => {});
+        }
+      }
     } catch (err) {
       setError(err?.message || 'Failed to load planner settings');
     } finally {
@@ -203,18 +247,14 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
         .order('name');
       const list = subjectsData || [];
       setSubjects(list);
-      const st = {};
-      list.forEach((subj) => {
-        const mode =
-          subj.default_constraint_mode ||
-          (subj.default_target_days != null ? 'days' : subj.default_target_hours != null ? 'hours' : 'none');
-        st[subj.id] = {
-          mode,
-          days: subj.default_target_days != null ? String(subj.default_target_days) : '',
-          hours: subj.default_target_hours != null ? String(subj.default_target_hours) : '',
-        };
-      });
-      setSubjectTargets(st);
+      const { subjectTargetsMap, firstActiveTarget } = deriveSubjectTargetState(list);
+      setSubjectTargets(subjectTargetsMap);
+      if (firstActiveTarget) {
+        setTargetScope('per_subject');
+        setGoalMode(firstActiveTarget.mode);
+        if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '180');
+        if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
+      }
     } catch (_) {
       /* ignore */
     }
@@ -463,6 +503,18 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
           })
           .eq('id', subjectId);
         if (error) throw error;
+        if (mode === 'days' || mode === 'hours') {
+          await saveFamilyPlannerSettings(familyId, {
+            target_scope: 'per_subject',
+            default_constraint_mode: mode,
+            default_target_days: mode === 'days' ? days : null,
+            default_target_hours: mode === 'hours' ? hours : null,
+          });
+          setTargetScope('per_subject');
+          setGoalMode(mode);
+          if (mode === 'days') setTargetDays(days != null ? String(days) : '');
+          if (mode === 'hours') setTargetHours(hours != null ? String(hours) : '');
+        }
         showSaved();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));

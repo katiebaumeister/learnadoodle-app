@@ -1605,8 +1605,12 @@ export default function PlanYearModal({
   const [newBreakEndCalendarMonth, setNewBreakEndCalendarMonth] = useState(() => new Date());
 
   const handleOpenPlannerSettingsFromDefaults = useCallback(() => {
-    setShowDefaultsEditor(true);
     setShowResolvedDefaults(false);
+    if (buildWithDefaults && showDefaultsEditor) {
+      setShowDefaultsEditor(false);
+      return;
+    }
+    setShowDefaultsEditor(true);
     setSectionDatesExpanded(true);
     setTimeout(() => {
       const y = datesSectionYRef.current;
@@ -1614,13 +1618,35 @@ export default function PlanYearModal({
         scrollRef.current.scrollTo({ y: Math.max(0, y - 24), animated: true });
       }
     }, 150);
-  }, []);
+  }, [buildWithDefaults, showDefaultsEditor]);
 
-  const getDropdownMenuPosition = useCallback((anchor, minWidth) => {
-    const windowWidth = Dimensions.get('window').width || 0;
-    const width = Math.max(Number(anchor?.width) || minWidth, minWidth);
-    const left = Math.max(8, Math.min(Number(anchor?.x) || 8, windowWidth - width - 8));
-    const top = Math.max(8, (Number(anchor?.y) || 8) + (Number(anchor?.height) || 40) + 4);
+  const getDropdownMenuPosition = useCallback((anchor, minWidth, estimatedMenuHeight = 220) => {
+    const windowDims = Dimensions.get('window') || {};
+    const windowWidth = Number(windowDims.width) || 0;
+    const windowHeight = Number(windowDims.height) || 0;
+
+    const anchorX = Number(anchor?.x);
+    const anchorY = Number(anchor?.y);
+    const anchorW = Number(anchor?.width);
+    const anchorH = Number(anchor?.height);
+
+    const safeX = Number.isFinite(anchorX) ? anchorX : 8;
+    const safeY = Number.isFinite(anchorY) ? anchorY : 8;
+    const safeW = Number.isFinite(anchorW) && anchorW > 0 ? anchorW : minWidth;
+    const safeH = Number.isFinite(anchorH) && anchorH > 0 ? anchorH : 40;
+
+    const width = Math.max(safeW, minWidth);
+    const left = Math.max(8, Math.min(safeX, Math.max(8, windowWidth - width - 8)));
+
+    const belowTop = safeY + safeH + 4;
+    const maxTop = Math.max(8, windowHeight - estimatedMenuHeight - 8);
+    let top = belowTop;
+    if (top > maxTop) {
+      // Flip above the trigger when there isn't enough room below.
+      top = safeY - estimatedMenuHeight - 4;
+    }
+    top = Math.max(8, Math.min(top, maxTop));
+
     return { top, left, width };
   }, []);
 
@@ -1629,16 +1655,31 @@ export default function PlanYearModal({
       setOpen(false);
       return;
     }
+    const fallbackAnchor = { x: 16, y: 180, width: 160, height: 40 };
+    // Open immediately using a safe fallback so dropdowns still work if measurement
+    // APIs are flaky inside nested modal/web layouts.
+    setAnchor((prev) => prev || fallbackAnchor);
+    setOpen(true);
     const node = triggerRef?.current;
     if (node && typeof node.measureInWindow === 'function') {
       node.measureInWindow((x, y, width, height) => {
-        setAnchor({ x, y, width, height });
-        setOpen(true);
+        const nx = Number(x);
+        const ny = Number(y);
+        const nw = Number(width);
+        const nh = Number(height);
+        if (
+          Number.isFinite(nx) &&
+          Number.isFinite(ny) &&
+          Number.isFinite(nw) &&
+          Number.isFinite(nh) &&
+          nw > 0 &&
+          nh > 0
+        ) {
+          setAnchor({ x: nx, y: ny, width: nw, height: nh });
+        }
       });
       return;
     }
-    setAnchor({ x: 16, y: 180, width: 160, height: 40 });
-    setOpen(true);
   }, []);
 
   // Modal can stay mounted with visible=false; reset clears dates — restore cache or a local default before paint (no empty date range).
@@ -1759,7 +1800,6 @@ export default function PlanYearModal({
   const [hoverSourceKey, setHoverSourceKey] = useState(null); // for step 1 option hover (web)
   const [hoverScopeKey, setHoverScopeKey] = useState(null); // for scope step option hover (web)
   const [entryChoiceHoverKey, setEntryChoiceHoverKey] = useState(null); // 'edit' | 'create' for arrow on hover
-  const [footerCancelHover, setFooterCancelHover] = useState(false);
   const [highlightBlockIndex, setHighlightBlockIndex] = useState(null);
   /** Block row indices to outline when Apply fails: missing weekday chips for that subject/block. */
   const [cadenceWeekdayHighlightIndices, setCadenceWeekdayHighlightIndices] = useState([]);
@@ -1768,7 +1808,7 @@ export default function PlanYearModal({
   const [planSubjectTargetsOverride, setPlanSubjectTargetsOverride] = useState({}); // { subjectId: { mode, days, hours } }
   /** Snapshot of cadence per subject id (synced from `blocks` when multi-subject flag is on). */
   const [perSubjectCadenceDraft, setPerSubjectCadenceDraft] = useState({});
-  const [targetScopeFromSettings, setTargetScopeFromSettings] = useState('overall'); // 'overall' | 'per_subject' from family_planner_settings
+  const [targetScopeFromSettings, setTargetScopeFromSettings] = useState('per_subject'); // forced per-subject in this modal
   const [planningDefaultsData, setPlanningDefaultsData] = useState(null); // { settings, exclusions } for Planning defaults summary
   const [planningDefaultsLoading, setPlanningDefaultsLoading] = useState(false);
   const [loadedPlanCurriculumSubjectIds, setLoadedPlanCurriculumSubjectIds] = useState([]);
@@ -2244,6 +2284,18 @@ export default function PlanYearModal({
     initialSubjectName,
     initialSubjectChildIdString,
   ]);
+  const subjectDetailContextSubjectId = useMemo(() => {
+    if (!fromSubjectDetail) return null;
+    if (initialSubjectId && (baseSubjectList || []).some((s) => String(s?.id) === String(initialSubjectId))) {
+      return initialSubjectId;
+    }
+    const fallbackByName = String(initialSubjectName || '').trim().toLowerCase();
+    if (!fallbackByName) return null;
+    const byName = (baseSubjectList || []).find(
+      (s) => String(s?.name || '').trim().toLowerCase() === fallbackByName
+    );
+    return byName?.id || null;
+  }, [fromSubjectDetail, initialSubjectId, initialSubjectName, baseSubjectList]);
   /** All family subjects; plan slots attach to children via each subject's `child_id` (see getChildIdsForSubject). */
   const subjectsForCurrentSelection = baseSubjectList;
   const allFamilyChildIds = useMemo(
@@ -2550,6 +2602,68 @@ export default function PlanYearModal({
     ],
   );
 
+  const parsePositiveIntOrNull = (value) => {
+    const n = parseInt(String(value ?? '').trim(), 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
+  const parsePositiveFloatOrNull = (value) => {
+    const n = parseFloat(String(value ?? '').trim());
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
+  const overallTargetFallbackForSubjectRows = useMemo(() => {
+    const settings = planningDefaultsData?.settings;
+    if (!settings) return null;
+    const modeRaw = typeof settings.default_constraint_mode === 'string'
+      ? settings.default_constraint_mode.toLowerCase()
+      : '';
+    const days = settings.default_target_days != null ? String(settings.default_target_days) : '';
+    const hours = settings.default_target_hours != null ? String(settings.default_target_hours) : '';
+    const hasDays = parsePositiveIntOrNull(days) != null;
+    const hasHours = parsePositiveFloatOrNull(hours) != null;
+    if (modeRaw !== 'days' && modeRaw !== 'hours') return null;
+    if (modeRaw === 'days' && hasDays) return { mode: 'days', days, hours: '' };
+    if (modeRaw === 'hours' && hasHours) return { mode: 'hours', days: '', hours };
+    return null;
+  }, [planningDefaultsData]);
+
+  const resolveSubjectSavedTarget = useCallback((subj) => {
+    if (subj) {
+      const modeRaw = typeof subj.default_constraint_mode === 'string'
+        ? subj.default_constraint_mode.toLowerCase()
+        : '';
+      const days = subj.default_target_days != null ? String(subj.default_target_days) : '';
+      const hours = subj.default_target_hours != null ? String(subj.default_target_hours) : '';
+      const hasDays = parsePositiveIntOrNull(days) != null;
+      const hasHours = parsePositiveFloatOrNull(hours) != null;
+
+      if (modeRaw === 'days' && hasDays) return { mode: 'days', days, hours: '' };
+      if (modeRaw === 'hours' && hasHours) return { mode: 'hours', days: '', hours };
+    }
+
+    if (overallTargetFallbackForSubjectRows) {
+      return {
+        mode: overallTargetFallbackForSubjectRows.mode,
+        days: overallTargetFallbackForSubjectRows.days || '',
+        hours: overallTargetFallbackForSubjectRows.hours || '',
+      };
+    }
+
+    return { mode: 'none', days: '', hours: '' };
+  }, [overallTargetFallbackForSubjectRows]);
+
+  const resolveSubjectRowTarget = useCallback((subj, override) => {
+    if (override) {
+      return {
+        mode: override.mode || 'none',
+        days: override.days ?? '',
+        hours: override.hours ?? '',
+      };
+    }
+    return resolveSubjectSavedTarget(subj);
+  }, [resolveSubjectSavedTarget]);
+
   // Merge: planSubjectTargetsOverride (user edits) > plan > subject defaults
   // When target_scope === 'overall': use plan-level target only, subject_targets = undefined
   // When target_scope === 'per_subject': use subject defaults per subject
@@ -2575,11 +2689,14 @@ export default function PlanYearModal({
     subjectIdsToConsider.forEach((sid) => {
       if (fromPlan[sid]) return;
       const subj = baseSubjectList.find((s) => String(s.id) === String(sid));
-      if (!subj || (subj.default_target_days == null && subj.default_target_hours == null)) return;
-      fromPlan[sid] = {
-        target_days: subj.default_target_days ?? undefined,
-        target_hours: subj.default_target_hours != null ? subj.default_target_hours : undefined,
-      };
+      const saved = resolveSubjectSavedTarget(subj);
+      if (saved.mode === 'days') {
+        const d = parsePositiveIntOrNull(saved.days);
+        if (d != null) fromPlan[sid] = { target_days: d, target_hours: undefined };
+      } else if (saved.mode === 'hours') {
+        const h = parsePositiveFloatOrNull(saved.hours);
+        if (h != null) fromPlan[sid] = { target_days: undefined, target_hours: h };
+      }
     });
     Object.entries(planSubjectTargetsOverride).forEach(([sid, t]) => {
       if (t.mode === 'none') delete fromPlan[sid];
@@ -2592,7 +2709,15 @@ export default function PlanYearModal({
       }
     });
     return Object.keys(fromPlan).length > 0 ? fromPlan : undefined;
-  }, [targetScopeFromSettings, planHealth?.subject_targets, baseSubjectList, effectiveSubjectIds, blocks, planSubjectTargetsOverride]);
+  }, [
+    targetScopeFromSettings,
+    planHealth?.subject_targets,
+    baseSubjectList,
+    effectiveSubjectIds,
+    blocks,
+    planSubjectTargetsOverride,
+    resolveSubjectSavedTarget,
+  ]);
 
   // Effective plan target for apply/schedule: always from local state (prefilled from settings when new, or from plan when editing)
   const effectivePlanTarget = useMemo(() => ({
@@ -2620,19 +2745,14 @@ export default function PlanYearModal({
       for (const subjectId of effectiveSubjectIds) {
         const subj = baseSubjectList.find((s) => String(s.id) === String(subjectId));
         const o = planSubjectTargetsOverride[subjectId];
-        const rowMode =
-          o?.mode ??
-          (subj?.default_constraint_mode ||
-            (subj?.default_target_days != null ? 'days' : subj?.default_target_hours != null ? 'hours' : 'none'));
-        if (rowMode === 'none') continue;
-        if (rowMode === 'days') {
-          const daysStr = o?.days ?? (subj?.default_target_days != null ? String(subj.default_target_days) : '');
-          const n = parseInt(String(daysStr).replace(/[^\d]/g, ''), 10);
+        const resolvedRow = resolveSubjectRowTarget(subj, o);
+        if (resolvedRow.mode === 'none') continue;
+        if (resolvedRow.mode === 'days') {
+          const n = parsePositiveIntOrNull(resolvedRow.days);
           if (Number.isFinite(n) && n > 0) return true;
         }
-        if (rowMode === 'hours') {
-          const hoursStr = o?.hours ?? (subj?.default_target_hours != null ? String(subj.default_target_hours) : '');
-          const h = parseFloat(String(hoursStr));
+        if (resolvedRow.mode === 'hours') {
+          const h = parsePositiveFloatOrNull(resolvedRow.hours);
           if (Number.isFinite(h) && h > 0) return true;
         }
       }
@@ -2648,6 +2768,7 @@ export default function PlanYearModal({
     effectiveSubjectIds,
     planSubjectTargetsOverride,
     baseSubjectList,
+    resolveSubjectRowTarget,
   ]);
 
   /** Projected instructional hours per subject (for per-subject hour targets). */
@@ -2842,17 +2963,20 @@ export default function PlanYearModal({
     if (!settings) return null;
     const modeRaw = typeof settings.default_constraint_mode === 'string'
       ? settings.default_constraint_mode.toLowerCase()
-      : 'none';
+      : '';
     const days = settings.default_target_days != null ? String(settings.default_target_days) : '';
     const hours = settings.default_target_hours != null ? String(settings.default_target_hours) : '';
     const defaultHoursPerDay = settings.default_planned_hours_per_day != null
       ? String(settings.default_planned_hours_per_day)
       : '';
+    const hasDays = parsePositiveIntOrNull(days) != null;
+    const hasHours = parsePositiveFloatOrNull(hours) != null;
 
-    if (modeRaw === 'days' && days) return { mode: 'days', target: days, hoursPerDay: defaultHoursPerDay };
-    if (modeRaw === 'hours' && hours) return { mode: 'hours', target: hours, hoursPerDay: defaultHoursPerDay };
-    if (days) return { mode: 'days', target: days, hoursPerDay: defaultHoursPerDay };
-    if (hours) return { mode: 'hours', target: hours, hoursPerDay: defaultHoursPerDay };
+    if (modeRaw === 'none') return null;
+    if (modeRaw === 'days' && hasDays) return { mode: 'days', target: days, hoursPerDay: defaultHoursPerDay };
+    if (modeRaw === 'hours' && hasHours) return { mode: 'hours', target: hours, hoursPerDay: defaultHoursPerDay };
+    if (hasDays) return { mode: 'days', target: days, hoursPerDay: defaultHoursPerDay };
+    if (hasHours) return { mode: 'hours', target: hours, hoursPerDay: defaultHoursPerDay };
     return null;
   }, [planningDefaultsData]);
 
@@ -4647,6 +4771,22 @@ export default function PlanYearModal({
     }
   }, [visible]);
 
+  // Explicit "Edit plan list" opens (toolbar/subject fallback): force YOUR PLANS list.
+  // This must win even when skipInitialPlanSummary is true, otherwise stale
+  // startCreatingNew/showPlanManagerView state can render the Build flow.
+  useEffect(() => {
+    if (!visible || !openToEditPlanList) return;
+    setShowPlanManagerView(true);
+    setStartCreatingNew(false);
+    setPlanSummaryYearId(null);
+    setPlanSummaryData(null);
+    setPlanSummaryError(null);
+    if (!initialAcademicYearId) {
+      setAcademicYearId(null);
+      setEditingFromSummary(false);
+    }
+  }, [visible, openToEditPlanList, initialAcademicYearId]);
+
   // When opening from subject details or "Edit plan" in toolbar, show YOUR PLANS list directly (skip "Editing or creating?" choice)
   useEffect(() => {
     if (visible && (fromSubjectDetail || openToEditPlanList) && !skipInitialPlanSummary) {
@@ -5231,9 +5371,8 @@ export default function PlanYearModal({
   // Fetch target_scope from family_planner_settings for plan resolution (overall vs per_subject)
   useEffect(() => {
     if (!visible || !familyId) return;
-    getFamilyPlannerSettings(familyId).then(({ data }) => {
-      if (data?.target_scope) setTargetScopeFromSettings(data.target_scope);
-      else setTargetScopeFromSettings('overall');
+    getFamilyPlannerSettings(familyId).then(() => {
+      setTargetScopeFromSettings('per_subject');
     });
   }, [visible, familyId]);
 
@@ -5242,9 +5381,18 @@ export default function PlanYearModal({
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     if (!visible || !familyId) return;
     const onRefresh = () => {
-      getFamilyPlannerSettings(familyId).then(({ data }) => {
-        if (data?.target_scope) setTargetScopeFromSettings(data.target_scope);
-        else setTargetScopeFromSettings('overall');
+      Promise.all([
+        getFamilyPlannerSettings(familyId),
+        getPlanDefaultsFromSettings(familyId),
+      ]).then(([, defaultsPayload]) => {
+        setTargetScopeFromSettings('per_subject');
+        if (!defaultsPayload?.error) {
+          setPlanningDefaultsData({
+            settings: defaultsPayload?.settings || null,
+            exclusions: defaultsPayload?.exclusions || [],
+            excluded_holiday_dates: defaultsPayload?.excluded_holiday_dates || [],
+          });
+        }
       });
     };
     window.addEventListener('refreshPlanDefaults', onRefresh);
@@ -5301,9 +5449,12 @@ export default function PlanYearModal({
       const { settings, exclusions, excluded_holiday_dates, error: settingsErr } = await getPlanDefaultsFromSettings(familyId);
       if (cancelled) return;
       if (!settingsErr && settings) {
-        const hasConstraint = settings.default_constraint_mode && settings.default_constraint_mode !== 'none';
-        const hasTargetDays = settings.default_target_days != null;
-        const hasTargetHours = settings.default_target_hours != null;
+        const modeRaw = typeof settings.default_constraint_mode === 'string'
+          ? settings.default_constraint_mode.toLowerCase()
+          : '';
+        const hasConstraint = modeRaw === 'days' || modeRaw === 'hours';
+        const hasTargetDays = hasConstraint && modeRaw === 'days' && settings.default_target_days != null;
+        const hasTargetHours = hasConstraint && modeRaw === 'hours' && settings.default_target_hours != null;
         const hasExclusions = exclusions && exclusions.length > 0;
         const hasExcludedDates = excluded_holiday_dates && excluded_holiday_dates.length > 0;
         if (hasConstraint || hasTargetDays || hasTargetHours || hasExclusions || hasExcludedDates) {
@@ -5320,9 +5471,9 @@ export default function PlanYearModal({
             setPlanTargetHours(String(settings.default_target_hours ?? 1000));
             if (settings.default_planned_hours_per_day != null) setHoursPerDay(String(settings.default_planned_hours_per_day));
           } else if (hasConstraint) {
-            setPlanConstraintMode(settings.default_constraint_mode || 'none');
-            if (settings.default_constraint_mode === 'days') setPlanTargetDays(String(settings.default_target_days ?? 180));
-            if (settings.default_constraint_mode === 'hours') {
+            setPlanConstraintMode(modeRaw);
+            if (modeRaw === 'days') setPlanTargetDays(String(settings.default_target_days ?? 180));
+            if (modeRaw === 'hours') {
               setPlanTargetHours(String(settings.default_target_hours ?? 1000));
               if (settings.default_planned_hours_per_day != null) setHoursPerDay(String(settings.default_planned_hours_per_day));
             }
@@ -5395,6 +5546,65 @@ export default function PlanYearModal({
       setSelectedSubjectIds([initialSubjectId]);
     }
   }, [visible, initialSubjectId, baseSubjectList]);
+
+  // Subject detail flow should always target the current subject.
+  useEffect(() => {
+    if (!visible || !fromSubjectDetail || !subjectDetailContextSubjectId) return;
+    setAllSubjectsChipSelected(false);
+    setSelectedSubjectIds([subjectDetailContextSubjectId]);
+    // Opening from a subject page should not carry over stale per-subject chip overrides.
+    setPlanSubjectTargetsOverride({});
+  }, [visible, fromSubjectDetail, subjectDetailContextSubjectId]);
+
+  useEffect(() => {
+    if (!visible || !fromSubjectDetail || !subjectDetailContextSubjectId) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('subject')
+        .select('default_constraint_mode, default_target_days, default_target_hours')
+        .eq('id', subjectDetailContextSubjectId)
+        .maybeSingle();
+      if (cancelled) return;
+      const modeRaw = typeof data?.default_constraint_mode === 'string'
+        ? data.default_constraint_mode.toLowerCase()
+        : '';
+      const daysNum = parsePositiveIntOrNull(data?.default_target_days);
+      const hoursNum = parsePositiveFloatOrNull(data?.default_target_hours);
+
+      let nextRow = { mode: 'none', days: '', hours: '' };
+      if (modeRaw === 'days' && daysNum != null) {
+        nextRow = { mode: 'days', days: String(daysNum), hours: '' };
+      } else if (modeRaw === 'hours' && hoursNum != null) {
+        nextRow = { mode: 'hours', days: '', hours: String(hoursNum) };
+      } else if (overallTargetFallbackForSubjectRows) {
+        nextRow = {
+          mode: overallTargetFallbackForSubjectRows.mode,
+          days: overallTargetFallbackForSubjectRows.days || '',
+          hours: overallTargetFallbackForSubjectRows.hours || '',
+        };
+      }
+
+      setPlanSubjectTargetsOverride((prev) => ({
+        ...prev,
+        [subjectDetailContextSubjectId]: nextRow,
+      }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    visible,
+    fromSubjectDetail,
+    subjectDetailContextSubjectId,
+    overallTargetFallbackForSubjectRows,
+  ]);
+
+  useEffect(() => {
+    if (!visible || !startCreatingNew || academicYearId || initialAcademicYearId) return;
+    // Starting a fresh plan should reset ad-hoc target chip overrides from prior edit sessions.
+    setPlanSubjectTargetsOverride({});
+  }, [visible, startCreatingNew, academicYearId, initialAcademicYearId]);
 
   // When opening with initial material (e.g. from Library "Build curriculum from this"), start in upload mode with that material
   useEffect(() => {
@@ -6526,7 +6736,7 @@ export default function PlanYearModal({
             resolvedDefaultsFromModel?.holiday_settings?.excluded_holiday_dates ?? excludedPublicHolidayDates ?? [],
         },
         planning_preferences: {
-          target_scope: resolvedDefaultsFromModel?.planning?.target_scope ?? targetScopeFromSettings,
+          target_scope: 'per_subject',
           constraint_mode:
             resolvedDefaultsFromModel?.planning?.constraint_mode ?? effectivePlanTarget.constraint_mode,
           target_days:
@@ -6580,7 +6790,7 @@ export default function PlanYearModal({
               end_date: mode === 'FIXED_END' ? endDate || null : calculatedResult?.end_date || endDate || null,
             },
             planning: {
-              target_scope: targetScopeFromSettings,
+              target_scope: 'per_subject',
               constraint_mode: effectivePlanTarget.constraint_mode,
               target_days: effectivePlanTarget.target_days ?? null,
               target_hours: effectivePlanTarget.target_hours ?? null,
@@ -7838,7 +8048,7 @@ export default function PlanYearModal({
       setStartDate('');
       setEndDate('');
       setPlanSubjectTargetsOverride({});
-      setTargetScopeFromSettings('overall');
+      setTargetScopeFromSettings('per_subject');
       setSavedCurriculumHasLessonsBySubjectId({});
       setApplyFromMode('entire');
       setApplyFromDate(null);
@@ -7921,7 +8131,7 @@ export default function PlanYearModal({
       ? t('planMyYear.multiSubjectUnits.headerUnitsFor', { subjectName: unitFocusSubjectNameForHeader })
       : null;
   const unitStructureSaveDraftLabel = returnToSubjectModalAfterUnitSave
-    ? 'Back to Add Subject'
+    ? 'Save units'
     : PLAN_MY_YEAR_LOGISTICS_FIRST
       ? t('planMyYear.multiSubjectUnits.footerSaveDraftLogisticsFirst')
       : t('planMyYear.multiSubjectUnits.footerSaveDraftClassic');
@@ -8258,6 +8468,260 @@ export default function PlanYearModal({
         >
           <Trash2 size={16} color="#B91C1C" strokeWidth={2} />
           <Text style={{ fontSize: 14, color: '#B91C1C', fontWeight: '600' }}>Delete plan</Text>
+        </TouchableOpacity>
+      </View>,
+      document.body,
+    );
+  };
+
+  const renderPlanningScopeDropdownPortals = () => {
+    if (Platform.OS !== 'web') return null;
+    const showSchoolYearMenu = showSchoolYearDropdown && !!schoolYearDropdownAnchor;
+    const showDurationMenu = showPlanningScopeDropdown && !!planningScopeDropdownAnchor;
+    if (!showSchoolYearMenu && !showDurationMenu) return null;
+
+    let ReactDOM;
+    try {
+      ReactDOM = require('react-dom');
+    } catch (_) {
+      return null;
+    }
+    if (!ReactDOM?.createPortal || typeof document === 'undefined' || !document.body) return null;
+
+    return ReactDOM.createPortal(
+      <>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => {
+            setShowSchoolYearDropdown(false);
+            setShowPlanningScopeDropdown(false);
+          }}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 2147483646,
+          }}
+          {...(Platform.OS === 'web' && { cursor: 'default' })}
+        />
+        {showSchoolYearMenu ? (
+          <View
+            style={{
+              position: 'fixed',
+              ...(getDropdownMenuPosition(schoolYearDropdownAnchor, 140, 260)),
+              borderWidth: 1,
+              borderColor: BORDER_SUBTLE,
+              borderRadius: 10,
+              backgroundColor: '#ffffff',
+              overflow: 'hidden',
+              zIndex: 2147483647,
+              boxShadow: '0 8px 24px rgba(15,23,42,0.16)',
+            }}
+          >
+            {schoolYearOptions.map((yearOption) => {
+              const isSelected = String(selectedSchoolYearTemplateId || '') === String(yearOption.id);
+              return (
+                <TouchableOpacity
+                  key={yearOption.id}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                    borderBottomWidth: schoolYearOptions[schoolYearOptions.length - 1]?.id === yearOption.id ? 0 : 1,
+                    borderBottomColor: BORDER_SUBTLE,
+                    backgroundColor: isSelected ? ACCENT_LIGHT : '#ffffff',
+                  }}
+                  onPress={() => {
+                    setSelectedSchoolYearTemplateId(yearOption.id);
+                    setShowSchoolYearDropdown(false);
+                    setAcademicYearId(null);
+                    setSelectedTermId(null);
+                    setStartCreatingNew(false);
+                    const startYmd = yearOption.start_date || '';
+                    const startYear = /^\d{4}-\d{2}-\d{2}$/.test(startYmd) ? Number(startYmd.slice(0, 4)) : null;
+                    if (startYear != null && Number.isFinite(startYear)) {
+                      if (schoolDurationScope === 'full_year') {
+                        setStartDate(`${startYear}-08-01`);
+                        setEndDate(`${startYear + 1}-05-31`);
+                      } else if (schoolDurationScope === 'fall_term') {
+                        setStartDate(`${startYear}-08-01`);
+                        setEndDate(`${startYear}-12-31`);
+                      } else if (schoolDurationScope === 'spring_term') {
+                        setStartDate(`${startYear + 1}-01-01`);
+                        setEndDate(`${startYear + 1}-05-01`);
+                      } else {
+                        setStartDate(yearOption.start_date || '');
+                        setEndDate(yearOption.end_date || '');
+                      }
+                    } else {
+                      setStartDate(yearOption.start_date || '');
+                      setEndDate(yearOption.end_date || '');
+                    }
+                    setFollowGlobalHolidays(true);
+                    setCountryCode('US');
+                    setRegionCode(null);
+                    setPlanConstraintMode('none');
+                    setCustomHolidays([]);
+                    setCustomBreaks([]);
+                  }}
+                  activeOpacity={0.85}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={{ fontSize: 13, color: isSelected ? ACCENT : FG, fontWeight: isSelected ? '600' : '500' }}>
+                    {yearOption.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : null}
+        {showDurationMenu ? (
+          <View
+            style={{
+              position: 'fixed',
+              ...(getDropdownMenuPosition(planningScopeDropdownAnchor, 170, 220)),
+              borderWidth: 1,
+              borderColor: BORDER_SUBTLE,
+              borderRadius: 10,
+              backgroundColor: '#ffffff',
+              overflow: 'hidden',
+              zIndex: 2147483647,
+              boxShadow: '0 8px 24px rgba(15,23,42,0.16)',
+            }}
+          >
+            {durationOptions.map((durationOpt) => {
+              const isSelected = durationOpt.id === schoolDurationScope;
+              return (
+                <TouchableOpacity
+                  key={durationOpt.id}
+                  style={{
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                    borderBottomWidth: durationOptions[durationOptions.length - 1]?.id === durationOpt.id ? 0 : 1,
+                    borderBottomColor: BORDER_SUBTLE,
+                    backgroundColor: isSelected ? ACCENT_LIGHT : '#ffffff',
+                  }}
+                  onPress={() => {
+                    setSchoolDurationScope(durationOpt.id);
+                    setShowPlanningScopeDropdown(false);
+                    setShowSchoolYearDropdown(false);
+                  }}
+                  activeOpacity={0.85}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={{ fontSize: 13, color: isSelected ? ACCENT : FG, fontWeight: isSelected ? '600' : '500' }}>
+                    {durationOpt.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : null}
+      </>,
+      document.body,
+    );
+  };
+
+  const renderPublicHolidaysPickerPortal = () => {
+    if (Platform.OS !== 'web' || !showPublicHolidaysPicker) return null;
+    let ReactDOM;
+    try {
+      ReactDOM = require('react-dom');
+    } catch (_) {
+      return null;
+    }
+    if (!ReactDOM?.createPortal || typeof document === 'undefined' || !document.body) return null;
+
+    return ReactDOM.createPortal(
+      <View
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 2147483647,
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 16,
+        }}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setShowPublicHolidaysPicker(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.3)',
+            zIndex: 2147483646,
+          }}
+        />
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={(e) => e.stopPropagation()}
+          style={[
+            styles.calendarModal,
+            {
+              width: '100%',
+              maxWidth: 420,
+              maxHeight: '80%',
+              zIndex: 2147483647,
+            },
+          ]}
+        >
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>U.S. public holidays</Text>
+            <TouchableOpacity onPress={() => setShowPublicHolidaysPicker(false)} hitSlop={12}>
+              <X size={22} color={SUB} />
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.mutedText, { marginBottom: 12 }]}>Uncheck any holiday you don't want to include (they will be treated as regular instructional days).</Text>
+          <View style={styles.publicHolidaysListContainer}>
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator>
+              {publicHolidaysList.map((h) => {
+                const dateStr = (h.date || '').slice(0, 10);
+                const isIncluded = !excludedPublicHolidayDates.includes(dateStr);
+                return (
+                  <TouchableOpacity
+                    key={`${dateStr}-${h.name}`}
+                    onPress={() => {
+                      let nextExcludedDates = excludedPublicHolidayDates;
+                      if (isIncluded) {
+                        nextExcludedDates = [...excludedPublicHolidayDates, dateStr];
+                      } else {
+                        nextExcludedDates = excludedPublicHolidayDates.filter((d) => d !== dateStr);
+                      }
+                      setExcludedPublicHolidayDates(nextExcludedDates);
+                      persistExcludedPublicHolidayDatesDebounced(nextExcludedDates, publicHolidaysList);
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingRight: 8, borderBottomWidth: 1, borderBottomColor: BORDER }}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={{ width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: isIncluded ? ACCENT : BORDER, backgroundColor: isIncluded ? ACCENT : 'transparent', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
+                      {isIncluded ? <Check size={14} color="#fff" strokeWidth={3} /> : null}
+                    </View>
+                    <Text style={[styles.label, { flex: 1, fontSize: 14 }]}>{h.name}</Text>
+                    <Text style={[styles.mutedText, { fontSize: 13 }]}>{dateStr}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {publicHolidaysList.length === 0 && !publicHolidaysLoading && (
+                <Text style={[styles.mutedText, { padding: 16 }]}>No holidays in this date range. Extend range or add custom holiday.</Text>
+              )}
+            </ScrollView>
+          </View>
+          <TouchableOpacity
+            onPress={() => setShowPublicHolidaysPicker(false)}
+            style={[styles.primaryButton, { marginTop: 16 }]}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.primaryButtonText}>Done</Text>
+          </TouchableOpacity>
         </TouchableOpacity>
       </View>,
       document.body,
@@ -10019,6 +10483,16 @@ export default function PlanYearModal({
 
   /** Subject-detail links (Manual input, Paste, etc.) should show unit structure full-screen, not logistics behind a nested modal. */
   const inlineUnitStructureFromSubjectDetail = Boolean(fromSubjectDetail && initialUnitStructureMethod);
+  const isSubjectDetailAddUnitsMode =
+    Boolean(returnToSubjectModalAfterUnitSave) && planStep === 'unit_structure';
+  const addUnitsModalTitle = 'Add units';
+
+  const renderFooterPrimaryLabel = useCallback((label) => (
+    <View style={styles.footerPrimaryInner}>
+      <Sparkles size={16} color="#FFFFFF" />
+      <Text style={styles.footerPrimaryText}>{label}</Text>
+    </View>
+  ), []);
 
   /** Flush/square corners only when embedded in the planner (`renderInline`). Overlay modals (Library, toolbar, etc.) keep `styles.modal` rounding. */
   const useModalFlatLf =
@@ -10043,7 +10517,7 @@ export default function PlanYearModal({
       activeOpacity={1}
       onPress={() => {}}
     >
-          {subjectDetailOverlayChrome && PLAN_MY_YEAR_LOGISTICS_FIRST && !showPlanEditingModeBanner ? (
+          {subjectDetailOverlayChrome && PLAN_MY_YEAR_LOGISTICS_FIRST && !showPlanEditingModeBanner && pickerOnly ? (
             <View style={styles.subjectDetailPlanCloseBar} accessibilityRole="toolbar">
               <TouchableOpacity
                 onPress={(e) => {
@@ -10059,40 +10533,74 @@ export default function PlanYearModal({
               </TouchableOpacity>
             </View>
           ) : null}
-          {!pickerOnly && !PLAN_MY_YEAR_LOGISTICS_FIRST ? (
-          <View style={styles.modalHeader}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-            {PLAN_MY_YEAR_LOGISTICS_FIRST ? null : (
-            <View style={styles.breadcrumbRow}>
-              {editingFromSummary ? (
-                <>
-                  <Text style={[styles.breadcrumbStep, planStep === 'logistics' && styles.breadcrumbStepCurrent]}>Edit</Text>
-                  <Text style={[styles.breadcrumbSeparator]}>{'  -->  '}</Text>
-                  <Text style={[styles.breadcrumbStep, planStep === 'preview' && styles.breadcrumbStepCurrent]}>Review</Text>
-                </>
-              ) : (
-                <>
-                  <Text style={[styles.breadcrumbStep, planStep === 'source' && styles.breadcrumbStepCurrent]}>1. Method</Text>
-                  <Text style={[styles.breadcrumbSeparator]}>{'  ·  '}</Text>
-                  <Text style={[styles.breadcrumbStep, planStep === 'unit_structure' && styles.breadcrumbStepCurrent]}>2. Unit Structure</Text>
-                  <Text style={[styles.breadcrumbSeparator]}>{'  ·  '}</Text>
-                  <Text style={[styles.breadcrumbStep, planStep === 'logistics' && styles.breadcrumbStepCurrent]}>3. Logistics</Text>
-                  <Text style={[styles.breadcrumbSeparator]}>{'  ·  '}</Text>
-                  <Text style={[styles.breadcrumbStep, planStep === 'preview' && styles.breadcrumbStepCurrent]}>4. Review</Text>
-                </>
-              )}
-            </View>
-            )}
-            {unitHeaderSubtitle ? (
-              <Text style={[styles.modalHeaderMeta, { marginTop: 6 }]} numberOfLines={2}>
-                {unitHeaderSubtitle}
-              </Text>
-            ) : null}
-            </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeButtonHeader} hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}>
-              <X size={22} color={FG} />
-            </TouchableOpacity>
-          </View>
+          {!pickerOnly ? (
+            isSubjectDetailAddUnitsMode ? (
+              <View style={styles.modalHeaderMinimal}>
+                <Text style={styles.modalHeaderMinimalTitle}>{addUnitsModalTitle}</Text>
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={styles.closeButtonHeader}
+                  hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <X size={20} color="#6b7280" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.modalHeader}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                {PLAN_MY_YEAR_LOGISTICS_FIRST ? (
+                  <View style={styles.modalHeaderTitleRow}>
+                    <View style={{ minWidth: 0 }}>
+                      <View style={styles.modalHeaderBadge}>
+                        <Text style={styles.modalHeaderEyebrow}>
+                          {isEditingExistingPlanFlow ? 'EDIT PLAN' : 'NEW PLAN'}
+                        </Text>
+                      </View>
+                      <Text style={styles.modalHeaderTitle}>
+                        {isEditingExistingPlanFlow ? 'Edit Structured Class Plans' : 'Build Structured Class Plans'}
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.breadcrumbRow}>
+                    {editingFromSummary ? (
+                      <>
+                        <Text style={[styles.breadcrumbStep, planStep === 'logistics' && styles.breadcrumbStepCurrent]}>Edit</Text>
+                        <Text style={[styles.breadcrumbSeparator]}>{'  -->  '}</Text>
+                        <Text style={[styles.breadcrumbStep, planStep === 'preview' && styles.breadcrumbStepCurrent]}>Review</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={[styles.breadcrumbStep, planStep === 'source' && styles.breadcrumbStepCurrent]}>1. Method</Text>
+                        <Text style={[styles.breadcrumbSeparator]}>{'  ·  '}</Text>
+                        <Text style={[styles.breadcrumbStep, planStep === 'unit_structure' && styles.breadcrumbStepCurrent]}>2. Unit Structure</Text>
+                        <Text style={[styles.breadcrumbSeparator]}>{'  ·  '}</Text>
+                        <Text style={[styles.breadcrumbStep, planStep === 'logistics' && styles.breadcrumbStepCurrent]}>3. Logistics</Text>
+                        <Text style={[styles.breadcrumbSeparator]}>{'  ·  '}</Text>
+                        <Text style={[styles.breadcrumbStep, planStep === 'preview' && styles.breadcrumbStepCurrent]}>4. Review</Text>
+                      </>
+                    )}
+                  </View>
+                )}
+                {unitHeaderSubtitle ? (
+                  <Text style={[styles.modalHeaderMeta, { marginTop: 6 }]} numberOfLines={2}>
+                    {unitHeaderSubtitle}
+                  </Text>
+                ) : null}
+                </View>
+                <View style={styles.modalHeaderRight}>
+                  {PLAN_MY_YEAR_LOGISTICS_FIRST ? (
+                    <View style={styles.modalHeaderHeroIcon}>
+                      <Calendar size={26} color="#10B981" />
+                    </View>
+                  ) : null}
+                  <TouchableOpacity onPress={onClose} style={styles.closeButtonHeader} hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}>
+                    <X size={18} color="#7E86B3" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )
           ) : null}
           {planSummaryYearId ? (
             <ScrollView
@@ -10541,7 +11049,7 @@ export default function PlanYearModal({
                   <Text
                     style={{
                       fontSize: 14,
-                      color: TEXT_SECONDARY,
+                      color: '#000000',
                       marginBottom: lessonSchedulePreviewPlan.hasCurriculumMapping ? 4 : 12,
                       lineHeight: 18,
                     }}
@@ -11096,7 +11604,7 @@ export default function PlanYearModal({
           <ScrollView
             ref={scrollRef}
             style={styles.content}
-            contentContainerStyle={styles.contentContainer}
+            contentContainerStyle={[styles.contentContainer, styles.modalBody]}
             showsVerticalScrollIndicator={false}
           >
             {loadError && (
@@ -11150,11 +11658,7 @@ export default function PlanYearModal({
                 </View>
               </View>
             )}
-            {PLAN_MY_YEAR_LOGISTICS_FIRST && !hideStructuredClassPlansIntro && (
-              <View style={styles.planYearGlanceHeaderWrap}>
-                <Text style={styles.planYearGlanceTitle}>{t('planMyYear.modal.structuredClassPlansTitle')}</Text>
-              </View>
-            )}
+            {/* Header title now lives in modal shell; avoid duplicate in content flow. */}
             {PLAN_MY_YEAR_LOGISTICS_FIRST && unitHeaderSubtitle ? (
               <Text style={[styles.modalHeaderMeta, { marginBottom: 12 }]} numberOfLines={2}>
                 {unitHeaderSubtitle}
@@ -11190,36 +11694,25 @@ export default function PlanYearModal({
             ) : (
               // Homeschool Constraint Solver
               <View>
-                <View style={[styles.fieldSection, { marginTop: 0, marginBottom: 12 }]}>
-                <View style={{ marginBottom: 10 }}>
+                <View style={styles.stepSection}>
+                <View>
                 <View
                   style={[
                     styles.inputGroup,
                     {
-                      marginBottom: 10,
+                      marginBottom: 0,
                       position: 'relative',
                       zIndex: 1,
                       elevation: 0,
                     },
                   ]}
                 >
-                  <Text
-                    style={{
-                      fontSize: 14,
-                      fontWeight: '700',
-                      letterSpacing: 0.6,
-                      color: TEXT_SECONDARY,
-                      textTransform: 'uppercase',
-                      marginBottom: 6,
-                      ...(Platform.OS === 'web' && {
-                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      }),
-                    }}
-                  >
+                  <Text style={styles.stepTitle}>
                     STEP 1 — WHAT ARE WE PLANNING FOR?
                   </Text>
-                  <View style={styles.planningModeHeaderRow}>
-                    <View style={styles.planningModeHeaderCell}>
+                  <View style={styles.stepContent}>
+                  <View style={styles.row}>
+                    <View style={styles.halfField}>
                       <TouchableOpacity
                         ref={schoolYearDropdownTriggerRef}
                         onPress={() => {
@@ -11231,7 +11724,7 @@ export default function PlanYearModal({
                             setShowSchoolYearDropdown
                           );
                         }}
-                        style={[styles.planningModeHeaderTrigger, styles.planningModeHeaderTriggerWide]}
+                        style={styles.planningModeHeaderTrigger}
                         activeOpacity={0.8}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
@@ -11245,7 +11738,7 @@ export default function PlanYearModal({
                         {showSchoolYearDropdown ? <ChevronUp size={18} color={SUB} /> : <ChevronDown size={18} color={SUB} />}
                       </TouchableOpacity>
                     </View>
-                    <View style={styles.planningModeHeaderCell}>
+                    <View style={styles.halfField}>
                       <TouchableOpacity
                         ref={planningScopeDropdownTriggerRef}
                         onPress={() => {
@@ -11269,7 +11762,7 @@ export default function PlanYearModal({
                     </View>
                   </View>
                   <View style={styles.planningModeCard}>
-                    <View style={styles.planningModeToggleRow}>
+                    <View style={[styles.planningModeToggleRow, styles.checkboxRow]}>
                       <TouchableOpacity
                         onPress={() =>
                           setBuildWithDefaults((prev) => {
@@ -11293,7 +11786,7 @@ export default function PlanYearModal({
                       <Text style={styles.planningModeToggleText}>
                         Use{' '}
                         <Text
-                          onPress={() => setShowResolvedDefaults((prev) => !prev)}
+                          onPress={handleOpenPlannerSettingsFromDefaults}
                           style={styles.planningModeSecondaryCtaText}
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
@@ -11301,59 +11794,37 @@ export default function PlanYearModal({
                         </Text>
                       </Text>
                     </View>
-                    {!buildWithDefaults ? (
-                      <TouchableOpacity
-                        onPress={handleOpenPlannerSettingsFromDefaults}
-                        style={styles.planningModePrimaryCta}
-                        activeOpacity={0.8}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={styles.planningModePrimaryCtaText}>Customize plan settings ▾</Text>
-                      </TouchableOpacity>
-                    ) : null}
-                    {buildWithDefaults && showResolvedDefaults ? (
-                      <View style={styles.planningModeExpandedDefaults}>
-                        <Text style={{ fontSize: 12, color: FG, lineHeight: 18 }}>
-                          {selectedSchoolYearOption?.label || 'New school year'} ·{' '}
-                          {selectedTermOption?.name ? `${selectedTermOption.name} · ` : ''}
-                          {resolvedRunStartDate ? formatDateDisplay(resolvedRunStartDate) : 'Start not set'} -{' '}
-                          {resolvedRunEndDate ? formatDateDisplay(resolvedRunEndDate) : 'End not set'}
-                        </Text>
-                        <Text style={{ marginTop: 4, fontSize: 12, color: MUTED, lineHeight: 18 }}>
-                          {defaultsSummarySentence}
-                        </Text>
-                        <TouchableOpacity
-                          onPress={handleOpenPlannerSettingsFromDefaults}
-                          style={{ marginTop: 8, alignSelf: 'flex-start' }}
-                          activeOpacity={0.8}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={{ fontSize: 12, color: ACCENT, fontWeight: '600', textDecorationLine: 'underline' }}>
-                            Change defaults
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : null}
+                  </View>
                   </View>
                 </View>
                 </View>
 
+                {Platform.OS !== 'web' && (
+                <>
                 <Modal
                   transparent
                   visible={showSchoolYearDropdown && !!schoolYearDropdownAnchor}
                   animationType="none"
                   onRequestClose={() => setShowSchoolYearDropdown(false)}
                 >
-                  <View style={{ flex: 1 }}>
+                  <View
+                    style={{
+                      flex: 1,
+                      zIndex: 2147483647,
+                      ...(Platform.OS !== 'web' && { elevation: 2147483647 }),
+                    }}
+                  >
                     <TouchableOpacity
-                      style={StyleSheet.absoluteFill}
+                      style={[StyleSheet.absoluteFill, { zIndex: 1 }]}
                       activeOpacity={1}
                       onPress={() => setShowSchoolYearDropdown(false)}
                     />
                     <View
                       style={{
                         position: 'absolute',
-                        ...(getDropdownMenuPosition(schoolYearDropdownAnchor, 140)),
+                        ...(getDropdownMenuPosition(schoolYearDropdownAnchor, 140, 260)),
+                        zIndex: 2147483647,
+                        ...(Platform.OS !== 'web' && { elevation: 2147483647 }),
                         borderWidth: 1,
                         borderColor: BORDER_SUBTLE,
                         borderRadius: 10,
@@ -11425,16 +11896,24 @@ export default function PlanYearModal({
                   animationType="none"
                   onRequestClose={() => setShowPlanningScopeDropdown(false)}
                 >
-                  <View style={{ flex: 1 }}>
+                  <View
+                    style={{
+                      flex: 1,
+                      zIndex: 2147483647,
+                      ...(Platform.OS !== 'web' && { elevation: 2147483647 }),
+                    }}
+                  >
                     <TouchableOpacity
-                      style={StyleSheet.absoluteFill}
+                      style={[StyleSheet.absoluteFill, { zIndex: 1 }]}
                       activeOpacity={1}
                       onPress={() => setShowPlanningScopeDropdown(false)}
                     />
                     <View
                       style={{
                         position: 'absolute',
-                        ...(getDropdownMenuPosition(planningScopeDropdownAnchor, 170)),
+                        ...(getDropdownMenuPosition(planningScopeDropdownAnchor, 170, 220)),
+                        zIndex: 2147483647,
+                        ...(Platform.OS !== 'web' && { elevation: 2147483647 }),
                         borderWidth: 1,
                         borderColor: BORDER_SUBTLE,
                         borderRadius: 10,
@@ -11471,11 +11950,15 @@ export default function PlanYearModal({
                     </View>
                   </View>
                 </Modal>
+                </>
+                )}
 
                 {(showDefaultsEditor || !buildWithDefaults || schoolDurationScope === 'custom_duration') && (
+                <View style={styles.defaultsFieldsStack}>
                 <View style={[styles.inputGroup, { marginBottom: 0 }]}>
                   <Text style={[styles.logisticsLabel]}>Date range <Text style={{ color: ERROR }}>*</Text></Text>
-                  <View style={styles.dateRangeCard} onLayout={(e) => { datesSectionYRef.current = e.nativeEvent.layout.y; }}>
+                  <View style={styles.dateRangeWithHolidayRow}>
+                  <View style={[styles.dateRangeCard, styles.dateRangeCardNarrow]} onLayout={(e) => { datesSectionYRef.current = e.nativeEvent.layout.y; }}>
                   <View style={styles.dateRangeRow}>
                     <View style={styles.dateRangeSide}>
                       <TouchableOpacity onPress={() => { if (!startDate) return; const d = new Date(startDate + 'T12:00:00'); d.setDate(d.getDate() - 1); handleStartDateChange(toLocalYYYYMMDD(d)); }} style={styles.dateRangeArrow} disabled={!startDate} {...(Platform.OS === 'web' && { cursor: startDate ? 'pointer' : 'default' })}>
@@ -11504,9 +11987,54 @@ export default function PlanYearModal({
                     ) : null}
                   </View>
                   </View>
+                  <View style={styles.followHolidaysCard}>
+                  <View style={[styles.settingRowInline, styles.followHolidaysInlineRow]}>
+                    <TouchableOpacity
+                      style={[styles.customToggleTrack, followGlobalHolidays && styles.customToggleTrackOn]}
+                      onPress={handleToggleFollowGlobalHolidays}
+                      activeOpacity={0.8}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <View style={[styles.customToggleThumb, followGlobalHolidays && styles.customToggleThumbOn]} />
+                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <Text style={[styles.logisticsLabel, { marginBottom: 0, marginRight: 4, fontSize: 13, color: FG }]}>Follow </Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (followGlobalHolidays) {
+                            setShowPublicHolidaysPicker(true);
+                            const start = startDate || new Date().toISOString().slice(0, 10);
+                            let end = endDate;
+                            if (!end) {
+                              const e = new Date(start);
+                              e.setFullYear(e.getFullYear() + 1);
+                              end = e.toISOString().slice(0, 10);
+                            }
+                            setPublicHolidaysLoading(true);
+                            getPublicHolidaysForRange(countryCode || 'US', start, end)
+                              .then(({ data: res }) => {
+                                setPublicHolidaysList(res?.holidays || []);
+                              })
+                              .catch(() => {
+                                setPublicHolidaysList([]);
+                              })
+                              .finally(() => {
+                                setPublicHolidaysLoading(false);
+                              });
+                          }
+                        }}
+                        activeOpacity={0.7}
+                        style={{ flexDirection: 'row', alignItems: 'center' }}
+                        {...(Platform.OS === 'web' && { cursor: followGlobalHolidays ? 'pointer' : 'default' })}
+                      >
+                        <Text style={[styles.logisticsLabel, { marginBottom: 0, fontSize: 13, color: followGlobalHolidays ? ACCENT : SUB, textDecorationLine: followGlobalHolidays ? 'underline' : 'none' }]}>U.S. public holidays</Text>
+                      </TouchableOpacity>
+                      <Text style={[styles.logisticsLabel, { marginBottom: 0, marginLeft: 4, fontSize: 13 }]}>?</Text>
+                    </View>
+                  </View>
+                  </View>
+                  </View>
                 </View>
-                )}
-
                 {/* Target Days (TARGET_DAYS mode) */}
                 {(showDefaultsEditor || !buildWithDefaults) && mode === 'TARGET_DAYS' && (
                   <View style={styles.inputGroup}>
@@ -11558,30 +12086,8 @@ export default function PlanYearModal({
 
                 {/* Card 3: Planning Preferences — holidays/breaks summary-first, from settings vs added for this plan */}
                 {(showDefaultsEditor || !buildWithDefaults) && (
-                <View style={[styles.fieldSection, { marginTop: 8, marginBottom: 0 }]}>
-                  <Text style={[styles.fieldSectionLabel, { marginBottom: 0, fontSize: 12 }]}>
-                    {STRINGS.planMyYear?.sections?.breaks?.title ?? 'Planning Preferences'}
-                  </Text>
-                  <View style={{ marginBottom: 14, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: BORDER_SUBTLE }}>
-                    <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 6 }]}>Learning goals</Text>
-                    <View style={[styles.radioRow, { flexWrap: 'wrap', marginBottom: 12 }]}>
-                      <TouchableOpacity
-                        style={[styles.radioOption, targetScopeFromSettings === 'overall' && styles.radioOptionActive]}
-                        onPress={() => handlePlanningPrefsTargetScopeChange('overall')}
-                        activeOpacity={0.85}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={[styles.radioLabel, targetScopeFromSettings === 'overall' && styles.radioLabelActive]}>Overall</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.radioOption, targetScopeFromSettings === 'per_subject' && styles.radioOptionActive]}
-                        onPress={() => handlePlanningPrefsTargetScopeChange('per_subject')}
-                        activeOpacity={0.85}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={[styles.radioLabel, targetScopeFromSettings === 'per_subject' && styles.radioLabelActive]}>Per subject</Text>
-                      </TouchableOpacity>
-                    </View>
+                <View style={styles.fieldSection}>
+                  <View style={{ marginBottom: 0, paddingBottom: 0 }}>
                     {targetScopeFromSettings === 'overall' && (
                       <View>
                         <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 6 }]}>Target</Text>
@@ -11695,7 +12201,9 @@ export default function PlanYearModal({
                     )}
                     {targetScopeFromSettings === 'per_subject' && (
                       <View style={{ marginTop: 4 }}>
-                        <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 6 }]}>Subject targets</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 6 }}>
+                          <Text style={[styles.logisticsLabel, { fontSize: 12, marginBottom: 0 }]}>Subject targets</Text>
+                        </View>
                         {effectiveSubjectIds.length === 0 ? (
                           <Text style={[styles.mutedText, { fontSize: 12, lineHeight: 18 }]}>
                             Select one or more subjects to set targets per subject.
@@ -11704,13 +12212,10 @@ export default function PlanYearModal({
                           effectiveSubjectIds.map((subjectId) => {
                             const subj = baseSubjectList.find((s) => String(s.id) === String(subjectId));
                             const o = planSubjectTargetsOverride[subjectId];
-                            const rowMode =
-                              o?.mode ??
-                              (subj?.default_constraint_mode ||
-                                (subj?.default_target_days != null ? 'days' : subj?.default_target_hours != null ? 'hours' : 'none'));
-                            const daysStr = o?.days ?? (subj?.default_target_days != null ? String(subj.default_target_days) : '');
-                            const hoursStr = o?.hours ?? (subj?.default_target_hours != null ? String(subj.default_target_hours) : '');
-                            const name = subj?.name || 'Subject';
+                            const resolvedRow = resolveSubjectRowTarget(subj, o);
+                            const rowMode = resolvedRow.mode;
+                            const daysStr = resolvedRow.days;
+                            const hoursStr = resolvedRow.hours;
                             const setRow = (merged) => {
                               setPlanSubjectTargetsOverride((p) => ({ ...p, [subjectId]: merged }));
                               schedulePersistSubjectPlanningTarget(subjectId, merged);
@@ -11720,9 +12225,6 @@ export default function PlanYearModal({
                                 key={String(subjectId)}
                                 style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}
                               >
-                                <Text style={{ fontSize: 13, fontWeight: '600', color: FG, minWidth: 88 }} numberOfLines={1}>
-                                  {name}
-                                </Text>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                   <TouchableOpacity
                                     style={[styles.weekdayChipSmall, rowMode === 'none' && styles.weekdayChipSmallActive]}
@@ -11779,57 +12281,19 @@ export default function PlanYearModal({
                       </View>
                     )}
                   </View>
-                  <View style={[styles.settingRowInline, { flexDirection: 'row', alignItems: 'center', marginTop: 10, marginBottom: 10, flexWrap: 'wrap', gap: 10 }]}>
-                    <TouchableOpacity
-                      style={[styles.customToggleTrack, followGlobalHolidays && styles.customToggleTrackOn]}
-                      onPress={handleToggleFollowGlobalHolidays}
-                      activeOpacity={0.8}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <View style={[styles.customToggleThumb, followGlobalHolidays && styles.customToggleThumbOn]} />
-                    </TouchableOpacity>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <Text style={[styles.logisticsLabel, { marginBottom: 0, marginRight: 4, fontSize: 12 }]}>Follow </Text>
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (followGlobalHolidays) {
-                            setShowPublicHolidaysPicker(true);
-                            const start = startDate || new Date().toISOString().slice(0, 10);
-                            let end = endDate;
-                            if (!end) {
-                              const e = new Date(start);
-                              e.setFullYear(e.getFullYear() + 1);
-                              end = e.toISOString().slice(0, 10);
-                            }
-                            setPublicHolidaysLoading(true);
-                            getPublicHolidaysForRange(countryCode || 'US', start, end).then(({ data: res }) => {
-                              setPublicHolidaysList(res?.holidays || []);
-                              setPublicHolidaysLoading(false);
-                            });
-                          }
-                        }}
-                        activeOpacity={0.7}
-                        style={{ flexDirection: 'row', alignItems: 'center' }}
-                        {...(Platform.OS === 'web' && { cursor: followGlobalHolidays ? 'pointer' : 'default' })}
-                      >
-                        <Text style={[styles.logisticsLabel, { marginBottom: 0, fontSize: 12, color: followGlobalHolidays ? ACCENT : SUB, textDecorationLine: followGlobalHolidays ? 'underline' : 'none' }]}>U.S. public holidays</Text>
-                      </TouchableOpacity>
-                      <Text style={[styles.logisticsLabel, { marginBottom: 0, marginLeft: 4, fontSize: 12 }]}>?</Text>
-                    </View>
-                  </View>
                   {(exclusionsFromSettings.holidays.length + exclusionsFromSettings.breaks.length) > 0 && (
                     <View style={{ marginBottom: 12 }}>
-                      <Text style={[styles.logisticsLabel, { fontSize: 12, color: MUTED, marginBottom: 6 }]}>From Planning Preferences</Text>
+                      <Text style={[styles.logisticsLabel, { fontSize: 12, color: MUTED, marginBottom: 6 }]}>Custom breaks</Text>
                       {exclusionsFromSettings.holidays.map((h, i) => (
                         <View key={`s-h-${i}`} style={[styles.holidayItem, { backgroundColor: 'transparent' }]}>
-                          <Text style={[styles.holidayDate, { fontSize: 12 }]}>{h.date}</Text>
-                          <Text style={[styles.holidayName, { fontSize: 12 }]}>{h.name || 'Holiday'}</Text>
+                          <Text style={[styles.holidayDate, { fontSize: 13 }]}>{h.date}</Text>
+                          <Text style={[styles.holidayName, { fontSize: 13 }]}>{h.name || 'Holiday'}</Text>
                         </View>
                       ))}
                       {exclusionsFromSettings.breaks.map((b, i) => (
                         <View key={`s-b-${i}`} style={[styles.holidayItem, { backgroundColor: 'transparent' }]}>
-                          <Text style={[styles.holidayDate, { fontSize: 12 }]}>{b.start} – {b.end}</Text>
-                          <Text style={[styles.holidayName, { fontSize: 12 }]}>{b.name || 'Break'}</Text>
+                          <Text style={[styles.holidayDate, { fontSize: 13 }]}>{b.start} – {b.end}</Text>
+                          <Text style={[styles.holidayName, { fontSize: 13 }]}>{b.name || 'Break'}</Text>
                         </View>
                       ))}
                     </View>
@@ -11841,8 +12305,8 @@ export default function PlanYearModal({
                         const idx = customHolidays.findIndex((ch) => ch.date === (h.date || h.startDate) && (ch.name || '') === (h.name || ''));
                         return (
                           <View key={`p-h-${i}`} style={styles.holidayItem}>
-                            <Text style={[styles.holidayDate, { fontSize: 12 }]}>{h.date}</Text>
-                            <Text style={[styles.holidayName, { fontSize: 12 }]}>{h.name}</Text>
+                            <Text style={[styles.holidayDate, { fontSize: 13 }]}>{h.date}</Text>
+                            <Text style={[styles.holidayName, { fontSize: 13 }]}>{h.name}</Text>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                               <TouchableOpacity onPress={async () => { try { await addExclusion({ family_id: familyId, scope_type: 'family_default', exclusion_type: 'holiday', start_date: h.date, end_date: h.date, label: h.name || '' }); const { settings, exclusions } = await getPlanDefaultsFromSettings(familyId); setPlanningDefaultsData({ settings, exclusions: exclusions || [] }); toast?.push?.('Saved to Planning Preferences', 'success'); } catch (e) { toast?.push?.(e?.message || 'Failed to save', 'error'); } }} style={{ padding: 4 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                                 <Text style={{ fontSize: 12, color: ACCENT }}>Save to settings</Text>
@@ -11854,12 +12318,15 @@ export default function PlanYearModal({
                           </View>
                         );
                       })}
+                      {planOnlyExclusions.breaks.length > 0 ? (
+                        <Text style={[styles.logisticsLabel, { fontSize: 12, color: MUTED, marginBottom: 6 }]}>Custom breaks</Text>
+                      ) : null}
                       {planOnlyExclusions.breaks.map((b, i) => {
                         const idx = customBreaks.findIndex((cb) => (cb.start || cb.startDate) === b.start && (cb.end || cb.endDate) === b.end && (cb.name || '') === (b.name || ''));
                         return (
                           <View key={`p-b-${i}`} style={styles.holidayItem}>
-                            <Text style={[styles.holidayDate, { fontSize: 12 }]}>{b.start} – {b.end}</Text>
-                            <Text style={[styles.holidayName, { fontSize: 12 }]}>{b.name}</Text>
+                            <Text style={[styles.holidayDate, { fontSize: 13 }]}>{b.start} – {b.end}</Text>
+                            <Text style={[styles.holidayName, { fontSize: 13 }]}>{b.name}</Text>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                               <TouchableOpacity onPress={async () => { try { await addExclusion({ family_id: familyId, scope_type: 'family_default', exclusion_type: 'break', start_date: b.start, end_date: b.end, label: b.name || '' }); const { settings, exclusions } = await getPlanDefaultsFromSettings(familyId); setPlanningDefaultsData({ settings, exclusions: exclusions || [] }); toast?.push?.('Saved to Planning Preferences', 'success'); } catch (e) { toast?.push?.(e?.message || 'Failed to save', 'error'); } }} style={{ padding: 4 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                                 <Text style={{ fontSize: 12, color: ACCENT }}>Save to settings</Text>
@@ -11873,13 +12340,13 @@ export default function PlanYearModal({
                       })}
                     </View>
                   )}
-                  <TouchableOpacity onPress={() => setShowAddExclusionForm(!showAddExclusionForm)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, marginBottom: showAddExclusionForm ? 8 : 0, gap: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                  <TouchableOpacity onPress={() => setShowAddExclusionForm(!showAddExclusionForm)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 0, marginBottom: showAddExclusionForm ? 8 : 0, gap: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                     <Text style={[styles.logisticsLabel, { marginBottom: 0, fontSize: 12 }]}>Add custom breaks</Text>
                     {showAddExclusionForm ? <ChevronUp size={18} color={MUTED} /> : <ChevronDown size={18} color={MUTED} />}
                   </TouchableOpacity>
                   {showAddExclusionForm && (
-                    <View style={{ marginTop: 8 }}>
-                      <View style={[styles.inputGroup, { marginBottom: 10 }]}>
+                    <View style={{ marginTop: 4 }}>
+                      <View style={[styles.inputGroup, { marginBottom: 6 }]}>
                         <Text style={[styles.mutedText, { marginBottom: 6, fontSize: 12 }]}>Day</Text>
                         <View style={styles.holidayInputRow}>
                           <TouchableOpacity style={[styles.datePickerTrigger, { flex: 1, marginRight: 8 }]} onPress={() => { setNewHolidayDateCalendarMonth(newHolidayDate ? dateStringToDate(newHolidayDate) : new Date()); setShowNewHolidayDatePicker(true); }}>
@@ -11892,7 +12359,7 @@ export default function PlanYearModal({
                           </TouchableOpacity>
                         </View>
                       </View>
-                      <View style={[styles.inputGroup, { marginBottom: 0 }]}>
+                      <View style={[styles.inputGroup, { marginBottom: 0, marginTop: 0 }]}>
                         <Text style={[styles.mutedText, { marginBottom: 6, fontSize: 12 }]}>Range</Text>
                         <View style={styles.holidayInputRow}>
                           <TouchableOpacity style={[styles.datePickerTrigger, { flex: 1, marginRight: 6 }]} onPress={() => { setNewBreakStartCalendarMonth(newBreakStart ? dateStringToDate(newBreakStart) : new Date()); setShowNewBreakStartPicker(true); }}>
@@ -11911,6 +12378,8 @@ export default function PlanYearModal({
                       </View>
                     </View>
                   )}
+                </View>
+                )}
                 </View>
                 )}
 
@@ -12153,6 +12622,7 @@ export default function PlanYearModal({
                     </View>
                   )}
 
+                {!fromSubjectDetail ? (
                 <View style={[styles.inputGroup, { marginBottom: 0, marginTop: buildWithDefaults && !showDefaultsEditor ? 2 : 12 }]}>
                   <View style={styles.subjectsInlineRow}>
                     <Text style={[styles.logisticsLabel, { marginBottom: 0, marginTop: 6 }]}>Subjects</Text>
@@ -12295,32 +12765,20 @@ export default function PlanYearModal({
                     </View>
                   ) : null}
                 </View>
+                ) : null}
                 </View>
 
                 {/* Scheduled class days / cadence — show when subjects selected OR placeholder-only scope */}
                 {(effectiveSubjectIds.length > 0 || isPlaceholderOnlyScope) && (
-                  <View style={[styles.fieldSection, { marginTop: 0, marginBottom: 12 }]} onLayout={(e) => { scheduleSectionYRef.current = e.nativeEvent.layout.y; }}>
+                  <View style={styles.stepSection} onLayout={(e) => { scheduleSectionYRef.current = e.nativeEvent.layout.y; }}>
                       <View style={styles.scheduleBlocksInner}>
                       {PLAN_MY_YEAR_LOGISTICS_FIRST && (
-                        <Text
-                          style={{
-                            fontSize: 14,
-                            fontWeight: '700',
-                            letterSpacing: 0.6,
-                            color: TEXT_SECONDARY,
-                            textTransform: 'uppercase',
-                            marginBottom: 6,
-                            ...(Platform.OS === 'web' && {
-                              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                            }),
-                          }}
-                        >
+                        <Text style={styles.stepTitle}>
                           STEP 2 — WHEN ARE WE LEARNING?
                         </Text>
                       )}
+                      <View style={styles.stepContent}>
                       {blocks.map((block, idx) => {
-                      const subj = block.subject_id ? baseSubjectList.find((s) => s.id === block.subject_id) : null;
-                      const blockSubjectLabel = subj?.name ?? (block.placeholder_label || (STRINGS.planMyYear?.sections?.blocks?.genericSlotLabel ?? 'Learning block'));
                       const weekdays = block.weekdays || [];
                       const isHighlighted = highlightBlockIndex === idx;
                       const cadenceWeekdayHighlight = cadenceWeekdayHighlightIndices.includes(idx);
@@ -12341,9 +12799,9 @@ export default function PlanYearModal({
                             },
                           ]}
                         >
-                          <Text style={styles.blockRowSubject}>{blockSubjectLabel}</Text>
+                          <Text style={styles.blockRowSubject}>Learning Days</Text>
                           <View style={styles.blockRowLine}>
-                            <View style={styles.weekdayChipsRow}>
+                            <View style={styles.dayChipsRow}>
                               {WEEKDAY_NUMBERS.map((dayNum, dayIdx) => {
                                 const isActive = weekdays.includes(dayNum);
                                 return (
@@ -12363,8 +12821,8 @@ export default function PlanYearModal({
                               })}
                             </View>
                           {!block.all_day && (
-                            <View style={styles.blockTimeInline}>
-                              <View style={styles.blockTimeField}>
+                            <View style={styles.timeRow}>
+                              <View style={styles.timeFieldGroup}>
                                 <Text style={styles.blockTimeLabel}>Start</Text>
                                 <View style={styles.blockTimeInputWrap}>
                                   {Platform.OS === 'web' ? (
@@ -12383,7 +12841,7 @@ export default function PlanYearModal({
                                         fontSize: 14,
                                         color: FG,
                                         width: '100%',
-                                        maxWidth: 100,
+                                        maxWidth: 160,
                                         height: 44,
                                         outline: 'none',
                                         boxSizing: 'border-box',
@@ -12409,12 +12867,12 @@ export default function PlanYearModal({
                                         if (m > 59) m = 59;
                                         updateBlock(idx, { start_time: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` });
                                       }}
-                                      style={[styles.input, { width: 90, height: 44 }]}
+                                      style={[styles.input, styles.timeField, { height: 44 }]}
                                     />
                                   )}
                                 </View>
                               </View>
-                              <View style={styles.blockTimeField}>
+                              <View style={styles.timeFieldGroup}>
                                 <Text style={styles.blockTimeLabel}>End</Text>
                                 <View style={styles.blockTimeInputWrap}>
                                   {Platform.OS === 'web' ? (
@@ -12433,7 +12891,7 @@ export default function PlanYearModal({
                                         fontSize: 14,
                                         color: FG,
                                         width: '100%',
-                                        maxWidth: 100,
+                                        maxWidth: 160,
                                         height: 44,
                                         outline: 'none',
                                         boxSizing: 'border-box',
@@ -12459,7 +12917,7 @@ export default function PlanYearModal({
                                       if (m > 59) m = 59;
                                       updateBlock(idx, { end_time: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` });
                                     }}
-                                    style={[styles.input, { width: 90, height: 44 }]}
+                                    style={[styles.input, styles.timeField, { height: 44 }]}
                                   />
                                 )}
                                 </View>
@@ -12490,6 +12948,7 @@ export default function PlanYearModal({
                     {showPlanEditingModeBanner && academicYearId && blocks.length > 0 && cadenceDirty
                       ? renderApplyFromScopeCadenceInline()
                       : null}
+                      </View>
                     </View>
                     {isPlaceholderOnlyScope && (
                       <TouchableOpacity
@@ -12505,22 +12964,11 @@ export default function PlanYearModal({
                   </View>
                 )}
                 {PLAN_MY_YEAR_LOGISTICS_FIRST && (effectiveSubjectIds.length > 0 || isPlaceholderOnlyScope) && (
-                  <View style={[styles.fieldSection, { marginTop: 0, marginBottom: 12 }]}>
-                        <Text
-                          style={{
-                            fontSize: 14,
-                            fontWeight: '700',
-                            letterSpacing: 0.6,
-                            color: TEXT_SECONDARY,
-                            textTransform: 'uppercase',
-                            marginBottom: 6,
-                            ...(Platform.OS === 'web' && {
-                              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                            }),
-                          }}
-                        >
+                  <View style={styles.stepSection}>
+                        <Text style={styles.stepTitle}>
                           STEP 3 — WHAT ARE WE LEARNING? (OPTIONAL)
                         </Text>
+                        <View style={styles.stepContent}>
                         {step3CurriculumCards.map((card, idx) => {
                           const quickActions = [
                             { key: 'add', label: 'Add units', method: 'paste', icon: Plus },
@@ -12532,12 +12980,12 @@ export default function PlanYearModal({
                             <View
                               key={`step3-card-${card.subjectId}`}
                               style={[
-                                styles.step3SubjectCard,
+                                fromSubjectDetail ? styles.step3SubjectInline : styles.step3SubjectCard,
                                 idx === step3CurriculumCards.length - 1 && styles.step3SubjectCardNoDivider,
                               ]}
                             >
-                              <Text style={styles.step3SubjectTitle}>{card.label}</Text>
-                              <View style={styles.step3ActionRow}>
+                              {!fromSubjectDetail ? <Text style={styles.step3SubjectTitle}>{card.label}</Text> : null}
+                              <View style={styles.subjectActions}>
                                 {quickActions.map((action) => {
                                   const Icon = action.icon;
                                   return (
@@ -12602,6 +13050,7 @@ export default function PlanYearModal({
                             </Text>
                           </View>
                         )}
+                        </View>
                   </View>
                 )}
 
@@ -12662,23 +13111,12 @@ export default function PlanYearModal({
                 )}
 
                 {PLAN_MY_YEAR_LOGISTICS_FIRST && ENABLE_STEP4_PREVIEW_SUMMARY && (
-                  <View style={[styles.fieldSection, { marginTop: 0, marginBottom: 12 }]}>
-                    <View style={{ paddingHorizontal: 14, paddingVertical: 8 }}>
-                      <Text
-                        style={{
-                          fontSize: 14,
-                          fontWeight: '700',
-                          letterSpacing: 0.6,
-                          color: TEXT_SECONDARY,
-                          textTransform: 'uppercase',
-                          marginBottom: 6,
-                          ...(Platform.OS === 'web' && {
-                            fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                          }),
-                        }}
-                      >
+                  <View style={[styles.stepSection, styles.stepSectionLast]}>
+                    <View style={{ paddingVertical: 8 }}>
+                      <Text style={styles.stepTitle}>
                         STEP 4 — DOES THIS SCHEDULE MAKE SENSE?
                       </Text>
+                      <View style={[styles.stepContent, styles.summaryBox]}>
                       {cadenceYieldsInstructionalSlots ? (
                         <>
                           <View style={styles.previewSummaryCard}>
@@ -12814,6 +13252,7 @@ export default function PlanYearModal({
                           </Text>
                         </View>
                       )}
+                      </View>
                     </View>
                     {cadenceYieldsInstructionalSlots && hasAnySavedCurriculumUnits ? (
                       <LessonOverflowFollowUp
@@ -12831,37 +13270,13 @@ export default function PlanYearModal({
                 )}
               </View>
             )}
-            {PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'logistics' ? (
-              <View style={styles.previewCommitBar}>
-                <TouchableOpacity
-                  style={[
-                    styles.primaryButton,
-                    styles.planYearGenerateCtaFooter,
-                    { marginTop: 12 },
-                    (saving || loading) && styles.buttonDisabled,
-                  ]}
-                  onPress={handleApplyToCalendar}
-                  disabled={saving || loading}
-                  {...(Platform.OS === 'web' && {
-                    cursor: saving || loading ? 'wait' : 'pointer',
-                  })}
-                >
-                  {saving ? (
-                    <ActivityIndicator size="small" color={BG} />
-                  ) : (
-                    <Text style={[styles.primaryButtonText, styles.primaryButtonTextAllCaps]}>
-                      {academicYearId
-                        ? STRINGS.planMyYear.primaryActions.updateSlots
-                        : STRINGS.planMyYear.primaryActions.generateSlots}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            ) : null}
+            {/* Homeschool logistics CTA now lives in the modal footer for consistency. */}
           </ScrollView>
           {PLAN_MY_YEAR_LOGISTICS_FIRST &&
             planStep === 'unit_structure' &&
-            !inlineUnitStructureFromSubjectDetail && (
+            !inlineUnitStructureFromSubjectDetail &&
+            (() => {
+              const unitStructureOverlayModalEl = (
             <Modal
               animationType="fade"
               transparent
@@ -12910,6 +13325,19 @@ export default function PlanYearModal({
                   backgroundColor: 'rgba(15,23,42,0.5)',
                   justifyContent: 'center',
                   padding: Platform.OS === 'web' ? 24 : 12,
+                  ...(Platform.OS === 'web'
+                    ? {
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        zIndex: 2147483647,
+                      }
+                    : {
+                        zIndex: 2147483647,
+                        elevation: 2147483647,
+                      }),
                 }}
               >
                 <View
@@ -12923,6 +13351,8 @@ export default function PlanYearModal({
                     overflow: 'hidden',
                     flex: Platform.OS === 'web' ? undefined : 1,
                     position: 'relative',
+                    zIndex: 2147483647,
+                    ...(Platform.OS !== 'web' && { elevation: 2147483647 }),
                     ...(Platform.OS === 'web' ? { boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' } : {}),
                   }}
                 >
@@ -13385,7 +13815,19 @@ export default function PlanYearModal({
                 </View>
               </View>
             </Modal>
-          )}
+              );
+              if (Platform.OS !== 'web') return unitStructureOverlayModalEl;
+              let ReactDOM;
+              try {
+                ReactDOM = require('react-dom');
+              } catch (_) {
+                return unitStructureOverlayModalEl;
+              }
+              if (!ReactDOM?.createPortal || typeof document === 'undefined' || !document.body) {
+                return unitStructureOverlayModalEl;
+              }
+              return ReactDOM.createPortal(unitStructureOverlayModalEl, document.body);
+            })()}
             </>
           )}
 
@@ -13691,7 +14133,9 @@ export default function PlanYearModal({
           )}
 
           {/* U.S. public holidays picker: choose which holidays to include */}
-          {showPublicHolidaysPicker && (
+          {Platform.OS === 'web' ? (
+            renderPublicHolidaysPickerPortal()
+          ) : showPublicHolidaysPicker ? (
             <Modal animationType="fade" transparent visible={showPublicHolidaysPicker} onRequestClose={() => setShowPublicHolidaysPicker(false)}>
               <TouchableOpacity style={styles.calendarOverlay} activeOpacity={1} onPress={() => setShowPublicHolidaysPicker(false)}>
                 <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={[styles.calendarModal, { maxWidth: 420, maxHeight: '80%' }]}>
@@ -13702,12 +14146,8 @@ export default function PlanYearModal({
                     </TouchableOpacity>
                   </View>
                   <Text style={[styles.mutedText, { marginBottom: 12 }]}>Uncheck any holiday you don't want to include (they will be treated as regular instructional days).</Text>
-                  {publicHolidaysLoading ? (
-                    <View style={{ padding: 24, alignItems: 'center' }}>
-                      <ActivityIndicator size="small" color={ACCENT} />
-                    </View>
-                  ) : (
-                    <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator>
+                  <View style={styles.publicHolidaysListContainer}>
+                    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator>
                       {publicHolidaysList.map((h) => {
                         const dateStr = (h.date || '').slice(0, 10);
                         const isIncluded = !excludedPublicHolidayDates.includes(dateStr);
@@ -13740,7 +14180,7 @@ export default function PlanYearModal({
                         <Text style={[styles.mutedText, { padding: 16 }]}>No holidays in this date range. Extend range or add custom holiday.</Text>
                       )}
                     </ScrollView>
-                  )}
+                  </View>
                   <TouchableOpacity
                     onPress={() => setShowPublicHolidaysPicker(false)}
                     style={[styles.primaryButton, { marginTop: 16 }]}
@@ -13751,7 +14191,7 @@ export default function PlanYearModal({
                 </TouchableOpacity>
               </TouchableOpacity>
             </Modal>
-          )}
+          ) : null}
 
           {/* Custom Break Start Date Calendar Picker */}
           {showNewBreakStartPicker && (
@@ -13852,9 +14292,15 @@ export default function PlanYearModal({
           {/* Footer - Build Curriculum style: Cancel + rounded primary, no icons. Hidden on entry choice and when showing plan summary. */}
           {!showEntryChoice &&
             !planSummaryYearId &&
-            !(PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'unit_structure' && !inlineUnitStructureFromSubjectDetail) &&
-            !(PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'logistics' && isHomeschool) && (
-          <View style={[styles.footer, pickerOnly && styles.pickerFooter]}>
+            !(PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'unit_structure' && !inlineUnitStructureFromSubjectDetail) && (
+          <View
+            style={[
+              styles.footer,
+              pickerOnly && styles.pickerFooter,
+              isSubjectDetailAddUnitsMode && styles.footerRightAlignedActions,
+              isSubjectDetailAddUnitsMode && styles.footerNoDivider,
+            ]}
+          >
             {planStep === 'preview' ? (
               <View style={{ width: '100%' }}>
                 {cadenceDirty ? renderApplyFromScopeCard() : null}
@@ -13896,17 +14342,45 @@ export default function PlanYearModal({
                   >
                     {saving ? (
                       <ActivityIndicator size="small" color={BG} />
-                    ) : (
-                      <Text style={[styles.primaryButtonText, styles.primaryButtonTextAllCaps]}>
-                        {academicYearId
-                          ? STRINGS.planMyYear.primaryActions.updateSlots
-                          : STRINGS.planMyYear.primaryActions.generateSlots}
-                      </Text>
+                    ) : renderFooterPrimaryLabel(
+                      academicYearId
+                        ? STRINGS.planMyYear.primaryActions.updateSlots
+                        : 'Add plan'
                     )}
                   </TouchableOpacity>
                   <View style={styles.planYearPreviewFooterSide} />
                 </View>
               </View>
+            ) : PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'logistics' && isHomeschool ? (
+              <>
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={styles.cancelButton}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.cancelText}>{STRINGS.global.actions.cancel}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.primaryButton,
+                    styles.planYearGenerateCtaFooter,
+                    (saving || loading) && styles.buttonDisabled,
+                  ]}
+                  onPress={handleApplyToCalendar}
+                  disabled={saving || loading}
+                  {...(Platform.OS === 'web' && {
+                    cursor: saving || loading ? 'wait' : 'pointer',
+                  })}
+                >
+                  {saving ? (
+                    <ActivityIndicator size="small" color={BG} />
+                  ) : renderFooterPrimaryLabel(
+                    academicYearId
+                      ? STRINGS.planMyYear.primaryActions.updateSlots
+                      : 'Add plan'
+                  )}
+                </TouchableOpacity>
+              </>
             ) : pickerOnly ? (
               <>
                 <TouchableOpacity onPress={onClose} style={styles.cancelButton}>
@@ -13933,11 +14407,9 @@ export default function PlanYearModal({
                     }
                   }}
                   style={styles.cancelButton}
-                  onMouseEnter={Platform.OS === 'web' ? () => setFooterCancelHover(true) : undefined}
-                  onMouseLeave={Platform.OS === 'web' ? () => setFooterCancelHover(false) : undefined}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={[styles.cancelText, footerCancelHover && Platform.OS === 'web' && { textDecorationLine: 'underline' }]}>
+                  <Text style={styles.cancelText}>
                     {PLAN_MY_YEAR_LOGISTICS_FIRST ? 'Back' : STRINGS.global.actions.cancel}
                   </Text>
                 </TouchableOpacity>
@@ -13953,7 +14425,7 @@ export default function PlanYearModal({
                   }}
                   disabled={planSource === 'placeholders' || (planSource === 'link' && !sourceUrl.trim())}
                 >
-                  <Text style={styles.primaryButtonText}>Next</Text>
+                  {renderFooterPrimaryLabel('Next')}
                 </TouchableOpacity>
               </>
             ) : planStep === 'unit_structure' &&
@@ -13994,17 +14466,29 @@ export default function PlanYearModal({
                       setPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST ? PLAN_STEP_KEYS.LOGISTICS : 'source');
                     }
                   }}
-                  style={styles.cancelButton}
-                  onMouseEnter={Platform.OS === 'web' ? () => setFooterCancelHover(true) : undefined}
-                  onMouseLeave={Platform.OS === 'web' ? () => setFooterCancelHover(false) : undefined}
+                  style={[
+                    styles.cancelButton,
+                    isSubjectDetailAddUnitsMode && styles.footerSecondaryActionButton,
+                  ]}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={[styles.cancelText, footerCancelHover && Platform.OS === 'web' && { textDecorationLine: 'underline' }]}>
+                  <Text
+                    style={[
+                      styles.cancelText,
+                      isSubjectDetailAddUnitsMode && styles.footerSecondaryActionText,
+                    ]}
+                  >
                     {s('global.actions.cancel')}
                   </Text>
                 </TouchableOpacity>
                 {(draftData || manualDraft) ? (
-                  <View style={{ alignItems: 'stretch', flex: 1, minWidth: 0 }}>
+                  <View
+                    style={
+                      isSubjectDetailAddUnitsMode
+                        ? styles.footerPrimaryActionWrapCompact
+                        : { alignItems: 'stretch', flex: 1, minWidth: 0 }
+                    }
+                  >
                   <TouchableOpacity
                     onPress={async () => {
                       const availableSubjectId = unitPipelineSubjectId;
@@ -14124,9 +14608,14 @@ export default function PlanYearModal({
                     }}
                     style={[
                       styles.primaryButton,
+                      isSubjectDetailAddUnitsMode && styles.footerPrimaryActionButton,
                       (unitStructureStep === 'saving' ||
                         (manualDraft && getManualCommitValidationError(manualDraft))) &&
                         styles.primaryButtonDisabled,
+                      (unitStructureStep === 'saving' ||
+                        (manualDraft && getManualCommitValidationError(manualDraft))) &&
+                        isSubjectDetailAddUnitsMode &&
+                        styles.footerPrimaryActionButtonDisabled,
                     ]}
                     disabled={
                       unitStructureStep === 'saving' ||
@@ -14145,12 +14634,15 @@ export default function PlanYearModal({
                         <ActivityIndicator size="small" color={BG} style={{ marginRight: 8 }} />
                         <Text style={styles.primaryButtonText}>{s('global.status.saving')}</Text>
                       </>
-                    ) : (
-                      <Text style={styles.primaryButtonText}>
-                        {manualDraft && hasPersistedManualCurriculum
-                          ? unitStructureSaveManualChangesLabel
-                          : unitStructureSaveDraftLabel}
-                      </Text>
+                    ) : isSubjectDetailAddUnitsMode ? (
+                      <View style={styles.footerPrimaryActionInner}>
+                        <Save size={16} color="#FFFFFF" strokeWidth={2.2} />
+                        <Text style={styles.footerPrimaryActionText}>Save</Text>
+                      </View>
+                    ) : renderFooterPrimaryLabel(
+                      manualDraft && hasPersistedManualCurriculum
+                        ? unitStructureSaveManualChangesLabel
+                        : unitStructureSaveDraftLabel
                     )}
                   </TouchableOpacity>
                   </View>
@@ -14169,7 +14661,7 @@ export default function PlanYearModal({
                     >
                       <Text style={{ fontSize: 15, fontWeight: '600', color: SUB }}>
                         {returnToSubjectModalAfterUnitSave
-                          ? 'Back to Add Subject'
+                          ? 'Done'
                           : t('planMyYear.multiSubjectUnits.savedManualCurriculumFooterBackToBuilder')}
                       </Text>
                     </TouchableOpacity>
@@ -14216,11 +14708,7 @@ export default function PlanYearModal({
                           {t('planMyYear.multiSubjectUnits.generateAndPreviewLoading')}
                         </Text>
                       </>
-                    ) : (
-                      <Text style={styles.primaryButtonText}>
-                        {t('planMyYear.multiSubjectUnits.generateAndPreview')}
-                      </Text>
-                    )}
+                    ) : renderFooterPrimaryLabel(t('planMyYear.multiSubjectUnits.generateAndPreview'))}
                   </TouchableOpacity>
                 ) : showUploadMaterialPreviewFooter ? (
                   <TouchableOpacity
@@ -14241,11 +14729,7 @@ export default function PlanYearModal({
                           {t('planMyYear.multiSubjectUnits.importPreviewStructureLoading')}
                         </Text>
                       </>
-                    ) : (
-                      <Text style={styles.primaryButtonText}>
-                        {t('planMyYear.multiSubjectUnits.importPreviewStructure')}
-                      </Text>
-                    )}
+                    ) : renderFooterPrimaryLabel(t('planMyYear.multiSubjectUnits.importPreviewStructure'))}
                   </TouchableOpacity>
                 ) : hideFooterSkipForPasteImportInput ? null : (
                   <TouchableOpacity
@@ -14253,9 +14737,7 @@ export default function PlanYearModal({
                     style={styles.primaryButton}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Text style={styles.primaryButtonText}>
-                      {unitStructureSkipDraftLabel}
-                    </Text>
+                    {renderFooterPrimaryLabel(unitStructureSkipDraftLabel)}
                   </TouchableOpacity>
                 )}
               </>
@@ -14295,9 +14777,7 @@ export default function PlanYearModal({
                 >
                   {loading ? (
                     <ActivityIndicator size="small" color={BG} />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>{STRINGS.buildCurriculum?.actions?.createUnitAndSchedule ?? 'Create unit & schedule'}</Text>
-                  )}
+                  ) : renderFooterPrimaryLabel(STRINGS.buildCurriculum?.actions?.createUnitAndSchedule ?? 'Create unit & schedule')}
                 </TouchableOpacity>
               ) : PLAN_MY_YEAR_LOGISTICS_FIRST ? (
                 <TouchableOpacity
@@ -14306,7 +14786,7 @@ export default function PlanYearModal({
                   disabled={!preconditionsMet}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={styles.primaryButtonText}>{t('planMyYear.multiSubjectUnits.nextContinueToReview')}</Text>
+                  {renderFooterPrimaryLabel(t('planMyYear.multiSubjectUnits.nextContinueToReview'))}
                 </TouchableOpacity>
               ) : (
             <TouchableOpacity
@@ -14317,7 +14797,7 @@ export default function PlanYearModal({
                 onPress={() => setPlanStep('preview')}
                 disabled={saving || loading || !preconditionsMet || !feasible}
               >
-                <Text style={styles.primaryButtonText}>Preview selected days/times</Text>
+                {renderFooterPrimaryLabel('Preview selected days/times')}
               </TouchableOpacity>
               )
             ) : PLAN_MY_YEAR_LOGISTICS_FIRST ? (
@@ -14327,7 +14807,7 @@ export default function PlanYearModal({
                 disabled={!preconditionsMet}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Text style={styles.primaryButtonText}>{t('planMyYear.multiSubjectUnits.nextContinueToReview')}</Text>
+                {renderFooterPrimaryLabel(t('planMyYear.multiSubjectUnits.nextContinueToReview'))}
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
@@ -14337,9 +14817,7 @@ export default function PlanYearModal({
             >
               {saving ? (
                 <ActivityIndicator size="small" color={BG} />
-              ) : (
-                  <Text style={styles.primaryButtonText}>Save</Text>
-              )}
+              ) : renderFooterPrimaryLabel('Save')}
             </TouchableOpacity>
             )}
               </>
@@ -14370,10 +14848,27 @@ export default function PlanYearModal({
     />
   ) : null;
 
+  const renderUploadAddMaterialModalPortal = () => {
+    if (Platform.OS !== 'web' || !showAddMaterialForUpload || !uploadAddMaterialModalEl) {
+      return uploadAddMaterialModalEl;
+    }
+    let ReactDOM;
+    try {
+      ReactDOM = require('react-dom');
+    } catch (_) {
+      return uploadAddMaterialModalEl;
+    }
+    if (!ReactDOM?.createPortal || typeof document === 'undefined' || !document.body) {
+      return uploadAddMaterialModalEl;
+    }
+    return ReactDOM.createPortal(uploadAddMaterialModalEl, document.body);
+  };
+
   if (renderInline) {
     return (
       <View style={{ flex: 1, minHeight: 0, width: '100%', minWidth: 0 }}>
         {modalContent}
+      {renderPlanningScopeDropdownPortals()}
       {renderPlanListContextMenuPortal()}
       <ConfirmDialog
         visible={showDeletePlanConfirm}
@@ -14425,7 +14920,7 @@ export default function PlanYearModal({
         }}
         onCancel={() => setShowDeletePlanConfirm(false)}
       />
-      {uploadAddMaterialModalEl}
+      {renderUploadAddMaterialModalPortal()}
       </View>
     );
   }
@@ -14435,6 +14930,7 @@ export default function PlanYearModal({
       <TouchableOpacity ref={overlayRef} style={styles.overlay} activeOpacity={1} onPress={onClose}>
         {modalContent}
       </TouchableOpacity>
+      {renderPlanningScopeDropdownPortals()}
       {renderPlanListContextMenuPortal()}
       <ConfirmDialog
         visible={showDeletePlanConfirm}
@@ -14486,7 +14982,7 @@ export default function PlanYearModal({
         }}
         onCancel={() => setShowDeletePlanConfirm(false)}
       />
-      {uploadAddMaterialModalEl}
+      {renderUploadAddMaterialModalPortal()}
     </Modal>
   );
 }
@@ -15072,10 +15568,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   modal: {
-    width: Platform.OS === 'web' ? 760 : '100%',
-    maxWidth: '100%',
-    width: 760,
-    maxWidth: '100%',
+    width: '100%',
+    maxWidth: 860,
     maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
     backgroundColor: BG,
     borderRadius: 24,
@@ -15113,11 +15607,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 28,
-    paddingVertical: 16,
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: BORDER_SUBTLE,
-    backgroundColor: SURFACE_ELEVATED,
+    borderBottomColor: '#EEF0F5',
+    backgroundColor: '#F0FDF4',
+  },
+  modalHeaderMinimal: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 36,
+    paddingTop: 36,
+    paddingBottom: 16,
+    borderBottomWidth: 0,
+    backgroundColor: '#FFFFFF',
+  },
+  modalHeaderMinimalTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+    marginTop: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   modalHeaderLeft: { flex: 1, minWidth: 0 },
   modalHeaderTitleRow: {
@@ -15125,21 +15639,63 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
+  modalHeaderBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginBottom: 8,
+    backgroundColor: '#FFFFFFC9',
+  },
+  modalHeaderEyebrow: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    color: '#10B981',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  modalHeaderRight: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'flex-start',
+  },
+  modalHeaderHeroIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ECFDF5',
+  },
   modalHeaderIconWrap: {
     marginRight: 2,
   },
   modalHeaderTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: FG,
-    marginBottom: 2,
+    fontSize: 34,
+    lineHeight: 38,
+    fontWeight: '800',
+    color: '#1E2A3A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   modalHeaderMeta: {
     fontSize: 14,
     color: TEXT_SECONDARY,
     lineHeight: 20,
   },
-  closeButtonHeader: { padding: 6, marginRight: -6 },
+  closeButtonHeader: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E5EAF1',
+    backgroundColor: '#ffffff',
+  },
   breadcrumbRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -15257,9 +15813,15 @@ const styles = StyleSheet.create({
   },
   /** Match planner AttendanceView inner inset (attendance/constants TOKENS.contentPadX / contentPadY + bottom breathing room). */
   contentContainer: {
-    paddingHorizontal: 32,
+    paddingHorizontal: 40,
+    paddingTop: 28,
+    paddingBottom: 28,
+  },
+  modalBody: {
+    paddingHorizontal: 48,
     paddingTop: 24,
-    paddingBottom: 48,
+    paddingBottom: 24,
+    gap: 0,
   },
   /** Logistics-first unit overlay: align summary row with top-right close control (FAB top 14, h 40). */
   contentContainerUnitStructureOverlay: {
@@ -15528,14 +16090,45 @@ const styles = StyleSheet.create({
     flex: 1,
     marginBottom: 0,
   },
-  /** Step container: outlined card with transparent/white fill. */
+  /** Step container: flattened to match modal body (no outlined card). */
   fieldSection: {
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    backgroundColor: '#ffffff',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderRadius: 0,
+    padding: 0,
+    marginBottom: 0,
+    backgroundColor: 'transparent',
+  },
+  stepSection: {
+    marginBottom: 24,
+  },
+  stepSectionLast: {
+    marginBottom: 0,
+  },
+  stepTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  stepContent: {
+    marginTop: 12,
+    gap: 12,
+  },
+  defaultsFieldsStack: {
+    marginTop: 12,
+    gap: 12,
+  },
+  row: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  halfField: {
+    flex: 1,
   },
   fieldSectionLabel: {
     fontSize: 12,
@@ -15614,6 +16207,46 @@ const styles = StyleSheet.create({
     borderColor: BORDER_SUBTLE,
     marginTop: 8,
     marginBottom: 4,
+  },
+  dateRangeWithHolidayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 16,
+    marginTop: 8,
+  },
+  dateRangeCardNarrow: {
+    flex: 1,
+    minWidth: 420,
+    maxWidth: 760,
+    height: 52,
+    minHeight: 52,
+    justifyContent: 'center',
+    paddingVertical: 8,
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  followHolidaysInlineRow: {
+    marginTop: 0,
+    marginBottom: 0,
+    paddingVertical: 0,
+    gap: 10,
+  },
+  followHolidaysCard: {
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    borderRadius: 16,
+    height: 52,
+    minHeight: 52,
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  publicHolidaysListContainer: {
+    position: 'relative',
+    height: 320,
+    maxHeight: 320,
   },
   dateRangeRow: {
     flexDirection: 'row',
@@ -15927,8 +16560,8 @@ const styles = StyleSheet.create({
   blockRowLine: {
     flexDirection: 'column',
     alignItems: 'flex-start',
-    gap: 10,
-    marginTop: 10,
+    gap: 12,
+    marginTop: 12,
   },
   blockTimeInline: {
     flexDirection: 'row',
@@ -15961,6 +16594,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
+  },
+  learningDaysRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginTop: 2,
+  },
+  dayChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   weekdayChipSmall: {
     paddingVertical: 8,
@@ -15999,6 +16643,17 @@ const styles = StyleSheet.create({
     flex: 1,
     maxWidth: 100,
     minWidth: 90,
+  },
+  timeRow: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 0,
+  },
+  timeFieldGroup: {
+    gap: 6,
+  },
+  timeField: {
+    width: 160,
   },
   blockTimeLabel: {
     color: SUB,
@@ -16282,15 +16937,16 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   planningModeHeaderRow: {
-    marginTop: 10,
+    marginTop: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 16,
     flexWrap: 'wrap',
   },
   planningModeHeaderCell: {
-    minWidth: 170,
+    minWidth: 0,
     flexGrow: 1,
+    flex: 1,
   },
   planningModeHeaderTrigger: {
     minHeight: 40,
@@ -16306,7 +16962,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   planningModeHeaderTriggerWide: {
-    minWidth: 200,
+    minWidth: 0,
   },
   planningModeHeaderTriggerText: {
     fontSize: 13,
@@ -16317,12 +16973,15 @@ const styles = StyleSheet.create({
     }),
   },
   planningModeCard: {
-    marginTop: 12,
+    marginTop: 0,
   },
   planningModeToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  checkboxRow: {
+    marginTop: 4,
   },
   planningModeCheckbox: {
     width: 18,
@@ -16379,13 +17038,13 @@ const styles = StyleSheet.create({
   },
   planningModeExpandedDefaults: {
     marginTop: 10,
-    marginLeft: 26,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: BORDER_SUBTLE,
-    borderRadius: 10,
-    backgroundColor: '#ffffff',
+    marginLeft: 0,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderRadius: 0,
+    backgroundColor: 'transparent',
   },
   step2InlineConflictCard: {
     marginTop: 8,
@@ -16405,9 +17064,18 @@ const styles = StyleSheet.create({
     }),
   },
   step3SubjectCard: {
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER_SUBTLE,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E3EAF3',
+    borderRadius: 18,
+    padding: 16,
+  },
+  step3SubjectInline: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderRadius: 0,
+    padding: 0,
   },
   step3SubjectCardNoDivider: {
     borderBottomWidth: 0,
@@ -16424,7 +17092,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 10,
+  },
+  subjectActions: {
+    flexDirection: 'row',
+    gap: 10,
+    flexWrap: 'wrap',
+    marginTop: 8,
   },
   step3ActionPill: {
     borderWidth: 1,
@@ -16637,37 +17311,92 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 28,
-    paddingVertical: 12,
+    paddingHorizontal: 40,
+    paddingVertical: 20,
     gap: 12,
     backgroundColor: BG,
     borderTopWidth: 1,
-    borderTopColor: BORDER_SUBTLE,
+    borderTopColor: '#E8EDF4',
+  },
+  footerRightAlignedActions: {
+    justifyContent: 'flex-end',
+  },
+  footerNoDivider: {
+    borderTopWidth: 0,
+  },
+  summarySection: {
+    gap: 10,
+    marginTop: 0,
+  },
+  summaryBox: {
+    marginTop: 8,
   },
   cancelButton: {
     paddingVertical: 6,
     paddingHorizontal: 12,
   },
   cancelText: {
-    color: TEXT_SECONDARY,
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#4A556B',
     ...(Platform.OS === 'web' && {
       textDecorationLine: 'none',
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  footerSecondaryActionButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+  },
+  footerSecondaryActionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  footerPrimaryActionWrapCompact: {
+    alignItems: 'stretch',
+    minWidth: 0,
+  },
+  footerPrimaryActionButton: {
+    minHeight: 46,
+    borderRadius: 10,
+    backgroundColor: EVENT_DETAILS_PRIMARY_BG,
+    paddingHorizontal: 22,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 12px rgba(133,196,242,0.45)',
+    }),
+  },
+  footerPrimaryActionButtonDisabled: {
+    ...(Platform.OS === 'web' && { boxShadow: 'none' }),
+  },
+  footerPrimaryActionInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  footerPrimaryActionText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   primaryButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 24,
-    minHeight: 40,
-    borderRadius: 10,
+    minHeight: 50,
+    paddingHorizontal: 18,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
     alignSelf: 'flex-end',
-    backgroundColor: PRIMARY_BTN,
+    backgroundColor: '#10B981',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 12px rgba(133, 196, 242, 0.35)',
+      boxShadow: '0 2px 6px rgba(16,185,129,0.28)',
       cursor: 'pointer',
     }),
     ...(Platform.OS !== 'web' && { elevation: 2 }),
@@ -16679,7 +17408,20 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '800',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  footerPrimaryInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  footerPrimaryText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

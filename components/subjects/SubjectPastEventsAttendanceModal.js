@@ -603,11 +603,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.5)',
     justifyContent: 'center',
     padding: 20,
-    ...(Platform.OS === 'web'
-      ? {
-          backdropFilter: 'blur(4px)',
-        }
-      : {}),
   },
   overlayBackdrop: {
     ...StyleSheet.absoluteFillObject,

@@ -8,7 +8,7 @@ import { getMaterials } from '../lib/services/materialsClient';
 import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { parseChildIds } from '../lib/services/subjectsClient';
-import { getFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
+import { getFamilyPlannerSettings, saveFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
 import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import ConfirmDialog from './ConfirmDialog';
@@ -51,6 +51,16 @@ function getSchoolYearOptions() {
   return options;
 }
 const SCHOOL_YEAR_OPTIONS = getSchoolYearOptions();
+
+const parsePositiveIntOrNull = (value) => {
+  const n = parseInt(String(value ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+const parsePositiveFloatOrNull = (value) => {
+  const n = parseFloat(String(value ?? '').trim());
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
 
 // Default: before May = current year/next (e.g. 2025/26), May or later = next year (e.g. 2026/27)
 function getDefaultSchoolYear() {
@@ -252,16 +262,34 @@ export default function AddSubjectModal({
   useEffect(() => {
     if (!visible || !familyId) return;
     let cancelled = false;
-    getFamilyPlannerSettings(familyId).then(({ data: s }) => {
+    getFamilyPlannerSettings(familyId).then(async ({ data: s }) => {
       if (cancelled) return;
       if (!s) {
         setFamilyPlannerContext({ targetScope: 'overall', mode: 'none', days: '', hours: '' });
         return;
       }
-      const scope = s.target_scope || 'overall';
-      const mode = s.default_constraint_mode || (s.default_target_days != null ? 'days' : s.default_target_hours != null ? 'hours' : 'none');
-      const days = s.default_target_days != null ? String(s.default_target_days) : '';
-      const hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
+      let scope = s.target_scope || 'overall';
+      let mode = s.default_constraint_mode || 'none';
+      let days = s.default_target_days != null ? String(s.default_target_days) : '';
+      let hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
+      if (scope !== 'per_subject') {
+        const { data: subjectRows } = await supabase
+          .from('subject')
+          .select('default_constraint_mode, default_target_days, default_target_hours')
+          .eq('family_id', familyId)
+          .order('updated_at', { ascending: false });
+        const firstActive = (subjectRows || []).find((row) => {
+          const m = String(row?.default_constraint_mode || '').toLowerCase();
+          return (m === 'days' && parsePositiveIntOrNull(row?.default_target_days) != null) ||
+            (m === 'hours' && parsePositiveFloatOrNull(row?.default_target_hours) != null);
+        });
+        if (firstActive) {
+          scope = 'per_subject';
+          mode = String(firstActive.default_constraint_mode).toLowerCase();
+          days = mode === 'days' ? String(parsePositiveIntOrNull(firstActive.default_target_days) || '') : '';
+          hours = mode === 'hours' ? String(parsePositiveFloatOrNull(firstActive.default_target_hours) || '') : '';
+        }
+      }
       setFamilyPlannerContext({ targetScope: scope, mode, days, hours });
     });
     return () => { cancelled = true; };
@@ -272,12 +300,28 @@ export default function AddSubjectModal({
     if (!familyId) return;
     const { data: s } = await getFamilyPlannerSettings(familyId);
     if (s) {
-      const scope = s.target_scope || 'overall';
-      const mode =
-        s.default_constraint_mode ||
-        (s.default_target_days != null ? 'days' : s.default_target_hours != null ? 'hours' : 'none');
-      const days = s.default_target_days != null ? String(s.default_target_days) : '';
-      const hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
+      let scope = s.target_scope || 'overall';
+      let mode = s.default_constraint_mode || 'none';
+      let days = s.default_target_days != null ? String(s.default_target_days) : '';
+      let hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
+      if (scope !== 'per_subject') {
+        const { data: subjectRows } = await supabase
+          .from('subject')
+          .select('default_constraint_mode, default_target_days, default_target_hours')
+          .eq('family_id', familyId)
+          .order('updated_at', { ascending: false });
+        const firstActive = (subjectRows || []).find((row) => {
+          const m = String(row?.default_constraint_mode || '').toLowerCase();
+          return (m === 'days' && parsePositiveIntOrNull(row?.default_target_days) != null) ||
+            (m === 'hours' && parsePositiveFloatOrNull(row?.default_target_hours) != null);
+        });
+        if (firstActive) {
+          scope = 'per_subject';
+          mode = String(firstActive.default_constraint_mode).toLowerCase();
+          days = mode === 'days' ? String(parsePositiveIntOrNull(firstActive.default_target_days) || '') : '';
+          hours = mode === 'hours' ? String(parsePositiveFloatOrNull(firstActive.default_target_hours) || '') : '';
+        }
+      }
       setFamilyPlannerContext({ targetScope: scope, mode, days, hours });
     } else {
       setFamilyPlannerContext({ targetScope: 'overall', mode: 'none', days: '', hours: '' });
@@ -1036,6 +1080,17 @@ export default function AddSubjectModal({
         } catch (materialError) {
           console.warn('Error linking materials to subject:', materialError);
         }
+      }
+
+      if (familyId && goalModeForSubject === 'per_subject' && (targetMode === 'days' || targetMode === 'hours')) {
+        const daysValue = targetMode === 'days' ? parsePositiveIntOrNull(defaultTargetDays) : null;
+        const hoursValue = targetMode === 'hours' ? parsePositiveFloatOrNull(defaultTargetHours) : null;
+        await saveFamilyPlannerSettings(familyId, {
+          target_scope: 'per_subject',
+          default_constraint_mode: targetMode,
+          default_target_days: targetMode === 'days' ? daysValue : null,
+          default_target_hours: targetMode === 'hours' ? hoursValue : null,
+        });
       }
 
       // Success

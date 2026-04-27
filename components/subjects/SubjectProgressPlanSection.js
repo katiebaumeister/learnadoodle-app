@@ -22,6 +22,7 @@ import {
 import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import { clearPlaceholders, getEventForPlanSlot } from '../../lib/services/academicYearClient';
 import { deleteEvent as deletePlannerEventSoft } from '../../lib/services/plannerClientWithOffline';
+import { supabase } from '../../lib/supabase';
 import { dropPlanYearFullDataCacheEntry } from '../../lib/planEditListCache';
 import {
   getSubjectProgressCache,
@@ -132,6 +133,10 @@ export default function SubjectProgressPlanSection({
       .filter(Boolean);
     return formatSubjectPlanHeading(names, subjectName);
   }, [children, assignedChildIds, subjectName]);
+  const upcomingEventsHeading = useMemo(
+    () => `Upcoming ${subjectName || 'Subject'} events`,
+    [subjectName]
+  );
 
   const loadPlan = useCallback(async (opts = {}) => {
     const silent = opts.silent === true;
@@ -313,7 +318,12 @@ export default function SubjectProgressPlanSection({
     return () => window.removeEventListener('subjectProgressPlanCacheUpdated', h);
   }, [familyId, subjectId]);
 
-  const hasPlan = !!academicYearId && !!planData?.plan?.blocks?.some((b) => String(b.subject_id) === String(subjectId));
+  const hasPlan =
+    !!academicYearId &&
+    (
+      !!planData?.plan?.blocks?.some((b) => String(b.subject_id) === String(subjectId)) ||
+      slotLines.length > 0
+    );
   const hasUnits = curriculumUnits.length > 0;
 
   const onPlanContextRef = useRef(onPlanContext);
@@ -449,20 +459,53 @@ export default function SubjectProgressPlanSection({
     });
   }, [subjectId]);
 
-  const openEditPlanModal = useCallback(() => {
-    if (academicYearId) {
+  const openEditPlanModal = useCallback(async () => {
+    let yearIdForEdit = academicYearId;
+    if (!yearIdForEdit) {
+      const planRowYearId = mergedScheduleRows.find((item) => item.kind === 'plan' && item.line?.academicYearId)?.line?.academicYearId || null;
+      yearIdForEdit = planRowYearId;
+    }
+    if (!yearIdForEdit) {
+      const curriculumEventId = mergedScheduleRows.find((item) => item.kind === 'curriculum' && item.row?.eventId)?.row?.eventId || null;
+      if (curriculumEventId && familyId) {
+        const { data } = await supabase
+          .from('events')
+          .select('academic_year_id')
+          .eq('id', curriculumEventId)
+          .eq('family_id', familyId)
+          .maybeSingle();
+        yearIdForEdit = data?.academic_year_id || null;
+      }
+    }
+    if (!yearIdForEdit && familyId && subjectId) {
+      // Some legacy event rows can miss academic_year_id; fall back to the
+      // most recent academic year whose plan blocks include this subject.
+      const fallback = await findAcademicYearPlanForSubject(familyId, subjectId);
+      yearIdForEdit = fallback?.academicYearId || null;
+    }
+
+    if (yearIdForEdit) {
+      if (!academicYearId) setAcademicYearId(yearIdForEdit);
       dispatchOpenPlanModal({
         from: 'subject_detail',
         subjectId,
-        academicYearId,
+        academicYearId: yearIdForEdit,
         openAsModal: true,
         openToEditList: false,
         skipPlanSummary: true,
       });
     } else {
-      openBuildPlanModal();
+      // Last-resort fallback: never route Edit plan into Build plan.
+      // Open the edit-plan picker so users can still select an existing plan.
+      dispatchOpenPlanModal({
+        from: 'subject_detail',
+        subjectId,
+        openAsModal: true,
+        openToEditList: true,
+        skipPlanSummary: true,
+      });
     }
-  }, [academicYearId, subjectId, openBuildPlanModal]);
+  }, [academicYearId, mergedScheduleRows, familyId, subjectId]);
 
   /** Route subject-detail unit actions into the unified Plan My Year / Edit Plan modal. */
   const openCurriculumStructureAction = useCallback(
@@ -608,7 +651,7 @@ export default function SubjectProgressPlanSection({
 
   return (
     <View style={styles.section}>
-      {!hasPlan ? (
+      {!hasPlan && mergedScheduleRows.length === 0 ? (
         <View style={styles.emptyStateBox}>
           <Text style={styles.emptyStateHint}>
             Start by scheduling this subject, or just organize your lessons.
@@ -624,51 +667,58 @@ export default function SubjectProgressPlanSection({
             <Calendar size={16} color={colors.accentContrast || '#ffffff'} strokeWidth={2} />
             <Text style={styles.emptyStatePrimaryBtnText}>Build plan</Text>
           </TouchableOpacity>
-          {Platform.OS === 'web' && !hasUnitsOrLessonsContent ? (
-            <TouchableOpacity
-              onPress={() => openCurriculumStructureAction('manual')}
-              style={styles.emptyStateSecondaryLinkWrap}
-              activeOpacity={0.7}
-              accessibilityRole="link"
-              accessibilityLabel="Add units manually"
-              {...webCursor}
-            >
-              <Text style={styles.emptyStateSecondaryLink}>Add units manually →</Text>
-            </TouchableOpacity>
-          ) : null}
         </View>
       ) : null}
 
       {mergedScheduleRows.length > 0 ? (
         <View style={styles.datesCard}>
-          <View style={styles.datesCardHeaderRow}>
-            <Text style={styles.tableTitle}>{planSectionHeading}</Text>
-            <View style={styles.planHeaderActionGroup}>
-              <TouchableOpacity
-                style={styles.planHeaderRoundedBtn}
-                onPress={openEditPlanModal}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel="Edit plan"
-                {...webCursor}
-              >
-                <Pencil size={16} color="#64748b" strokeWidth={2} />
-                <Text style={styles.planHeaderRoundedBtnText}>Edit plan</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.planHeaderRoundedBtn, deletingPlan && styles.btnDisabledSoft]}
-                onPress={() => setShowDeletePlanConfirm(true)}
-                disabled={deletingPlan}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel="Delete plan"
-                {...webCursor}
-              >
-                <Trash2 size={16} color="#64748b" strokeWidth={2} />
-                <Text style={styles.planHeaderRoundedBtnText}>Delete plan</Text>
-              </TouchableOpacity>
+          {hasPlan ? (
+            <View style={styles.datesCardHeaderRow}>
+              <Text style={styles.tableTitle}>{planSectionHeading}</Text>
+              <View style={styles.planHeaderActionGroup}>
+                <TouchableOpacity
+                  style={styles.planHeaderRoundedBtn}
+                  onPress={openEditPlanModal}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit plan"
+                  {...webCursor}
+                >
+                  <Pencil size={16} color="#64748b" strokeWidth={2} />
+                  <Text style={styles.planHeaderRoundedBtnText}>Edit plan</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.planHeaderRoundedBtn, deletingPlan && styles.btnDisabledSoft]}
+                  onPress={() => setShowDeletePlanConfirm(true)}
+                  disabled={deletingPlan}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete plan"
+                  {...webCursor}
+                >
+                  <Trash2 size={16} color="#64748b" strokeWidth={2} />
+                  <Text style={styles.planHeaderRoundedBtnText}>Delete plan</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          ) : (
+            <View style={styles.datesCardHeaderRow}>
+              <Text style={styles.tableTitle}>{upcomingEventsHeading}</Text>
+              <View style={styles.planHeaderActionGroup}>
+                <TouchableOpacity
+                  style={styles.planHeaderRoundedBtn}
+                  onPress={openBuildPlanModal}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
+                  accessibilityLabel="Build plan"
+                  {...webCursor}
+                >
+                  <Calendar size={16} color="#64748b" strokeWidth={2} />
+                  <Text style={styles.planHeaderRoundedBtnText}>Build plan</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           <View style={styles.tableBody}>
             {mergedScheduleRows.map((item) => {
               if (item.kind === 'plan') {
