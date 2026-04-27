@@ -417,21 +417,6 @@ export default function SubjectOverviewCard({
         <TouchableOpacity
           style={[
             styles.actionButtonPill,
-            hoveredButton === 'assignment' && styles.actionButtonPillHovered
-          ]}
-          onPress={handleAddAssignment}
-          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('assignment')}
-          onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
-        >
-          <ClipboardList size={16} color="#6B7280" />
-          <Text style={[
-            styles.actionButtonPillText,
-            hoveredButton === 'assignment' && styles.actionButtonPillTextHovered
-          ]}>Add Assignment</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.actionButtonPill,
             hoveredButton === 'lesson' && styles.actionButtonPillHovered
           ]}
           onPress={handleAddLesson}
@@ -443,6 +428,21 @@ export default function SubjectOverviewCard({
             styles.actionButtonPillText,
             hoveredButton === 'lesson' && styles.actionButtonPillTextHovered
           ]}>Add Lesson</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.actionButtonPill,
+            hoveredButton === 'assignment' && styles.actionButtonPillHovered
+          ]}
+          onPress={handleAddAssignment}
+          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('assignment')}
+          onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
+        >
+          <ClipboardList size={16} color="#6B7280" />
+          <Text style={[
+            styles.actionButtonPillText,
+            hoveredButton === 'assignment' && styles.actionButtonPillTextHovered
+          ]}>Add Assignment</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[

@@ -32,13 +32,13 @@ import MaterialDocViewerModal, {
 } from '../materials/MaterialDocViewerModal';
 import { useToast } from '../Toast';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
-import SubjectProgressPlanSection from './SubjectProgressPlanSection';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
 import SubjectAssignedToStudentModal from './SubjectAssignedToStudentModal';
 import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
 import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
 import { extractStudentHelpReason, formatDueShort } from '../tutor/tutorHelpUtils';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
+import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 
@@ -83,6 +83,7 @@ export default function SubjectDetailPage({
   const [materialDocViewerUrl, setMaterialDocViewerUrl] = useState('');
   const [materialDocViewerTitle, setMaterialDocViewerTitle] = useState('');
   const [materialDocViewerKind, setMaterialDocViewerKind] = useState('pdf');
+  const [subjectPlanYearId, setSubjectPlanYearId] = useState(null);
   const loadingRef = useRef(false);
   /** Parent often passes inline callbacks; keep loadSubjectDetail stable so mount effect does not loop. */
   const sessionRef = useRef(session);
@@ -250,7 +251,6 @@ export default function SubjectDetailPage({
   const eventOutcomes = subjectData?.eventOutcomes || [];
 
   // Metrics (with proper null/undefined handling)
-  const progressPercent = subjectData?.progressPercent ?? null;
   const attendanceRate30 = subjectData?.attendanceRate30 ?? null;
   const avgGradePercent = subjectData?.avgGradePercent ?? null;
 
@@ -279,31 +279,57 @@ export default function SubjectDetailPage({
     );
   }, [subject?.id, subject?.name, assignedChildren]);
 
-  const handleAddLesson = useCallback(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openTaskModal', {
-        detail: {
-          date: new Date(),
-          subjectId,
-          eventType: 'lesson',
-          childIds: assignedChildren.length > 0 ? assignedChildren : undefined,
-        }
-      }));
-    }
-  }, [subjectId, assignedChildren]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!familyId || !subject?.id) {
+        if (!cancelled) setSubjectPlanYearId(null);
+        return;
+      }
+      try {
+        const { academicYearId } = await findAcademicYearPlanForSubject(familyId, subject.id);
+        if (!cancelled) setSubjectPlanYearId(academicYearId || null);
+      } catch (_) {
+        if (!cancelled) setSubjectPlanYearId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId, subject?.id, subjectData?.events]);
 
-  const handleAddAssignment = useCallback(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openTaskModal', {
-        detail: {
-          date: new Date(),
-          subjectId,
-          eventType: 'assignment',
-          childIds: assignedChildren.length > 0 ? assignedChildren : undefined,
-        }
-      }));
+  const handleOpenPlanBuilder = useCallback(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !subject?.id) return;
+    if (subjectPlanYearId) {
+      window.dispatchEvent(
+        new CustomEvent('openPlanYearModal', {
+          detail: {
+            from: 'subject_detail',
+            subjectId: subject.id,
+            subjectName: subject.name || null,
+            childIds: assignedChildren,
+            academicYearId: subjectPlanYearId,
+            openAsModal: true,
+            openToEditList: false,
+            skipPlanSummary: true,
+          },
+        })
+      );
+      return;
     }
-  }, [subjectId, assignedChildren]);
+    window.dispatchEvent(
+      new CustomEvent('openPlanYearModal', {
+        detail: {
+          from: 'subject_detail',
+          subjectId: subject.id,
+          subjectName: subject.name || null,
+          childIds: assignedChildren,
+          openAsModal: true,
+          openDirectlyToScope: true,
+        },
+      })
+    );
+  }, [subject?.id, subject?.name, assignedChildren, subjectPlanYearId]);
 
   // Process attendance for last 30 days
   const attendance30Days = useMemo(() => {
@@ -517,52 +543,20 @@ export default function SubjectDetailPage({
               )}
               <TouchableOpacity
                 style={styles.actionButton}
-                onPress={handleAddAssignment}
+                onPress={handleOpenPlanBuilder}
                 accessibilityRole="button"
-                accessibilityLabel="Add assignment"
+                accessibilityLabel={subjectPlanYearId ? 'Edit plan' : 'Build plan'}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Plus size={16} color="#6B7280" />
-                <Text style={styles.actionButtonText}>Add assignment</Text>
+                <Calendar size={16} color="#6B7280" />
+                <Text style={styles.actionButtonText}>{subjectPlanYearId ? 'Edit plan' : 'Build plan'}</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
 
-        {/* Top Summary Panel - 4 Tiles */}
+        {/* Top Summary Panel */}
         <View style={styles.summaryPanel}>
-          {/* Progress Tile */}
-          <TouchableOpacity
-            style={styles.summaryTile}
-            onPress={() => {
-              if (progressPercent !== null && progressPercent !== undefined && !isNaN(progressPercent)) {
-                scrollToSection('progress-section');
-              } else {
-                handleAddLesson();
-              }
-            }}
-          >
-            <Text style={styles.summaryTileLabel}>Progress</Text>
-            {progressPercent !== null && progressPercent !== undefined && !isNaN(progressPercent) ? (
-              <>
-                <Text style={styles.summaryTileValue}>{progressPercent}%</Text>
-                <View style={styles.summaryProgressBar}>
-                  <View 
-                    style={[
-                      styles.summaryProgressBarFill,
-                      { width: `${Math.max(0, Math.min(100, progressPercent))}%` }
-                    ]} 
-                  />
-                </View>
-              </>
-            ) : (
-              <>
-                <Text style={styles.summaryTileValue}>Not started</Text>
-                <Text style={styles.summaryTileSubtext}>Add a lesson to begin tracking.</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
           {/* Attendance Tile */}
           <TouchableOpacity
             style={styles.summaryTile}
@@ -688,91 +682,88 @@ export default function SubjectDetailPage({
           <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials Snapshot</Text>
           </View>
-          <View style={styles.materialsActionsRow}>
-            <TouchableOpacity
-              style={styles.materialsAddCta}
-              onPress={openAddMaterialModal}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Add material"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={16} color="#6BB3E8" />
-              <Text style={styles.materialsAddCtaText}>Add material</Text>
-            </TouchableOpacity>
-          </View>
           {materials.length > 0 ? (
-            <View style={styles.materialsList}>
-              <View style={styles.materialsListHeader}>
-                <Text style={styles.materialsListHeaderTitle}>TITLE</Text>
-                <Text style={styles.materialsListHeaderDate}>DATE</Text>
-              </View>
-              {materials.map((material) => {
-                const baseName = material.title || material.provider_name || 'Material';
-                const typeLabel = getMaterialFileTypeLabel(material);
-                const roleTag = roleLabel(deriveRoleFromTags(material?.tags));
-                const createdDate = formatDate(material.created_at || material.updated_at);
-                return (
-                  <TouchableOpacity
-                    key={material.id}
-                    style={styles.materialListItem}
-                    onPress={() => handleMaterialChipPress(material)}
-                    activeOpacity={0.7}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.materialListItemLeft}>
-                      <FileText size={16} color="#64748b" />
-                      <View style={styles.materialListItemTextWrap}>
-                        <Text style={styles.materialListItemTitle} numberOfLines={1}>
-                          {baseName}
-                        </Text>
-                        {(roleTag || typeLabel) ? (
-                          <View style={styles.materialListItemTagsRow}>
-                            {roleTag ? (
-                              <View style={styles.materialListItemTag}>
-                                <Text style={styles.materialListItemTagText}>{roleTag}</Text>
-                              </View>
-                            ) : null}
-                            {typeLabel ? (
-                              <View style={styles.materialListItemTag}>
-                                <Text style={styles.materialListItemTagText}>{typeLabel}</Text>
-                              </View>
-                            ) : null}
-                          </View>
-                        ) : null}
+            <>
+              <View style={[styles.materialsList, styles.materialsListWithBorder]}>
+                <View style={styles.materialsListHeader}>
+                  <Text style={styles.materialsListHeaderTitle}>TITLE</Text>
+                  <Text style={styles.materialsListHeaderDate}>DATE</Text>
+                </View>
+                {materials.map((material) => {
+                  const baseName = material.title || material.provider_name || 'Material';
+                  const typeLabel = getMaterialFileTypeLabel(material);
+                  const roleTag = roleLabel(deriveRoleFromTags(material?.tags));
+                  const createdDate = formatDate(material.created_at || material.updated_at);
+                  return (
+                    <TouchableOpacity
+                      key={material.id}
+                      style={styles.materialListItem}
+                      onPress={() => handleMaterialChipPress(material)}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <View style={styles.materialListItemLeft}>
+                        <FileText size={16} color="#64748b" />
+                        <View style={styles.materialListItemTextWrap}>
+                          <Text style={styles.materialListItemTitle} numberOfLines={1}>
+                            {baseName}
+                          </Text>
+                          {(roleTag || typeLabel) ? (
+                            <View style={styles.materialListItemTagsRow}>
+                              {roleTag ? (
+                                <View style={styles.materialListItemTag}>
+                                  <Text style={styles.materialListItemTagText}>{roleTag}</Text>
+                                </View>
+                              ) : null}
+                              {typeLabel ? (
+                                <View style={styles.materialListItemTag}>
+                                  <Text style={styles.materialListItemTagText}>{typeLabel}</Text>
+                                </View>
+                              ) : null}
+                            </View>
+                          ) : null}
+                        </View>
                       </View>
-                    </View>
-                    <Text style={styles.materialListItemDate}>{createdDate || '—'}</Text>
-                  </TouchableOpacity>
-                );
-              })}
+                      <Text style={styles.materialListItemDate}>{createdDate || '—'}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <View style={styles.materialsActionsRow}>
+                <TouchableOpacity
+                  style={styles.materialsAddCta}
+                  onPress={openAddMaterialModal}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add new material"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={16} color="#6BB3E8" />
+                  <Text style={styles.materialsAddCtaText}>Add new material</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          ) : (
+            <View style={styles.emptyStateBox}>
+              <Text style={styles.materialsEmptyText}>No materials added yet.</Text>
+              <View style={styles.materialsEmptyActionsRow}>
+                <TouchableOpacity
+                  style={styles.materialsAddCta}
+                  onPress={openAddMaterialModal}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add material"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={16} color="#6BB3E8" />
+                  <Text style={styles.materialsAddCtaText}>Add material</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          ) : (
-            <Text style={styles.materialsEmptyText}>No materials added yet.</Text>
           )}
         </View>
 
-        {/* Section 1: Progress — plan summary, curriculum */}
-        <View id="progress-section" style={styles.section}>
-          <View style={styles.attendanceSectionHeader}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
-          </View>
-          {Platform.OS === 'web' ? (
-            <SubjectProgressPlanSection
-              familyId={familyId}
-              subjectId={subject.id}
-              subjectName={subject.name}
-              children={children}
-              assignedChildIds={assignedChildren}
-              isParentViewer={isParentViewer}
-              onRefresh={() => loadSubjectDetail({ silent: true })}
-            />
-          ) : (
-            <Text style={styles.emptyStateText}>Open this subject on the web to manage your class plan and scheduled dates.</Text>
-          )}
-        </View>
-
-        {/* Section 2: Attendance */}
+        {/* Section 1: Attendance */}
         <View id="attendance-section" style={styles.section}>
           <View style={styles.attendanceSectionHeader}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
@@ -880,7 +871,7 @@ export default function SubjectDetailPage({
           )}
         </View>
 
-        {/* Section 3: Grades */}
+        {/* Section 2: Grades */}
         <View id="grades-section" style={styles.section}>
           <View style={styles.gradesSectionHeader}>
             <View style={styles.gradesSectionTitleRow}>
@@ -1478,11 +1469,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   materialsSectionHeader: {
-    marginBottom: 2,
+    marginBottom: 10,
   },
   materialsActionsRow: {
-    marginTop: 8,
-    marginBottom: 10,
+    marginTop: 20,
+    marginBottom: 0,
+  },
+  materialsEmptyActionsRow: {
+    marginTop: 10,
+    marginBottom: 0,
   },
   materialsAddCta: {
     flexDirection: 'row',
@@ -1507,6 +1502,9 @@ const styles = StyleSheet.create({
     }),
   },
   materialsList: {
+    backgroundColor: 'transparent',
+  },
+  materialsListWithBorder: {
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.2)',
     borderRadius: 10,
@@ -1614,10 +1612,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 16,
+    marginBottom: 10,
   },
   gradesSectionHeader: {
-    marginBottom: 16,
+    marginBottom: 10,
   },
   gradesSectionTitleRow: {
     flexDirection: 'row',
