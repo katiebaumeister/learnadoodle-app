@@ -559,18 +559,6 @@ export default function SubjectDetailPage({
               <>
                 <Text style={styles.summaryTileValue}>Not started</Text>
                 <Text style={styles.summaryTileSubtext}>Add a lesson to begin tracking.</Text>
-                <View style={styles.summaryProgressBar}>
-                  <View style={styles.summaryProgressBarSkeleton} />
-                </View>
-                <TouchableOpacity
-                  style={styles.summaryTileAction}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    handleAddLesson();
-                  }}
-                >
-                  <Text style={styles.summaryTileActionText}>Add lesson</Text>
-                </TouchableOpacity>
               </>
             )}
           </TouchableOpacity>

@@ -3154,6 +3154,31 @@ export default function PlanYearModal({
     }
     return { months, uniqueLearningDayCount: learningCountByDate.size };
   }, [startDate, endDate, previewSlotLines]);
+  const previewAttendanceList = useMemo(() => {
+    if (!previewSlotLines.length) return [];
+    const grouped = new Map();
+    (previewSlotLines || []).forEach((line, idx) => {
+      const ymd = typeof line?.date === 'string' ? line.date.slice(0, 10) : '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return;
+      const dateLabel = line?.dateLabel || formatDateDisplay(ymd);
+      if (!grouped.has(ymd)) grouped.set(ymd, { ymd, dateLabel, rows: [] });
+      const timeLabel = line?.timeLabel || null;
+      const subjectName = line?.subjectName || null;
+      const unitTopic = (line?.unitTopic || '').trim();
+      const lessonTitle = (line?.lessonTitle || '').trim();
+      const hasLessonAttached = !!lessonTitle && !/available instructional slot/i.test(lessonTitle);
+      grouped.get(ymd).rows.push({
+        key: `${ymd}-${idx}`,
+        timeLabel,
+        subjectName,
+        unitTopic,
+        lessonTitle,
+        hasUnitAttached: !!unitTopic,
+        hasLessonAttached,
+      });
+    });
+    return Array.from(grouped.values()).sort((a, b) => a.ymd.localeCompare(b.ymd));
+  }, [previewSlotLines]);
   const topConflictHotspotLabel = useMemo(() => {
     if (!cadenceConflictReport) return null;
     const bucket = new Map();
@@ -8126,18 +8151,46 @@ export default function PlanYearModal({
   const unitFocusSubjectNameForHeader = unitPipelineSubjectId
     ? (baseSubjectList || []).find((s) => String(s.id) === String(unitPipelineSubjectId))?.name
     : null;
+  const buildPlanSubjectName = useMemo(() => {
+    const explicit = String(initialSubjectName || '').trim();
+    if (explicit) return explicit;
+    if (Array.isArray(effectiveSubjectIds) && effectiveSubjectIds.length === 1) {
+      const onlyId = String(effectiveSubjectIds[0]);
+      const only = (baseSubjectList || []).find((s) => String(s?.id) === onlyId);
+      const nm = String(only?.name || '').trim();
+      if (nm) return nm;
+    }
+    if (initialSubjectId != null) {
+      const fromInitial = (baseSubjectList || []).find((s) => String(s?.id) === String(initialSubjectId));
+      const nm = String(fromInitial?.name || '').trim();
+      if (nm) return nm;
+    }
+    return null;
+  }, [initialSubjectName, effectiveSubjectIds, baseSubjectList, initialSubjectId]);
+  const newPlanEyebrowLabel = isEditingExistingPlanFlow
+    ? 'EDIT PLAN'
+    : buildPlanSubjectName
+      ? `NEW ${buildPlanSubjectName.toUpperCase()} PLAN`
+      : 'NEW PLAN';
+  const savePlanLabel = buildPlanSubjectName
+    ? `Save ${buildPlanSubjectName} Plan`
+    : 'Save plan';
   const unitHeaderSubtitle =
     unitFocusSubjectNameForHeader && effectiveSubjectIds.length > 1 && (planStep === 'source' || planStep === 'unit_structure')
       ? t('planMyYear.multiSubjectUnits.headerUnitsFor', { subjectName: unitFocusSubjectNameForHeader })
       : null;
   const unitStructureSaveDraftLabel = returnToSubjectModalAfterUnitSave
     ? 'Save units'
+    : fromSubjectDetail && planStep === 'unit_structure'
+      ? 'Save'
+      : PLAN_MY_YEAR_LOGISTICS_FIRST
+        ? t('planMyYear.multiSubjectUnits.footerSaveDraftLogisticsFirst')
+        : t('planMyYear.multiSubjectUnits.footerSaveDraftClassic');
+  const unitStructureSkipDraftLabel = fromSubjectDetail && planStep === 'unit_structure'
+    ? 'Save'
     : PLAN_MY_YEAR_LOGISTICS_FIRST
-      ? t('planMyYear.multiSubjectUnits.footerSaveDraftLogisticsFirst')
-      : t('planMyYear.multiSubjectUnits.footerSaveDraftClassic');
-  const unitStructureSkipDraftLabel = PLAN_MY_YEAR_LOGISTICS_FIRST
-    ? t('planMyYear.multiSubjectUnits.footerSkipLogisticsFirst')
-    : t('planMyYear.multiSubjectUnits.footerSkipClassic');
+      ? t('planMyYear.multiSubjectUnits.footerSkipLogisticsFirst')
+      : t('planMyYear.multiSubjectUnits.footerSkipClassic');
   const hideFooterSkipForPasteImportInput =
     planSource === 'paste_plain' && unitStructureStep === 'input' && !draftData && !manualDraft;
   const showUploadMaterialPreviewFooter =
@@ -10482,7 +10535,9 @@ export default function PlanYearModal({
   );
 
   /** Subject-detail links (Manual input, Paste, etc.) should show unit structure full-screen, not logistics behind a nested modal. */
-  const inlineUnitStructureFromSubjectDetail = Boolean(fromSubjectDetail && initialUnitStructureMethod);
+  // In subject-detail build-plan flow, keep unit-structure inside the same modal shell
+  // instead of opening a second nested modal overlay.
+  const inlineUnitStructureFromSubjectDetail = Boolean(fromSubjectDetail);
   const isSubjectDetailAddUnitsMode =
     Boolean(returnToSubjectModalAfterUnitSave) && planStep === 'unit_structure';
   const addUnitsModalTitle = 'Add units';
@@ -10554,7 +10609,7 @@ export default function PlanYearModal({
                     <View style={{ minWidth: 0 }}>
                       <View style={styles.modalHeaderBadge}>
                         <Text style={styles.modalHeaderEyebrow}>
-                          {isEditingExistingPlanFlow ? 'EDIT PLAN' : 'NEW PLAN'}
+                          {newPlanEyebrowLabel}
                         </Text>
                       </View>
                       <Text style={styles.modalHeaderTitle}>
@@ -12974,7 +13029,7 @@ export default function PlanYearModal({
                             { key: 'add', label: 'Add units', method: 'paste', icon: Plus },
                             { key: 'generate', label: s('planMyYear.multiSubjectUnits.cadenceGenerateLabel'), method: 'generate', icon: Sparkles },
                             { key: 'upload', label: s('planMyYear.sections.useASource.options.upload.label'), method: 'upload', icon: Upload },
-                            { key: 'paste', label: s('planMyYear.sections.useASource.options.paste.label'), method: 'paste', icon: Pencil },
+                            { key: 'paste_plain', label: s('planMyYear.sections.useASource.options.pastePlain.label'), method: 'paste_plain', icon: Pencil },
                           ];
                           return (
                             <View
@@ -12988,6 +13043,8 @@ export default function PlanYearModal({
                               <View style={styles.subjectActions}>
                                 {quickActions.map((action) => {
                                   const Icon = action.icon;
+                                  const isSavedCurriculumChip =
+                                    card.hasCurriculum && action.method === 'paste';
                                   return (
                                   <TouchableOpacity
                                     key={`${card.subjectId}-${action.key}`}
@@ -12998,37 +13055,27 @@ export default function PlanYearModal({
                                       methodLabel: action.label,
                                       subjectName: card.label,
                                     })}
-                                    style={styles.step3ActionPill}
+                                    style={[
+                                      styles.step3ActionPill,
+                                      isSavedCurriculumChip && styles.step3ActionPillActive,
+                                    ]}
                                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                   >
                                     <View style={styles.step3ActionPillInner}>
-                                      <Icon size={12} color={SUB} />
-                                      <Text style={styles.step3ActionPillText}>{action.label}</Text>
+                                      <Icon size={12} color={isSavedCurriculumChip ? ACCENT : SUB} />
+                                      <Text
+                                        style={[
+                                          styles.step3ActionPillText,
+                                          isSavedCurriculumChip && styles.step3ActionPillTextActive,
+                                        ]}
+                                      >
+                                        {action.label}
+                                      </Text>
                                     </View>
                                   </TouchableOpacity>
                                   );
                                 })}
                               </View>
-                              {card.hasCurriculum ? (
-                                <View style={styles.step3SecondaryActionRow}>
-                                  <TouchableOpacity
-                                    onPress={() => handleOpenCadenceUnitMethod(card.subjectId, 'paste')}
-                                    activeOpacity={0.8}
-                                    style={styles.step3SecondaryAction}
-                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                  >
-                                    <Text style={styles.step3SecondaryActionText}>View structure</Text>
-                                  </TouchableOpacity>
-                                  <TouchableOpacity
-                                    onPress={() => handleOpenCadenceUnitMethod(card.subjectId, 'paste')}
-                                    activeOpacity={0.8}
-                                    style={styles.step3SecondaryAction}
-                                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                  >
-                                    <Text style={styles.step3SecondaryActionText}>Edit</Text>
-                                  </TouchableOpacity>
-                                </View>
-                              ) : null}
                             </View>
                           );
                         })}
@@ -13204,44 +13251,30 @@ export default function PlanYearModal({
                           {showFullSchedulePreview ? (
                             <View style={styles.previewAttendanceCalendarCard}>
                               <Text style={styles.previewAttendanceCalendarLabel}>
-                                {previewAttendanceCalendar.uniqueLearningDayCount} learning days highlighted
+                                {previewAttendanceCalendar.uniqueLearningDayCount} learning days scheduled
                               </Text>
-                              {previewAttendanceCalendar.months.map((month) => (
-                                <View key={month.key} style={styles.previewAttendanceMonthBlock}>
-                                  <Text style={styles.previewAttendanceMonthTitle}>{month.label}</Text>
-                                  <View style={styles.previewAttendanceWeekdayRow}>
-                                    {WEEKDAY_LABELS.map((weekday) => (
-                                      <Text key={`${month.key}-${weekday}`} style={styles.previewAttendanceWeekdayText}>
-                                        {weekday}
-                                      </Text>
-                                    ))}
-                                  </View>
-                                  <View style={styles.previewAttendanceGrid}>
-                                    {month.days.map((day) => (
-                                      <View
-                                        key={`${month.key}-${day.key}`}
-                                        style={[
-                                          styles.previewAttendanceDayCell,
-                                          !day.isInMonth && styles.previewAttendanceDayCellOutsideMonth,
-                                          !day.isInRange && styles.previewAttendanceDayCellOutsideRange,
-                                          day.isLearningDay && styles.previewAttendanceDayCellLearning,
-                                        ]}
-                                      >
-                                        <Text
-                                          style={[
-                                            styles.previewAttendanceDayText,
-                                            !day.isInMonth && styles.previewAttendanceDayTextOutsideMonth,
-                                            !day.isInRange && styles.previewAttendanceDayTextOutsideRange,
-                                            day.isLearningDay && styles.previewAttendanceDayTextLearning,
-                                          ]}
-                                        >
-                                          {day.dayNumber}
+                              <View style={styles.previewAttendanceListWrap}>
+                                {previewAttendanceList.map((group) => (
+                                  <View key={group.ymd}>
+                                    {group.rows.map((row) => (
+                                      <View key={row.key} style={styles.previewAttendanceListRow}>
+                                        <Text style={styles.previewAttendanceListPrimary}>
+                                          <Text style={styles.previewAttendanceListDateInline}>{group.dateLabel}</Text>
+                                          {' · '}
+                                          {[row.timeLabel, row.subjectName].filter(Boolean).join(' · ')}
                                         </Text>
+                                        {(row.hasUnitAttached || row.hasLessonAttached) ? (
+                                          <Text style={styles.previewAttendanceListMeta}>
+                                            {row.hasUnitAttached ? `Unit attached${row.unitTopic ? `: ${row.unitTopic}` : ''}` : null}
+                                            {row.hasUnitAttached && row.hasLessonAttached ? ' · ' : null}
+                                            {row.hasLessonAttached ? `Lesson attached${row.lessonTitle ? `: ${row.lessonTitle}` : ''}` : null}
+                                          </Text>
+                                        ) : null}
                                       </View>
                                     ))}
                                   </View>
-                                </View>
-                              ))}
+                                ))}
+                              </View>
                             </View>
                           ) : null}
                         </>
@@ -13276,12 +13309,7 @@ export default function PlanYearModal({
             planStep === 'unit_structure' &&
             !inlineUnitStructureFromSubjectDetail &&
             (() => {
-              const unitStructureOverlayModalEl = (
-            <Modal
-              animationType="fade"
-              transparent
-              visible
-              onRequestClose={() => {
+              const handleUnitStructureOverlayClose = () => {
                 setCadenceDifferentMethodNotice(null);
                 suppressManualCurriculumHydrateRef.current = false;
                 if (planSource === 'paste' && (draftData || manualDraft)) {
@@ -13317,14 +13345,16 @@ export default function PlanYearModal({
                   setPlanStep(PLAN_STEP_KEYS.LOGISTICS);
                   setUnitFocusSubjectId(null);
                 }
-              }}
-            >
+              };
+              const unitStructureOverlayBodyEl = (
               <View
                 style={{
                   flex: 1,
-                  backgroundColor: 'rgba(15,23,42,0.5)',
+                  // Parent Build Plan modal already has a dim backdrop.
+                  // Keep Add Units overlay transparent to avoid double-darkening.
+                  backgroundColor: Platform.OS === 'web' ? 'transparent' : 'rgba(15,23,42,0.5)',
                   justifyContent: 'center',
-                  padding: Platform.OS === 'web' ? 24 : 12,
+                  padding: Platform.OS === 'web' ? 0 : 12,
                   ...(Platform.OS === 'web'
                     ? {
                         position: 'fixed',
@@ -13814,8 +13844,20 @@ export default function PlanYearModal({
                   </View>
                 </View>
               </View>
-            </Modal>
               );
+              const unitStructureOverlayModalEl =
+                Platform.OS === 'web' ? (
+                  unitStructureOverlayBodyEl
+                ) : (
+                  <Modal
+                    animationType="fade"
+                    transparent
+                    visible
+                    onRequestClose={handleUnitStructureOverlayClose}
+                  >
+                    {unitStructureOverlayBodyEl}
+                  </Modal>
+                );
               if (Platform.OS !== 'web') return unitStructureOverlayModalEl;
               let ReactDOM;
               try {
@@ -14345,7 +14387,7 @@ export default function PlanYearModal({
                     ) : renderFooterPrimaryLabel(
                       academicYearId
                         ? STRINGS.planMyYear.primaryActions.updateSlots
-                        : 'Add plan'
+                        : savePlanLabel
                     )}
                   </TouchableOpacity>
                   <View style={styles.planYearPreviewFooterSide} />
@@ -14377,7 +14419,7 @@ export default function PlanYearModal({
                   ) : renderFooterPrimaryLabel(
                     academicYearId
                       ? STRINGS.planMyYear.primaryActions.updateSlots
-                      : 'Add plan'
+                      : savePlanLabel
                   )}
                 </TouchableOpacity>
               </>
@@ -17108,6 +17150,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
   },
+  step3ActionPillActive: {
+    borderColor: '#93c5fd',
+    backgroundColor: '#eff6ff',
+  },
   step3ActionPillInner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -17121,20 +17167,9 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  step3SecondaryActionRow: {
-    marginTop: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-  },
-  step3SecondaryAction: {
-    paddingVertical: 2,
-  },
-  step3SecondaryActionText: {
-    fontSize: 12,
+  step3ActionPillTextActive: {
     color: ACCENT,
     fontWeight: '600',
-    textDecorationLine: 'underline',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -17439,7 +17474,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     paddingVertical: 10,
     paddingHorizontal: 12,
-    marginBottom: 10,
+    marginBottom: 4,
     gap: 4,
   },
   previewSummaryPrimary: {
@@ -17551,8 +17586,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   previewExpandToggle: {
-    marginTop: 6,
-    marginBottom: 8,
+    marginTop: 0,
+    marginBottom: 6,
     alignSelf: 'flex-start',
   },
   previewExpandToggleText: {
@@ -17576,6 +17611,29 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: MUTED,
     fontWeight: '600',
+  },
+  previewAttendanceListWrap: {
+    gap: 4,
+  },
+  previewAttendanceListRow: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: BORDER_SUBTLE,
+  },
+  previewAttendanceListPrimary: {
+    fontSize: 12,
+    color: FG,
+    lineHeight: 18,
+  },
+  previewAttendanceListMeta: {
+    fontSize: 11,
+    color: MUTED,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  previewAttendanceListDateInline: {
+    fontWeight: '700',
+    color: FG,
   },
   previewAttendanceMonthBlock: {
     borderWidth: 1,
