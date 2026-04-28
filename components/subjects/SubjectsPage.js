@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import {
   Search,
+  HelpCircle,
   Plus,
   BookOpen,
   X,
@@ -20,6 +21,7 @@ import {
   Calendar,
   Clock,
   GraduationCap,
+  Check,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
@@ -30,6 +32,7 @@ import SubjectOverviewCard from './SubjectOverviewCard';
 import SubjectDetailPage from './SubjectDetailPage';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
+import HelpPopover from '../planner/HelpPopover';
 
 const SEARCH_SECTION_KEYWORDS = {
   'attendance-section': ['attendance', 'attended', 'present', 'absent', 'lesson', 'lessons', 'event', 'events'],
@@ -116,6 +119,7 @@ export default function SubjectsPage({
     isChildView && childId ? childId : 'all'
   );
   const [selectedModeFilter, setSelectedModeFilter] = useState('view');
+  const [showHeaderFilters, setShowHeaderFilters] = useState(false);
   const [selectedYearFilter, setSelectedYearFilter] = useState('all');
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
@@ -127,6 +131,9 @@ export default function SubjectsPage({
   const [attendanceByChildForCompliance, setAttendanceByChildForCompliance] = useState(null); // { [childId]: { daysPresent } }
   const loadingRef = useRef(false);
   const preloadingRef = useRef(false);
+  const helpButtonRef = useRef(null);
+  const [showHelpPopover, setShowHelpPopover] = useState(false);
+  const [helpPopoverPosition, setHelpPopoverPosition] = useState({ top: 0, left: 0 });
 
   // Update local cache when prop changes
   useEffect(() => {
@@ -853,16 +860,281 @@ export default function SubjectsPage({
   const subjectsHeaderTitle = isChildView && childId
     ? (childDisplayName === 'Your' ? 'Your Subjects' : `${childDisplayName}'s Subjects`)
     : "Your Family's Subjects";
-  const pageHeaderTitle = selectedModeFilter === 'plan'
-    ? "Build Your Family's Learning Schedule"
-    : subjectsHeaderTitle;
-
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>{pageHeaderTitle}</Text>
+        <View style={styles.headerTitleWrap}>
+          <Text style={styles.headerTitle}>{subjectsHeaderTitle}</Text>
+        </View>
+        {!isChildView && (
+          <View style={styles.headerModeWrap}>
+            <View style={styles.headerModeControls}>
+              <View style={styles.headerFiltersAnchor}>
+                <TouchableOpacity
+                  style={styles.headerFiltersButton}
+                  onPress={() => setShowHeaderFilters((prev) => !prev)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.headerFiltersButtonText}>Filters</Text>
+                  {showHeaderFilters ? <ChevronUp size={14} color="rgba(15,23,42,0.7)" /> : <ChevronDown size={14} color="rgba(15,23,42,0.7)" />}
+                </TouchableOpacity>
+                {showHeaderFilters && (
+                  <View style={styles.headerFiltersPopover}>
+                    <View style={styles.headerFiltersSectionTitleRow}>
+                      <Text style={styles.headerFiltersSectionTitle}>Children</Text>
+                    </View>
+                    <View style={styles.headerFiltersSection}>
+                      <View style={styles.filterChecklist}>
+                        <TouchableOpacity
+                          style={styles.filterOptionRow}
+                          onPress={() => setSelectedChildFilter('all')}
+                        >
+                          <View
+                            style={[
+                              styles.filterOptionCheck,
+                              selectedChildFilter === 'all' && styles.filterOptionCheckActive,
+                            ]}
+                          >
+                            {selectedChildFilter === 'all' && <Check size={10} color="#FFFFFF" />}
+                          </View>
+                          <Text
+                            style={[
+                              styles.filterOptionLabel,
+                              selectedChildFilter === 'all' && styles.filterOptionLabelActive,
+                            ]}
+                          >
+                            All Children
+                          </Text>
+                        </TouchableOpacity>
+                        {safeChildren.map((child) => {
+                          const childColor = getChildColorFromAvatar(child.avatar);
+                          const isActive = selectedChildFilter === child.id;
+                          return (
+                            <TouchableOpacity
+                              key={child.id}
+                              style={styles.filterOptionRow}
+                              onPress={() => setSelectedChildFilter(child.id)}
+                            >
+                              <View
+                                style={[
+                                  styles.filterOptionCheck,
+                                  isActive && styles.filterOptionCheckActive,
+                                ]}
+                              >
+                                {isActive && <Check size={10} color="#FFFFFF" />}
+                              </View>
+                              <Text
+                                style={[
+                                  styles.filterOptionLabel,
+                                  isActive && styles.filterOptionLabelActive,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {child.name || child.first_name}
+                              </Text>
+                              <View
+                                style={[
+                                  styles.filterOptionTrailingDot,
+                                  { backgroundColor: childColor },
+                                ]}
+                              />
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+                    {registeredYears.length > 0 && <View style={styles.headerFiltersDivider} />}
+                    {registeredYears.length > 0 && (
+                      <View>
+                        <View style={styles.headerFiltersSectionTitleRow}>
+                          <Text style={styles.headerFiltersSectionTitle}>Year</Text>
+                        </View>
+                        <View style={styles.headerFiltersSection}>
+                        <View style={styles.filterChecklist}>
+                          <TouchableOpacity
+                            style={styles.filterOptionRow}
+                            onPress={() => setSelectedYearFilter('all')}
+                          >
+                            <View
+                              style={[
+                                styles.filterOptionCheck,
+                                selectedYearFilter === 'all' && styles.filterOptionCheckActive,
+                              ]}
+                            >
+                              {selectedYearFilter === 'all' && <Check size={10} color="#FFFFFF" />}
+                            </View>
+                            <Text
+                              style={[
+                                styles.filterOptionLabel,
+                                selectedYearFilter === 'all' && styles.filterOptionLabelActive,
+                              ]}
+                              numberOfLines={1}
+                            >
+                              All years
+                            </Text>
+                          </TouchableOpacity>
+                          {registeredYears.map((year) => {
+                            const isActive = selectedYearFilter === year;
+                            return (
+                              <TouchableOpacity
+                                key={year}
+                                style={styles.filterOptionRow}
+                                onPress={() => setSelectedYearFilter(year)}
+                              >
+                                <View
+                                  style={[
+                                    styles.filterOptionCheck,
+                                    isActive && styles.filterOptionCheckActive,
+                                  ]}
+                                >
+                                  {isActive && <Check size={10} color="#FFFFFF" />}
+                                </View>
+                                <Text
+                                  style={[
+                                    styles.filterOptionLabel,
+                                    isActive && styles.filterOptionLabelActive,
+                                  ]}
+                                  numberOfLines={1}
+                                >
+                                  {year}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+              <View style={styles.modeSegmentedControl}>
+                <TouchableOpacity
+                  style={[
+                    styles.modeSegment,
+                    selectedModeFilter === 'view' && styles.modeSegmentActive,
+                  ]}
+                  onPress={() => handleModeFilterChange('view')}
+                >
+                  <Text
+                    style={[
+                      styles.modeSegmentText,
+                      selectedModeFilter === 'view' && styles.modeSegmentTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    View Subjects
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modeSegment,
+                    selectedModeFilter === 'plan' && styles.modeSegmentActive,
+                  ]}
+                  onPress={() => handleModeFilterChange('plan')}
+                >
+                  <Text
+                    style={[
+                      styles.modeSegmentText,
+                      selectedModeFilter === 'plan' && styles.modeSegmentTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Build Schedule
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity
+                ref={helpButtonRef}
+                onPress={() => {
+                  if (showHelpPopover) {
+                    setShowHelpPopover(false);
+                    return;
+                  }
+                  if (Platform.OS === 'web' && helpButtonRef.current) {
+                    const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
+                    if (node && typeof node.getBoundingClientRect === 'function') {
+                      const rect = node.getBoundingClientRect();
+                      setHelpPopoverPosition({
+                        top: rect.bottom + 4,
+                        left: rect.left,
+                      });
+                    }
+                  }
+                  setShowHelpPopover(true);
+                }}
+                style={styles.helpButton}
+                {...(Platform.OS === 'web' && {
+                  cursor: 'pointer',
+                  onMouseEnter: () => {
+                    if (helpButtonRef.current) {
+                      const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
+                      if (node && typeof node.getBoundingClientRect === 'function') {
+                        const rect = node.getBoundingClientRect();
+                        setHelpPopoverPosition({
+                          top: rect.bottom + 4,
+                          left: rect.left,
+                        });
+                      }
+                    }
+                    setShowHelpPopover(true);
+                  },
+                  onMouseLeave: () => {
+                    setShowHelpPopover(false);
+                  },
+                })}
+              >
+                <HelpCircle size={22} color="rgba(15,23,42,0.7)" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
         <View style={styles.headerActions}>
+          {isChildView && (
+            <TouchableOpacity
+              ref={helpButtonRef}
+              onPress={() => {
+                if (showHelpPopover) {
+                  setShowHelpPopover(false);
+                  return;
+                }
+                if (Platform.OS === 'web' && helpButtonRef.current) {
+                  const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
+                  if (node && typeof node.getBoundingClientRect === 'function') {
+                    const rect = node.getBoundingClientRect();
+                    setHelpPopoverPosition({
+                      top: rect.bottom + 4,
+                      left: rect.left,
+                    });
+                  }
+                }
+                setShowHelpPopover(true);
+              }}
+              style={styles.helpButton}
+              {...(Platform.OS === 'web' && {
+                cursor: 'pointer',
+                onMouseEnter: () => {
+                  if (helpButtonRef.current) {
+                    const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
+                    if (node && typeof node.getBoundingClientRect === 'function') {
+                      const rect = node.getBoundingClientRect();
+                      setHelpPopoverPosition({
+                        top: rect.bottom + 4,
+                        left: rect.left,
+                      });
+                    }
+                  }
+                  setShowHelpPopover(true);
+                },
+                onMouseLeave: () => {
+                  setShowHelpPopover(false);
+                },
+              })}
+            >
+              <HelpCircle size={22} color="rgba(15,23,42,0.7)" />
+            </TouchableOpacity>
+          )}
           <View style={styles.searchContainer}>
             <TextInput
               style={styles.searchInput}
@@ -908,179 +1180,13 @@ export default function SubjectsPage({
         </View>
       </View>
       <View style={styles.divider} />
-
-      {/* Mode Filter Chips - Hide for child/student view */}
-      {!isChildView && (
-        <View style={styles.filterRow}>
-          <Text style={styles.filterLabel}>Mode</Text>
-          <View style={styles.filterChipsWrap}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.filterChips}
-              contentContainerStyle={styles.filterChipsContent}
-            >
-              <TouchableOpacity
-                style={[
-                  styles.filterChip,
-                  selectedModeFilter === 'view' && styles.filterChipActive,
-                ]}
-                onPress={() => handleModeFilterChange('view')}
-              >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    selectedModeFilter === 'view' && styles.filterChipTextActive,
-                  ]}
-                  numberOfLines={1}
-                >
-                  View Subjects
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.filterChip,
-                  selectedModeFilter === 'plan' && styles.filterChipActive,
-                ]}
-                onPress={() => handleModeFilterChange('plan')}
-              >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    selectedModeFilter === 'plan' && styles.filterChipTextActive,
-                  ]}
-                  numberOfLines={1}
-                >
-                  Build Schedule
-                </Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
-        </View>
-      )}
-
-      {/* Children Filter Chips - Hide for child/student view */}
-      {!isChildView && (
-        <View style={[styles.filterRow, styles.filterRowBelowMode]}>
-          <Text style={styles.filterLabel}>Children</Text>
-          <View style={styles.filterChipsWrap}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.filterChips}
-              contentContainerStyle={styles.filterChipsContent}
-            >
-              <TouchableOpacity
-                style={[
-                  styles.filterChip,
-                  selectedChildFilter === 'all' && styles.filterChipActive,
-                ]}
-                onPress={() => setSelectedChildFilter('all')}
-              >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    selectedChildFilter === 'all' && styles.filterChipTextActive,
-                  ]}
-                  numberOfLines={1}
-                >
-                  All Children
-                </Text>
-              </TouchableOpacity>
-              {safeChildren.map((child) => {
-                const childColor = getChildColorFromAvatar(child.avatar);
-                const isActive = selectedChildFilter === child.id;
-                return (
-                  <TouchableOpacity
-                    key={child.id}
-                    style={[
-                      styles.filterChip,
-                      isActive && styles.filterChipActive,
-                    ]}
-                    onPress={() => setSelectedChildFilter(child.id)}
-                  >
-                    <View
-                      style={[
-                        styles.childDotSmall,
-                        { backgroundColor: childColor, marginRight: 6 },
-                      ]}
-                    />
-                    <Text
-                      style={[
-                        styles.filterChipText,
-                        isActive && styles.filterChipTextActive,
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {child.name || child.first_name}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </View>
-      )}
-
-      {/* Year Filter Chips - only show when we have at least one year */}
-      {registeredYears.length > 0 && (
-        <View
-          style={[
-            styles.filterRow,
-            !isChildView && styles.filterRowBelowChildren,
-          ]}
-        >
-          <Text style={styles.filterLabel}>Year</Text>
-          <View style={styles.filterChipsWrapYear}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.filterChipsYear}
-              contentContainerStyle={styles.filterChipsContent}
-            >
-              <TouchableOpacity
-                style={[
-                  styles.filterChip,
-                  selectedYearFilter === 'all' && styles.filterChipActive,
-                ]}
-                onPress={() => setSelectedYearFilter('all')}
-              >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    selectedYearFilter === 'all' && styles.filterChipTextActive,
-                  ]}
-                  numberOfLines={1}
-                >
-                  All years
-                </Text>
-              </TouchableOpacity>
-              {registeredYears.map((year) => {
-                const isActive = selectedYearFilter === year;
-                return (
-                  <TouchableOpacity
-                    key={year}
-                    style={[
-                      styles.filterChip,
-                      isActive && styles.filterChipActive,
-                    ]}
-                    onPress={() => setSelectedYearFilter(year)}
-                  >
-                    <Text
-                      style={[
-                        styles.filterChipText,
-                        isActive && styles.filterChipTextActive,
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {year}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </View>
+      {showHelpPopover && Platform.OS === 'web' && (
+        <HelpPopover
+          visible={showHelpPopover}
+          onClose={() => setShowHelpPopover(false)}
+          position={helpPopoverPosition}
+          descriptionText={"This is your family's subject overview page. Switch to Build Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page."}
+        />
       )}
 
       {/* Content */}
@@ -1184,6 +1290,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: '#FFFFFF',
+    gap: 12,
+    position: 'relative',
+    zIndex: 200,
+    elevation: 200,
+  },
+  headerTitleWrap: {
+    minWidth: 180,
+    maxWidth: 340,
+    flexShrink: 0,
   },
   headerTitle: {
     fontSize: 18,
@@ -1194,10 +1309,60 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  headerTitlePlanMode: {
+    textTransform: 'none',
+    letterSpacing: 0,
+  },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flexShrink: 0,
+  },
+  helpButton: {
+    padding: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  headerModeWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 0,
+    position: 'relative',
+    zIndex: 220,
+  },
+  headerModeControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    position: 'relative',
+    zIndex: 230,
+  },
+  headerFiltersAnchor: {
+    position: 'relative',
+    zIndex: 240,
+  },
+  headerFiltersButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: '#E6EBF2',
+    backgroundColor: '#FFFFFF',
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  headerFiltersButtonText: {
+    fontSize: 15,
+    color: 'rgba(15,23,42,0.85)',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   searchContainer: {
     flexDirection: 'row',
@@ -1263,6 +1428,8 @@ const styles = StyleSheet.create({
     marginTop: 0,
     marginBottom: 0,
     marginHorizontal: 24,
+    position: 'relative',
+    zIndex: 10,
   },
   summaryCard: {
     marginHorizontal: 24,
@@ -1585,6 +1752,59 @@ const styles = StyleSheet.create({
     marginTop: 0,
     marginBottom: 8,
   },
+  headerFiltersPopover: {
+    position: 'absolute',
+    top: 52,
+    left: 0,
+    minWidth: 200,
+    maxWidth: 350,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.08)',
+    backgroundColor: '#FFFFFF',
+    padding: 4,
+    shadowColor: '#000000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 8,
+    zIndex: 9999,
+  },
+  headerFiltersSectionTitleRow: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(15,23,42,0.06)',
+    marginBottom: 4,
+  },
+  headerFiltersSection: {
+    gap: 2,
+  },
+  headerFiltersDivider: {
+    height: 1,
+    backgroundColor: 'rgba(15,23,42,0.06)',
+    marginVertical: 4,
+  },
+  headerFiltersSectionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: 'rgba(107, 114, 128, 0.7)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  modeRow: {
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  modeRowDivider: {
+    height: 1,
+    backgroundColor: 'rgba(148, 163, 184, 0.2)',
+    marginHorizontal: 24,
+    marginBottom: 8,
+  },
   filterLabel: {
     fontSize: 15,
     fontWeight: '700',
@@ -1597,12 +1817,94 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  filterChecklist: {
+    gap: 2,
+  },
+  filterOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  filterOptionCheck: {
+    width: 14,
+    height: 14,
+    borderRadius: 3,
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterOptionCheckActive: {
+    borderColor: '#8B5CF6',
+    backgroundColor: '#8B5CF6',
+  },
+  filterOptionLabel: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 15,
+    color: 'rgba(15,23,42,0.9)',
+    fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  },
+  filterOptionLabelActive: {
+    fontWeight: '600',
+  },
+  filterOptionTrailingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    flexShrink: 0,
+  },
   filterChipsWrapYear: {
     flex: 1,
     minWidth: 0,
   },
   filterChips: {
     flex: 1,
+  },
+  modeSegmentedControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E6EBF2',
+    borderRadius: 9999,
+    padding: 6,
+    gap: 4,
+    alignSelf: 'flex-start',
+  },
+  modePickerWrap: {
+    flexShrink: 0,
+  },
+  modeSegment: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 9999,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  modeSegmentActive: {
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.5)',
+  },
+  modeSegmentText: {
+    fontSize: 15,
+    color: 'rgba(15,23,42,0.85)',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  modeSegmentTextActive: {
+    color: 'rgba(99, 102, 241, 1)',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   filterChipsYear: {
     flexGrow: 0,

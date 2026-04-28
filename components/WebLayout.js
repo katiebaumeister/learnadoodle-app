@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Download } from 'lucide-react';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Download } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
@@ -3445,7 +3445,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     }}>
                       Filters
                     </Text>
-                    <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
+                    {showFiltersDropdown ? (
+                      <ChevronUp size={16} color="rgba(15,23,42,0.7)" />
+                    ) : (
+                      <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
+                    )}
                   </TouchableOpacity>
                   
                   {/* View Mode - Segmented control with sliding highlight */}

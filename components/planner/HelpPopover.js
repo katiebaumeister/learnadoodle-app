@@ -2,7 +2,13 @@ import React from 'react';
 import { View, Text, TouchableOpacity, Platform } from 'react-native';
 import { ExternalLink } from 'lucide-react';
 
-export default function HelpPopover({ visible, onClose, position, helpForumHref = '/help/faqs' }) {
+export default function HelpPopover({
+  visible,
+  onClose,
+  position,
+  helpForumHref = '/help/faqs',
+  descriptionText = `Welcome to your family's shared schedule. Add events quickly with the "+ NEW" button. Right click event chips for event actions. As your day goes on, check events to mark them done. Bulk mark attendance, build out structured class plans, and view per-subject analytics by switching to the Subjects tab in the left sidebar.`,
+}) {
   if (!visible) return null;
 
   return (
@@ -30,7 +36,7 @@ export default function HelpPopover({ visible, onClose, position, helpForumHref 
             fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
           }}
         >
-          Welcome to your family's shared schedule. Add events quickly with the "+ NEW" button. Right click event chips for event actions. As your day goes on, check events to mark them done. Bulk mark attendance, build out structured class plans, and view per-subject analytics by switching to the Subjects tab in the left sidebar.
+          {descriptionText}
         </Text>
       </View>
 

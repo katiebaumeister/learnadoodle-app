@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Check, ChevronDown, ChevronUp, Pencil, Plus, Sparkles, Upload } from 'lucide-react';
-import { applyToCalendar } from '../../lib/services/academicYearClient';
+import { applyToCalendar, getAcademicYear, getPlanHealth } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
 
@@ -29,6 +29,10 @@ const TERM_OPTIONS = [
   { id: 'fall_term', label: 'Fall term' },
   { id: 'spring_term', label: 'Spring term' },
 ];
+const OVERVIEW_CACHE_TTL_MS = 2 * 60 * 1000;
+const overviewCacheByFamily = new Map();
+const overviewInflightByFamily = new Map();
+let schoolYearTemplateCache = null;
 
 function formatYmdFromTemplateYear(startYear, endYear, scope) {
   const safeStart = Number(startYear);
@@ -79,11 +83,97 @@ function toAmPm(hhmm = '09:00') {
   return `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
+function formatWeekdaySummary(dayNums = []) {
+  const unique = [...new Set((dayNums || []).map((d) => Number(d)).filter((d) => Number.isInteger(d)))].sort((a, b) => a - b);
+  if (unique.length === 0) return 'No days set';
+  const monToFri = [1, 2, 3, 4, 5];
+  const isMonToFri = monToFri.every((d) => unique.includes(d)) && unique.length === 5;
+  if (isMonToFri) return 'Mon-Fri';
+  return unique.map((d) => WEEKDAY_LABELS[d] || '').filter(Boolean).join(', ');
+}
+
+function normalizeFamilyKey(familyId) {
+  return String(familyId || '').trim();
+}
+
+function getCachedOverview(familyId, { allowStale = true } = {}) {
+  const key = normalizeFamilyKey(familyId);
+  if (!key) return null;
+  const cached = overviewCacheByFamily.get(key);
+  if (!cached) return null;
+  if (allowStale) return cached;
+  if (Date.now() - Number(cached.updatedAt || 0) > OVERVIEW_CACHE_TTL_MS) return null;
+  return cached;
+}
+
+async function fetchAndCacheOverview(familyId, { force = false } = {}) {
+  const key = normalizeFamilyKey(familyId);
+  if (!key) return { activeScheduleCore: null, otherPlans: [], updatedAt: Date.now() };
+  if (!force) {
+    const fresh = getCachedOverview(key, { allowStale: false });
+    if (fresh) return fresh;
+  }
+  const inflight = overviewInflightByFamily.get(key);
+  if (inflight) return inflight;
+  const request = (async () => {
+    const [{ data: rows, error }, healthResult] = await Promise.all([
+      supabase
+        .from('academic_years')
+        .select('id, year_name, start_date, end_date, updated_at, run_scope_type, school_duration_scope')
+        .eq('family_id', familyId)
+        .order('updated_at', { ascending: false }),
+      getPlanHealth(familyId),
+    ]);
+    if (error) throw error;
+    const allPlanRows = Array.isArray(rows) ? rows : [];
+    const health = healthResult?.data || null;
+    const activePlanId = health?.academic_year_id || allPlanRows[0]?.id || null;
+    const activeRow = activePlanId ? allPlanRows.find((r) => String(r.id) === String(activePlanId)) || null : null;
+    let activeDetails = null;
+    if (activeRow?.id) {
+      const { data } = await getAcademicYear(activeRow.id);
+      activeDetails = data || null;
+    }
+    const blocks = Array.isArray(activeDetails?.plan?.blocks) ? activeDetails.plan.blocks : [];
+    const dayNums = [...new Set(blocks.flatMap((b) => Array.isArray(b.weekdays) ? b.weekdays : []))];
+    const timePairs = [...new Set(blocks.map((b) => `${b?.start_time || '09:00'}-${b?.end_time || '10:00'}`))];
+    const uniformTime = timePairs.length === 1 ? timePairs[0] : null;
+    const subjectIds = [...new Set(blocks.map((b) => b?.subject_id).filter(Boolean).map(String))];
+    const payload = {
+      activeScheduleCore: activeRow ? {
+        row: activeRow,
+        health,
+        subjectIds,
+        weekdaySummary: formatWeekdaySummary(dayNums),
+        timeSummary: uniformTime
+          ? `${toAmPm(uniformTime.split('-')[0])}-${toAmPm(uniformTime.split('-')[1])}`
+          : 'Mixed times',
+      } : null,
+      otherPlans: allPlanRows.filter((r) => String(r.id) !== String(activePlanId || '')),
+      updatedAt: Date.now(),
+    };
+    overviewCacheByFamily.set(key, payload);
+    return payload;
+  })().finally(() => {
+    overviewInflightByFamily.delete(key);
+  });
+  overviewInflightByFamily.set(key, request);
+  return request;
+}
+
 export default function SubjectsPlanBuilder({ familyId, children = [], visibleSubjects = [], allSubjects = [], onDone }) {
   const toast = useToast();
-  const [loadingYears, setLoadingYears] = useState(true);
-  const [schoolYearOptions, setSchoolYearOptions] = useState([]);
-  const [selectedSchoolYearId, setSelectedSchoolYearId] = useState(null);
+  const [surfaceMode, setSurfaceMode] = useState('home'); // home | builder
+  const [overviewReloadKey, setOverviewReloadKey] = useState(0);
+  const [overviewLoading, setOverviewLoading] = useState(() => !getCachedOverview(familyId));
+  const [activeScheduleCore, setActiveScheduleCore] = useState(() => getCachedOverview(familyId)?.activeScheduleCore || null);
+  const [otherPlans, setOtherPlans] = useState(() => getCachedOverview(familyId)?.otherPlans || []);
+  const [loadingYears, setLoadingYears] = useState(() => !Array.isArray(schoolYearTemplateCache) || schoolYearTemplateCache.length === 0);
+  const [schoolYearOptions, setSchoolYearOptions] = useState(() => (Array.isArray(schoolYearTemplateCache) ? schoolYearTemplateCache : []));
+  const [selectedSchoolYearId, setSelectedSchoolYearId] = useState(() => {
+    const first = Array.isArray(schoolYearTemplateCache) ? schoolYearTemplateCache[0] : null;
+    return first?.id || null;
+  });
   const [selectedTerm, setSelectedTerm] = useState('full_year');
   const [buildWithDefaults, setBuildWithDefaults] = useState(true);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
@@ -101,7 +191,8 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoadingYears(true);
+      const hasCachedYears = Array.isArray(schoolYearTemplateCache) && schoolYearTemplateCache.length > 0;
+      if (!hasCachedYears) setLoadingYears(true);
       const { data, error } = await supabase
         .from('school_year_templates')
         .select('id, start_year, end_year, label')
@@ -111,6 +202,7 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
         const now = new Date();
         const y = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
         const fallback = [{ id: `${y}-${y + 1}`, label: `${y}/${String(y + 1).slice(-2)}`, start_year: y, end_year: y + 1 }];
+        schoolYearTemplateCache = fallback;
         setSchoolYearOptions(fallback);
         setSelectedSchoolYearId(fallback[0].id);
         setLoadingYears(false);
@@ -122,6 +214,7 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
         start_year: Number(row.start_year),
         end_year: Number(row.end_year),
       }));
+      schoolYearTemplateCache = mapped;
       setSchoolYearOptions(mapped);
       setSelectedSchoolYearId((prev) => prev || mapped[0]?.id || null);
       setLoadingYears(false);
@@ -161,6 +254,71 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     () => baseSubjects.filter((s) => selectedSubjectIds.includes(String(s?.id))),
     [baseSubjects, selectedSubjectIds]
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    const hydrateFromCache = () => {
+      const cached = getCachedOverview(familyId);
+      if (!cached) return false;
+      setActiveScheduleCore(cached.activeScheduleCore || null);
+      setOtherPlans(Array.isArray(cached.otherPlans) ? cached.otherPlans : []);
+      setOverviewLoading(false);
+      return true;
+    };
+    const syncOverview = async ({ force = false } = {}) => {
+      if (!familyId) return;
+      try {
+        const payload = await fetchAndCacheOverview(familyId, { force });
+        if (cancelled) return;
+        setActiveScheduleCore(payload.activeScheduleCore || null);
+        setOtherPlans(Array.isArray(payload.otherPlans) ? payload.otherPlans : []);
+        setOverviewLoading(false);
+      } catch (_) {
+        if (cancelled) return;
+        const hasCache = hydrateFromCache();
+        if (!hasCache) {
+          setActiveScheduleCore(null);
+          setOtherPlans([]);
+          setOverviewLoading(false);
+        }
+      }
+    };
+    (async () => {
+      if (!familyId) {
+        setActiveScheduleCore(null);
+        setOtherPlans([]);
+        setOverviewLoading(false);
+        return;
+      }
+      const hadCache = hydrateFromCache();
+      if (!hadCache) setOverviewLoading(true);
+      await syncOverview({ force: !hadCache || overviewReloadKey > 0 });
+    })();
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const handleOverviewInvalidation = () => {
+        syncOverview({ force: true });
+      };
+      window.addEventListener('planAppliedToCalendar', handleOverviewInvalidation);
+      window.addEventListener('refreshPlanHealth', handleOverviewInvalidation);
+      return () => {
+        cancelled = true;
+        window.removeEventListener('planAppliedToCalendar', handleOverviewInvalidation);
+        window.removeEventListener('refreshPlanHealth', handleOverviewInvalidation);
+      };
+    }
+    return () => { cancelled = true; };
+  }, [familyId, overviewReloadKey]);
+
+  const activeSchedule = useMemo(() => {
+    if (!activeScheduleCore) return null;
+    const subjectNames = (activeScheduleCore.subjectIds || [])
+      .map((sid) => baseSubjects.find((s) => String(s?.id) === String(sid))?.name)
+      .filter(Boolean);
+    return {
+      ...activeScheduleCore,
+      subjectNames,
+    };
+  }, [activeScheduleCore, baseSubjects]);
 
   const step4Preview = useMemo(() => {
     if (!dateRange || selectedSubjectRows.length === 0) return null;
@@ -290,20 +448,139 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
       };
       const { data, error } = await applyToCalendar(payload);
       if (error) throw error;
+      setSurfaceMode('home');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
         window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
       }
+      setOverviewReloadKey((k) => k + 1);
       toast?.push?.(`Saved plan (${data?.created ?? 0} events).`, 'success');
-      onDone?.();
     } catch (err) {
       toast?.push?.(err?.message || 'Failed to save plan.', 'error');
     } finally {
       setSaving(false);
     }
   };
+
+  const openPlannerView = () => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (activeSchedule?.row?.id) {
+      window.dispatchEvent(
+        new CustomEvent('openPlanYearModal', {
+          detail: {
+            from: 'subjects_builder',
+            academicYearId: activeSchedule.row.id,
+            openAsModal: false,
+            openToEditList: false,
+          },
+        })
+      );
+      return;
+    }
+    window.history.pushState({}, '', '/planner?view=plan-year');
+    window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'plan-year' }));
+  };
+
+  if (surfaceMode === 'home') {
+    return (
+      <View style={styles.wrap}>
+        <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <View style={styles.scheduleHeaderBlock}>
+            <Text style={styles.schedulePageTitle}>Family Scheduling</Text>
+            <Text style={styles.scheduleSubtitle}>
+              Build and manage when learning happens across all subjects.
+            </Text>
+          </View>
+
+          {activeSchedule ? (
+            <>
+              <View style={styles.sectionShell}>
+                <Text style={styles.sectionKicker}>Current Schedule</Text>
+                <Text style={styles.currentYearTitle}>{activeSchedule?.row?.year_name || 'School year plan'}</Text>
+                <Text style={styles.currentMeta}>{activeSchedule.weekdaySummary} · {activeSchedule.timeSummary}</Text>
+                <Text style={styles.currentMeta}>Applies to: {activeSchedule.subjectNames.length > 0 ? activeSchedule.subjectNames.join(', ') : 'Selected subjects'}</Text>
+                <Text style={styles.currentFact}>- {activeSchedule?.health?.planned_days ?? 0} planned instructional days</Text>
+                <Text style={styles.currentFact}>
+                  - {activeSchedule?.health?.delta_days != null
+                    ? (activeSchedule.health.delta_days <= 0 ? 'On track with state targets' : `${activeSchedule.health.delta_days} days behind target`)
+                    : 'On track with state targets'}
+                </Text>
+                <View style={styles.actionRow}>
+                  <TouchableOpacity style={styles.secondaryBtn} onPress={() => setSurfaceMode('builder')}>
+                    <Text style={styles.secondaryBtnText}>Edit schedule</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.secondaryBtn} onPress={() => setSurfaceMode('builder')}>
+                    <Text style={styles.secondaryBtnText}>Rebuild</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.secondaryBtn} onPress={openPlannerView}>
+                    <Text style={styles.secondaryBtnText}>View in planner</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={styles.sectionShell}>
+                <Text style={styles.sectionKicker}>Other Plans</Text>
+                {otherPlans.length === 0 ? (
+                  <Text style={styles.mutedLine}>No archived or alternate plans yet.</Text>
+                ) : (
+                  otherPlans.slice(0, 3).map((plan) => (
+                    <View key={plan.id} style={styles.otherPlanRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.otherPlanTitle}>{plan.year_name || 'Plan'}</Text>
+                        <Text style={styles.mutedLine}>
+                          {(plan.start_date || '').slice(0, 7)} to {(plan.end_date || '').slice(0, 7)}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.minorBtn}
+                        onPress={() => {
+                          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                            window.dispatchEvent(
+                              new CustomEvent('openPlanYearModal', {
+                                detail: { from: 'subjects_builder', academicYearId: plan.id, openAsModal: true },
+                              })
+                            );
+                          }
+                        }}
+                      >
+                        <Text style={styles.minorBtnText}>View</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.minorBtn} onPress={() => setSurfaceMode('builder')}>
+                        <Text style={styles.minorBtnText}>Duplicate</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+              </View>
+
+              <TouchableOpacity style={styles.primaryBuildCta} onPress={() => setSurfaceMode('builder')}>
+                <Text style={styles.primaryBuildCtaText}>Rebuild or Adjust Schedule</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <View style={styles.emptyStateCard}>
+              <Text style={styles.emptyStateTitle}>No schedule yet</Text>
+              <Text style={styles.emptyStateText}>
+                Create your family's learning schedule to automatically plan lessons across subjects and track progress.
+              </Text>
+              <TouchableOpacity style={styles.primaryBuildCta} onPress={() => setSurfaceMode('builder')}>
+                <Text style={styles.primaryBuildCtaText}>Build Your Schedule</Text>
+              </TouchableOpacity>
+              <Text style={styles.nextStepHint}>Takes ~30 seconds • You can adjust anytime</Text>
+              <View style={styles.emptyDivider} />
+              <View style={styles.valueList}>
+                <Text style={styles.valueItem}>• Automatically creates lesson slots</Text>
+                <Text style={styles.valueItem}>• Keeps you on track with targets</Text>
+                <Text style={styles.valueItem}>• Adjusts when life changes</Text>
+              </View>
+            </View>
+          )}
+        </ScrollView>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.wrap}>
@@ -566,7 +843,7 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
       </ScrollView>
 
       <View style={styles.footer}>
-        <TouchableOpacity style={styles.cancelBtn} onPress={onDone} disabled={saving}>
+        <TouchableOpacity style={styles.cancelBtn} onPress={() => setSurfaceMode('home')} disabled={saving}>
           <Text style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.saveBtn, saving && styles.saveBtnDisabled]} onPress={handleSave} disabled={saving}>
@@ -587,6 +864,182 @@ const styles = StyleSheet.create({
   },
   scroll: { flex: 1 },
   content: { paddingBottom: 32 },
+  scheduleHeaderBlock: {
+    marginBottom: 16,
+  },
+  schedulePageTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: FG,
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
+  },
+  scheduleSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    color: SUB,
+    maxWidth: 760,
+    ...(Platform.OS === 'web' && { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
+  },
+  sectionShell: {
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    padding: 14,
+    marginBottom: 14,
+  },
+  sectionKicker: {
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    fontWeight: '700',
+    color: MUTED,
+    marginBottom: 8,
+  },
+  currentYearTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: FG,
+    marginBottom: 6,
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
+  },
+  currentMeta: {
+    fontSize: 13,
+    color: SUB,
+    marginBottom: 4,
+  },
+  currentFact: {
+    marginTop: 2,
+    fontSize: 13,
+    color: FG,
+    fontWeight: '600',
+  },
+  actionRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  secondaryBtn: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  secondaryBtnText: {
+    fontSize: 13,
+    color: FG,
+    fontWeight: '600',
+  },
+  otherPlanRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: BORDER_SUBTLE,
+  },
+  otherPlanTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: FG,
+  },
+  mutedLine: {
+    fontSize: 12,
+    color: MUTED,
+  },
+  minorBtn: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#fff',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  minorBtnText: {
+    fontSize: 12,
+    color: FG,
+    fontWeight: '600',
+  },
+  primaryBuildCta: {
+    marginTop: 2,
+    borderRadius: 10,
+    backgroundColor: '#10b981',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  primaryBuildCtaText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyStateCard: {
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    padding: 24,
+    minHeight: 280,
+    maxWidth: 760,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  emptyStateTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: FG,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptyStateText: {
+    fontSize: 14,
+    color: SUB,
+    textAlign: 'center',
+    maxWidth: 620,
+    marginBottom: 16,
+    alignSelf: 'center',
+  },
+  nextStepHint: {
+    marginTop: 8,
+    fontSize: 12,
+    color: MUTED,
+    textAlign: 'center',
+  },
+  emptyDivider: {
+    marginTop: 14,
+    marginBottom: 12,
+    height: 1,
+    backgroundColor: BORDER_SUBTLE,
+  },
+  valueList: {
+    gap: 6,
+  },
+  valueItem: {
+    fontSize: 13,
+    color: FG,
+    fontWeight: '500',
+  },
+  infoCard: {
+    borderWidth: 1,
+    borderColor: BORDER_SUBTLE,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    padding: 14,
+  },
+  infoCardTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+  },
   stepSection: { marginBottom: 24 },
   stepSectionLast: { marginBottom: 0 },
   stepTitle: {
