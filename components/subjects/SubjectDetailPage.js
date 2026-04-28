@@ -14,7 +14,6 @@ import {
   Edit2,
   Calendar,
   Clock,
-  FileText,
   Plus,
   CheckCircle,
   XCircle,
@@ -39,6 +38,11 @@ import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
 import { extractStudentHelpReason, formatDueShort } from '../tutor/tutorHelpUtils';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
+import {
+  SubjectAttendanceYearHeatmap,
+  SubjectAttendanceMonthDrilldown,
+} from './SubjectSectionDrilldownPanels';
+import SubjectProgressPlanSection from './SubjectProgressPlanSection';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 
@@ -64,6 +68,7 @@ export default function SubjectDetailPage({
   preloadedSubjectData = null,
   onSubjectDataUpdate = null,
   initialScrollToSectionId = null,
+  initialOpenMaterialId = null,
 }) {
   const session = useSession();
   const toast = useToast();
@@ -83,8 +88,17 @@ export default function SubjectDetailPage({
   const [materialDocViewerUrl, setMaterialDocViewerUrl] = useState('');
   const [materialDocViewerTitle, setMaterialDocViewerTitle] = useState('');
   const [materialDocViewerKind, setMaterialDocViewerKind] = useState('pdf');
+  const [highlightedMaterialId, setHighlightedMaterialId] = useState(null);
   const [subjectPlanYearId, setSubjectPlanYearId] = useState(null);
+  const [subjectPlanYearLookupDone, setSubjectPlanYearLookupDone] = useState(false);
+  const [isOpeningPlanBuilder, setIsOpeningPlanBuilder] = useState(false);
+  const [attendanceInsightsMode, setAttendanceInsightsMode] = useState(null);
   const loadingRef = useRef(false);
+  const subjectPlanLookupPromiseRef = useRef(null);
+  const subjectPlanLookupKeyRef = useRef(null);
+  const openingPlanBuilderRef = useRef(false);
+  const autoOpenedMaterialKeyRef = useRef(null);
+  const materialHighlightTimeoutRef = useRef(null);
   /** Parent often passes inline callbacks; keep loadSubjectDetail stable so mount effect does not loop. */
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -233,6 +247,24 @@ export default function SubjectDetailPage({
     [toast]
   );
 
+  useEffect(() => {
+    autoOpenedMaterialKeyRef.current = null;
+    setHighlightedMaterialId(null);
+    if (materialHighlightTimeoutRef.current) {
+      clearTimeout(materialHighlightTimeoutRef.current);
+      materialHighlightTimeoutRef.current = null;
+    }
+  }, [subjectId, initialOpenMaterialId]);
+
+  useEffect(() => {
+    return () => {
+      if (materialHighlightTimeoutRef.current) {
+        clearTimeout(materialHighlightTimeoutRef.current);
+        materialHighlightTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   const closeMaterialDocViewer = useCallback(() => {
     setShowMaterialDocViewer(false);
     setMaterialDocViewerUrl('');
@@ -249,6 +281,7 @@ export default function SubjectDetailPage({
   const attendanceRecords = subjectData?.attendanceRecords || [];
   const grades = subjectData?.grades || [];
   const eventOutcomes = subjectData?.eventOutcomes || [];
+  const subjectEvents = subjectData?.events || [];
 
   // Metrics (with proper null/undefined handling)
   const attendanceRate30 = subjectData?.attendanceRate30 ?? null;
@@ -264,6 +297,29 @@ export default function SubjectDetailPage({
   }, [subject, subjectData?.events]);
 
   const childrenNames = assignedChildren.map(getChildName).filter(Boolean);
+
+  useEffect(() => {
+    if (!initialOpenMaterialId) return;
+    if (!subjectId) return;
+    const key = `${subjectId}:${initialOpenMaterialId}`;
+    if (autoOpenedMaterialKeyRef.current === key) return;
+    const matched = materials.find((material) => String(material?.id) === String(initialOpenMaterialId));
+    if (!matched) return;
+    autoOpenedMaterialKeyRef.current = key;
+    setHighlightedMaterialId(String(initialOpenMaterialId));
+    if (materialHighlightTimeoutRef.current) {
+      clearTimeout(materialHighlightTimeoutRef.current);
+    }
+    materialHighlightTimeoutRef.current = setTimeout(() => {
+      setHighlightedMaterialId(null);
+      materialHighlightTimeoutRef.current = null;
+    }, 2200);
+    scrollToSection('materials-section');
+    const t = setTimeout(() => {
+      handleMaterialChipPress(matched);
+    }, 260);
+    return () => clearTimeout(t);
+  }, [initialOpenMaterialId, subjectId, materials, scrollToSection, handleMaterialChipPress]);
 
   const openAddMaterialModal = useCallback(() => {
     if (!subject?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -281,16 +337,39 @@ export default function SubjectDetailPage({
 
   useEffect(() => {
     let cancelled = false;
+    const lookupKey = `${familyId || ''}:${subject?.id || ''}`;
+    const lookupTargetChanged = subjectPlanLookupKeyRef.current !== lookupKey;
+    subjectPlanLookupKeyRef.current = lookupKey;
+    if (lookupTargetChanged) {
+      setSubjectPlanYearId(null);
+    }
+    setSubjectPlanYearLookupDone(false);
+    subjectPlanLookupPromiseRef.current = null;
     (async () => {
       if (!familyId || !subject?.id) {
-        if (!cancelled) setSubjectPlanYearId(null);
+        if (!cancelled) {
+          setSubjectPlanYearId(null);
+          setSubjectPlanYearLookupDone(true);
+        }
         return;
       }
+      const lookupPromise = findAcademicYearPlanForSubject(familyId, subject.id);
+      subjectPlanLookupPromiseRef.current = lookupPromise;
       try {
-        const { academicYearId } = await findAcademicYearPlanForSubject(familyId, subject.id);
-        if (!cancelled) setSubjectPlanYearId(academicYearId || null);
+        const { academicYearId } = await lookupPromise;
+        if (!cancelled) {
+          setSubjectPlanYearId(academicYearId || null);
+          setSubjectPlanYearLookupDone(true);
+        }
       } catch (_) {
-        if (!cancelled) setSubjectPlanYearId(null);
+        if (!cancelled) {
+          setSubjectPlanYearId(null);
+          setSubjectPlanYearLookupDone(true);
+        }
+      } finally {
+        if (subjectPlanLookupPromiseRef.current === lookupPromise) {
+          subjectPlanLookupPromiseRef.current = null;
+        }
       }
     })();
     return () => {
@@ -298,9 +377,46 @@ export default function SubjectDetailPage({
     };
   }, [familyId, subject?.id, subjectData?.events]);
 
-  const handleOpenPlanBuilder = useCallback(() => {
+  const handleOpenPlanBuilder = useCallback(async () => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !subject?.id) return;
-    if (subjectPlanYearId) {
+    if (openingPlanBuilderRef.current) return;
+    openingPlanBuilderRef.current = true;
+    setIsOpeningPlanBuilder(true);
+    let resolvedPlanYearId = subjectPlanYearId;
+    try {
+      if (!subjectPlanYearLookupDone) {
+        try {
+          if (subjectPlanLookupPromiseRef.current) {
+            const inFlight = await subjectPlanLookupPromiseRef.current;
+            resolvedPlanYearId = inFlight?.academicYearId || null;
+          } else if (familyId) {
+            const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
+            resolvedPlanYearId = fetched?.academicYearId || null;
+            setSubjectPlanYearId(resolvedPlanYearId);
+            setSubjectPlanYearLookupDone(true);
+          }
+        } catch (_) {
+          resolvedPlanYearId = null;
+          setSubjectPlanYearLookupDone(true);
+        }
+      }
+      if (resolvedPlanYearId) {
+        window.dispatchEvent(
+          new CustomEvent('openPlanYearModal', {
+            detail: {
+              from: 'subject_detail',
+              subjectId: subject.id,
+              subjectName: subject.name || null,
+              childIds: assignedChildren,
+              academicYearId: resolvedPlanYearId,
+              openAsModal: true,
+              openToEditList: false,
+              skipPlanSummary: true,
+            },
+          })
+        );
+        return;
+      }
       window.dispatchEvent(
         new CustomEvent('openPlanYearModal', {
           detail: {
@@ -308,35 +424,74 @@ export default function SubjectDetailPage({
             subjectId: subject.id,
             subjectName: subject.name || null,
             childIds: assignedChildren,
-            academicYearId: subjectPlanYearId,
             openAsModal: true,
-            openToEditList: false,
-            skipPlanSummary: true,
+            openDirectlyToScope: true,
           },
         })
       );
-      return;
+    } finally {
+      openingPlanBuilderRef.current = false;
+      setIsOpeningPlanBuilder(false);
     }
-    window.dispatchEvent(
-      new CustomEvent('openPlanYearModal', {
-        detail: {
-          from: 'subject_detail',
-          subjectId: subject.id,
-          subjectName: subject.name || null,
-          childIds: assignedChildren,
-          openAsModal: true,
-          openDirectlyToScope: true,
-        },
-      })
-    );
-  }, [subject?.id, subject?.name, assignedChildren, subjectPlanYearId]);
+  }, [subject?.id, subject?.name, assignedChildren, subjectPlanYearId, subjectPlanYearLookupDone, familyId]);
+  const planButtonLabel = subjectPlanYearLookupDone
+    ? (subjectPlanYearId ? 'Edit plan' : 'Build plan')
+    : (subjectPlanYearId ? 'Edit plan' : 'Open plan');
+  const isPlanButtonBusy = isOpeningPlanBuilder || !subjectPlanYearLookupDone;
+
+  const attendanceRecordsForUI = useMemo(() => {
+    const base = Array.isArray(attendanceRecords) ? attendanceRecords : [];
+    const byEvent = new Set(base.map((r) => String(r?.event_id || '')).filter(Boolean));
+    const nowMs = Date.now();
+    const thirtyDaysAgoMs = nowMs - (30 * 24 * 60 * 60 * 1000);
+    const fallback = [];
+
+    for (const ev of subjectEvents) {
+      if (!ev || String(ev.status || '').toLowerCase() !== 'done') continue;
+      const eventId = String(ev.id || '');
+      if (!eventId || byEvent.has(eventId)) continue;
+      const tsRaw = ev.start_ts || ev.end_ts || ev.due_ts;
+      const t = tsRaw ? new Date(tsRaw).getTime() : NaN;
+      if (!Number.isFinite(t) || t < thirtyDaysAgoMs || t > nowMs) continue;
+      const startTs = ev.start_ts ? new Date(ev.start_ts).getTime() : NaN;
+      const endTs = ev.end_ts ? new Date(ev.end_ts).getTime() : NaN;
+      const minutes =
+        Number.isFinite(startTs) && Number.isFinite(endTs)
+          ? Math.max(1, Math.round((endTs - startTs) / 60000))
+          : 60;
+      fallback.push({
+        id: `fallback-attendance-${eventId}`,
+        event_id: ev.id,
+        child_id: ev.child_id || null,
+        day_date: new Date(t).toISOString().split('T')[0],
+        minutes,
+        status: 'present',
+        created_at: ev.updated_at || ev.end_ts || ev.start_ts || null,
+      });
+    }
+
+    return [...base, ...fallback].sort((a, b) => {
+      const aTs = a?.day_date ? new Date(`${a.day_date}T00:00:00`).getTime() : 0;
+      const bTs = b?.day_date ? new Date(`${b.day_date}T00:00:00`).getTime() : 0;
+      return bTs - aTs;
+    });
+  }, [attendanceRecords, subjectEvents]);
 
   // Process attendance for last 30 days
   const attendance30Days = useMemo(() => {
-    const present = attendanceRecords.filter(ar => ar.status === 'present').length;
-    const absent = attendanceRecords.filter(ar => ar.status === 'absent').length;
-    return { present, absent, total: attendanceRecords.length };
-  }, [attendanceRecords]);
+    const present = attendanceRecordsForUI.filter(ar => ar.status === 'present').length;
+    const absent = attendanceRecordsForUI.filter(ar => ar.status === 'absent').length;
+    return { present, absent, total: attendanceRecordsForUI.length };
+  }, [attendanceRecordsForUI]);
+  const attendanceRate30Display = useMemo(() => {
+    if (attendanceRate30 !== null && attendanceRate30 !== undefined && !isNaN(attendanceRate30)) {
+      return attendanceRate30;
+    }
+    if (attendance30Days.total > 0) {
+      return Math.round((attendance30Days.present / attendance30Days.total) * 100);
+    }
+    return null;
+  }, [attendanceRate30, attendance30Days]);
 
   // Process graded items
   const gradedItems = useMemo(() => {
@@ -480,6 +635,19 @@ export default function SubjectDetailPage({
     }
   }, []);
 
+  const attendanceInsightsPanel = attendanceInsightsMode ? (
+    <View style={styles.attendanceInsightsPanelWrap}>
+      {attendanceInsightsMode === 'heatmap' ? (
+        <SubjectAttendanceYearHeatmap attendanceRecords={attendanceRecordsForUI} />
+      ) : attendanceInsightsMode === 'drilldown' ? (
+        <SubjectAttendanceMonthDrilldown
+          attendanceRecords={attendanceRecordsForUI}
+          subjectEvents={subjectData?.events || []}
+        />
+      ) : null}
+    </View>
+  ) : null;
+
   if (loading && !preloadedSubjectData) {
     return (
       <View style={styles.container}>
@@ -545,11 +713,18 @@ export default function SubjectDetailPage({
                 style={styles.actionButton}
                 onPress={handleOpenPlanBuilder}
                 accessibilityRole="button"
-                accessibilityLabel={subjectPlanYearId ? 'Edit plan' : 'Build plan'}
+                accessibilityLabel={planButtonLabel}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <Calendar size={16} color="#6B7280" />
-                <Text style={styles.actionButtonText}>{subjectPlanYearId ? 'Edit plan' : 'Build plan'}</Text>
+                <Text style={styles.actionButtonText}>{planButtonLabel}</Text>
+                {isPlanButtonBusy ? (
+                  <ActivityIndicator
+                    size="small"
+                    color="#6B7280"
+                    style={{ marginLeft: 8, transform: [{ scale: 0.75 }] }}
+                  />
+                ) : null}
               </TouchableOpacity>
             </View>
           </View>
@@ -557,6 +732,19 @@ export default function SubjectDetailPage({
 
         {/* Top Summary Panel */}
         <View style={styles.summaryPanel}>
+          {/* Progress Tile */}
+          <TouchableOpacity
+            style={styles.summaryTile}
+            onPress={() => scrollToSection('progress-section')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.summaryTileLabel}>Progress</Text>
+            <Text style={styles.summaryTileValue}>
+              {subjectPlanYearId ? 'Plan linked' : 'No plan yet'}
+            </Text>
+            <Text style={styles.summaryTileCaption}>Plan lessons breakdown</Text>
+          </TouchableOpacity>
+
           {/* Attendance Tile */}
           <TouchableOpacity
             style={styles.summaryTile}
@@ -569,9 +757,9 @@ export default function SubjectDetailPage({
             }}
           >
             <Text style={styles.summaryTileLabel}>Attendance</Text>
-            {attendanceRate30 !== null && attendanceRate30 !== undefined && !isNaN(attendanceRate30) ? (
+            {attendanceRate30Display !== null && attendanceRate30Display !== undefined && !isNaN(attendanceRate30Display) ? (
               <>
-                <Text style={styles.summaryTileValue}>{attendanceRate30}% present</Text>
+                <Text style={styles.summaryTileValue}>{attendanceRate30Display}% present</Text>
                 <Text style={styles.summaryTileCaption}>last 30 days</Text>
               </>
             ) : (
@@ -678,7 +866,7 @@ export default function SubjectDetailPage({
         ) : null}
 
         {/* Materials Snapshot */}
-        <View style={styles.section}>
+        <View id="materials-section" style={styles.section}>
           <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials Snapshot</Text>
           </View>
@@ -697,31 +885,38 @@ export default function SubjectDetailPage({
                   return (
                     <TouchableOpacity
                       key={material.id}
-                      style={styles.materialListItem}
+                      style={[
+                        styles.materialListItem,
+                        highlightedMaterialId != null &&
+                        String(material.id) === String(highlightedMaterialId)
+                          ? styles.materialListItemHighlighted
+                          : null,
+                      ]}
                       onPress={() => handleMaterialChipPress(material)}
                       activeOpacity={0.7}
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
                       <View style={styles.materialListItemLeft}>
-                        <FileText size={16} color="#64748b" />
                         <View style={styles.materialListItemTextWrap}>
-                          <Text style={styles.materialListItemTitle} numberOfLines={1}>
-                            {baseName}
-                          </Text>
-                          {(roleTag || typeLabel) ? (
-                            <View style={styles.materialListItemTagsRow}>
-                              {roleTag ? (
-                                <View style={styles.materialListItemTag}>
-                                  <Text style={styles.materialListItemTagText}>{roleTag}</Text>
-                                </View>
-                              ) : null}
-                              {typeLabel ? (
-                                <View style={styles.materialListItemTag}>
-                                  <Text style={styles.materialListItemTagText}>{typeLabel}</Text>
-                                </View>
-                              ) : null}
-                            </View>
-                          ) : null}
+                          <View style={styles.materialListItemTitleRow}>
+                            <Text style={styles.materialListItemTitle} numberOfLines={1}>
+                              {baseName}
+                            </Text>
+                            {(roleTag || typeLabel) ? (
+                              <View style={styles.materialListItemTagsRow}>
+                                {roleTag ? (
+                                  <View style={styles.materialListItemTag}>
+                                    <Text style={styles.materialListItemTagText}>{roleTag}</Text>
+                                  </View>
+                                ) : null}
+                                {typeLabel ? (
+                                  <View style={styles.materialListItemTag}>
+                                    <Text style={styles.materialListItemTagText}>{typeLabel}</Text>
+                                  </View>
+                                ) : null}
+                              </View>
+                            ) : null}
+                          </View>
                         </View>
                       </View>
                       <Text style={styles.materialListItemDate}>{createdDate || '—'}</Text>
@@ -763,7 +958,23 @@ export default function SubjectDetailPage({
           )}
         </View>
 
-        {/* Section 1: Attendance */}
+        {/* Section 1: Progress */}
+        <View id="progress-section" style={styles.section}>
+          <View style={styles.attendanceSectionHeader}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
+          </View>
+          <SubjectProgressPlanSection
+            familyId={familyId}
+            subjectId={subject?.id}
+            subjectName={subject?.name}
+            children={children}
+            assignedChildIds={assignedChildren}
+            isParentViewer={isParentViewer}
+            onRefresh={() => loadSubjectDetail({ silent: true })}
+          />
+        </View>
+
+        {/* Section 2: Attendance */}
         <View id="attendance-section" style={styles.section}>
           <View style={styles.attendanceSectionHeader}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
@@ -785,7 +996,7 @@ export default function SubjectDetailPage({
               </TouchableOpacity>
             )}
           </View>
-          {attendanceRecords.length > 0 ? (
+          {attendanceRecordsForUI.length > 0 ? (
             <View style={styles.emptyStateBox}>
               <View style={styles.attendanceChips}>
                 <View style={styles.attendanceChip}>
@@ -802,7 +1013,7 @@ export default function SubjectDetailPage({
                 </View>
               </View>
               <View style={styles.attendanceList}>
-                {(showAttendanceExpanded ? attendanceRecords : attendanceRecords.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
+                {(showAttendanceExpanded ? attendanceRecordsForUI : attendanceRecordsForUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
                   const event = (subjectData?.events || []).find(e => e.id === record.event_id);
                   return (
                     <TouchableOpacity
@@ -822,7 +1033,7 @@ export default function SubjectDetailPage({
                   );
                 })}
               </View>
-              {attendanceRecords.length > ATTENDANCE_LIST_LIMIT && (
+              {attendanceRecordsForUI.length > ATTENDANCE_LIST_LIMIT && (
                 <TouchableOpacity
                   style={styles.attendanceShowMoreBtn}
                   onPress={() => setShowAttendanceExpanded((v) => !v)}
@@ -831,47 +1042,105 @@ export default function SubjectDetailPage({
                   <Text style={styles.attendanceShowMoreText}>
                     {showAttendanceExpanded
                       ? 'Show less'
-                      : `Show more (${attendanceRecords.length - ATTENDANCE_LIST_LIMIT} more)`}
+                      : `Show more (${attendanceRecordsForUI.length - ATTENDANCE_LIST_LIMIT} more)`}
                   </Text>
                 </TouchableOpacity>
               )}
-              {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 && (
-                <TouchableOpacity
-                  style={[styles.emptyStateButton, styles.attendancePastLessonsButton]}
-                  onPress={() => setShowPastEventsAttendanceModal(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="View past lessons and bulk update attendance"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Calendar size={18} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Past lessons & bulk actions</Text>
-                </TouchableOpacity>
-              )}
+              <View style={styles.attendanceContainerActionsRow}>
+                {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
+                  <TouchableOpacity
+                    style={[styles.emptyStateButton, styles.attendancePastLessonsButton]}
+                    onPress={() => setShowPastEventsAttendanceModal(true)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="View past lessons and bulk update attendance"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Calendar size={18} color="#6B7280" />
+                    <Text style={styles.emptyStateButtonText}>Past lessons & bulk actions</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <View style={styles.attendanceModePillsGroup}>
+                  <TouchableOpacity
+                    style={[styles.sectionModePill, attendanceInsightsMode === 'heatmap' && styles.sectionModePillActive]}
+                    onPress={() =>
+                      setAttendanceInsightsMode((current) => (current === 'heatmap' ? null : 'heatmap'))
+                    }
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'heatmap' && styles.sectionModePillTextActive]}>
+                      Year heatmap grid
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.sectionModePill, attendanceInsightsMode === 'drilldown' && styles.sectionModePillActive]}
+                    onPress={() =>
+                      setAttendanceInsightsMode((current) => (current === 'drilldown' ? null : 'drilldown'))
+                    }
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'drilldown' && styles.sectionModePillTextActive]}>
+                      Month drill-down
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              {attendanceInsightsPanel}
             </View>
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.emptyStateText}>
                 Attendance appears once you complete an event attached to this subject.
               </Text>
-              {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 && (
-                <TouchableOpacity
-                  style={styles.emptyStateButton}
-                  onPress={() => setShowPastEventsAttendanceModal(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="View past lessons and bulk update attendance"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Calendar size={18} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Past lessons & bulk actions</Text>
-                </TouchableOpacity>
-              )}
+              <View style={styles.attendanceContainerActionsRow}>
+                {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
+                  <TouchableOpacity
+                    style={[styles.emptyStateButton, styles.attendancePastLessonsButton]}
+                    onPress={() => setShowPastEventsAttendanceModal(true)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="View past lessons and bulk update attendance"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Calendar size={18} color="#6B7280" />
+                    <Text style={styles.emptyStateButtonText}>Past lessons & bulk actions</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <View style={styles.attendanceModePillsGroup}>
+                  <TouchableOpacity
+                    style={[styles.sectionModePill, attendanceInsightsMode === 'heatmap' && styles.sectionModePillActive]}
+                    onPress={() =>
+                      setAttendanceInsightsMode((current) => (current === 'heatmap' ? null : 'heatmap'))
+                    }
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'heatmap' && styles.sectionModePillTextActive]}>
+                      Year heatmap grid
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.sectionModePill, attendanceInsightsMode === 'drilldown' && styles.sectionModePillActive]}
+                    onPress={() =>
+                      setAttendanceInsightsMode((current) => (current === 'drilldown' ? null : 'drilldown'))
+                    }
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'drilldown' && styles.sectionModePillTextActive]}>
+                      Month drill-down
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              {attendanceInsightsPanel}
             </View>
           )}
         </View>
 
-        {/* Section 2: Grades */}
+        {/* Section 3: Grades */}
         <View id="grades-section" style={styles.section}>
           <View style={styles.gradesSectionHeader}>
             <View style={styles.gradesSectionTitleRow}>
@@ -1549,6 +1818,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(148, 163, 184, 0.14)',
   },
+  materialListItemHighlighted: {
+    backgroundColor: 'rgba(133, 196, 242, 0.14)',
+    borderBottomColor: 'rgba(107, 179, 232, 0.45)',
+  },
   materialListItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1564,16 +1837,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#334155',
+    flexShrink: 1,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  materialListItemTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+  },
   materialListItemTagsRow: {
-    marginTop: 5,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    flexWrap: 'wrap',
   },
   materialListItemTag: {
     paddingHorizontal: 8,
@@ -1617,6 +1895,55 @@ const styles = StyleSheet.create({
   gradesSectionHeader: {
     marginBottom: 10,
   },
+  sectionModePillsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+    flexWrap: 'wrap',
+  },
+  attendanceContainerActionsRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  attendanceModePillsGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginLeft: 'auto',
+  },
+  attendanceInsightsPanelWrap: {
+    marginTop: 12,
+  },
+  sectionModePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.28)',
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  sectionModePillActive: {
+    borderColor: 'rgba(107, 179, 232, 0.85)',
+    backgroundColor: 'rgba(133, 196, 242, 0.16)',
+  },
+  sectionModePillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  sectionModePillTextActive: {
+    color: '#2b6ea6',
+  },
   gradesSectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1624,7 +1951,7 @@ const styles = StyleSheet.create({
   },
   /** Past lessons CTA when attendance list is non-empty: spacing below list / show more */
   attendancePastLessonsButton: {
-    marginTop: 8,
+    marginTop: 0,
   },
   exportIconButton: {
     padding: 4,

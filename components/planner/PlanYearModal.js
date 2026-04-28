@@ -3596,18 +3596,23 @@ export default function PlanYearModal({
     [startDate, endDate],
   );
 
+  const clampApplyFromDateToPlanRange = useCallback((candidateYmd) => {
+    if (!candidateYmd || !/^\d{4}-\d{2}-\d{2}$/.test(candidateYmd)) return null;
+    if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) && candidateYmd < startDate) return startDate;
+    if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) && candidateYmd > endDate) return endDate;
+    return candidateYmd;
+  }, [startDate, endDate]);
+
   /** YYYY-MM-DD sent to apply_to_calendar when applying partial updates; null = full range. */
   const resolvedApplyFromDateForPayload = useMemo(() => {
     if (applyFromMode === 'entire') return null;
     if (applyFromMode === 'today') {
       const t = toLocalYYYYMMDD(new Date());
-      if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate) && t < startDate) return startDate;
-      if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate) && t > endDate) return endDate;
-      return t;
+      return clampApplyFromDateToPlanRange(t);
     }
-    if (applyFromMode === 'date') return applyFromDate || null;
+    if (applyFromMode === 'date') return clampApplyFromDateToPlanRange(applyFromDate);
     return null;
-  }, [applyFromMode, applyFromDate, startDate, endDate]);
+  }, [applyFromMode, applyFromDate, clampApplyFromDateToPlanRange]);
 
   /** Per block subject: whether saved curriculum has lessons (for Step 2 “Add units” vs “Change units”). */
   const subjectIdsKeyForCadenceFetch = useMemo(() => {
@@ -4519,16 +4524,6 @@ export default function PlanYearModal({
         });
 
         window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
-        setTimeout(() => {
-          window.dispatchEvent(
-            new CustomEvent('refreshCalendar', {
-              detail: {
-                forceInvalidate: true,
-                skipHomeRefresh: true,
-              },
-            }),
-          );
-        }, 250);
       }
       if (yid && planSummaryYearId && String(planSummaryYearId) === String(yid)) {
         getAcademicYear(yid).then(({ data: fresh, error }) => {
@@ -6735,6 +6730,17 @@ export default function PlanYearModal({
   }, [familyId, normalizeSlotTimeTo24h, baseSubjectList, children, allFamilyChildIds]);
 
   const runScopeType = selectedTermId ? 'term' : 'full_year';
+  const selectedFamilySchoolYearId =
+    selectedFamilySchoolYear?.id || selectedSchoolYearOption?.family_school_year_id || null;
+  const resolvedScopeUsesSchoolYear = !!selectedFamilySchoolYearId;
+  const resolvedRunScopeTypeForPayload = resolvedScopeUsesSchoolYear ? runScopeType : 'full_year';
+  const resolvedSchoolDurationScopeForPayload = resolvedScopeUsesSchoolYear
+    ? schoolDurationScope
+    : 'custom_duration';
+  const resolvedTermIdForPayload =
+    resolvedScopeUsesSchoolYear && resolvedRunScopeTypeForPayload === 'term'
+      ? (selectedTermId || undefined)
+      : undefined;
   const resolvedRunStartDate = buildWithDefaults
     ? selectedTermOption?.start_date || selectedFamilySchoolYear?.start_date || startDate || null
     : startDate || null;
@@ -7017,11 +7023,11 @@ export default function PlanYearModal({
       });
       const payload = {
         academic_year_id: academicYearId || undefined,
-        family_school_year_id: selectedFamilySchoolYear?.id || selectedSchoolYearOption?.family_school_year_id || undefined,
-        family_school_term_id: selectedTermId || undefined,
-        term_id: selectedTermId || undefined,
-        run_scope_type: runScopeType,
-        school_duration_scope: schoolDurationScope,
+        family_school_year_id: selectedFamilySchoolYearId || undefined,
+        family_school_term_id: resolvedTermIdForPayload,
+        term_id: resolvedTermIdForPayload,
+        run_scope_type: resolvedRunScopeTypeForPayload,
+        school_duration_scope: resolvedSchoolDurationScopeForPayload,
         use_defaults: buildWithDefaults,
         defaults_snapshot_json: buildWithDefaults ? defaultsSnapshotForRun : undefined,
         effective_config_json: effectiveConfigForRun,
@@ -7858,11 +7864,11 @@ export default function PlanYearModal({
         });
         const input = {
           academic_year_id: academicYearId,
-          family_school_year_id: selectedFamilySchoolYear?.id || selectedSchoolYearOption?.family_school_year_id || undefined,
-          family_school_term_id: selectedTermId || undefined,
-          term_id: selectedTermId || undefined,
-          run_scope_type: runScopeType,
-          school_duration_scope: schoolDurationScope,
+          family_school_year_id: selectedFamilySchoolYearId || undefined,
+          family_school_term_id: resolvedTermIdForPayload,
+          term_id: resolvedTermIdForPayload,
+          run_scope_type: resolvedRunScopeTypeForPayload,
+          school_duration_scope: resolvedSchoolDurationScopeForPayload,
           use_defaults: buildWithDefaults,
           defaults_snapshot_json: buildWithDefaults ? defaultsSnapshotForRun : undefined,
           effective_config_json: effectiveConfigForRun,
@@ -8590,7 +8596,10 @@ export default function PlanYearModal({
                     setShowSchoolYearDropdown(false);
                     setAcademicYearId(null);
                     setSelectedTermId(null);
-                    setStartCreatingNew(false);
+                    // Changing school year inside Build flow should not bounce back to edit/list views.
+                    setStartCreatingNew(true);
+                    setShowPlanManagerView(false);
+                    setPlanSummaryYearId(null);
                     const startYmd = yearOption.start_date || '';
                     const startYear = /^\d{4}-\d{2}-\d{2}$/.test(startYmd) ? Number(startYmd.slice(0, 4)) : null;
                     if (startYear != null && Number.isFinite(startYear)) {
@@ -11904,7 +11913,10 @@ export default function PlanYearModal({
                               setShowSchoolYearDropdown(false);
                               setAcademicYearId(null);
                               setSelectedTermId(null);
-                              setStartCreatingNew(false);
+                              // Changing school year inside Build flow should not bounce back to edit/list views.
+                              setStartCreatingNew(true);
+                              setShowPlanManagerView(false);
+                              setPlanSummaryYearId(null);
                               const startYmd = yearOption.start_date || '';
                               const startYear = /^\d{4}-\d{2}-\d{2}$/.test(startYmd) ? Number(startYmd.slice(0, 4)) : null;
                               if (startYear != null && Number.isFinite(startYear)) {
@@ -14310,7 +14322,13 @@ export default function PlanYearModal({
                   </View>
                   <View style={styles.calendarYearRow}>
                     <TouchableOpacity onPress={() => { const d = new Date(applyFromDateCalendarMonth); d.setFullYear(d.getFullYear() - 1); setApplyFromDateCalendarMonth(d); }} style={styles.calendarNavButton}><Text style={styles.calendarYearLink}>← Year</Text></TouchableOpacity>
-                    <TouchableOpacity onPress={() => { const today = new Date(); setApplyFromDateCalendarMonth(today); setApplyFromDate(toLocalYYYYMMDD(today)); setApplyFromMode('date'); setShowApplyFromDatePicker(false); }} style={styles.calendarNavButton}><Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={() => {
+                      const today = new Date();
+                      setApplyFromDateCalendarMonth(today);
+                      setApplyFromDate(clampApplyFromDateToPlanRange(toLocalYYYYMMDD(today)));
+                      setApplyFromMode('date');
+                      setShowApplyFromDatePicker(false);
+                    }} style={styles.calendarNavButton}><Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text></TouchableOpacity>
                     <TouchableOpacity onPress={() => { const d = new Date(applyFromDateCalendarMonth); d.setFullYear(d.getFullYear() + 1); setApplyFromDateCalendarMonth(d); }} style={styles.calendarNavButton}><Text style={styles.calendarYearLink}>Year →</Text></TouchableOpacity>
                   </View>
                   <View style={styles.calendarDayHeaders}>{WEEKDAY_LABELS.map((day) => (<View key={day} style={styles.calendarDayHeader}><Text style={styles.calendarDayHeaderText}>{day}</Text></View>))}</View>

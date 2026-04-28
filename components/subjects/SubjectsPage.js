@@ -29,6 +29,57 @@ import { useSession } from '../../contexts/SessionContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
 import SubjectDetailPage from './SubjectDetailPage';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
+import SubjectsPlanBuilder from './SubjectsPlanBuilder';
+
+const SEARCH_SECTION_KEYWORDS = {
+  'attendance-section': ['attendance', 'attended', 'present', 'absent', 'lesson', 'lessons', 'event', 'events'],
+  'grades-section': ['grade', 'grades', 'grading', 'score', 'scores', 'scoring', 'assessment', 'assessments', 'quiz', 'quizzes', 'test', 'tests'],
+  'learning-goals-section': ['goal', 'goals', 'learning', 'objective', 'objectives', 'mastery', 'target', 'targets'],
+  'materials-section': ['material', 'materials', 'resource', 'resources', 'attachment', 'attachments', 'syllabus', 'file', 'files', 'pdf', 'document', 'documents'],
+  'needs-help-section': ['help', 'support', 'needs-help', 'needshelp', 'struggle', 'struggling'],
+};
+
+function tokenizeSearchQuery(value) {
+  return String(value || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function isSectionIntentToken(token, keywords) {
+  const safeToken = String(token || '').toLowerCase().trim();
+  if (!safeToken) return false;
+  return keywords.some((keyword) => {
+    const safeKeyword = String(keyword || '').toLowerCase().trim();
+    if (!safeKeyword) return false;
+    if (safeKeyword === safeToken) return true;
+    // Allow near/prefix matching while typing, e.g. "grad" -> "grades"
+    if (safeToken.length >= 3 && safeKeyword.startsWith(safeToken)) return true;
+    return false;
+  });
+}
+
+function computeSearchScore(entry, tokens, queryNormalized) {
+  if (!entry || !tokens.length) return 0;
+  const name = String(entry.subject?.name || '').toLowerCase();
+  const description = String(entry.subject?.description || '').toLowerCase();
+  const searchableText = String(entry.searchableText || '');
+  let score = 0;
+
+  if (queryNormalized && name === queryNormalized) score += 200;
+  if (queryNormalized && name.includes(queryNormalized)) score += 120;
+  if (queryNormalized && description.includes(queryNormalized)) score += 40;
+
+  tokens.forEach((token) => {
+    if (!token) return;
+    if (name.includes(token)) score += 30;
+    else if (description.includes(token)) score += 12;
+    else if (searchableText.includes(token)) score += 4;
+  });
+
+  return score;
+}
 
 export default function SubjectsPage({
   familyId,
@@ -64,10 +115,12 @@ export default function SubjectsPage({
   const [selectedChildFilter, setSelectedChildFilter] = useState(
     isChildView && childId ? childId : 'all'
   );
+  const [selectedModeFilter, setSelectedModeFilter] = useState('view');
   const [selectedYearFilter, setSelectedYearFilter] = useState('all');
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
   const [pendingScrollToSectionId, setPendingScrollToSectionId] = useState(null);
+  const [pendingOpenMaterialId, setPendingOpenMaterialId] = useState(null);
   const [expandedSummaryMetric, setExpandedSummaryMetric] = useState(null);
   const [openComplianceRequirement, setOpenComplianceRequirement] = useState(null);
   const [complianceRowHoverKey, setComplianceRowHoverKey] = useState(null);
@@ -190,24 +243,177 @@ export default function SubjectsPage({
     }
   }, [preloadedSubjects]);
 
+  const searchQueryNormalized = useMemo(() => String(searchQuery || '').toLowerCase().trim(), [searchQuery]);
+  const searchTokens = useMemo(() => tokenizeSearchQuery(searchQuery), [searchQuery]);
+  const sectionSearchKeywords = useMemo(
+    () => Object.values(SEARCH_SECTION_KEYWORDS).flat(),
+    []
+  );
+  const nonSectionSearchTokens = useMemo(
+    () => searchTokens.filter((token) => !isSectionIntentToken(token, sectionSearchKeywords)),
+    [searchTokens, sectionSearchKeywords]
+  );
+
+  const detectedSectionFromSearch = useMemo(() => {
+    if (!searchTokens.length) return null;
+    for (const [sectionId, keywords] of Object.entries(SEARCH_SECTION_KEYWORDS)) {
+      if (searchTokens.some((token) => isSectionIntentToken(token, keywords))) {
+        return sectionId;
+      }
+    }
+    return null;
+  }, [searchTokens]);
+  const activeSearchPreviewSectionId = useMemo(
+    () => (searchTokens.length > 0 ? detectedSectionFromSearch : null),
+    [searchTokens, detectedSectionFromSearch]
+  );
+
+  const searchableSubjects = useMemo(() => {
+    return (subjects || []).map((subject) => {
+      const detail = subjectDetailCache[subject.id];
+      const assignedChildIds = Array.isArray(subject?.assignedChildren) ? subject.assignedChildren : [];
+      const assignedChildNames = assignedChildIds
+        .map((id) => safeChildren.find((child) => String(child?.id) === String(id)))
+        .filter(Boolean)
+        .map((child) => `${child?.name || ''} ${child?.first_name || ''}`.trim())
+        .filter(Boolean);
+      const schoolYear = String(subject?.school_year || '2025/26');
+      const schoolYearTokens = schoolYear
+        .split(/[^0-9a-z]+/gi)
+        .map((token) => token.trim())
+        .filter(Boolean);
+      const textParts = [
+        subject?.name,
+        subject?.description,
+        subject?.currentFocus,
+        subject?.coreGoal,
+        schoolYear,
+        schoolYear.replace('/', ' '),
+        schoolYearTokens.join(' '),
+        assignedChildNames.join(' '),
+      ];
+
+      if (detail) {
+        textParts.push(
+          detail?.subject?.name,
+          detail?.subject?.description,
+          detail?.currentFocus,
+          detail?.coreGoal
+        );
+        (detail.materials || []).forEach((material) => {
+          textParts.push(
+            material?.title,
+            material?.provider_name,
+            Array.isArray(material?.tags) ? material.tags.join(' ') : null
+          );
+        });
+        (detail.events || []).forEach((event) => {
+          textParts.push(
+            event?.title,
+            event?.description,
+            event?.notes,
+            event?.status,
+            event?.lesson_name,
+            event?.unit_name
+          );
+        });
+        (detail.grades || []).forEach((grade) => {
+          textParts.push(
+            grade?.grade,
+            grade?.title,
+            grade?.label,
+            grade?.category,
+            grade?.notes,
+            grade?.score != null ? String(grade.score) : null,
+            grade?.possible != null ? String(grade.possible) : null
+          );
+        });
+        (detail.eventOutcomes || []).forEach((outcome) => {
+          textParts.push(
+            outcome?.grade,
+            outcome?.notes,
+            outcome?.comment,
+            outcome?.title
+          );
+        });
+        (detail.learningGoals || []).forEach((goal) => {
+          textParts.push(goal?.title, goal?.description, goal?.status, goal?.notes);
+        });
+      }
+
+      if ((detail?.attendanceRecords || []).length > 0 || (detail?.events || []).length > 0) {
+        textParts.push('attendance lessons events present absent');
+      }
+      if ((detail?.grades || []).length > 0 || (detail?.eventOutcomes || []).some((o) => o?.grade != null)) {
+        textParts.push('grades score scoring assessment');
+      }
+      if ((detail?.materials || []).length > 0) {
+        textParts.push('materials syllabus files pdf document');
+      }
+      if ((detail?.learningGoals || []).length > 0) {
+        textParts.push('learning goals objective mastery target');
+      }
+
+      const materialsSearchText = (detail?.materials || [])
+        .map((material) => {
+          const title = material?.title || material?.provider_name || '';
+          const tags = Array.isArray(material?.tags) ? material.tags.join(' ') : '';
+          const type = material?.type || material?.kind || material?.mime_type || material?.content_type || '';
+          return `${title} ${tags} ${type}`;
+        })
+        .join(' ')
+        .toLowerCase();
+
+      return {
+        subject,
+        searchableText: textParts.filter(Boolean).join(' ').toLowerCase(),
+        materialsSearchText,
+      };
+    });
+  }, [subjects, subjectDetailCache, safeChildren]);
+
   // Filter subjects by search query
   const filteredSubjects = useMemo(() => {
-    if (!subjects || subjects.length === 0) return [];
-    
-    let filtered = subjects;
-    
-    // Filter by search
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase().trim();
-      filtered = filtered.filter(subject => 
-        subject.name?.toLowerCase().includes(query) ||
-        subject.description?.toLowerCase().includes(query)
-      );
+    if (!searchableSubjects.length) return [];
+
+    let filteredEntries = searchableSubjects.map((entry) => ({
+      ...entry,
+      score: 0,
+    }));
+
+    // Filter by search + rank by relevance
+    if (searchTokens.length > 0) {
+      // Treat section keywords (e.g. "grades", "attendance") as navigation intent,
+      // not strict filter terms, so queries like "math grades" still match by subject.
+      const requiredTokens = nonSectionSearchTokens;
+      filteredEntries = searchableSubjects
+        .filter((entry) =>
+          requiredTokens.length === 0 ||
+          requiredTokens.every((token) => entry.searchableText.includes(token))
+        )
+        .map((entry) => ({
+          ...entry,
+          score: computeSearchScore(entry, searchTokens, searchQueryNormalized),
+        }))
+        .sort((a, b) => {
+          if (b.score !== a.score) return b.score - a.score;
+          const aName = String(a.subject?.name || '');
+          const bName = String(b.subject?.name || '');
+          return aName.localeCompare(bName);
+        });
+
+      // For section-only searches (e.g. "syllabus"), narrow by section content.
+      if (requiredTokens.length === 0 && detectedSectionFromSearch === 'materials-section') {
+        filteredEntries = filteredEntries.filter((entry) => {
+          if (!entry.materialsSearchText) return false;
+          return searchTokens.some((token) => entry.materialsSearchText.includes(token));
+        });
+      }
     }
-    
+
     // Filter by child
     if (selectedChildFilter !== 'all') {
-      filtered = filtered.filter(subject => {
+      filteredEntries = filteredEntries.filter(({ subject }) => {
         if (!subject.assignedChildren || subject.assignedChildren.length === 0) {
           return true; // Subjects with no assigned children show for all
         }
@@ -217,11 +423,37 @@ export default function SubjectsPage({
 
     // Filter by school year
     if (selectedYearFilter !== 'all') {
-      filtered = filtered.filter(subject => (subject.school_year || '2025/26') === selectedYearFilter);
+      filteredEntries = filteredEntries.filter(
+        ({ subject }) => (subject.school_year || '2025/26') === selectedYearFilter
+      );
     }
-    
-    return filtered;
-  }, [subjects, searchQuery, selectedChildFilter, selectedYearFilter]);
+
+    return filteredEntries.map((entry) => entry.subject).filter(Boolean);
+  }, [
+    searchableSubjects,
+    searchTokens,
+    nonSectionSearchTokens,
+    detectedSectionFromSearch,
+    selectedChildFilter,
+    selectedYearFilter,
+    searchQueryNormalized,
+  ]);
+
+  const handleSubjectClick = useCallback((subject, sectionOverride = null, materialId = null) => {
+    if (!subject?.id) return;
+    const sectionId = sectionOverride || detectedSectionFromSearch || null;
+    setPendingScrollToSectionId(sectionId);
+    setPendingOpenMaterialId(materialId || null);
+    setSelectedSubjectId(subject.id);
+    setExpandedSummaryMetric(null);
+  }, [detectedSectionFromSearch]);
+
+  const handleSearchSubmit = useCallback(() => {
+    if (!searchTokens.length) return;
+    if (!filteredSubjects.length) return;
+    const bestMatch = filteredSubjects[0];
+    handleSubjectClick(bestMatch, detectedSectionFromSearch || null);
+  }, [searchTokens, filteredSubjects, handleSubjectClick, detectedSectionFromSearch]);
 
   // Years that have at least one subject (for chip row - only show chips for registered years)
   const registeredYears = useMemo(() => {
@@ -509,13 +741,10 @@ export default function SubjectsPage({
     };
   }, [filteredSubjects, subjectDetailCache, getChildName, effectiveComplianceStateCodes, selectedChildFilter, attendanceByChildForCompliance]);
 
-  const handleSubjectClick = (subject) => {
-    setSelectedSubjectId(subject.id);
-  };
-
   const handleBack = () => {
     setSelectedSubjectId(null);
     setPendingScrollToSectionId(null);
+    setPendingOpenMaterialId(null);
   };
 
   const openSubjectToSection = (subjectId, sectionId) => {
@@ -588,6 +817,10 @@ export default function SubjectsPage({
     }
   };
 
+  const handleModeFilterChange = useCallback((nextMode) => {
+    setSelectedModeFilter(nextMode);
+  }, []);
+
   // If a subject is selected, show detail view
   if (selectedSubjectId) {
     return (
@@ -597,6 +830,7 @@ export default function SubjectsPage({
         children={safeChildren}
         preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
         initialScrollToSectionId={pendingScrollToSectionId}
+        initialOpenMaterialId={pendingOpenMaterialId}
         onSubjectDataUpdate={(data) => {
           const updatedCache = {
             ...subjectDetailCache,
@@ -619,12 +853,15 @@ export default function SubjectsPage({
   const subjectsHeaderTitle = isChildView && childId
     ? (childDisplayName === 'Your' ? 'Your Subjects' : `${childDisplayName}'s Subjects`)
     : "Your Family's Subjects";
+  const pageHeaderTitle = selectedModeFilter === 'plan'
+    ? "Build Your Family's Learning Schedule"
+    : subjectsHeaderTitle;
 
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>{subjectsHeaderTitle}</Text>
+        <Text style={styles.headerTitle}>{pageHeaderTitle}</Text>
         <View style={styles.headerActions}>
           <View style={styles.searchContainer}>
             <TextInput
@@ -633,6 +870,7 @@ export default function SubjectsPage({
               placeholderTextColor="#9ca3af"
               value={searchQuery}
               onChangeText={setSearchQuery}
+              onSubmitEditing={handleSearchSubmit}
             />
             {searchQuery.length > 0 ? (
               <TouchableOpacity
@@ -671,9 +909,59 @@ export default function SubjectsPage({
       </View>
       <View style={styles.divider} />
 
-      {/* Children Filter Chips - Hide for child/student view */}
+      {/* Mode Filter Chips - Hide for child/student view */}
       {!isChildView && (
         <View style={styles.filterRow}>
+          <Text style={styles.filterLabel}>Mode</Text>
+          <View style={styles.filterChipsWrap}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterChips}
+              contentContainerStyle={styles.filterChipsContent}
+            >
+              <TouchableOpacity
+                style={[
+                  styles.filterChip,
+                  selectedModeFilter === 'view' && styles.filterChipActive,
+                ]}
+                onPress={() => handleModeFilterChange('view')}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    selectedModeFilter === 'view' && styles.filterChipTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  View Subjects
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.filterChip,
+                  selectedModeFilter === 'plan' && styles.filterChipActive,
+                ]}
+                onPress={() => handleModeFilterChange('plan')}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    selectedModeFilter === 'plan' && styles.filterChipTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  Build Schedule
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      )}
+
+      {/* Children Filter Chips - Hide for child/student view */}
+      {!isChildView && (
+        <View style={[styles.filterRow, styles.filterRowBelowMode]}>
           <Text style={styles.filterLabel}>Children</Text>
           <View style={styles.filterChipsWrap}>
             <ScrollView
@@ -796,7 +1084,15 @@ export default function SubjectsPage({
       )}
 
       {/* Content */}
-      {loading ? (
+      {selectedModeFilter === 'plan' ? (
+        <SubjectsPlanBuilder
+          familyId={familyId}
+          children={safeChildren}
+          visibleSubjects={filteredSubjects}
+          allSubjects={subjects}
+          onDone={() => setSelectedModeFilter('view')}
+        />
+      ) : loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#60a5fa" />
           <Text style={styles.loadingText}>Loading subjects...</Text>
@@ -810,13 +1106,13 @@ export default function SubjectsPage({
         </View>
       ) : filteredSubjects.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <BookOpen size={48} color={colors.muted} />
+          {!searchQuery ? <BookOpen size={48} color={colors.muted} /> : null}
           <Text style={styles.emptyTitle}>
-            {searchQuery ? 'No subjects found' : 'No subjects yet'}
+            {searchQuery ? 'No results found' : 'No subjects yet'}
           </Text>
           <Text style={styles.emptyText}>
             {searchQuery
-              ? 'Try adjusting your search'
+              ? 'Please try something else'
               : 'Create subjects to organize learning by topic, course, or area of study.'}
           </Text>
           {!searchQuery && (
@@ -853,6 +1149,13 @@ export default function SubjectsPage({
               onAddSyllabus={handleAddSyllabus}
               onAddEvent={handleAddEvent}
               onAddMaterial={onAddMaterial}
+              searchPreviewSectionId={activeSearchPreviewSectionId}
+              searchPreviewData={subjectDetailCache[subject.id] || null}
+              searchPreviewTokens={searchTokens}
+              onSearchPreviewMaterialPress={(s, materialId) =>
+                handleSubjectClick(s, 'materials-section', materialId)
+              }
+              isSearchResultCompact={Boolean(searchQuery.trim())}
             />
           ))}
         </ScrollView>
@@ -1275,6 +1578,10 @@ const styles = StyleSheet.create({
     }),
   },
   filterRowBelowChildren: {
+    marginTop: 0,
+    marginBottom: 8,
+  },
+  filterRowBelowMode: {
     marginTop: 0,
     marginBottom: 8,
   },

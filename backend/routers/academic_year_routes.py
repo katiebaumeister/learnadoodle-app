@@ -2688,6 +2688,15 @@ async def apply_to_calendar(
                     detail="apply_from_date must be a valid date (YYYY-MM-DD)",
                 )
 
+        custom_holidays_dict = [
+            {"date": h.date, "name": h.name, "type": getattr(h, "type", "CUSTOM_HOLIDAY")}
+            for h in (body.custom_holidays or [])
+        ]
+        custom_breaks_dict = [
+            {"start": b.start, "end": b.end, "name": b.name}
+            for b in (body.custom_breaks or [])
+        ]
+
         resolved_config = resolve_effective_config_server(
             supabase=supabase,
             scope_data=scope_data,

@@ -2725,15 +2725,29 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Also ensure right tool is closed when planner first opens
   useEffect(() => {
     const prevTab = prevActiveTabRef.current;
-    prevActiveTabRef.current = activeTab;
-    
+    const enteringPlanner = activeTab === 'planner' && prevTab !== 'planner';
     if (activeTab !== 'calendar' && activeTab !== 'planner') {
       setActiveRightTool(null);
-    } else if (activeTab === 'planner' && prevTab !== 'planner') {
+    } else if (enteringPlanner) {
       // Ensure right pane is closed when switching TO planner (not when already on it)
       setActiveRightTool(null);
+      // If Plan Builder was opened from Subject Detail, do not keep planner stuck on inline
+      // plan-year/edit-year when user navigates back to Planner. Default back to month view.
+      const isInlinePlanView = currentView === 'plan-year' || currentView === 'edit-year';
+      if (isInlinePlanView && planYearFromSubjectDetail) {
+        resetInlinePlanYearOpenState();
+        setCurrentView('month');
+        setDefaultView('month');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          const url = new URL(window.location);
+          url.searchParams.set('view', 'month');
+          window.history.replaceState({}, '', url);
+          window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
+        }
+      }
     }
-  }, [activeTab]);
+    prevActiveTabRef.current = activeTab;
+  }, [activeTab, currentView, planYearFromSubjectDetail, resetInlinePlanYearOpenState]);
 
   // Determine if we're on a calendar screen
   const isCalendarScreen = activeTab === 'calendar' || activeTab === 'planner';

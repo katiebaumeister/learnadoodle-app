@@ -1066,6 +1066,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const refreshCalendarDataRef = useRef(null);
   /** Same-month requests (preload + planner tab) share one promise so get_month_view is not called twice. */
   const monthCalendarFetchRef = useRef(new Map());
+  /** Dedupe bursty refreshCalendar events for the same month. */
+  const recentRefreshCalendarMonthRef = useRef(new Map());
   
   // Initialize the ref and global function - this will be set when refreshCalendarData is defined
   // We'll set it up in a useEffect that depends on refreshCalendarData being available
@@ -2707,6 +2709,22 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const targetYear = event?.detail?.targetYear;
       const eventIdFromDetail = event?.detail?.eventId;
       const isTargetedRefresh = targetYear !== undefined && targetMonth !== undefined;
+      const forceInvalidate = event?.detail?.forceInvalidate === true;
+
+      // Many emitters can fire the same month refresh in a tight burst; keep the first one.
+      if (isTargetedRefresh) {
+        const dedupeKey = `${targetYear}-${targetMonth}`;
+        const now = Date.now();
+        const lastAt = recentRefreshCalendarMonthRef.current.get(dedupeKey) || 0;
+        if (now - lastAt < 200) return;
+        recentRefreshCalendarMonthRef.current.set(dedupeKey, now);
+        // Bounded cleanup so this map cannot grow indefinitely.
+        if (recentRefreshCalendarMonthRef.current.size > 32) {
+          for (const [key, at] of recentRefreshCalendarMonthRef.current.entries()) {
+            if (now - at > 10000) recentRefreshCalendarMonthRef.current.delete(key);
+          }
+        }
+      }
 
       // Do not delete pendingOptimisticUpdatesRef here — refreshCalendarData merges using it
       // plus preserveEventId; clearing before refetch broke first-drag preservation.
@@ -2766,7 +2784,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       
       // Update data in place: refetch target month and merge into cache (no full cache clear to avoid loading flash)
       const skipCacheClear = event?.detail?.skipCacheClear === true;
-      const forceInvalidate = event?.detail?.forceInvalidate === true;
       const dropStartTime = event?.detail?.dropStartTime;
       if (forceInvalidate && familyId) {
         invalidateHolidaysForRangeCache(familyId);

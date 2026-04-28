@@ -350,7 +350,7 @@ async def update_event_status(
             raise HTTPException(status_code=404, detail="Family not found")
 
         # Validate status
-        valid_statuses = ['scheduled', 'in_progress', 'done']
+        valid_statuses = ['scheduled', 'in_progress', 'done', 'completed']
         if body.status not in valid_statuses:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -362,20 +362,49 @@ async def update_event_status(
         
         supabase = get_admin_client()
         
-        status_update = {"status": body.status}
         conv_fields, did_convert = get_placeholder_conversion_fields(event)
-        status_update.update(conv_fields)
-        if did_convert:
-            log_event("placeholder_converted", action="status_update", event_id=event_id, academic_year_id=event.get("academic_year_id"), user_id=user["id"], old_batch_id=event.get("generation_batch_id"))
-        update_res = supabase.table("events").update(status_update).eq("id", event_id).execute()
-        
-        if not update_res.data:
+        status_attempts = [body.status]
+        # Local schemas can enforce either 'done' or 'completed'.
+        if body.status == "done":
+            status_attempts.append("completed")
+        elif body.status == "completed":
+            status_attempts.append("done")
+
+        updated_event = None
+        last_err = None
+        for status_value in status_attempts:
+            try:
+                status_update = {"status": status_value}
+                status_update.update(conv_fields)
+                update_res = supabase.table("events").update(status_update).eq("id", event_id).execute()
+                if update_res and isinstance(update_res.data, list) and len(update_res.data) > 0:
+                    updated_event = update_res.data[0]
+                elif update_res and isinstance(update_res.data, dict):
+                    updated_event = update_res.data
+                if updated_event is None:
+                    refetch_res = supabase.table("events").select("*").eq("id", event_id).single().execute()
+                    if refetch_res and refetch_res.data and refetch_res.data.get("status") == status_value:
+                        updated_event = refetch_res.data
+                if updated_event is not None:
+                    if did_convert:
+                        log_event("placeholder_converted", action="status_update", event_id=event_id, academic_year_id=event.get("academic_year_id"), user_id=user["id"], old_batch_id=event.get("generation_batch_id"))
+                    break
+            except Exception as e:
+                last_err = e
+                msg = str(e or "").lower()
+                if (
+                    ("status" in msg and ("invalid input value" in msg or "check constraint" in msg))
+                    or ("no unique or exclusion constraint matching the on conflict specification" in msg)
+                ):
+                    continue
+                raise
+
+        if updated_event is None:
+            err_text = str(last_err) if last_err else "Failed to update event status"
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update event status"
+                detail=err_text
             )
-        
-        updated_event = update_res.data[0]
         
         # Refresh calendar cache for affected date
         try:

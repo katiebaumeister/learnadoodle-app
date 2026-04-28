@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Clock, AlertTriangle, ChevronRight, Plus, Package, ClipboardList, GraduationCap, TrendingUp, Calendar } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { useSession } from '../../contexts/SessionContext';
+import { getMaterialFileTypeLabel } from '../materials/MaterialDocViewerModal';
+import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 
 export default function SubjectOverviewCard({
   subject,
@@ -19,6 +21,11 @@ export default function SubjectOverviewCard({
   onAddSyllabus,
   onAddEvent,
   recentlyViewedMaterials = [],
+  searchPreviewSectionId = null,
+  searchPreviewData = null,
+  searchPreviewTokens = [],
+  onSearchPreviewMaterialPress,
+  isSearchResultCompact = false,
 }) {
   const session = useSession();
   const [showStatusTooltip, setShowStatusTooltip] = useState(false);
@@ -211,6 +218,200 @@ export default function SubjectOverviewCard({
       );
     }
   };
+
+  const gradesPreviewRows = useMemo(() => {
+    if (searchPreviewSectionId !== 'grades-section') return [];
+    const gradeRows = (searchPreviewData?.grades || []).map((g) => {
+      const possible = g?.possible != null && Number(g.possible) > 0 ? Number(g.possible) : null;
+      const score = g?.score != null ? Number(g.score) : null;
+      const percent =
+        possible != null && score != null && Number.isFinite(score)
+          ? Math.round((score / possible) * 100)
+          : null;
+      const date = g?.created_at || g?.day_date || null;
+      return {
+        id: g?.id || `${g?.created_at || ''}-${g?.grade || ''}-${g?.score || ''}`,
+        label:
+          g?.grade != null && String(g.grade).trim().length > 0
+            ? String(g.grade)
+            : score != null && possible != null
+              ? `${score}/${possible}${percent != null ? ` (${percent}%)` : ''}`
+              : 'Graded item',
+        date,
+      };
+    });
+
+    const outcomeRows = (searchPreviewData?.eventOutcomes || [])
+      .filter((o) => o?.grade != null)
+      .map((o) => ({
+        id: o?.id || `${o?.created_at || ''}-${o?.grade || ''}`,
+        label: String(o.grade),
+        date: o?.created_at || null,
+      }));
+
+    return [...gradeRows, ...outcomeRows]
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+      .slice(0, 3);
+  }, [searchPreviewSectionId, searchPreviewData]);
+
+  const materialsPreviewRows = useMemo(() => {
+    if (searchPreviewSectionId !== 'materials-section') return [];
+    const rows = (searchPreviewData?.materials || []).map((material) => {
+      const title = material?.title || material?.provider_name || 'Material';
+      const roleTag = roleLabel(deriveRoleFromTags(material?.tags));
+      const typeLabel = getMaterialFileTypeLabel(material);
+      const date = material?.created_at || material?.updated_at || null;
+      const haystack = [
+        title,
+        roleTag,
+        typeLabel,
+        Array.isArray(material?.tags) ? material.tags.join(' ') : '',
+        material?.type,
+        material?.mime_type,
+        material?.content_type,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return {
+        id: material?.id || `${title}-${date || ''}`,
+        materialId: material?.id || null,
+        title,
+        roleTag,
+        typeLabel,
+        date,
+        haystack,
+      };
+    });
+
+    const normalizedTokens = (searchPreviewTokens || [])
+      .map((t) => String(t || '').toLowerCase().trim())
+      .filter(Boolean);
+    const matched =
+      normalizedTokens.length > 0
+        ? rows.filter((row) => normalizedTokens.some((token) => row.haystack.includes(token)))
+        : rows;
+    const finalRows = matched.length > 0 ? matched : rows;
+    return finalRows.slice(0, 3);
+  }, [searchPreviewSectionId, searchPreviewData, searchPreviewTokens]);
+
+  const searchPreviewContent = (
+    <>
+      {searchPreviewSectionId === 'grades-section' ? (
+        <View style={styles.searchPreviewSection}>
+          <Text style={styles.searchPreviewTitle}>Grades</Text>
+          {gradesPreviewRows.length > 0 ? (
+            <View style={styles.searchPreviewList}>
+              {gradesPreviewRows.map((row, idx) => (
+                <View
+                  key={row.id || `${idx}`}
+                  style={[styles.searchPreviewRow, idx === gradesPreviewRows.length - 1 && styles.searchPreviewRowLast]}
+                >
+                  <Text style={styles.searchPreviewRowLabel} numberOfLines={1}>
+                    {row.label}
+                  </Text>
+                  <Text style={styles.searchPreviewRowDate}>
+                    {row.date
+                      ? new Date(row.date).toLocaleDateString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })
+                      : '—'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.searchPreviewEmptyBox}>
+              <Text style={styles.searchPreviewEmptyText}>
+                Grades appear once you add grades to assignments or assessments for this subject.
+              </Text>
+            </View>
+          )}
+        </View>
+      ) : null}
+      {searchPreviewSectionId === 'materials-section' ? (
+        <View style={styles.searchPreviewSection}>
+          <Text style={styles.searchPreviewTitle}>Materials</Text>
+          {materialsPreviewRows.length > 0 ? (
+            <View style={styles.searchPreviewList}>
+              {materialsPreviewRows.map((row, idx) => (
+                <TouchableOpacity
+                  key={row.id || `${idx}`}
+                  style={[styles.searchPreviewMaterialRow, idx === materialsPreviewRows.length - 1 && styles.searchPreviewRowLast]}
+                  onPress={(e) => {
+                    if (e?.stopPropagation) e.stopPropagation();
+                    if (row.materialId && typeof onSearchPreviewMaterialPress === 'function') {
+                      onSearchPreviewMaterialPress(subject, row.materialId);
+                    } else {
+                      onCardClick?.(subject);
+                    }
+                  }}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open material ${row.title}`}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.searchPreviewMaterialTextWrap}>
+                    <Text style={styles.searchPreviewRowLabel} numberOfLines={1}>
+                      {row.title}
+                    </Text>
+                    {(row.roleTag || row.typeLabel) ? (
+                      <View style={styles.searchPreviewTagsRow}>
+                        {row.roleTag ? (
+                          <View style={styles.searchPreviewTag}>
+                            <Text style={styles.searchPreviewTagText}>{row.roleTag}</Text>
+                          </View>
+                        ) : null}
+                        {row.typeLabel ? (
+                          <View style={styles.searchPreviewTag}>
+                            <Text style={styles.searchPreviewTagText}>{row.typeLabel}</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.searchPreviewRowDate}>
+                    {row.date
+                      ? new Date(row.date).toLocaleDateString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })
+                      : '—'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.searchPreviewEmptyBox}>
+              <Text style={styles.searchPreviewEmptyText}>
+                No materials match this search yet.
+              </Text>
+            </View>
+          )}
+        </View>
+      ) : null}
+    </>
+  );
+
+  if (isSearchResultCompact) {
+    return (
+      <TouchableOpacity
+        style={[styles.card, styles.cardCompactSearch]}
+        onPress={() => onCardClick?.(subject)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.searchCompactHeader}>
+          <Text style={styles.searchCompactSubjectName} numberOfLines={2}>
+            {subject.name}
+          </Text>
+        </View>
+        {searchPreviewContent}
+      </TouchableOpacity>
+    );
+  }
 
   return (
     <TouchableOpacity
@@ -460,6 +661,7 @@ export default function SubjectOverviewCard({
           ]}>Add Material</Text>
         </TouchableOpacity>
       </View>
+      {searchPreviewContent}
     </TouchableOpacity>
   );
 }
@@ -475,6 +677,20 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       transition: 'all 0.2s ease',
       cursor: 'pointer',
+    }),
+  },
+  cardCompactSearch: {
+    padding: 14,
+  },
+  searchCompactHeader: {
+    marginBottom: 4,
+  },
+  searchCompactSubjectName: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   header: {
@@ -813,5 +1029,106 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1.5,
     borderColor: '#FFFFFF',
+  },
+  searchPreviewSection: {
+    marginTop: 14,
+  },
+  searchPreviewTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  searchPreviewList: {
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.2)',
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    overflow: 'hidden',
+  },
+  searchPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.14)',
+  },
+  searchPreviewRowLast: {
+    borderBottomWidth: 0,
+  },
+  searchPreviewRowLabel: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  searchPreviewRowDate: {
+    fontSize: 12,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  searchPreviewMaterialRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.14)',
+  },
+  searchPreviewMaterialTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  searchPreviewTagsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+    flexWrap: 'wrap',
+  },
+  searchPreviewTag: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+  },
+  searchPreviewTagText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  searchPreviewEmptyBox: {
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.2)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    backgroundColor: '#fff',
+  },
+  searchPreviewEmptyText: {
+    fontSize: 13,
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

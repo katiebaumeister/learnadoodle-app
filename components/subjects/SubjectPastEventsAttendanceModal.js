@@ -37,9 +37,12 @@ function isPastEvent(e, nowMs = Date.now()) {
   return t < nowMs;
 }
 
-function summarizeAttendanceForEvent(eventId, logs) {
+function summarizeAttendanceForEvent(eventId, logs, eventStatus = null) {
   const rows = logs.filter((l) => String(l.event_id) === String(eventId));
-  if (rows.length === 0) return 'none';
+  if (rows.length === 0) {
+    if (String(eventStatus || '').toLowerCase() === 'done') return 'present';
+    return 'none';
+  }
   const present = rows.filter((r) => r.status === 'present').length;
   const absent = rows.filter((r) => r.status === 'absent').length;
   if (present > 0 && absent === 0) return 'present';
@@ -58,6 +61,14 @@ function attendanceLabel(key) {
     default:
       return 'Pending';
   }
+}
+
+function errorText(err) {
+  if (!err) return '';
+  const raw = String(err?.detail || err?.message || err || '').trim();
+  if (!raw) return '';
+  const compact = raw.replace(/\s+/g, ' ');
+  return compact.length > 220 ? `${compact.slice(0, 220)}...` : compact;
 }
 
 function notifyAttendanceAndSubjectRefresh(subjectId) {
@@ -190,19 +201,34 @@ export default function SubjectPastEventsAttendanceModal({
     setApplyingThrough(true);
     try {
       let ok = 0;
+      let failed = 0;
+      let firstError = null;
       for (const ev of slice) {
-        const { error } = await completeEvent(ev.id);
+        const { error } = await completeEvent(ev.id, null, { requirePersist: true });
         if (error == null) ok += 1;
+        else {
+          failed += 1;
+          if (!firstError) firstError = error;
+        }
       }
-      toast.push(
-        `Updated ${ok} lesson${ok !== 1 ? 's' : ''} (completed & attended).`,
-        'success'
-      );
-      notifyAttendanceAndSubjectRefresh(subjectId);
-      onCompleted?.();
-      await refreshLogs();
-      setCutoffIndex(null);
-      onClose?.();
+      if (ok > 0) {
+        toast.push(
+          `Updated ${ok} lesson${ok !== 1 ? 's' : ''} (completed & attended).${failed ? ` ${failed} could not be updated.` : ''}`,
+          failed ? 'info' : 'success'
+        );
+        notifyAttendanceAndSubjectRefresh(subjectId);
+        onCompleted?.();
+        await refreshLogs();
+        setCutoffIndex(null);
+        onClose?.();
+      } else {
+        const detail = errorText(firstError);
+        toast.push(
+          detail ? `Could not update lessons: ${detail}` : 'Could not update lessons. Try again or open an event in the planner.',
+          'error'
+        );
+        await refreshLogs();
+      }
     } catch (e) {
       toast.push(e?.message || 'Something went wrong.', 'error');
     } finally {
@@ -217,11 +243,14 @@ export default function SubjectPastEventsAttendanceModal({
       setSaving(true);
       let succeeded = 0;
       let failed = 0;
+      let firstError = null;
       try {
         for (const ev of pastEvents) {
-          const { error } = await completeEvent(ev.id);
-          if (error) failed += 1;
-          else succeeded += 1;
+          const { error } = await completeEvent(ev.id, null, { requirePersist: true });
+          if (error) {
+            failed += 1;
+            if (!firstError) firstError = error;
+          } else succeeded += 1;
         }
         if (succeeded > 0) {
           toast.push(
@@ -229,7 +258,11 @@ export default function SubjectPastEventsAttendanceModal({
             failed ? 'info' : 'success'
           );
         } else if (failed > 0) {
-          toast.push('Could not update lessons. Try again or open an event in the planner.', 'error');
+          const detail = errorText(firstError);
+          toast.push(
+            detail ? `Could not update lessons: ${detail}` : 'Could not update lessons. Try again or open an event in the planner.',
+            'error'
+          );
         }
         notifyAttendanceAndSubjectRefresh(subjectId);
         onCompleted?.();
@@ -357,7 +390,7 @@ export default function SubjectPastEventsAttendanceModal({
 
               <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
                 {pastEventsChronological.map((ev, idx) => {
-                  const att = summarizeAttendanceForEvent(ev.id, attendanceLogs);
+                  const att = summarizeAttendanceForEvent(ev.id, attendanceLogs, ev.status);
                   const when = ev.start_ts
                     ? new Date(ev.start_ts).toLocaleString(undefined, {
                         month: 'short',
@@ -377,7 +410,12 @@ export default function SubjectPastEventsAttendanceModal({
                     childIds.length > 0 && typeof getChildName === 'function'
                       ? childIds.map((id) => getChildName(id)).filter(Boolean).join(', ')
                       : '';
-                  const selected = cutoffIndex === idx;
+                  const selected = cutoffIndex != null && idx <= cutoffIndex;
+                  const selectedCutoff = cutoffIndex === idx;
+                  const previewWillMarkAttended =
+                    (pendingAction == null && cutoffIndex != null && idx <= cutoffIndex) ||
+                    pendingAction === 'markAll';
+                  const displayAttendance = previewWillMarkAttended ? 'present' : att;
                   const calRaw = ev.status === 'done' ? 'Complete' : ev.status || 'scheduled';
                   const calLabel =
                     typeof calRaw === 'string' && calRaw.length
@@ -415,7 +453,7 @@ export default function SubjectPastEventsAttendanceModal({
                         accessibilityElementsHidden
                         importantForAccessibility="no"
                       >
-                        {selected ? <View style={styles.radioInner} /> : null}
+                        {selectedCutoff ? <View style={styles.radioInner} /> : null}
                       </View>
                       <View style={styles.selectRowBody}>
                         <View style={styles.rowTop}>
@@ -423,9 +461,13 @@ export default function SubjectPastEventsAttendanceModal({
                             {ev.title || 'Lesson'}
                           </Text>
                           <Text
-                            style={[styles.badge, att === 'present' && styles.badgeOk, att === 'none' && styles.badgeMuted]}
+                            style={[
+                              styles.badge,
+                              displayAttendance === 'present' && styles.badgeOk,
+                              displayAttendance === 'none' && styles.badgeMuted,
+                            ]}
                           >
-                            {attendanceLabel(att)}
+                            {attendanceLabel(displayAttendance)}
                           </Text>
                         </View>
                         {when ? <Text style={styles.rowMeta}>{when}</Text> : null}
@@ -498,7 +540,8 @@ export default function SubjectPastEventsAttendanceModal({
                     pendingAction === 'markAll' && styles.secondaryOutlineBtnActive,
                   ]}
                   onPress={() => {
-                    setPendingAction('markAll');
+                    const isAlreadySelected = pendingAction === 'markAll';
+                    setPendingAction(isAlreadySelected ? null : 'markAll');
                     setCutoffIndex(null);
                   }}
                   disabled={saving || applyingThrough}
@@ -580,16 +623,18 @@ export default function SubjectPastEventsAttendanceModal({
                 )}
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity
-              style={styles.cancelLink}
-              onPress={handleCancel}
-              disabled={saving || applyingThrough}
-              accessibilityRole="button"
-              accessibilityLabel="Cancel"
-              {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
-            >
-              <Text style={styles.cancelLinkText}>Cancel</Text>
-            </TouchableOpacity>
+            {hasPastEvents ? (
+              <TouchableOpacity
+                style={styles.cancelLink}
+                onPress={handleCancel}
+                disabled={saving || applyingThrough}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+                {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
+              >
+                <Text style={styles.cancelLinkText}>Cancel</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
       </View>
