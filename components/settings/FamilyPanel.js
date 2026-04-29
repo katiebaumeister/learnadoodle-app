@@ -2365,7 +2365,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
             
             {/* Reset Password Button */}
-            <View style={styles.profileFieldGroup}>
+            <View
+              style={[
+                styles.profileFieldGroup,
+                canEditOnboardingGoal && showGoalDropdown && styles.profileFieldGroupDropdownOpen,
+              ]}
+            >
               <Text style={styles.profileFieldLabel}>Password</Text>
               <TouchableOpacity
                 style={styles.profileResetPasswordButton}
@@ -2391,29 +2396,22 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
             <View style={styles.profileFieldGroup}>
               <Text style={styles.profileFieldLabel}>Goal</Text>
-              <View style={styles.profileReadOnlyValue}>
-                <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
-              </View>
-              {canEditOnboardingGoal && (
+              {canEditOnboardingGoal ? (
                 <>
-                  <Text style={styles.profileGoalHint}>
-                    Switching this changes parts of your planning experience, but all your existing data stays intact.
-                  </Text>
                   <View style={styles.profileGoalDropdownWrap}>
                     <TouchableOpacity
-                      style={styles.profileGoalDropdownTrigger}
+                      style={[styles.profileReadOnlyValue, styles.profileGoalInlineTrigger]}
                       onPress={() => setShowGoalDropdown((prev) => !prev)}
                       disabled={savingOnboardingGoal}
                       {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
                     >
-                      <Text style={styles.profileGoalDropdownTriggerText}>{onboardingGoalLabel}</Text>
+                      <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
                       <ChevronDown
                         size={16}
                         color="#6b7280"
                         style={showGoalDropdown ? { transform: [{ rotate: '180deg' }] } : undefined}
                       />
                     </TouchableOpacity>
-
                     {showGoalDropdown && (
                       <View style={styles.profileGoalDropdownMenu}>
                         {ONBOARDING_GOAL_OPTIONS.map((option) => {
@@ -2429,14 +2427,21 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                               <Text style={[styles.profileGoalDropdownItemText, selected && styles.profileGoalDropdownItemTextSelected]}>
                                 {option.label}
                               </Text>
-                              {selected ? <Check size={14} color="#2563eb" /> : null}
+                            {selected ? <Check size={14} color="#111827" /> : null}
                             </TouchableOpacity>
                           );
                         })}
                       </View>
                     )}
                   </View>
+                  <Text style={styles.profileGoalHint}>
+                    Switching this changes parts of your planning experience, but all your existing data stays intact.
+                  </Text>
                 </>
+              ) : (
+                <View style={styles.profileReadOnlyValue}>
+                  <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
+                </View>
               )}
             </View>
 
@@ -2850,7 +2855,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                             onPress={() => handleOpenChildInviteModal(child.id)}
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                           >
-                            <RotateCw size={12} color="#6366f1" />
+                            <RotateCw size={12} color="#6366F1" />
                             <Text style={styles.memberRowResendText}>Resend</Text>
                           </TouchableOpacity>
                         </>
@@ -5292,7 +5297,7 @@ function createStyles(tokens) {
     memberRowResendText: {
       fontSize: 12,
       fontWeight: '600',
-      color: '#6366f1',
+      color: '#6366F1',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -6004,11 +6009,18 @@ function createStyles(tokens) {
       marginTop: 0,
     },
     profileFieldGroup: {
+      position: 'relative',
       marginTop: 0,
       marginBottom: 32,
     },
+    profileFieldGroupDropdownOpen: {
+      zIndex: 80,
+      ...(Platform.OS === 'web' && {
+        isolation: 'isolate',
+      }),
+    },
     profileSectionSpacer: {
-      marginTop: 6,
+      marginTop: 20,
     },
     profileFieldLabel: {
       fontSize: 15,
@@ -6173,36 +6185,39 @@ function createStyles(tokens) {
       lineHeight: 20,
       marginBottom: 10,
     },
-    profileGoalDropdownWrap: {
-      marginTop: 2,
-      maxWidth: 280,
-    },
-    profileGoalDropdownTrigger: {
-      minHeight: 40,
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: '#d1d5db',
-      backgroundColor: '#ffffff',
-      paddingHorizontal: 12,
-      paddingVertical: 10,
+    profileGoalInlineTrigger: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
+      paddingRight: 14,
     },
-    profileGoalDropdownTriggerText: {
-      fontSize: 13,
-      color: '#374151',
-      ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }),
+    profileGoalDropdownWrap: {
+      marginTop: 2,
+      position: 'relative',
+      zIndex: 120,
     },
     profileGoalDropdownMenu: {
+      position: 'absolute',
+      top: '100%',
+      left: 0,
+      right: 0,
       marginTop: 6,
       borderWidth: 1,
       borderColor: '#d1d5db',
       borderRadius: 10,
       backgroundColor: '#ffffff',
       overflow: 'hidden',
+      zIndex: 140,
+      ...(Platform.OS === 'web' && {
+        boxShadow: '0 10px 25px rgba(17, 24, 39, 0.14)',
+      }),
+      ...((Platform.OS === 'ios' || Platform.OS === 'android') && {
+        elevation: 6,
+        shadowColor: '#000',
+        shadowOpacity: 0.12,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 6 },
+      }),
     },
     profileGoalDropdownItem: {
       minHeight: 40,
@@ -6215,7 +6230,7 @@ function createStyles(tokens) {
       borderBottomColor: '#f3f4f6',
     },
     profileGoalDropdownItemText: {
-      fontSize: 13,
+      fontSize: 14,
       color: '#374151',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -6223,7 +6238,7 @@ function createStyles(tokens) {
     },
     profileGoalDropdownItemTextSelected: {
       fontWeight: '700',
-      color: '#1d4ed8',
+      color: '#111827',
     },
     goalConfirmBodyText: {
       fontSize: 13,
@@ -7615,8 +7630,10 @@ function createStyles(tokens) {
     },
     // Danger Zone - Delete account (Profile)
     dangerZoneAccount: {
-      marginTop: 24,
-      paddingTop: 24,
+      position: 'relative',
+      zIndex: 1,
+      marginTop: 8,
+      paddingTop: 16,
       borderTopWidth: 1,
       borderTopColor: '#e5e7eb',
     },

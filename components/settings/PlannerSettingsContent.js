@@ -529,22 +529,28 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
   }, [toast, readOnly]);
 
   const sectionStyle = {
-    paddingVertical: 16,
-    paddingBottom: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
-    marginBottom: 24,
+    paddingTop: 0,
+    paddingBottom: 20,
+    marginBottom: 20,
   };
   const sectionTitleStyle = {
     fontSize: 18,
     fontWeight: '600',
-    color: TEXT_BLACK,
+    color: '#374151',
+    marginBottom: 12,
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   };
+  const sectionDividerStyle = {
+    height: 1,
+    backgroundColor: BORDER,
+    marginBottom: 20,
+  };
   const pageTitleStyle = {
-    ...sectionTitleStyle,
-    fontSize: 28,
-    fontWeight: '700',
+    fontSize: 36,
+    fontWeight: '800',
+    color: '#111827',
+    marginBottom: 20,
+    fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   };
   const chip = (active) => ({
     paddingVertical: 6,
@@ -604,6 +610,47 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
     transform: [{ translateX: 24 }],
     backgroundColor: '#0D9488',
   };
+  const rowActionButtonsStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  };
+  const rowActionButtonStyle = {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f9fafb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      transition: 'all 0.2s ease',
+      cursor: 'pointer',
+    }),
+  };
+  const addOutlineButtonStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 42,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#9ED3FF',
+    backgroundColor: '#F8FCFF',
+    alignSelf: 'flex-start',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  };
+  const addOutlineButtonTextStyle = {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#5AAEF2',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  };
   if (loading) {
     return (
       <View style={{ padding: 32, alignItems: 'center' }}>
@@ -615,11 +662,11 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 32 }}>
-      <View style={{ paddingHorizontal: 24, paddingTop: 8 }}>
+      <View style={{ paddingHorizontal: 0, paddingTop: 0 }}>
         {readOnly ? (
           <View
             style={{
-              marginBottom: 16,
+              marginBottom: 24,
               padding: 12,
               borderRadius: 12,
               borderWidth: 1,
@@ -632,7 +679,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
             </Text>
           </View>
         ) : null}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={pageTitleStyle}>Planning Preferences</Text>
           {savedIndicator && (
             <Text style={{ fontSize: 13, color: '#10b981', fontWeight: '500' }}>Saved</Text>
@@ -642,7 +689,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
         {/* Learning Goals */}
         <View style={sectionStyle}>
           <Text style={sectionTitleStyle}>Learning Goals</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, marginBottom: 4 }}>
+          <View style={sectionDividerStyle} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             <TouchableOpacity style={chip(targetScope === 'overall')} onPress={() => handleTargetScopeChange('overall')}>
               <Text style={chipText(targetScope === 'overall')}>Overall</Text>
             </TouchableOpacity>
@@ -656,7 +704,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
         {targetScope === 'overall' && (
           <View style={sectionStyle}>
             <Text style={sectionTitleStyle}>Target</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            <View style={sectionDividerStyle} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <TouchableOpacity style={chip(goalMode === 'none')} onPress={() => handleGoalChange('none')}>
                 <Text style={chipText(goalMode === 'none')}>None</Text>
               </TouchableOpacity>
@@ -710,8 +759,9 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
         {targetScope === 'per_subject' && (
           <View style={sectionStyle}>
             <Text style={sectionTitleStyle}>Subject targets</Text>
+            <View style={sectionDividerStyle} />
             {subjects.length === 0 ? null : (
-              <View style={{ marginTop: 8 }}>
+              <View>
               {subjects.map((subj) => {
                 const t = subjectTargets[subj.id] || { mode: 'none', days: '', hours: '' };
                 return (
@@ -765,7 +815,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
         {/* Public holidays */}
         <View style={sectionStyle}>
           <Text style={sectionTitleStyle}>Public holidays</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+          <View style={sectionDividerStyle} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <TouchableOpacity
               style={[toggleTrackStyle, followGlobalHolidays && toggleTrackOnStyle]}
               onPress={() => handleFollowChange(!followGlobalHolidays)}
@@ -881,7 +932,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
         {/* Custom days (single-date exclusions) */}
         <View style={sectionStyle}>
           <Text style={sectionTitleStyle}>{PLANNING_PREFERENCES_UI.customDaysSectionTitle}</Text>
-          <View style={{ marginTop: 8 }}>
+          <View style={sectionDividerStyle} />
+          <View>
               {customHolidays.map((h, i) => (
                 <View key={h.id || i} style={{ marginBottom: 8 }}>
                   {editingHolidayIndex === i ? (
@@ -919,12 +971,12 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                       <Text style={{ fontSize: 14, color: TEXT_BLACK }}>
                         {h.date} — {h.name}
                       </Text>
-                      <View style={{ flexDirection: 'row', gap: 4 }}>
-                        <TouchableOpacity onPress={() => startEditHoliday(i)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Pencil size={14} color={MUTED} />
+                      <View style={rowActionButtonsStyle}>
+                        <TouchableOpacity onPress={() => startEditHoliday(i)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Pencil size={16} color="#374151" />
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={() => removeHoliday(i)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Trash2 size={14} color="#94A3B8" />
+                        <TouchableOpacity onPress={() => removeHoliday(i)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Trash2 size={16} color="#374151" />
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -960,11 +1012,11 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
               ) : (
                 <TouchableOpacity
                   onPress={() => setAddingHoliday(true)}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}
+                  style={addOutlineButtonStyle}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color={TEXT_BLACK} />
-                  <Text style={{ fontSize: 14, fontWeight: '500', color: TEXT_BLACK }}>{PLANNING_PREFERENCES_UI.addDay}</Text>
+                  <Plus size={16} color="#5AAEF2" />
+                  <Text style={addOutlineButtonTextStyle}>{PLANNING_PREFERENCES_UI.addDay}</Text>
                 </TouchableOpacity>
               )}
           </View>
@@ -973,7 +1025,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
         {/* Ranges (date-span exclusions) */}
         <View style={sectionStyle}>
           <Text style={sectionTitleStyle}>{PLANNING_PREFERENCES_UI.rangesSectionTitle}</Text>
-          <View style={{ marginTop: 8 }}>
+          <View style={sectionDividerStyle} />
+          <View>
               {customBreaks.map((b, i) => (
                 <View key={b.id || i} style={{ marginBottom: 8 }}>
                   {editingBreakIndex === i ? (
@@ -1081,11 +1134,11 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
               ) : (
                 <TouchableOpacity
                   onPress={() => setAddingBreak(true)}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}
+                  style={addOutlineButtonStyle}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color={TEXT_BLACK} />
-                  <Text style={{ fontSize: 14, fontWeight: '500', color: TEXT_BLACK }}>{PLANNING_PREFERENCES_UI.addRange}</Text>
+                  <Plus size={16} color="#5AAEF2" />
+                  <Text style={addOutlineButtonTextStyle}>{PLANNING_PREFERENCES_UI.addRange}</Text>
                 </TouchableOpacity>
               )}
           </View>

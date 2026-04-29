@@ -2337,8 +2337,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   roleChipActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#8B5CF6',
+    backgroundColor: 'rgba(139,92,246,0.14)',
   },
   roleChipText: {
     fontSize: 12,
@@ -2349,7 +2349,7 @@ const styles = StyleSheet.create({
     }),
   },
   roleChipTextActive: {
-    color: '#6BB3E8',
+    color: '#6366F1',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2393,8 +2393,8 @@ const styles = StyleSheet.create({
     }),
   },
   subjectChipActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#8B5CF6',
+    backgroundColor: 'rgba(139,92,246,0.14)',
   },
   subjectChipText: {
     fontSize: 12,
@@ -2405,7 +2405,7 @@ const styles = StyleSheet.create({
     }),
   },
   subjectChipTextActive: {
-    color: '#6BB3E8',
+    color: '#6366F1',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2432,8 +2432,8 @@ const styles = StyleSheet.create({
     }),
   },
   sortChipActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#8B5CF6',
+    backgroundColor: 'rgba(139,92,246,0.14)',
   },
   sortChipText: {
     fontSize: 12,
@@ -2444,7 +2444,7 @@ const styles = StyleSheet.create({
     }),
   },
   sortChipTextActive: {
-    color: '#6BB3E8',
+    color: '#6366F1',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2466,8 +2466,8 @@ const styles = StyleSheet.create({
     }),
   },
   childChipActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#8B5CF6',
+    backgroundColor: 'rgba(139,92,246,0.14)',
   },
   childAvatar: {
     width: 22,
@@ -2480,7 +2480,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   childAvatarActive: {
-    borderColor: '#6BB3E8',
+    borderColor: '#8B5CF6',
   },
   childChipText: {
     fontSize: 12,
@@ -2491,7 +2491,7 @@ const styles = StyleSheet.create({
     }),
   },
   childChipTextActive: {
-    color: '#6BB3E8',
+    color: '#6366F1',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2583,8 +2583,8 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   filterChipActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#8B5CF6',
+    backgroundColor: 'rgba(139,92,246,0.14)',
   },
   filterChipText: {
     fontSize: 14,
@@ -2594,7 +2594,7 @@ const styles = StyleSheet.create({
     }),
   },
   filterChipTextActive: {
-    color: '#6BB3E8',
+    color: '#6366F1',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2956,8 +2956,8 @@ const styles = StyleSheet.create({
     }),
   },
   childrenFilterChipActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#8B5CF6',
+    backgroundColor: 'rgba(139,92,246,0.14)',
   },
   childrenFilterChipText: {
     fontSize: 14,
@@ -2968,7 +2968,7 @@ const styles = StyleSheet.create({
     }),
   },
   childrenFilterChipTextActive: {
-    color: '#6BB3E8',
+    color: '#6366F1',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

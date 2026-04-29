@@ -4,15 +4,19 @@
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Switch, Platform, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { Plus } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { useToast } from '../Toast';
 import {
   saveFamilyUserControls,
 } from '../../lib/services/userControlsClient';
 import { useFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
+import { LEARNADOODLE_LIGHT_BLUE } from '../../theme/comingSoonModalTheme';
 
-const BORDER = '#E5E7EB';
-const ACCENT_ON = '#AECBFA';
+const SWITCH_TRACK_OFF = '#d1d5db';
+const SWITCH_TRACK_ON = LEARNADOODLE_LIGHT_BLUE;
+const SWITCH_THUMB_OFF = '#94A3B8';
+const SWITCH_THUMB_ON = '#0D9488';
 
 const CONTROL_ROWS = [
   {
@@ -150,9 +154,9 @@ export default function UserControlsSettingsContent({
             value={!!flags[row.id]}
             onValueChange={() => toggle(row.id)}
             disabled={contextLoading || saving || !familyId}
-            trackColor={{ false: BORDER, true: ACCENT_ON }}
-            thumbColor="#FFFFFF"
-            ios_backgroundColor={BORDER}
+            trackColor={{ false: SWITCH_TRACK_OFF, true: SWITCH_TRACK_ON }}
+            thumbColor={flags[row.id] ? SWITCH_THUMB_ON : SWITCH_THUMB_OFF}
+            ios_backgroundColor={SWITCH_TRACK_OFF}
           />
         </View>
       ))}
@@ -168,6 +172,7 @@ export default function UserControlsSettingsContent({
           onPress={buttonLabel === 'Invite child' ? onInviteChildPress : onInviteTutorPress}
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
+          <Plus size={16} color="#374151" />
           <Text style={styles.inviteButtonText}>{buttonLabel}</Text>
         </TouchableOpacity>
       </View>
@@ -200,6 +205,7 @@ export default function UserControlsSettingsContent({
                 onPress={onInviteChildPress}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
+                <Plus size={16} color="#374151" />
                 <Text style={styles.inviteButtonText}>Invite child</Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -207,6 +213,7 @@ export default function UserControlsSettingsContent({
                 onPress={onInviteTutorPress}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
+                <Plus size={16} color="#374151" />
                 <Text style={styles.inviteButtonText}>Invite tutor</Text>
               </TouchableOpacity>
             </View>
@@ -223,7 +230,7 @@ export default function UserControlsSettingsContent({
             {renderInviteSection(
               'Child Permissions',
               'Invite a child to set permissions for student accounts.',
-              'Invite child'
+              'Invite Child'
             )}
           </View>
         ) : null}
@@ -235,7 +242,7 @@ export default function UserControlsSettingsContent({
             {renderInviteSection(
               'Tutor Permissions',
               'Invite a tutor to set permissions for tutor accounts.',
-              'Invite tutor'
+              'Invite Tutor'
             )}
           </View>
         ) : null}
@@ -394,7 +401,7 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   rowLabel: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '600',
     color: '#111827',
     marginBottom: 4,

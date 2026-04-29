@@ -8,6 +8,8 @@ import {
   TextInput,
   Platform,
   ActivityIndicator,
+  Modal,
+  Alert,
 } from 'react-native';
 import {
   Search,
@@ -19,10 +21,14 @@ import {
   Calendar,
   Clock,
   GraduationCap,
+  Download,
+  Check,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
 import { getAttendanceLogs } from '../../lib/services/recordsClient';
+import { generateAttendanceReport } from '../../lib/services/attendanceClient';
+import { exportReportCard } from '../../lib/services/exportClient';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { useSession } from '../../contexts/SessionContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
@@ -107,6 +113,32 @@ const ALL_TERMS_FILTER = 'all_terms';
 
 const SUBJECTS_MODE_STORAGE_PREFIX = 'subjects:selected-mode';
 
+function toLocalYmd(date) {
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function parseSchoolYearRange(schoolYearLabel) {
+  const raw = String(schoolYearLabel || '').trim();
+  const m = raw.match(/^(\d{4})\/(\d{2})$/);
+  if (!m) {
+    const now = new Date();
+    return {
+      startDate: toLocalYmd(new Date(now.getFullYear(), 7, 1)),
+      endDate: toLocalYmd(new Date(now.getFullYear() + 1, 6, 31)),
+    };
+  }
+  const startYear = Number(m[1]);
+  return {
+    startDate: toLocalYmd(new Date(startYear, 7, 1)),
+    endDate: toLocalYmd(new Date(startYear + 1, 6, 31)),
+  };
+}
+
 function readStoredSubjectsMode(storageKey) {
   if (Platform.OS !== 'web' || typeof window === 'undefined' || !storageKey) return null;
   try {
@@ -180,6 +212,23 @@ export default function SubjectsPage({
   const helpPopoverCloseTimerRef = useRef(null);
   const [showHelpPopover, setShowHelpPopover] = useState(false);
   const [helpPopoverPosition, setHelpPopoverPosition] = useState({ top: 0, left: 0 });
+  const [showSubjectsExportModal, setShowSubjectsExportModal] = useState(false);
+  const [subjectsExportType, setSubjectsExportType] = useState('schedule');
+  const [subjectsExportFormat, setSubjectsExportFormat] = useState('excel');
+  const [subjectsExportStartDate, setSubjectsExportStartDate] = useState('');
+  const [subjectsExportEndDate, setSubjectsExportEndDate] = useState('');
+  const [subjectsExportChildIds, setSubjectsExportChildIds] = useState([]);
+  const [subjectsExportBusy, setSubjectsExportBusy] = useState(false);
+
+  useEffect(() => {
+    if (subjectsExportType === 'schedule' && subjectsExportFormat !== 'excel' && subjectsExportFormat !== 'pdf') {
+      setSubjectsExportFormat('excel');
+      return;
+    }
+    if ((subjectsExportType === 'attendance' || subjectsExportType === 'report_card') && subjectsExportFormat === 'excel') {
+      setSubjectsExportFormat('pdf');
+    }
+  }, [subjectsExportType, subjectsExportFormat]);
 
   const clearHelpPopoverCloseTimer = useCallback(() => {
     if (helpPopoverCloseTimerRef.current) {
@@ -636,11 +685,188 @@ export default function SubjectsPage({
       : getSubjectTermLabel(selectedTermFilter);
     return `${selectedCoursesYear} / ${termLabel}`;
   }, [selectedCoursesYear, selectedTermFilter]);
+  const openSubjectsExportModal = useCallback(() => {
+    const range = parseSchoolYearRange(selectedCoursesYear || getCurrentSchoolYear());
+    setSubjectsExportType('schedule');
+    setSubjectsExportFormat('excel');
+    setSubjectsExportStartDate(range.startDate);
+    setSubjectsExportEndDate(range.endDate);
+    setSubjectsExportChildIds(prefilledSubjectChildIds);
+    setShowSubjectsExportModal(true);
+  }, [selectedCoursesYear, prefilledSubjectChildIds]);
+  const toggleSubjectsExportChild = useCallback((childId) => {
+    const safeId = String(childId || '');
+    if (!safeId) return;
+    setSubjectsExportChildIds((prev) => {
+      const set = new Set((prev || []).map((id) => String(id)));
+      if (set.has(safeId)) set.delete(safeId);
+      else set.add(safeId);
+      return Array.from(set);
+    });
+  }, []);
+  const runSubjectsExport = useCallback(async () => {
+    const start = String(subjectsExportStartDate || '').trim();
+    const end = String(subjectsExportEndDate || '').trim();
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    if (!start || !end || Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate > endDate) {
+      Alert.alert('Invalid dates', 'Please provide a valid start and end date.');
+      return;
+    }
+    const selectedChildIds = (subjectsExportChildIds || []).map((id) => String(id)).filter(Boolean);
+    if (selectedChildIds.length === 0) {
+      Alert.alert('Select students', 'Choose at least one student to export.');
+      return;
+    }
+    const triggerBlobDownload = (blob, filename) => {
+      if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    };
+
+    setSubjectsExportBusy(true);
+    try {
+      if (subjectsExportType === 'schedule') {
+        if (subjectsExportFormat === 'excel') {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('plannerExportToExcel', {
+              detail: {
+                startDate,
+                endDate,
+                childIds: selectedChildIds,
+                columns: {
+                  instructionalTime: false,
+                  plan: false,
+                  location: false,
+                  mode: false,
+                  instructor: false,
+                  subject: false,
+                  grade: false,
+                  unit: false,
+                  percentOfTotal: false,
+                  attachmentTitle: false,
+                  notes: false,
+                },
+              },
+            }));
+          }
+        } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          const rows = filteredSubjects.map((subject) => {
+            const childrenForSubject = Array.isArray(subject?.assignedChildren)
+              ? subject.assignedChildren
+                .map((id) => safeChildren.find((child) => String(child?.id) === String(id)))
+                .filter(Boolean)
+                .map((child) => child?.name || child?.first_name || 'Student')
+                .join(', ')
+              : '—';
+            return {
+              subject: subject?.name || 'Subject',
+              term: getSubjectTermLabel(normalizeSubjectTerm(subject?.school_term)),
+              children: childrenForSubject || '—',
+            };
+          });
+          const html = `
+            <html>
+              <head><title>Schedule Export</title></head>
+              <body style="font-family: Arial, sans-serif; padding: 24px;">
+                <h2>Class schedule (${selectedCoursesYear})</h2>
+                <p>Date range: ${start} to ${end}</p>
+                <table border="1" cellspacing="0" cellpadding="8" style="border-collapse: collapse; width: 100%;">
+                  <thead><tr><th>Subject</th><th>Term</th><th>Students</th></tr></thead>
+                  <tbody>
+                    ${rows.map((r) => `<tr><td>${r.subject}</td><td>${r.term}</td><td>${r.children}</td></tr>`).join('')}
+                  </tbody>
+                </table>
+              </body>
+            </html>
+          `;
+          const printWindow = window.open('', '_blank', 'width=980,height=720');
+          if (printWindow) {
+            printWindow.document.write(html);
+            printWindow.document.close();
+            printWindow.focus();
+            printWindow.print();
+          }
+        }
+      } else if (subjectsExportType === 'attendance') {
+        const fileExt = subjectsExportFormat === 'csv' ? 'csv' : 'pdf';
+        const reportType = selectedTermFilter === 'fall_term' ? 'fall_term'
+          : selectedTermFilter === 'spring_term' ? 'spring_term'
+            : 'custom';
+        for (const childId of selectedChildIds) {
+          const childName = safeChildren.find((child) => String(child?.id) === String(childId))?.name
+            || safeChildren.find((child) => String(child?.id) === String(childId))?.first_name
+            || 'student';
+          const blob = await generateAttendanceReport({
+            child_id: childId,
+            report_type: reportType,
+            date_range_start: start,
+            date_range_end: end,
+            format: fileExt,
+          });
+          triggerBlobDownload(blob, `attendance_${String(childName).replace(/\s+/g, '_')}_${start}_${end}.${fileExt}`);
+        }
+      } else if (subjectsExportType === 'report_card') {
+        const format = subjectsExportFormat === 'docx' ? 'docx' : 'pdf';
+        const termLabel = selectedTermFilter === ALL_TERMS_FILTER
+          ? `${selectedCoursesYear} School Year`
+          : `${getSubjectTermLabel(selectedTermFilter)} ${selectedCoursesYear}`;
+        const gradesPayload = filteredSubjects.map((subject) => {
+          const detail = subjectDetailCache?.[subject?.id] || null;
+          const grades = Array.isArray(detail?.grades) ? detail.grades : [];
+          const gradeCandidates = grades
+            .filter((g) => selectedChildIds.includes(String(g?.child_id)))
+            .map((g) => {
+              const possible = Number(g?.possible);
+              const score = Number(g?.score);
+              if (Number.isFinite(score) && Number.isFinite(possible) && possible > 0) {
+                return `${Math.round((score / possible) * 100)}%`;
+              }
+              if (g?.grade != null && String(g.grade).trim()) return String(g.grade).trim();
+              return null;
+            })
+            .filter(Boolean);
+          return {
+            subject: subject?.name || 'Subject',
+            grade: gradeCandidates[0] || 'N/A',
+          };
+        });
+        for (const childId of selectedChildIds) {
+          const result = await exportReportCard(childId, termLabel, gradesPayload, '', format);
+          if (!result?.success) {
+            throw new Error(result?.error || 'Report card export failed.');
+          }
+        }
+      }
+      setShowSubjectsExportModal(false);
+    } catch (err) {
+      Alert.alert('Export failed', err?.message || 'Unable to export right now.');
+    } finally {
+      setSubjectsExportBusy(false);
+    }
+  }, [
+    subjectsExportStartDate,
+    subjectsExportEndDate,
+    subjectsExportChildIds,
+    subjectsExportType,
+    subjectsExportFormat,
+    filteredSubjects,
+    safeChildren,
+    selectedCoursesYear,
+    selectedTermFilter,
+    subjectDetailCache,
+  ]);
   const renderCoursesHeaderFilters = useCallback((options = {}) => {
-    const { showTermRow = true } = options;
+    const { showTermRow = true, showChildrenRow = true } = options;
     return (
     <>
-      {showInlineChildrenFilters ? (
+      {showChildrenRow && showInlineChildrenFilters ? (
         <View style={[styles.filterRow, styles.coursesFilterRowTop]}>
           <Text style={styles.filterLabel}>Children</Text>
           <View style={styles.filterChipsWrap}>
@@ -1264,6 +1490,16 @@ export default function SubjectsPage({
               >
                 <HelpCircle size={22} color="rgba(15,23,42,0.7)" />
               </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.exportHeaderButton}
+                onPress={openSubjectsExportModal}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="Export subjects data"
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <Download size={20} color="rgba(15,23,42,0.7)" />
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -1347,11 +1583,138 @@ export default function SubjectsPage({
           descriptionText={"Courses is your family's subject overview page. Switch to Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page. Switch to Progress for multi-subject analytics -- attendance, performance, and gaps in learning."}
         />
       )}
+      <Modal
+        visible={showSubjectsExportModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !subjectsExportBusy && setShowSubjectsExportModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.exportModalBackdrop}
+          activeOpacity={1}
+          onPress={() => {
+            if (!subjectsExportBusy) setShowSubjectsExportModal(false);
+          }}
+        >
+          <TouchableOpacity style={styles.exportModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.exportModalTitle}>Export subject data</Text>
+            <Text style={styles.exportModalSubtitle}>
+              Export one data type at a time. Dates and students default to your current filters.
+            </Text>
+
+            <Text style={styles.exportModalLabel}>Data type</Text>
+            <View style={styles.exportTypeRow}>
+              {[
+                { id: 'schedule', label: 'Schedule' },
+                { id: 'attendance', label: 'Attendance' },
+                { id: 'report_card', label: 'Report card' },
+              ].map((option) => {
+                const active = subjectsExportType === option.id;
+                return (
+                  <TouchableOpacity
+                    key={option.id}
+                    style={[styles.exportTypeChip, active && styles.exportTypeChipActive]}
+                    onPress={() => {
+                      setSubjectsExportType(option.id);
+                      if (option.id === 'schedule') setSubjectsExportFormat('excel');
+                      if (option.id === 'attendance') setSubjectsExportFormat('pdf');
+                      if (option.id === 'report_card') setSubjectsExportFormat('pdf');
+                    }}
+                  >
+                    <Text style={[styles.exportTypeChipText, active && styles.exportTypeChipTextActive]}>{option.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.exportModalLabel}>Format</Text>
+            <View style={styles.exportTypeRow}>
+              {(subjectsExportType === 'schedule'
+                ? [{ id: 'excel', label: 'Excel (CSV)' }, { id: 'pdf', label: 'PDF' }]
+                : subjectsExportType === 'attendance'
+                  ? [{ id: 'pdf', label: 'PDF' }, { id: 'csv', label: 'CSV' }]
+                  : [{ id: 'pdf', label: 'PDF' }, { id: 'docx', label: 'Word' }]
+              ).map((option) => {
+                const active = subjectsExportFormat === option.id;
+                return (
+                  <TouchableOpacity
+                    key={option.id}
+                    style={[styles.exportTypeChip, active && styles.exportTypeChipActive]}
+                    onPress={() => setSubjectsExportFormat(option.id)}
+                  >
+                    <Text style={[styles.exportTypeChipText, active && styles.exportTypeChipTextActive]}>{option.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.exportDateRow}>
+              <View style={styles.exportDateCol}>
+                <Text style={styles.exportModalLabel}>Start date</Text>
+                <TextInput
+                  style={styles.exportDateInput}
+                  value={subjectsExportStartDate}
+                  onChangeText={setSubjectsExportStartDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+              <View style={styles.exportDateCol}>
+                <Text style={styles.exportModalLabel}>End date</Text>
+                <TextInput
+                  style={styles.exportDateInput}
+                  value={subjectsExportEndDate}
+                  onChangeText={setSubjectsExportEndDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor="#94A3B8"
+                />
+              </View>
+            </View>
+
+            <Text style={styles.exportModalLabel}>Students</Text>
+            <View style={styles.exportStudentsWrap}>
+              {safeChildren.map((child) => {
+                const childId = String(child?.id || '');
+                const selected = subjectsExportChildIds.includes(childId);
+                return (
+                  <TouchableOpacity
+                    key={childId}
+                    style={[styles.exportStudentChip, selected && styles.exportStudentChipActive]}
+                    onPress={() => toggleSubjectsExportChild(childId)}
+                  >
+                    <Text style={[styles.exportStudentChipText, selected && styles.exportStudentChipTextActive]}>
+                      {child?.name || child?.first_name || 'Student'}
+                    </Text>
+                    {selected ? <Check size={14} color="#2563EB" /> : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.exportModalActions}>
+              <TouchableOpacity
+                style={styles.exportCancelButton}
+                onPress={() => setShowSubjectsExportModal(false)}
+                disabled={subjectsExportBusy}
+              >
+                <Text style={styles.exportCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.exportSubmitButton, subjectsExportBusy && styles.exportSubmitButtonDisabled]}
+                onPress={runSubjectsExport}
+                disabled={subjectsExportBusy}
+              >
+                <Text style={styles.exportSubmitText}>{subjectsExportBusy ? 'Exporting…' : 'Export'}</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Content */}
       {selectedModeFilter === 'plan' ? (
         <View style={styles.coursesTabContent}>
-          {renderCoursesHeaderFilters({ showTermRow: false })}
+          {renderCoursesHeaderFilters({ showTermRow: false, showChildrenRow: false })}
           <SubjectsPlanBuilder
             familyId={familyId}
             planningMode={planningMode}
@@ -1540,6 +1903,10 @@ const styles = StyleSheet.create({
     gap: 12,
     flexShrink: 0,
   },
+  exportHeaderButton: {
+    padding: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
   helpButton: {
     padding: 4,
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
@@ -1654,6 +2021,167 @@ const styles = StyleSheet.create({
     marginHorizontal: 24,
     position: 'relative',
     zIndex: 10,
+  },
+  exportModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  exportModalCard: {
+    width: '100%',
+    maxWidth: 560,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 20,
+  },
+  exportModalTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  exportModalSubtitle: {
+    marginTop: 6,
+    marginBottom: 14,
+    fontSize: 13,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  exportModalLabel: {
+    marginTop: 8,
+    marginBottom: 6,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  exportTypeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 4,
+  },
+  exportTypeChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  exportTypeChipActive: {
+    borderColor: '#93C5FD',
+    backgroundColor: '#EFF6FF',
+  },
+  exportTypeChipText: {
+    fontSize: 13,
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  exportTypeChipTextActive: {
+    color: '#1D4ED8',
+    fontWeight: '600',
+  },
+  exportDateRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  exportDateCol: {
+    flex: 1,
+  },
+  exportDateInput: {
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  exportStudentsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  exportStudentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  exportStudentChipActive: {
+    borderColor: '#93C5FD',
+    backgroundColor: '#EFF6FF',
+  },
+  exportStudentChipText: {
+    fontSize: 13,
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  exportStudentChipTextActive: {
+    color: '#1D4ED8',
+    fontWeight: '600',
+  },
+  exportModalActions: {
+    marginTop: 14,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  exportCancelButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  exportCancelText: {
+    fontSize: 14,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  exportSubmitButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  exportSubmitButtonDisabled: {
+    opacity: 0.55,
+  },
+  exportSubmitText: {
+    fontSize: 14,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   summaryCard: {
     marginHorizontal: 24,
@@ -2064,8 +2592,8 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   filterOptionChipActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#8B5CF6',
+    backgroundColor: 'rgba(139,92,246,0.14)',
   },
   filterOptionChipText: {
     fontSize: 14,
@@ -2073,7 +2601,7 @@ const styles = StyleSheet.create({
     fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
   filterOptionChipTextActive: {
-    color: '#6BB3E8',
+    color: '#6366F1',
     fontWeight: '600',
   },
   filterOptionChipDot: {
@@ -2153,8 +2681,8 @@ const styles = StyleSheet.create({
     }),
   },
   filterChipActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133, 196, 242, 0.2)',
+    borderColor: '#8B5CF6',
+    backgroundColor: 'rgba(139,92,246,0.14)',
   },
   filterChipText: {
     fontSize: 12,
@@ -2165,7 +2693,7 @@ const styles = StyleSheet.create({
     }),
   },
   filterChipTextActive: {
-    color: '#6BB3E8',
+    color: '#6366F1',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
