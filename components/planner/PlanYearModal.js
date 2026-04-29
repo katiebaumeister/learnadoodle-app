@@ -168,6 +168,14 @@ const PARSE_MODES = [
 
 const LESSON_TYPES = ['lesson', 'project', 'exam', 'assignment', 'activity'];
 
+function normalizeSubjectSchoolTerm(term) {
+  const raw = String(term || '').trim().toLowerCase();
+  if (raw === 'fall_term' || raw === 'fall term' || raw === 'fall') return 'fall_term';
+  if (raw === 'spring_term' || raw === 'spring term' || raw === 'spring') return 'spring_term';
+  if (raw === 'full_year' || raw === 'full year' || raw === 'fullyear' || raw === 'year') return 'full_year';
+  return null;
+}
+
 /** Unscheduled manual curriculum rows use DB placeholder start_ts; hide that in UI. */
 function curriculumEventDisplayDate(event) {
   const meta = event?.curriculum_metadata || {};
@@ -1519,6 +1527,8 @@ export default function PlanYearModal({
   initialSubjectId = null,
   initialSubjectName = null,
   initialSubjectChildIds = [],
+  initialSubjectSchoolYear = null,
+  initialSubjectSchoolTerm = null,
   initialMaterialId = null,
   initialUnitStructureMethod = null,
 }) {
@@ -3925,6 +3935,37 @@ export default function PlanYearModal({
     }
     if (!Array.isArray(predefinedSchoolYearOptions) || predefinedSchoolYearOptions.length === 0) return;
     schoolYearOpenInitRef.current = true;
+    const incomingSchoolYear = String(initialSubjectSchoolYear || '').trim();
+    const incomingSchoolTerm = normalizeSubjectSchoolTerm(initialSubjectSchoolTerm);
+    if (fromSubjectDetail && incomingSchoolYear) {
+      const matchedIncomingYear = predefinedSchoolYearOptions.find(
+        (opt) => String(opt?.label || '').trim() === incomingSchoolYear
+      );
+      if (matchedIncomingYear) {
+        const preferredStartYmd = String(matchedIncomingYear.start_date || '');
+        const preferredStartYear =
+          /^\d{4}-\d{2}-\d{2}$/.test(preferredStartYmd) ? Number(preferredStartYmd.slice(0, 4)) : null;
+        setSelectedSchoolYearTemplateId(matchedIncomingYear.id);
+        if (preferredStartYear != null && Number.isFinite(preferredStartYear)) {
+          if (incomingSchoolTerm === 'fall_term') {
+            setStartDate(`${preferredStartYear}-08-01`);
+            setEndDate(`${preferredStartYear}-12-31`);
+          } else if (incomingSchoolTerm === 'spring_term') {
+            setStartDate(`${preferredStartYear + 1}-01-01`);
+            setEndDate(`${preferredStartYear + 1}-05-01`);
+          } else {
+            if (matchedIncomingYear.start_date) setStartDate(matchedIncomingYear.start_date);
+            if (matchedIncomingYear.end_date) setEndDate(matchedIncomingYear.end_date);
+          }
+        } else {
+          if (matchedIncomingYear.start_date) setStartDate(matchedIncomingYear.start_date);
+          if (matchedIncomingYear.end_date) setEndDate(matchedIncomingYear.end_date);
+        }
+        setSelectedTermId(null);
+        setSchoolDurationScope(incomingSchoolTerm || 'full_year');
+        return;
+      }
+    }
     const now = new Date();
     const currentYear = now.getFullYear();
     const month = now.getMonth() + 1; // 1-12
@@ -3976,6 +4017,9 @@ export default function PlanYearModal({
     openForNewPlan,
     startCreatingNew,
     academicYearId,
+    fromSubjectDetail,
+    initialSubjectSchoolYear,
+    initialSubjectSchoolTerm,
   ]);
 
   const editPlanListRows = useMemo(() => {
@@ -7119,15 +7163,21 @@ export default function PlanYearModal({
           ].map((id) => String(id)).filter(Boolean)
         ),
       ];
-      if (resolvedScopeUsesSchoolYear && familyId && subjectIdsForSync.length > 0 && selectedSchoolYearOption?.label) {
+      const syncedSchoolYearLabel = String(selectedSchoolYearOption?.label || '').trim();
+      if (familyId && subjectIdsForSync.length > 0 && syncedSchoolYearLabel) {
         let syncedSchoolTerm = null;
-        if (resolvedSchoolDurationScopeForPayload === 'fall_term' || resolvedSchoolDurationScopeForPayload === 'spring_term' || resolvedSchoolDurationScopeForPayload === 'full_year') {
-          syncedSchoolTerm = resolvedSchoolDurationScopeForPayload;
-        } else if (resolvedRunScopeTypeForPayload === 'term') {
+        const durationScopeCandidate = String(
+          resolvedSchoolDurationScopeForPayload === 'custom_duration'
+            ? schoolDurationScope
+            : resolvedSchoolDurationScopeForPayload
+        ).toLowerCase();
+        if (durationScopeCandidate === 'fall_term' || durationScopeCandidate === 'spring_term' || durationScopeCandidate === 'full_year') {
+          syncedSchoolTerm = durationScopeCandidate;
+        } else if (resolvedRunScopeTypeForPayload === 'term' || runScopeType === 'term') {
           const termName = String(selectedTermOption?.name || '').toLowerCase();
           if (termName.includes('fall')) syncedSchoolTerm = 'fall_term';
           else if (termName.includes('spring')) syncedSchoolTerm = 'spring_term';
-        } else if (resolvedRunScopeTypeForPayload === 'full_year') {
+        } else if (resolvedRunScopeTypeForPayload === 'full_year' || runScopeType === 'full_year') {
           syncedSchoolTerm = 'full_year';
         }
         if (syncedSchoolTerm) {
@@ -7135,7 +7185,7 @@ export default function PlanYearModal({
             await supabase
               .from('subject')
               .update({
-                school_year: selectedSchoolYearOption.label,
+                school_year: syncedSchoolYearLabel,
                 school_term: syncedSchoolTerm,
               })
               .eq('family_id', familyId)

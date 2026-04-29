@@ -110,6 +110,35 @@ function formatWeekdaySummary(dayNums = []) {
   return unique.map((d) => WEEKDAY_LABELS[d] || '').filter(Boolean).join(', ');
 }
 
+function formatCadenceDayPhrase(dayNums = []) {
+  const unique = [...new Set((dayNums || []).map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b);
+  if (unique.length === 0) return '';
+  const dayNames = unique.map((d) => `${WEEKDAY_FULL_LABELS[d] || WEEKDAY_LABELS[d] || 'Day'}s`);
+  if (dayNames.length === 1) return dayNames[0];
+  if (dayNames.length === 2) return `${dayNames[0]} and ${dayNames[1]}`;
+  return `${dayNames.slice(0, -1).join(', ')}, and ${dayNames[dayNames.length - 1]}`;
+}
+
+function formatSubjectCadence(blocks = []) {
+  const dayNums = [
+    ...new Set(
+      (blocks || []).flatMap((block) =>
+        Array.isArray(block?.weekdays)
+          ? block.weekdays.map((d) => Number(d)).filter((d) => Number.isInteger(d))
+          : []
+      )
+    ),
+  ].sort((a, b) => a - b);
+  if (dayNums.length === 0) return '';
+  const dayPhrase = formatCadenceDayPhrase(dayNums);
+  const startTimes = [...new Set((blocks || []).map((block) => String(block?.start_time || '').trim()).filter(Boolean))];
+  if (!dayPhrase) return '';
+  if (startTimes.length === 1) {
+    return `${dayPhrase} at ${toAmPm(startTimes[0]).toLowerCase()}`;
+  }
+  return `${dayPhrase} (mixed times)`;
+}
+
 function normalizeFamilyKey(familyId) {
   return String(familyId || '').trim();
 }
@@ -172,8 +201,11 @@ function buildPlanSlotKey(startYear, scopeId) {
 
 function normalizeSubjectTerm(term) {
   const raw = String(term || '').trim().toLowerCase();
+  if (raw === 'full year' || raw === 'fullyear' || raw === 'year') return 'full_year';
   if (raw === 'fall_term') return 'fall_term';
+  if (raw === 'fall term' || raw === 'fall') return 'fall_term';
   if (raw === 'spring_term') return 'spring_term';
+  if (raw === 'spring term' || raw === 'spring') return 'spring_term';
   return 'full_year';
 }
 
@@ -183,7 +215,9 @@ function subjectMatchesYearTerm(subject, yearLabel, termId) {
   if (!subjectYear || !slotYear || subjectYear !== slotYear) return false;
   const subjectTerm = normalizeSubjectTerm(subject?.school_term);
   const slotTerm = normalizeSubjectTerm(termId);
-  return subjectTerm === slotTerm;
+  if (slotTerm === 'full_year') return subjectTerm === 'full_year';
+  // Subjects tagged full_year should appear in both fall and spring planning slots.
+  return subjectTerm === slotTerm || subjectTerm === 'full_year';
 }
 
 function extractSubjectNamesFromBlock(block) {
@@ -424,8 +458,8 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   const [blocksBySubject, setBlocksBySubject] = useState({});
 
   const baseSubjects = useMemo(() => {
+    if (Array.isArray(allSubjects) && allSubjects.length > 0) return allSubjects;
     if (Array.isArray(visibleSubjects)) return visibleSubjects;
-    if (Array.isArray(allSubjects)) return allSubjects;
     return [];
   }, [visibleSubjects, allSubjects]);
   const allSubjectPool = useMemo(() => (Array.isArray(allSubjects) ? allSubjects : baseSubjects), [allSubjects, baseSubjects]);
@@ -695,16 +729,22 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     const slotSubjectNames = slotKey ? (planSubjectNamesBySlot?.[slotKey] || []) : [];
     const plannedSet = new Set((slotSubjectIds || []).map((id) => String(id)));
     const plannedNameSet = new Set((slotSubjectNames || []).map((name) => normalizeSubjectName(name)));
+    const blocks = Array.isArray(viewedScheduleCore?.blocksLite) ? viewedScheduleCore.blocksLite : [];
     return (slotScopedSubjects || []).map((subject) => {
       const subjectId = String(subject?.id || '');
       const normalizedName = normalizeSubjectName(subject?.name);
+      const blocksForSubject = blocks.filter((block) =>
+        Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
+      );
+      const cadenceText = formatSubjectCadence(blocksForSubject);
       return {
         id: subjectId,
         name: subject?.name || 'Subject',
         hasPlan: (subjectId ? plannedSet.has(subjectId) : false) || (normalizedName ? plannedNameSet.has(normalizedName) : false),
+        cadenceText,
       };
     });
-  }, [slotScopedSubjects, selectedSchoolYear?.start_year, selectedTerm, planSubjectIdsBySlot, planSubjectNamesBySlot]);
+  }, [slotScopedSubjects, selectedSchoolYear?.start_year, selectedTerm, planSubjectIdsBySlot, planSubjectNamesBySlot, viewedScheduleCore]);
 
   const step4Preview = useMemo(() => {
     if (!dateRange || selectedSubjectRows.length === 0) return null;
@@ -1002,7 +1042,11 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
                     <View key={`plan-${row.id}`} style={styles.subjectPlansRow}>
                       <View style={styles.subjectPlansTextWrap}>
                         <Text style={styles.subjectPlansName}>{row.name}</Text>
-                        <Text style={styles.subjectPlansStatus}>{row.hasPlan ? 'Plan created' : 'No plan yet'}</Text>
+                        <Text style={styles.subjectPlansStatus}>
+                          {row.hasPlan
+                            ? `Plan created${row.cadenceText ? ` • ${row.cadenceText}` : ''}`
+                            : 'No plan yet'}
+                        </Text>
                       <TouchableOpacity
                         style={styles.subjectPlansDetailsLinkButton}
                         onPress={() => openSubjectDetails(row.id)}

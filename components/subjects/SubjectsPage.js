@@ -1372,7 +1372,7 @@ export default function SubjectsPage({
           position={helpPopoverPosition}
           onMouseEnter={clearHelpPopoverCloseTimer}
           onMouseLeave={scheduleHelpPopoverClose}
-          descriptionText={"Courses is your family's subject overview page. Switch to Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page."}
+          descriptionText={"Courses is your family's subject overview page. Switch to Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page. Switch to Progress for multi-subject analytics -- attendance, performance, and gaps in learning."}
         />
       )}
 

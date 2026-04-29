@@ -274,6 +274,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [planYearInitialSubjectId, setPlanYearInitialSubjectId] = useState(null);
   const [planYearInitialSubjectName, setPlanYearInitialSubjectName] = useState(null);
   const [planYearInitialChildIds, setPlanYearInitialChildIds] = useState([]);
+  const [planYearInitialSubjectSchoolYear, setPlanYearInitialSubjectSchoolYear] = useState(null);
+  const [planYearInitialSubjectSchoolTerm, setPlanYearInitialSubjectSchoolTerm] = useState(null);
   const [planYearInitialMaterialId, setPlanYearInitialMaterialId] = useState(null);
   const [planYearInitialUnitStructureMethod, setPlanYearInitialUnitStructureMethod] = useState(null);
   /** When PlanYearModal opens as overlay from subject detail, refresh that subject on close. */
@@ -300,6 +302,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setPlanYearInitialSubjectId(null);
     setPlanYearInitialSubjectName(null);
     setPlanYearInitialChildIds([]);
+    setPlanYearInitialSubjectSchoolYear(null);
+    setPlanYearInitialSubjectSchoolTerm(null);
     setPlanYearInitialMaterialId(null);
     setPlanYearInitialUnitStructureMethod(null);
   }, []);
@@ -2236,6 +2240,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const subjectId = detail.subjectId ?? null;
       const subjectName = detail.subjectName ?? null;
       const childIds = Array.isArray(detail.childIds) ? detail.childIds.filter(Boolean) : [];
+      const subjectSchoolYear = detail.schoolYear ?? detail.subjectSchoolYear ?? null;
+      const subjectSchoolTerm = detail.schoolTerm ?? detail.subjectSchoolTerm ?? null;
       const materialId = detail.materialId ?? null;
       const initialUnitStructureMethod = detail.initialUnitStructureMethod ?? null;
       const openToEditListBase = detail.openToEditList === true;
@@ -2275,6 +2281,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setPlanYearInitialSubjectId(subjectId);
       setPlanYearInitialSubjectName(subjectName);
       setPlanYearInitialChildIds(childIds);
+      setPlanYearInitialSubjectSchoolYear(subjectSchoolYear);
+      setPlanYearInitialSubjectSchoolTerm(subjectSchoolTerm);
       setPlanYearInitialMaterialId(materialId);
       setPlanYearInitialUnitStructureMethod(initialUnitStructureMethod);
 
@@ -4063,6 +4071,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         initialSubjectId={planYearInitialSubjectId}
                     initialSubjectName={planYearInitialSubjectName}
                     initialSubjectChildIds={planYearInitialChildIds}
+                    initialSubjectSchoolYear={planYearInitialSubjectSchoolYear}
+                    initialSubjectSchoolTerm={planYearInitialSubjectSchoolTerm}
         initialMaterialId={planYearInitialMaterialId}
                     initialUnitStructureMethod={planYearInitialUnitStructureMethod}
         onOpenBuildCurriculum={(params) => {
@@ -4319,9 +4329,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         children={children}
         onSubjectAdded={(newSubject) => {
           const wasNewSubject = !editingSubject;
+          setSubjects((prev) => {
+            const list = Array.isArray(prev) ? prev : [];
+            if (!newSubject?.id) return list;
+            const idx = list.findIndex((s) => String(s?.id) === String(newSubject.id));
+            if (idx === -1) return [newSubject, ...list];
+            const next = [...list];
+            next[idx] = { ...next[idx], ...newSubject };
+            return next;
+          });
           setEditingSubject(null);
           setAddSubjectPrefill({ schoolYear: null, schoolTerm: null });
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            if (newSubject?.id) {
+              window.dispatchEvent(new CustomEvent('subjectRecordUpserted', { detail: { subject: newSubject } }));
+            }
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
           }
           // After adding (not editing), go to the new subject's detail page
@@ -4367,6 +4389,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setPlanYearInitialSubjectId(null);
             setPlanYearInitialSubjectName(null);
             setPlanYearInitialChildIds([]);
+            setPlanYearInitialSubjectSchoolYear(null);
+            setPlanYearInitialSubjectSchoolTerm(null);
             setPlanYearInitialMaterialId(null);
             setPlanYearInitialUnitStructureMethod(null);
           }, 300);
@@ -4386,6 +4410,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         initialSubjectId={planYearInitialSubjectId}
         initialSubjectName={planYearInitialSubjectName}
         initialSubjectChildIds={planYearInitialChildIds}
+        initialSubjectSchoolYear={planYearInitialSubjectSchoolYear}
+        initialSubjectSchoolTerm={planYearInitialSubjectSchoolTerm}
         initialMaterialId={planYearInitialMaterialId}
         initialUnitStructureMethod={planYearInitialUnitStructureMethod}
         onOpenBuildCurriculum={(params) => {

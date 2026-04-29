@@ -304,6 +304,20 @@ export default function SubjectDetailPage({
     const handleSubjectDetailRefresh = (e) => {
       if (e.detail?.subjectId === subjectId) loadSubjectDetail({ silent: true });
     };
+    const handleSubjectRecordUpserted = (e) => {
+      const incoming = e?.detail?.subject;
+      if (!incoming?.id || String(incoming.id) !== String(subjectId)) return;
+      setSubjectData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          subject: {
+            ...(prev.subject || {}),
+            ...incoming,
+          },
+        };
+      });
+    };
     const handleMaterialsStale = (e) => {
       const fid = e.detail?.familyId;
       const ids = e.detail?.subjectIds;
@@ -315,12 +329,14 @@ export default function SubjectDetailPage({
     window.addEventListener('refreshSubjects', handleRefresh);
     window.addEventListener('refreshPlanDefaults', handleRefresh);
     window.addEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
+    window.addEventListener('subjectRecordUpserted', handleSubjectRecordUpserted);
     window.addEventListener('childAssignmentsNeedRefresh', handleRefresh);
     window.addEventListener('subjectDetailMaterialsStale', handleMaterialsStale);
     return () => {
       window.removeEventListener('refreshSubjects', handleRefresh);
       window.removeEventListener('refreshPlanDefaults', handleRefresh);
       window.removeEventListener('refreshSubjectDetail', handleSubjectDetailRefresh);
+      window.removeEventListener('subjectRecordUpserted', handleSubjectRecordUpserted);
       window.removeEventListener('childAssignmentsNeedRefresh', handleRefresh);
       window.removeEventListener('subjectDetailMaterialsStale', handleMaterialsStale);
     };
@@ -706,6 +722,8 @@ export default function SubjectDetailPage({
               from: 'subject_detail',
               subjectId: subject.id,
               subjectName: subject.name || null,
+              schoolYear: subject.school_year || null,
+              schoolTerm: subject.school_term || null,
               childIds: assignedChildren,
               academicYearId: resolvedPlanYearId,
               openAsModal: true,
@@ -723,6 +741,8 @@ export default function SubjectDetailPage({
             from: 'subject_detail',
             subjectId: subject.id,
             subjectName: subject.name || null,
+            schoolYear: subject.school_year || null,
+            schoolTerm: subject.school_term || null,
             childIds: assignedChildren,
             openAsModal: true,
             openDirectlyToScope: true,
@@ -1205,8 +1225,18 @@ export default function SubjectDetailPage({
                       ]}
                       onPress={() => handleMaterialChipPress(material)}
                       {...(Platform.OS === 'web' && {
+                        onMouseDown: (e) => {
+                          const button = e?.button ?? e?.nativeEvent?.button;
+                          if (button !== 2) return;
+                          e.preventDefault?.();
+                          e.stopPropagation?.();
+                          const x = e?.clientX ?? e?.nativeEvent?.clientX ?? 0;
+                          const y = e?.clientY ?? e?.nativeEvent?.clientY ?? 0;
+                          showMaterialContextMenu(material, x, y);
+                        },
                         onContextMenu: (e) => {
                           e.preventDefault?.();
+                          e.stopPropagation?.();
                           const x = e?.clientX ?? e?.nativeEvent?.clientX ?? 0;
                           const y = e?.clientY ?? e?.nativeEvent?.clientY ?? 0;
                           showMaterialContextMenu(material, x, y);
