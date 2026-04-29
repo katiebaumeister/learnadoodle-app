@@ -21,7 +21,6 @@ import {
   Calendar,
   Clock,
   GraduationCap,
-  Check,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
@@ -581,19 +580,33 @@ export default function SubjectsPage({
   }, [subjects]);
 
   const registeredTerms = useMemo(() => {
-    if (!subjects || subjects.length === 0) return [];
     const order = ['full_year', 'fall_term', 'spring_term'];
-    const terms = [...new Set(subjects.map((s) => normalizeSubjectTerm(s?.school_term)).filter(Boolean))];
-    return terms.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    if (!subjects || subjects.length === 0) return order;
+    const present = new Set(subjects.map((s) => normalizeSubjectTerm(s?.school_term)).filter(Boolean));
+    return order.filter((term) => present.has(term) || term === 'fall_term');
   }, [subjects]);
 
-  const activeHeaderFilterCount = useMemo(() => {
-    let count = 0;
-    if (selectedChildFilter !== 'all') count += 1;
-    if (selectedYearFilter !== 'all') count += 1;
-    if (selectedTermFilter !== 'all') count += 1;
-    return count;
-  }, [selectedChildFilter, selectedYearFilter, selectedTermFilter]);
+  const scopeButtonLabel = useMemo(() => {
+    const childLabel = selectedChildFilter === 'all'
+      ? 'All children'
+      : (
+        safeChildren.find((child) => String(child.id) === String(selectedChildFilter))?.first_name
+        || safeChildren.find((child) => String(child.id) === String(selectedChildFilter))?.name
+        || 'Child'
+      );
+
+    const now = new Date();
+    const currentAcademicYear = (now.getMonth() + 1 >= 8)
+      ? `${now.getFullYear()}/${String(now.getFullYear() + 1).slice(-2)}`
+      : `${now.getFullYear() - 1}/${String(now.getFullYear()).slice(-2)}`;
+
+    const yearLabel = selectedYearFilter !== 'all'
+      ? selectedYearFilter
+      : (registeredYears.find((year) => year === currentAcademicYear) || registeredYears[0] || 'All years');
+
+    const termLabel = selectedTermFilter !== 'all' ? getSubjectTermLabel(selectedTermFilter) : 'All terms';
+    return [childLabel, yearLabel, termLabel].filter(Boolean).join(' · ');
+  }, [selectedChildFilter, selectedYearFilter, selectedTermFilter, safeChildren, registeredYears]);
 
   // Overall averages across filtered subjects (for compact summary card)
   const overallSummary = useMemo(() => {
@@ -1002,8 +1015,8 @@ export default function SubjectsPage({
                   onPress={() => setShowHeaderFilters((prev) => !prev)}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.headerFiltersButtonText}>
-                    {activeHeaderFilterCount > 0 ? `Scope (${activeHeaderFilterCount})` : 'Scope'}
+                  <Text style={styles.headerFiltersButtonText} numberOfLines={1} ellipsizeMode="tail">
+                    {scopeButtonLabel}
                   </Text>
                   {showHeaderFilters ? <ChevronUp size={14} color="rgba(15,23,42,0.7)" /> : <ChevronDown size={14} color="rgba(15,23,42,0.7)" />}
                 </TouchableOpacity>
@@ -1015,21 +1028,16 @@ export default function SubjectsPage({
                     <View style={styles.headerFiltersSection}>
                       <View style={styles.filterChecklist}>
                         <TouchableOpacity
-                          style={styles.filterOptionRow}
+                          style={[
+                            styles.filterOptionChip,
+                            selectedChildFilter === 'all' && styles.filterOptionChipActive,
+                          ]}
                           onPress={() => setSelectedChildFilter('all')}
                         >
-                          <View
-                            style={[
-                              styles.filterOptionCheck,
-                              selectedChildFilter === 'all' && styles.filterOptionCheckActive,
-                            ]}
-                          >
-                            {selectedChildFilter === 'all' && <Check size={10} color="#FFFFFF" />}
-                          </View>
                           <Text
                             style={[
-                              styles.filterOptionLabel,
-                              selectedChildFilter === 'all' && styles.filterOptionLabelActive,
+                              styles.filterOptionChipText,
+                              selectedChildFilter === 'all' && styles.filterOptionChipTextActive,
                             ]}
                           >
                             All Children
@@ -1041,21 +1049,16 @@ export default function SubjectsPage({
                           return (
                             <TouchableOpacity
                               key={child.id}
-                              style={styles.filterOptionRow}
+                              style={[
+                                styles.filterOptionChip,
+                                isActive && styles.filterOptionChipActive,
+                              ]}
                               onPress={() => setSelectedChildFilter(child.id)}
                             >
-                              <View
-                                style={[
-                                  styles.filterOptionCheck,
-                                  isActive && styles.filterOptionCheckActive,
-                                ]}
-                              >
-                                {isActive && <Check size={10} color="#FFFFFF" />}
-                              </View>
                               <Text
                                 style={[
-                                  styles.filterOptionLabel,
-                                  isActive && styles.filterOptionLabelActive,
+                                  styles.filterOptionChipText,
+                                  isActive && styles.filterOptionChipTextActive,
                                 ]}
                                 numberOfLines={1}
                               >
@@ -1063,7 +1066,7 @@ export default function SubjectsPage({
                               </Text>
                               <View
                                 style={[
-                                  styles.filterOptionTrailingDot,
+                                  styles.filterOptionChipDot,
                                   { backgroundColor: childColor },
                                 ]}
                               />
@@ -1081,21 +1084,16 @@ export default function SubjectsPage({
                         <View style={styles.headerFiltersSection}>
                         <View style={styles.filterChecklist}>
                           <TouchableOpacity
-                            style={styles.filterOptionRow}
+                            style={[
+                              styles.filterOptionChip,
+                              selectedYearFilter === 'all' && styles.filterOptionChipActive,
+                            ]}
                             onPress={() => setSelectedYearFilter('all')}
                           >
-                            <View
-                              style={[
-                                styles.filterOptionCheck,
-                                selectedYearFilter === 'all' && styles.filterOptionCheckActive,
-                              ]}
-                            >
-                              {selectedYearFilter === 'all' && <Check size={10} color="#FFFFFF" />}
-                            </View>
                             <Text
                               style={[
-                                styles.filterOptionLabel,
-                                selectedYearFilter === 'all' && styles.filterOptionLabelActive,
+                                styles.filterOptionChipText,
+                                selectedYearFilter === 'all' && styles.filterOptionChipTextActive,
                               ]}
                               numberOfLines={1}
                             >
@@ -1107,21 +1105,16 @@ export default function SubjectsPage({
                             return (
                               <TouchableOpacity
                                 key={year}
-                                style={styles.filterOptionRow}
+                                style={[
+                                  styles.filterOptionChip,
+                                  isActive && styles.filterOptionChipActive,
+                                ]}
                                 onPress={() => setSelectedYearFilter(year)}
                               >
-                                <View
-                                  style={[
-                                    styles.filterOptionCheck,
-                                    isActive && styles.filterOptionCheckActive,
-                                  ]}
-                                >
-                                  {isActive && <Check size={10} color="#FFFFFF" />}
-                                </View>
                                 <Text
                                   style={[
-                                    styles.filterOptionLabel,
-                                    isActive && styles.filterOptionLabelActive,
+                                    styles.filterOptionChipText,
+                                    isActive && styles.filterOptionChipTextActive,
                                   ]}
                                   numberOfLines={1}
                                 >
@@ -1143,21 +1136,16 @@ export default function SubjectsPage({
                         <View style={styles.headerFiltersSection}>
                           <View style={styles.filterChecklist}>
                             <TouchableOpacity
-                              style={styles.filterOptionRow}
+                              style={[
+                                styles.filterOptionChip,
+                                selectedTermFilter === 'all' && styles.filterOptionChipActive,
+                              ]}
                               onPress={() => setSelectedTermFilter('all')}
                             >
-                              <View
-                                style={[
-                                  styles.filterOptionCheck,
-                                  selectedTermFilter === 'all' && styles.filterOptionCheckActive,
-                                ]}
-                              >
-                                {selectedTermFilter === 'all' && <Check size={10} color="#FFFFFF" />}
-                              </View>
                               <Text
                                 style={[
-                                  styles.filterOptionLabel,
-                                  selectedTermFilter === 'all' && styles.filterOptionLabelActive,
+                                  styles.filterOptionChipText,
+                                  selectedTermFilter === 'all' && styles.filterOptionChipTextActive,
                                 ]}
                                 numberOfLines={1}
                               >
@@ -1169,21 +1157,16 @@ export default function SubjectsPage({
                               return (
                                 <TouchableOpacity
                                   key={term}
-                                  style={styles.filterOptionRow}
+                                  style={[
+                                    styles.filterOptionChip,
+                                    isActive && styles.filterOptionChipActive,
+                                  ]}
                                   onPress={() => setSelectedTermFilter(term)}
                                 >
-                                  <View
-                                    style={[
-                                      styles.filterOptionCheck,
-                                      isActive && styles.filterOptionCheckActive,
-                                    ]}
-                                  >
-                                    {isActive && <Check size={10} color="#FFFFFF" />}
-                                  </View>
                                   <Text
                                     style={[
-                                      styles.filterOptionLabel,
-                                      isActive && styles.filterOptionLabelActive,
+                                      styles.filterOptionChipText,
+                                      isActive && styles.filterOptionChipTextActive,
                                     ]}
                                     numberOfLines={1}
                                   >
@@ -1528,9 +1511,11 @@ const styles = StyleSheet.create({
   headerModeControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    gap: 10,
     position: 'relative',
     zIndex: 230,
+    minWidth: 0,
   },
   headerFiltersAnchor: {
     position: 'relative',
@@ -1539,7 +1524,7 @@ const styles = StyleSheet.create({
   headerFiltersButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     gap: 6,
     borderRadius: 9999,
     borderWidth: 1,
@@ -1547,13 +1532,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     minHeight: 44,
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
+    maxWidth: 260,
+    minWidth: 180,
+    flexShrink: 1,
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   headerFiltersButtonText: {
     fontSize: 15,
     color: 'rgba(15,23,42,0.85)',
     fontWeight: '500',
+    flexShrink: 1,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -2012,42 +2001,37 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   filterChecklist: {
-    gap: 2,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingBottom: 6,
   },
-  filterOptionRow: {
+  filterOptionChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 4,
+    gap: 7,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 999,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
-  filterOptionCheck: {
-    width: 14,
-    height: 14,
-    borderRadius: 3,
-    borderWidth: 1.5,
-    borderColor: '#D1D5DB',
-    backgroundColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
+  filterOptionChipActive: {
+    borderColor: 'rgba(139, 92, 246, 0.55)',
+    backgroundColor: 'rgba(139, 92, 246, 0.12)',
   },
-  filterOptionCheckActive: {
-    borderColor: '#8B5CF6',
-    backgroundColor: '#8B5CF6',
-  },
-  filterOptionLabel: {
-    flex: 1,
-    minWidth: 0,
+  filterOptionChipText: {
     fontSize: 15,
     color: 'rgba(15,23,42,0.9)',
     fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
-  filterOptionLabelActive: {
+  filterOptionChipTextActive: {
     fontWeight: '600',
   },
-  filterOptionTrailingDot: {
+  filterOptionChipDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
