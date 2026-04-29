@@ -132,8 +132,45 @@ export default function SubjectsPage({
   const loadingRef = useRef(false);
   const preloadingRef = useRef(false);
   const helpButtonRef = useRef(null);
+  const helpPopoverCloseTimerRef = useRef(null);
   const [showHelpPopover, setShowHelpPopover] = useState(false);
   const [helpPopoverPosition, setHelpPopoverPosition] = useState({ top: 0, left: 0 });
+
+  const clearHelpPopoverCloseTimer = useCallback(() => {
+    if (helpPopoverCloseTimerRef.current) {
+      clearTimeout(helpPopoverCloseTimerRef.current);
+      helpPopoverCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const updateHelpPopoverPosition = useCallback(() => {
+    if (Platform.OS === 'web' && helpButtonRef.current) {
+      const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
+      if (node && typeof node.getBoundingClientRect === 'function') {
+        const rect = node.getBoundingClientRect();
+        setHelpPopoverPosition({
+          top: rect.bottom + 4,
+          left: rect.left,
+        });
+      }
+    }
+  }, []);
+
+  const openHelpPopover = useCallback(() => {
+    clearHelpPopoverCloseTimer();
+    updateHelpPopoverPosition();
+    setShowHelpPopover(true);
+  }, [clearHelpPopoverCloseTimer, updateHelpPopoverPosition]);
+
+  const scheduleHelpPopoverClose = useCallback(() => {
+    clearHelpPopoverCloseTimer();
+    helpPopoverCloseTimerRef.current = setTimeout(() => {
+      setShowHelpPopover(false);
+      helpPopoverCloseTimerRef.current = null;
+    }, 120);
+  }, [clearHelpPopoverCloseTimer]);
+
+  useEffect(() => () => clearHelpPopoverCloseTimer(), [clearHelpPopoverCloseTimer]);
 
   // Update local cache when prop changes
   useEffect(() => {
@@ -859,7 +896,7 @@ export default function SubjectsPage({
   const childDisplayName = safeAccessibleChildren[0]?.first_name || safeAccessibleChildren[0]?.name || 'Your';
   const subjectsHeaderTitle = isChildView && childId
     ? (childDisplayName === 'Your' ? 'Your Subjects' : `${childDisplayName}'s Subjects`)
-    : "Your Family's Subjects";
+    : "YOUR FAMILY'S COURSES";
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -1024,7 +1061,7 @@ export default function SubjectsPage({
                     ]}
                     numberOfLines={1}
                   >
-                    View Subjects
+                    Courses
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1041,7 +1078,7 @@ export default function SubjectsPage({
                     ]}
                     numberOfLines={1}
                   >
-                    Build Schedule
+                    Class Schedule
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1049,39 +1086,20 @@ export default function SubjectsPage({
                 ref={helpButtonRef}
                 onPress={() => {
                   if (showHelpPopover) {
+                    clearHelpPopoverCloseTimer();
                     setShowHelpPopover(false);
                     return;
                   }
-                  if (Platform.OS === 'web' && helpButtonRef.current) {
-                    const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
-                    if (node && typeof node.getBoundingClientRect === 'function') {
-                      const rect = node.getBoundingClientRect();
-                      setHelpPopoverPosition({
-                        top: rect.bottom + 4,
-                        left: rect.left,
-                      });
-                    }
-                  }
-                  setShowHelpPopover(true);
+                  openHelpPopover();
                 }}
                 style={styles.helpButton}
                 {...(Platform.OS === 'web' && {
                   cursor: 'pointer',
                   onMouseEnter: () => {
-                    if (helpButtonRef.current) {
-                      const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
-                      if (node && typeof node.getBoundingClientRect === 'function') {
-                        const rect = node.getBoundingClientRect();
-                        setHelpPopoverPosition({
-                          top: rect.bottom + 4,
-                          left: rect.left,
-                        });
-                      }
-                    }
-                    setShowHelpPopover(true);
+                    openHelpPopover();
                   },
                   onMouseLeave: () => {
-                    setShowHelpPopover(false);
+                    scheduleHelpPopoverClose();
                   },
                 })}
               >
@@ -1096,39 +1114,20 @@ export default function SubjectsPage({
               ref={helpButtonRef}
               onPress={() => {
                 if (showHelpPopover) {
+                  clearHelpPopoverCloseTimer();
                   setShowHelpPopover(false);
                   return;
                 }
-                if (Platform.OS === 'web' && helpButtonRef.current) {
-                  const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
-                  if (node && typeof node.getBoundingClientRect === 'function') {
-                    const rect = node.getBoundingClientRect();
-                    setHelpPopoverPosition({
-                      top: rect.bottom + 4,
-                      left: rect.left,
-                    });
-                  }
-                }
-                setShowHelpPopover(true);
+                openHelpPopover();
               }}
               style={styles.helpButton}
               {...(Platform.OS === 'web' && {
                 cursor: 'pointer',
                 onMouseEnter: () => {
-                  if (helpButtonRef.current) {
-                    const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
-                    if (node && typeof node.getBoundingClientRect === 'function') {
-                      const rect = node.getBoundingClientRect();
-                      setHelpPopoverPosition({
-                        top: rect.bottom + 4,
-                        left: rect.left,
-                      });
-                    }
-                  }
-                  setShowHelpPopover(true);
+                  openHelpPopover();
                 },
                 onMouseLeave: () => {
-                  setShowHelpPopover(false);
+                  scheduleHelpPopoverClose();
                 },
               })}
             >
@@ -1183,9 +1182,14 @@ export default function SubjectsPage({
       {showHelpPopover && Platform.OS === 'web' && (
         <HelpPopover
           visible={showHelpPopover}
-          onClose={() => setShowHelpPopover(false)}
+          onClose={() => {
+            clearHelpPopoverCloseTimer();
+            setShowHelpPopover(false);
+          }}
           position={helpPopoverPosition}
-          descriptionText={"This is your family's subject overview page. Switch to Build Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page."}
+          onMouseEnter={clearHelpPopoverCloseTimer}
+          onMouseLeave={scheduleHelpPopoverClose}
+          descriptionText={"View Subjects is your family's subject overview page. Switch to Build Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page."}
         />
       )}
 

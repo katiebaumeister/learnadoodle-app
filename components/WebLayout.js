@@ -398,6 +398,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showHelpPopover, setShowHelpPopover] = useState(false);
   const [helpPopoverPosition, setHelpPopoverPosition] = useState({ top: 0, left: 0 });
   const helpPopoverRef = useRef(null);
+  const helpPopoverCloseTimerRef = useRef(null);
   const [showPlannerSettingsPopover, setShowPlannerSettingsPopover] = useState(false);
   const [plannerSettingsPopoverPosition, setPlannerSettingsPopoverPosition] = useState({ top: 0, left: 0 });
   const settingsButtonRef = useRef(null);
@@ -452,6 +453,43 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
     return Array.from(found).sort((a, b) => a.localeCompare(b));
   }, [session?.connected_accounts, session?.integrations, session?.provider_connections]);
+
+  const clearHelpPopoverCloseTimer = useCallback(() => {
+    if (helpPopoverCloseTimerRef.current) {
+      clearTimeout(helpPopoverCloseTimerRef.current);
+      helpPopoverCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const updateHelpPopoverPosition = useCallback(() => {
+    if (Platform.OS === 'web' && helpButtonRef.current) {
+      const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
+      if (node && typeof node.getBoundingClientRect === 'function') {
+        const rect = node.getBoundingClientRect();
+        setHelpPopoverPosition({
+          top: rect.bottom + 4,
+          left: rect.left,
+        });
+      }
+    }
+  }, []);
+
+  const openHelpPopover = useCallback(() => {
+    clearHelpPopoverCloseTimer();
+    updateHelpPopoverPosition();
+    setShowPlannerSettingsPopover(false);
+    setShowHelpPopover(true);
+  }, [clearHelpPopoverCloseTimer, updateHelpPopoverPosition]);
+
+  const scheduleHelpPopoverClose = useCallback(() => {
+    clearHelpPopoverCloseTimer();
+    helpPopoverCloseTimerRef.current = setTimeout(() => {
+      setShowHelpPopover(false);
+      helpPopoverCloseTimerRef.current = null;
+    }, 120);
+  }, [clearHelpPopoverCloseTimer]);
+
+  useEffect(() => () => clearHelpPopoverCloseTimer(), [clearHelpPopoverCloseTimer]);
   const plannerConnectedProviderIds = useMemo(() => {
     const found = [];
     if (googleCalendarConnected) found.push('google');
@@ -3024,10 +3062,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 >
                   {/* Help popover - Planner & Calendar FAQs */}
                   {showHelpPopover && Platform.OS === 'web' && (
-                    <View ref={helpPopoverRef}>
+                    <View
+                      ref={helpPopoverRef}
+                      onMouseEnter={clearHelpPopoverCloseTimer}
+                      onMouseLeave={scheduleHelpPopoverClose}
+                    >
                       <HelpPopover
                         visible={showHelpPopover}
-                        onClose={() => setShowHelpPopover(false)}
+                        onClose={() => {
+                          clearHelpPopoverCloseTimer();
+                          setShowHelpPopover(false);
+                        }}
                         position={helpPopoverPosition}
                         helpForumHref="/help/faqs"
                       />
@@ -3542,41 +3587,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       ref={helpButtonRef}
                       onPress={() => {
                         if (showHelpPopover) {
+                          clearHelpPopoverCloseTimer();
                           setShowHelpPopover(false);
                           return;
                         }
-                        if (Platform.OS === 'web' && helpButtonRef.current) {
-                          const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
-                          if (node && typeof node.getBoundingClientRect === 'function') {
-                            const rect = node.getBoundingClientRect();
-                            setHelpPopoverPosition({
-                              top: rect.bottom + 4,
-                              left: rect.left,
-                            });
-                          }
-                        }
-                        setShowPlannerSettingsPopover(false);
-                        setShowHelpPopover(true);
+                        openHelpPopover();
                       }}
                       style={{ padding: 4 }}
                       {...(Platform.OS === 'web' && {
                         cursor: 'pointer',
                         onMouseEnter: () => {
-                          if (helpButtonRef.current) {
-                            const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
-                            if (node && typeof node.getBoundingClientRect === 'function') {
-                              const rect = node.getBoundingClientRect();
-                              setHelpPopoverPosition({
-                                top: rect.bottom + 4,
-                                left: rect.left,
-                              });
-                            }
-                          }
-                          setShowPlannerSettingsPopover(false);
-                          setShowHelpPopover(true);
+                          openHelpPopover();
                         },
                         onMouseLeave: () => {
-                          setShowHelpPopover(false);
+                          scheduleHelpPopoverClose();
                         },
                       })}
                     >

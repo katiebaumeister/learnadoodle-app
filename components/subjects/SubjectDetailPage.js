@@ -32,12 +32,14 @@ import MaterialDocViewerModal, {
 import { useToast } from '../Toast';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
+import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import SubjectAssignedToStudentModal from './SubjectAssignedToStudentModal';
 import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
 import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
 import { extractStudentHelpReason, formatDueShort } from '../tutor/tutorHelpUtils';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
+import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 import {
   SubjectAttendanceYearHeatmap,
   SubjectAttendanceMonthDrilldown,
@@ -45,6 +47,7 @@ import {
 import SubjectProgressPlanSection from './SubjectProgressPlanSection';
 
 const ATTENDANCE_LIST_LIMIT = 5;
+const SHOW_SUBJECT_PROGRESS = false;
 
 function firstLinkedEventId(raw) {
   if (Array.isArray(raw) && raw.length > 0) return String(raw[0]);
@@ -78,6 +81,7 @@ export default function SubjectDetailPage({
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showExportComingSoonModal, setShowExportComingSoonModal] = useState(false);
   const [showPastEventsAttendanceModal, setShowPastEventsAttendanceModal] = useState(false);
+  const [showPastEventsGradesModal, setShowPastEventsGradesModal] = useState(false);
   const [showAssignedToStudentModal, setShowAssignedToStudentModal] = useState(false);
   /** Web-only: which export icon is hovered (portal tooltip, matches planner RightToolbar). */
   const [exportTooltipKey, setExportTooltipKey] = useState(null);
@@ -90,12 +94,8 @@ export default function SubjectDetailPage({
   const [materialDocViewerKind, setMaterialDocViewerKind] = useState('pdf');
   const [highlightedMaterialId, setHighlightedMaterialId] = useState(null);
   const [subjectPlanYearId, setSubjectPlanYearId] = useState(null);
-  const [subjectPlanYearLookupDone, setSubjectPlanYearLookupDone] = useState(false);
-  const [isOpeningPlanBuilder, setIsOpeningPlanBuilder] = useState(false);
   const [attendanceInsightsMode, setAttendanceInsightsMode] = useState(null);
   const loadingRef = useRef(false);
-  const subjectPlanLookupPromiseRef = useRef(null);
-  const subjectPlanLookupKeyRef = useRef(null);
   const openingPlanBuilderRef = useRef(false);
   const autoOpenedMaterialKeyRef = useRef(null);
   const materialHighlightTimeoutRef = useRef(null);
@@ -282,6 +282,12 @@ export default function SubjectDetailPage({
   const grades = subjectData?.grades || [];
   const eventOutcomes = subjectData?.eventOutcomes || [];
   const subjectEvents = subjectData?.events || [];
+  const subjectPlanYearIdFromEvents = useMemo(() => {
+    const ids = (subjectData?.events || [])
+      .map((event) => event?.academic_year_id)
+      .filter(Boolean);
+    return ids.length > 0 ? String(ids[0]) : null;
+  }, [subjectData?.events]);
 
   // Metrics (with proper null/undefined handling)
   const attendanceRate30 = subjectData?.attendanceRate30 ?? null;
@@ -336,68 +342,44 @@ export default function SubjectDetailPage({
   }, [subject?.id, subject?.name, assignedChildren]);
 
   useEffect(() => {
-    let cancelled = false;
-    const lookupKey = `${familyId || ''}:${subject?.id || ''}`;
-    const lookupTargetChanged = subjectPlanLookupKeyRef.current !== lookupKey;
-    subjectPlanLookupKeyRef.current = lookupKey;
-    if (lookupTargetChanged) {
+    if (!familyId || !subject?.id) {
       setSubjectPlanYearId(null);
+      return;
     }
-    setSubjectPlanYearLookupDone(false);
-    subjectPlanLookupPromiseRef.current = null;
-    (async () => {
-      if (!familyId || !subject?.id) {
-        if (!cancelled) {
-          setSubjectPlanYearId(null);
-          setSubjectPlanYearLookupDone(true);
-        }
-        return;
-      }
-      const lookupPromise = findAcademicYearPlanForSubject(familyId, subject.id);
-      subjectPlanLookupPromiseRef.current = lookupPromise;
-      try {
-        const { academicYearId } = await lookupPromise;
-        if (!cancelled) {
-          setSubjectPlanYearId(academicYearId || null);
-          setSubjectPlanYearLookupDone(true);
-        }
-      } catch (_) {
-        if (!cancelled) {
-          setSubjectPlanYearId(null);
-          setSubjectPlanYearLookupDone(true);
-        }
-      } finally {
-        if (subjectPlanLookupPromiseRef.current === lookupPromise) {
-          subjectPlanLookupPromiseRef.current = null;
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
+    const cached = getSubjectProgressCache(familyId, subject.id);
+    const nextPlanYearId = cached?.academicYearId || subjectPlanYearIdFromEvents || null;
+    setSubjectPlanYearId(nextPlanYearId);
+  }, [familyId, subject?.id, subjectPlanYearIdFromEvents]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onCacheUpdate = (e) => {
+      const { familyId: fid, subjectId: sid } = e.detail || {};
+      if (String(fid) !== String(familyId) || String(sid) !== String(subject?.id)) return;
+      const cached = getSubjectProgressCache(familyId, subject.id);
+      setSubjectPlanYearId(cached?.academicYearId || subjectPlanYearIdFromEvents || null);
     };
-  }, [familyId, subject?.id, subjectData?.events]);
+    window.addEventListener('subjectProgressPlanCacheUpdated', onCacheUpdate);
+    return () => window.removeEventListener('subjectProgressPlanCacheUpdated', onCacheUpdate);
+  }, [familyId, subject?.id, subjectPlanYearIdFromEvents]);
 
   const handleOpenPlanBuilder = useCallback(async () => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !subject?.id) return;
     if (openingPlanBuilderRef.current) return;
     openingPlanBuilderRef.current = true;
-    setIsOpeningPlanBuilder(true);
     let resolvedPlanYearId = subjectPlanYearId;
     try {
-      if (!subjectPlanYearLookupDone) {
+      if (!resolvedPlanYearId) {
+        const cached = getSubjectProgressCache(familyId, subject.id);
+        resolvedPlanYearId = cached?.academicYearId || subjectPlanYearIdFromEvents || null;
+      }
+      if (!resolvedPlanYearId && familyId) {
         try {
-          if (subjectPlanLookupPromiseRef.current) {
-            const inFlight = await subjectPlanLookupPromiseRef.current;
-            resolvedPlanYearId = inFlight?.academicYearId || null;
-          } else if (familyId) {
-            const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
-            resolvedPlanYearId = fetched?.academicYearId || null;
-            setSubjectPlanYearId(resolvedPlanYearId);
-            setSubjectPlanYearLookupDone(true);
-          }
+          const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
+          resolvedPlanYearId = fetched?.academicYearId || null;
+          setSubjectPlanYearId(resolvedPlanYearId);
         } catch (_) {
           resolvedPlanYearId = null;
-          setSubjectPlanYearLookupDone(true);
         }
       }
       if (resolvedPlanYearId) {
@@ -431,13 +413,9 @@ export default function SubjectDetailPage({
       );
     } finally {
       openingPlanBuilderRef.current = false;
-      setIsOpeningPlanBuilder(false);
     }
-  }, [subject?.id, subject?.name, assignedChildren, subjectPlanYearId, subjectPlanYearLookupDone, familyId]);
-  const planButtonLabel = subjectPlanYearLookupDone
-    ? (subjectPlanYearId ? 'Edit plan' : 'Build plan')
-    : (subjectPlanYearId ? 'Edit plan' : 'Open plan');
-  const isPlanButtonBusy = isOpeningPlanBuilder || !subjectPlanYearLookupDone;
+  }, [subject?.id, subject?.name, assignedChildren, subjectPlanYearId, subjectPlanYearIdFromEvents, familyId]);
+  const planButtonLabel = subjectPlanYearId ? 'Edit plan' : 'Build plan';
 
   const attendanceRecordsForUI = useMemo(() => {
     const base = Array.isArray(attendanceRecords) ? attendanceRecords : [];
@@ -718,13 +696,6 @@ export default function SubjectDetailPage({
               >
                 <Calendar size={16} color="#6B7280" />
                 <Text style={styles.actionButtonText}>{planButtonLabel}</Text>
-                {isPlanButtonBusy ? (
-                  <ActivityIndicator
-                    size="small"
-                    color="#6B7280"
-                    style={{ marginLeft: 8, transform: [{ scale: 0.75 }] }}
-                  />
-                ) : null}
               </TouchableOpacity>
             </View>
           </View>
@@ -732,18 +703,19 @@ export default function SubjectDetailPage({
 
         {/* Top Summary Panel */}
         <View style={styles.summaryPanel}>
-          {/* Progress Tile */}
-          <TouchableOpacity
-            style={styles.summaryTile}
-            onPress={() => scrollToSection('progress-section')}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.summaryTileLabel}>Progress</Text>
-            <Text style={styles.summaryTileValue}>
-              {subjectPlanYearId ? 'Plan linked' : 'No plan yet'}
-            </Text>
-            <Text style={styles.summaryTileCaption}>Plan lessons breakdown</Text>
-          </TouchableOpacity>
+          {SHOW_SUBJECT_PROGRESS ? (
+            <TouchableOpacity
+              style={styles.summaryTile}
+              onPress={() => scrollToSection('progress-section')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.summaryTileLabel}>Progress</Text>
+              <Text style={styles.summaryTileValue}>
+                {subjectPlanYearId ? 'Plan linked' : 'No plan yet'}
+              </Text>
+              <Text style={styles.summaryTileCaption}>Plan lessons breakdown</Text>
+            </TouchableOpacity>
+          ) : null}
 
           {/* Attendance Tile */}
           <TouchableOpacity
@@ -868,7 +840,7 @@ export default function SubjectDetailPage({
         {/* Materials Snapshot */}
         <View id="materials-section" style={styles.section}>
           <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials Snapshot</Text>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials</Text>
           </View>
           {materials.length > 0 ? (
             <>
@@ -940,7 +912,9 @@ export default function SubjectDetailPage({
             </>
           ) : (
             <View style={styles.emptyStateBox}>
-              <Text style={styles.materialsEmptyText}>No materials added yet.</Text>
+              <Text style={styles.materialsEmptyText}>
+                No materials added yet for {subject?.name || 'this subject'}.
+              </Text>
               <View style={styles.materialsEmptyActionsRow}>
                 <TouchableOpacity
                   style={styles.materialsAddCta}
@@ -958,21 +932,22 @@ export default function SubjectDetailPage({
           )}
         </View>
 
-        {/* Section 1: Progress */}
-        <View id="progress-section" style={styles.section}>
-          <View style={styles.attendanceSectionHeader}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
+        {SHOW_SUBJECT_PROGRESS ? (
+          <View id="progress-section" style={styles.section}>
+            <View style={styles.attendanceSectionHeader}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
+            </View>
+            <SubjectProgressPlanSection
+              familyId={familyId}
+              subjectId={subject?.id}
+              subjectName={subject?.name}
+              children={children}
+              assignedChildIds={assignedChildren}
+              isParentViewer={isParentViewer}
+              onRefresh={() => loadSubjectDetail({ silent: true })}
+            />
           </View>
-          <SubjectProgressPlanSection
-            familyId={familyId}
-            subjectId={subject?.id}
-            subjectName={subject?.name}
-            children={children}
-            assignedChildIds={assignedChildren}
-            isParentViewer={isParentViewer}
-            onRefresh={() => loadSubjectDetail({ silent: true })}
-          />
-        </View>
+        ) : null}
 
         {/* Section 2: Attendance */}
         <View id="attendance-section" style={styles.section}>
@@ -1255,6 +1230,19 @@ export default function SubjectDetailPage({
                   );
                 })}
               </View>
+              {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
+                <TouchableOpacity
+                  style={[styles.emptyStateButton, styles.gradesBulkActionsButton]}
+                  onPress={() => setShowPastEventsGradesModal(true)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="View past events and bulk update grades"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Calendar size={18} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>Past events & bulk actions</Text>
+                </TouchableOpacity>
+              ) : null}
               {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
                 <TouchableOpacity
                   style={[styles.emptyStateButton, styles.gradesAssignedToStudentButton]}
@@ -1274,6 +1262,19 @@ export default function SubjectDetailPage({
               <Text style={styles.emptyStateText}>
                 Grades appear once you add grades to assignments or assessments for this subject.
               </Text>
+              {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
+                <TouchableOpacity
+                  style={[styles.emptyStateButton, styles.gradesBulkActionsButton]}
+                  onPress={() => setShowPastEventsGradesModal(true)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="View past events and bulk update grades"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Calendar size={18} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>Past events & bulk actions</Text>
+                </TouchableOpacity>
+              ) : null}
               {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
                 <TouchableOpacity
                   style={styles.emptyStateButton}
@@ -1324,6 +1325,17 @@ export default function SubjectDetailPage({
         familyId={familyId}
         subjectId={subject.id}
         events={subjectData?.events || []}
+        getChildName={getChildName}
+        onOpenEvent={handleOpenEventDetails}
+        onCompleted={() => loadSubjectDetail({ silent: true })}
+      />
+      <SubjectPastEventsGradesModal
+        visible={showPastEventsGradesModal}
+        onClose={() => setShowPastEventsGradesModal(false)}
+        familyId={familyId}
+        subjectId={subject.id}
+        events={subjectData?.events || []}
+        eventOutcomes={eventOutcomes}
         getChildName={getChildName}
         onOpenEvent={handleOpenEventDetails}
         onCompleted={() => loadSubjectDetail({ silent: true })}
@@ -1630,6 +1642,9 @@ const styles = StyleSheet.create({
     }),
   },
   /** Grades: spacing for Assigned to student below the list (same idea as attendance past-lessons CTA) */
+  gradesBulkActionsButton: {
+    marginTop: 8,
+  },
   gradesAssignedToStudentButton: {
     marginTop: 8,
   },

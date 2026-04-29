@@ -24,6 +24,7 @@ const CHIP_SELECTED_BORDER = '#6BB3E8';
 const CHIP_SELECTED_TEXT = '#6BB3E8';
 const WEEKDAY_NUMBERS = [0, 1, 2, 3, 4, 5, 6];
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WEEKDAY_FULL_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const TERM_OPTIONS = [
   { id: 'full_year', label: 'Full year' },
   { id: 'fall_term', label: 'Fall term' },
@@ -129,26 +130,51 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
     const health = healthResult?.data || null;
     const activePlanId = health?.academic_year_id || allPlanRows[0]?.id || null;
     const activeRow = activePlanId ? allPlanRows.find((r) => String(r.id) === String(activePlanId)) || null : null;
-    let activeDetails = null;
-    if (activeRow?.id) {
-      const { data } = await getAcademicYear(activeRow.id);
-      activeDetails = data || null;
-    }
+    const yearDetailById = {};
+    await Promise.all(
+      allPlanRows.map(async (row) => {
+        const yearId = row?.id;
+        if (!yearId) return;
+        try {
+          const { data } = await getAcademicYear(yearId);
+          yearDetailById[String(yearId)] = data || null;
+        } catch (_) {
+          yearDetailById[String(yearId)] = null;
+        }
+      })
+    );
+    const activeDetails = activeRow?.id ? (yearDetailById[String(activeRow.id)] || null) : null;
     const blocks = Array.isArray(activeDetails?.plan?.blocks) ? activeDetails.plan.blocks : [];
     const dayNums = [...new Set(blocks.flatMap((b) => Array.isArray(b.weekdays) ? b.weekdays : []))];
     const timePairs = [...new Set(blocks.map((b) => `${b?.start_time || '09:00'}-${b?.end_time || '10:00'}`))];
     const uniformTime = timePairs.length === 1 ? timePairs[0] : null;
     const subjectIds = [...new Set(blocks.map((b) => b?.subject_id).filter(Boolean).map(String))];
+    const subjectsWithAnyPlanSet = new Set();
+    allPlanRows.forEach((row) => {
+      const detail = yearDetailById[String(row?.id)] || null;
+      const planBlocks = Array.isArray(detail?.plan?.blocks) ? detail.plan.blocks : [];
+      planBlocks.forEach((block) => {
+        const sid = block?.subject_id;
+        if (sid) subjectsWithAnyPlanSet.add(String(sid));
+      });
+    });
     const payload = {
       activeScheduleCore: activeRow ? {
         row: activeRow,
         health,
         subjectIds,
+        blocksLite: blocks.map((block) => ({
+          subject_id: block?.subject_id != null ? String(block.subject_id) : null,
+          weekdays: Array.isArray(block?.weekdays) ? block.weekdays.map((d) => Number(d)).filter((d) => Number.isInteger(d)) : [],
+          start_time: block?.start_time || '09:00',
+          end_time: block?.end_time || '10:00',
+        })).filter((block) => block.subject_id),
         weekdaySummary: formatWeekdaySummary(dayNums),
         timeSummary: uniformTime
           ? `${toAmPm(uniformTime.split('-')[0])}-${toAmPm(uniformTime.split('-')[1])}`
           : 'Mixed times',
       } : null,
+      subjectsWithAnyPlan: [...subjectsWithAnyPlanSet],
       otherPlans: allPlanRows.filter((r) => String(r.id) !== String(activePlanId || '')),
       updatedAt: Date.now(),
     };
@@ -167,6 +193,7 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   const [overviewReloadKey, setOverviewReloadKey] = useState(0);
   const [overviewLoading, setOverviewLoading] = useState(() => !getCachedOverview(familyId));
   const [activeScheduleCore, setActiveScheduleCore] = useState(() => getCachedOverview(familyId)?.activeScheduleCore || null);
+  const [subjectsWithAnyPlan, setSubjectsWithAnyPlan] = useState(() => getCachedOverview(familyId)?.subjectsWithAnyPlan || []);
   const [otherPlans, setOtherPlans] = useState(() => getCachedOverview(familyId)?.otherPlans || []);
   const [loadingYears, setLoadingYears] = useState(() => !Array.isArray(schoolYearTemplateCache) || schoolYearTemplateCache.length === 0);
   const [schoolYearOptions, setSchoolYearOptions] = useState(() => (Array.isArray(schoolYearTemplateCache) ? schoolYearTemplateCache : []));
@@ -261,6 +288,7 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
       const cached = getCachedOverview(familyId);
       if (!cached) return false;
       setActiveScheduleCore(cached.activeScheduleCore || null);
+      setSubjectsWithAnyPlan(Array.isArray(cached.subjectsWithAnyPlan) ? cached.subjectsWithAnyPlan : []);
       setOtherPlans(Array.isArray(cached.otherPlans) ? cached.otherPlans : []);
       setOverviewLoading(false);
       return true;
@@ -271,6 +299,7 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
         const payload = await fetchAndCacheOverview(familyId, { force });
         if (cancelled) return;
         setActiveScheduleCore(payload.activeScheduleCore || null);
+        setSubjectsWithAnyPlan(Array.isArray(payload.subjectsWithAnyPlan) ? payload.subjectsWithAnyPlan : []);
         setOtherPlans(Array.isArray(payload.otherPlans) ? payload.otherPlans : []);
         setOverviewLoading(false);
       } catch (_) {
@@ -278,6 +307,7 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
         const hasCache = hydrateFromCache();
         if (!hasCache) {
           setActiveScheduleCore(null);
+          setSubjectsWithAnyPlan([]);
           setOtherPlans([]);
           setOverviewLoading(false);
         }
@@ -286,6 +316,7 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     (async () => {
       if (!familyId) {
         setActiveScheduleCore(null);
+        setSubjectsWithAnyPlan([]);
         setOtherPlans([]);
         setOverviewLoading(false);
         return;
@@ -319,6 +350,39 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
       subjectNames,
     };
   }, [activeScheduleCore, baseSubjects]);
+
+  const activeScheduleDayRows = useMemo(() => {
+    const blocks = Array.isArray(activeSchedule?.blocksLite) ? activeSchedule.blocksLite : [];
+    return WEEKDAY_NUMBERS.map((dayNum) => {
+      const dayEntries = blocks
+        .filter((block) => Array.isArray(block.weekdays) && block.weekdays.includes(dayNum))
+        .sort((a, b) => String(a.start_time || '').localeCompare(String(b.start_time || '')))
+        .map((block) => {
+          const subjectName = baseSubjects.find((s) => String(s?.id) === String(block.subject_id))?.name || 'Subject';
+          return { subjectName, startTime: block.start_time || '09:00' };
+        });
+      const summaryText = dayEntries.length > 0
+        ? dayEntries.map((entry) => `${entry.subjectName} at ${toAmPm(entry.startTime)}`).join(', ')
+        : 'No lessons';
+      return {
+        key: `day-${dayNum}`,
+        dayLabel: WEEKDAY_FULL_LABELS[dayNum] || WEEKDAY_LABELS[dayNum] || `Day ${dayNum}`,
+        summaryText,
+      };
+    });
+  }, [activeSchedule, baseSubjects]);
+
+  const subjectPlans = useMemo(() => {
+    const plannedSet = new Set((subjectsWithAnyPlan || []).map((id) => String(id)));
+    return (baseSubjects || []).map((subject) => {
+      const subjectId = String(subject?.id || '');
+      return {
+        id: subjectId,
+        name: subject?.name || 'Subject',
+        hasPlan: subjectId ? plannedSet.has(subjectId) : false,
+      };
+    });
+  }, [baseSubjects, subjectsWithAnyPlan]);
 
   const step4Preview = useMemo(() => {
     if (!dateRange || selectedSubjectRows.length === 0) return null;
@@ -483,100 +547,102 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'plan-year' }));
   };
 
+  const openBuilderForSubject = (subjectId, action = 'edit') => {
+    const safeId = String(subjectId || '');
+    if (!safeId) return;
+    if (action === 'delete') {
+      const nextIds = (activeSchedule?.subjectIds || []).map(String).filter((id) => id !== safeId);
+      if (nextIds.length === 0) {
+        toast?.push?.('Open the schedule builder to remove the last subject plan.', 'info');
+        setSelectedSubjectIds([safeId]);
+        setSurfaceMode('builder');
+        return;
+      }
+      setSelectedSubjectIds(nextIds);
+      toast?.push?.('Review and save to apply plan removal.', 'info');
+      setSurfaceMode('builder');
+      return;
+    }
+    setSelectedSubjectIds([safeId]);
+    setSurfaceMode('builder');
+  };
+
   if (surfaceMode === 'home') {
     return (
       <View style={styles.wrap}>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.scheduleHeaderBlock}>
-            <Text style={styles.schedulePageTitle}>Family Scheduling</Text>
-            <Text style={styles.scheduleSubtitle}>
-              Build and manage when learning happens across all subjects.
-            </Text>
-          </View>
-
-          {activeSchedule ? (
-            <>
-              <View style={styles.sectionShell}>
-                <Text style={styles.sectionKicker}>Current Schedule</Text>
-                <Text style={styles.currentYearTitle}>{activeSchedule?.row?.year_name || 'School year plan'}</Text>
-                <Text style={styles.currentMeta}>{activeSchedule.weekdaySummary} · {activeSchedule.timeSummary}</Text>
-                <Text style={styles.currentMeta}>Applies to: {activeSchedule.subjectNames.length > 0 ? activeSchedule.subjectNames.join(', ') : 'Selected subjects'}</Text>
-                <Text style={styles.currentFact}>- {activeSchedule?.health?.planned_days ?? 0} planned instructional days</Text>
-                <Text style={styles.currentFact}>
-                  - {activeSchedule?.health?.delta_days != null
-                    ? (activeSchedule.health.delta_days <= 0 ? 'On track with state targets' : `${activeSchedule.health.delta_days} days behind target`)
-                    : 'On track with state targets'}
-                </Text>
-                <View style={styles.actionRow}>
-                  <TouchableOpacity style={styles.secondaryBtn} onPress={() => setSurfaceMode('builder')}>
-                    <Text style={styles.secondaryBtnText}>Edit schedule</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.secondaryBtn} onPress={() => setSurfaceMode('builder')}>
-                    <Text style={styles.secondaryBtnText}>Rebuild</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.secondaryBtn} onPress={openPlannerView}>
-                    <Text style={styles.secondaryBtnText}>View in planner</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <View style={styles.sectionShell}>
-                <Text style={styles.sectionKicker}>Other Plans</Text>
-                {otherPlans.length === 0 ? (
-                  <Text style={styles.mutedLine}>No archived or alternate plans yet.</Text>
-                ) : (
-                  otherPlans.slice(0, 3).map((plan) => (
-                    <View key={plan.id} style={styles.otherPlanRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.otherPlanTitle}>{plan.year_name || 'Plan'}</Text>
-                        <Text style={styles.mutedLine}>
-                          {(plan.start_date || '').slice(0, 7)} to {(plan.end_date || '').slice(0, 7)}
-                        </Text>
+          <View style={styles.emptyScheduleSection}>
+            <View style={styles.currentSchedulePlaceholderCard}>
+              <Text style={styles.currentSchedulePlaceholderTitle}>Current Schedule</Text>
+              <View style={styles.currentSchedulePlaceholderBody}>
+                {activeSchedule ? (
+                  <View style={styles.scheduleSummaryList}>
+                    {activeScheduleDayRows.map((row) => (
+                      <View key={row.key} style={styles.scheduleSummaryRow}>
+                        <Text style={styles.scheduleSummaryDay}>{row.dayLabel}</Text>
+                        <Text style={styles.scheduleSummaryText}>{row.summaryText}</Text>
                       </View>
-                      <TouchableOpacity
-                        style={styles.minorBtn}
-                        onPress={() => {
-                          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                            window.dispatchEvent(
-                              new CustomEvent('openPlanYearModal', {
-                                detail: { from: 'subjects_builder', academicYearId: plan.id, openAsModal: true },
-                              })
-                            );
-                          }
-                        }}
-                      >
-                        <Text style={styles.minorBtnText}>View</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.minorBtn} onPress={() => setSurfaceMode('builder')}>
-                        <Text style={styles.minorBtnText}>Duplicate</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))
+                    ))}
+                  </View>
+                ) : (
+                  <View style={styles.currentScheduleEmptyStateWrap}>
+                    <Text style={styles.currentScheduleEmptyStateTitle}>You don&apos;t have a current plan yet</Text>
+                    <Text style={styles.currentScheduleEmptyStateText}>
+                      Create your family schedule to auto-fill lesson times, track planning goals, and stay on track.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.currentScheduleEmptyStateButton}
+                      onPress={() => setSurfaceMode('builder')}
+                      activeOpacity={0.9}
+                    >
+                      <Text style={styles.currentScheduleEmptyStateButtonText}>Create Family Schedule</Text>
+                    </TouchableOpacity>
+                  </View>
                 )}
               </View>
+            </View>
+          </View>
 
-              <TouchableOpacity style={styles.primaryBuildCta} onPress={() => setSurfaceMode('builder')}>
-                <Text style={styles.primaryBuildCtaText}>Rebuild or Adjust Schedule</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <View style={styles.emptyStateCard}>
-              <Text style={styles.emptyStateTitle}>No schedule yet</Text>
-              <Text style={styles.emptyStateText}>
-                Create your family's learning schedule to automatically plan lessons across subjects and track progress.
-              </Text>
-              <TouchableOpacity style={styles.primaryBuildCta} onPress={() => setSurfaceMode('builder')}>
-                <Text style={styles.primaryBuildCtaText}>Build Your Schedule</Text>
-              </TouchableOpacity>
-              <Text style={styles.nextStepHint}>Takes ~30 seconds • You can adjust anytime</Text>
-              <View style={styles.emptyDivider} />
-              <View style={styles.valueList}>
-                <Text style={styles.valueItem}>• Automatically creates lesson slots</Text>
-                <Text style={styles.valueItem}>• Keeps you on track with targets</Text>
-                <Text style={styles.valueItem}>• Adjusts when life changes</Text>
+          <View style={styles.emptyScheduleSection}>
+            <View style={styles.currentSchedulePlaceholderCard}>
+              <Text style={styles.currentSchedulePlaceholderTitle}>Subject Plans</Text>
+              <View style={styles.subjectPlansList}>
+                {subjectPlans.map((row) => (
+                  <View key={`plan-${row.id}`} style={styles.subjectPlansRow}>
+                    <View style={styles.subjectPlansTextWrap}>
+                      <Text style={styles.subjectPlansName}>{row.name}</Text>
+                      <Text style={styles.subjectPlansStatus}>{row.hasPlan ? 'Plan created' : 'No plan yet'}</Text>
+                    </View>
+                    <View style={styles.subjectPlansActions}>
+                      {row.hasPlan ? (
+                        <>
+                          <TouchableOpacity
+                            style={styles.minorBtn}
+                            onPress={() => openBuilderForSubject(row.id, 'edit')}
+                          >
+                            <Text style={styles.minorBtnText}>Edit</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.minorBtn}
+                            onPress={() => openBuilderForSubject(row.id, 'delete')}
+                          >
+                            <Text style={styles.minorBtnText}>Delete</Text>
+                          </TouchableOpacity>
+                        </>
+                      ) : (
+                        <TouchableOpacity
+                          style={styles.minorBtn}
+                          onPress={() => openBuilderForSubject(row.id, 'add')}
+                        >
+                          <Text style={styles.minorBtnText}>Add plan</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                ))}
               </View>
             </View>
-          )}
+          </View>
         </ScrollView>
       </View>
     );
@@ -967,11 +1033,13 @@ const styles = StyleSheet.create({
   },
   primaryBuildCta: {
     marginTop: 2,
-    borderRadius: 10,
+    borderRadius: 14,
     backgroundColor: '#10b981',
-    paddingVertical: 12,
+    minHeight: 50,
+    paddingVertical: 13,
     paddingHorizontal: 14,
     alignItems: 'center',
+    justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   primaryBuildCtaText: {
@@ -984,14 +1052,160 @@ const styles = StyleSheet.create({
   },
   emptyStateCard: {
     borderWidth: 1,
-    borderColor: BORDER_SUBTLE,
-    borderRadius: 12,
-    backgroundColor: '#fff',
-    padding: 24,
+    borderColor: 'rgba(148, 163, 184, 0.18)',
+    borderRadius: 16,
+    backgroundColor: '#FCFDFE',
+    padding: 30,
     minHeight: 280,
     maxWidth: 760,
     width: '100%',
     alignSelf: 'center',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 10px rgba(15,23,42,0.04)',
+    }),
+  },
+  emptyScheduleSection: {
+    marginBottom: 14,
+  },
+  currentSchedulePlaceholderCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    minHeight: 200,
+    maxWidth: 1400,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
+  },
+  currentSchedulePlaceholderTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentSchedulePlaceholderBody: {
+    flex: 1,
+    minHeight: 132,
+    justifyContent: 'center',
+  },
+  scheduleSummaryList: {
+    gap: 8,
+    paddingVertical: 6,
+  },
+  scheduleSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.16)',
+  },
+  scheduleSummaryDay: {
+    width: 92,
+    flexShrink: 0,
+    fontSize: 13,
+    fontWeight: '700',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  scheduleSummaryText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    color: SUB,
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentScheduleEmptyStateWrap: {
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  currentScheduleEmptyStateTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: FG,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentScheduleEmptyStateText: {
+    fontSize: 13,
+    color: SUB,
+    textAlign: 'center',
+    maxWidth: 900,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  currentScheduleEmptyStateButton: {
+    marginTop: 4,
+    borderRadius: 12,
+    backgroundColor: '#10b981',
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  currentScheduleEmptyStateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPlansList: {
+    marginTop: 8,
+    gap: 0,
+  },
+  subjectPlansRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.16)',
+  },
+  subjectPlansTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  subjectPlansName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPlansStatus: {
+    marginTop: 2,
+    fontSize: 12,
+    color: SUB,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPlansActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
   },
   emptyStateTitle: {
     fontSize: 22,
@@ -1005,8 +1219,58 @@ const styles = StyleSheet.create({
     color: SUB,
     textAlign: 'center',
     maxWidth: 620,
-    marginBottom: 16,
+    marginBottom: 12,
     alignSelf: 'center',
+  },
+  previewMockCard: {
+    marginTop: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(186, 230, 253, 0.7)',
+    borderRadius: 18,
+    backgroundColor: 'rgba(236, 253, 255, 0.9)',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 6,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 8px rgba(14,165,233,0.08)',
+    }),
+  },
+  previewMockRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+  },
+  previewMockDayChip: {
+    minWidth: 44,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    backgroundColor: 'rgba(191, 219, 254, 0.55)',
+    alignItems: 'center',
+  },
+  previewMockDayChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  previewMockTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  previewMockMainText: {
+    fontSize: 12,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  previewMockIcons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   nextStepHint: {
     marginTop: 8,
@@ -1020,13 +1284,57 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: BORDER_SUBTLE,
   },
-  valueList: {
-    gap: 6,
+  valueCardRow: {
+    marginTop: 12,
+    gap: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
   },
-  valueItem: {
+  valueCard: {
+    flex: 1,
+    minWidth: 180,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.18)',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    gap: 5,
+  },
+  valueCardIconWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(186, 230, 253, 0.5)',
+  },
+  valueCardTitle: {
     fontSize: 13,
     color: FG,
-    fontWeight: '500',
+    fontWeight: '700',
+  },
+  valueCardDescription: {
+    fontSize: 11,
+    color: SUB,
+    lineHeight: 16,
+  },
+  secondaryInlineLink: {
+    marginTop: 2,
+    alignSelf: 'center',
+    paddingVertical: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  secondaryInlineLinkText: {
+    fontSize: 13,
+    color: '#0ea5e9',
+    fontWeight: '600',
+  },
+  emotionalHint: {
+    marginTop: 8,
+    textAlign: 'center',
+    color: '#64748B',
+    fontSize: 12,
   },
   infoCard: {
     borderWidth: 1,

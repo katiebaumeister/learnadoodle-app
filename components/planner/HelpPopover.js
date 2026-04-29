@@ -8,11 +8,15 @@ export default function HelpPopover({
   position,
   helpForumHref = '/help/faqs',
   descriptionText = `Welcome to your family's shared schedule. Add events quickly with the "+ NEW" button. Right click event chips for event actions. As your day goes on, check events to mark them done. Bulk mark attendance, build out structured class plans, and view per-subject analytics by switching to the Subjects tab in the left sidebar.`,
+  onMouseEnter,
+  onMouseLeave,
 }) {
   if (!visible) return null;
 
   return (
     <View
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       style={{
         position: 'fixed',
         top: position?.top ?? 0,
@@ -23,7 +27,7 @@ export default function HelpPopover({
         borderRadius: 12,
         borderWidth: 1,
         borderColor: 'rgba(15,23,42,0.08)',
-        zIndex: 1001,
+        zIndex: 10001,
         boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
       }}
     >
