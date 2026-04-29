@@ -97,6 +97,22 @@ function getSubjectTermLabel(term) {
   return 'Full year';
 }
 
+function getCurrentSchoolYear() {
+  const now = new Date();
+  const month = now.getMonth() + 1; // 1-12
+  const startYear = month >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${startYear}/${String(startYear + 1).slice(-2)}`;
+}
+
+function getCurrentSchoolTerm() {
+  const now = new Date();
+  const month = now.getMonth() + 1; // 1-12
+  return month >= 8 ? 'fall_term' : 'spring_term';
+}
+
+const ALL_YEARS_FILTER = 'all_years';
+const ALL_TERMS_FILTER = 'all_terms';
+
 const SUBJECTS_MODE_STORAGE_PREFIX = 'subjects:selected-mode';
 
 function readStoredSubjectsMode(storageKey) {
@@ -157,8 +173,8 @@ export default function SubjectsPage({
   );
   const [selectedModeFilter, setSelectedModeFilter] = useState(() => readStoredSubjectsMode(modeStorageKey) || 'view');
   const [showHeaderFilters, setShowHeaderFilters] = useState(false);
-  const [selectedYearFilter, setSelectedYearFilter] = useState('all');
-  const [selectedTermFilter, setSelectedTermFilter] = useState('all');
+  const [selectedYearFilter, setSelectedYearFilter] = useState(() => getCurrentSchoolYear());
+  const [selectedTermFilter, setSelectedTermFilter] = useState(() => getCurrentSchoolTerm());
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
   const [pendingScrollToSectionId, setPendingScrollToSectionId] = useState(null);
@@ -532,13 +548,13 @@ export default function SubjectsPage({
       });
     }
 
-    // Filter by school year
-    if (selectedYearFilter !== 'all') {
+    // Filter by school year + term
+    if (selectedYearFilter !== ALL_YEARS_FILTER) {
       filteredEntries = filteredEntries.filter(
         ({ subject }) => (subject.school_year || '2025/26') === selectedYearFilter
       );
     }
-    if (selectedTermFilter !== 'all') {
+    if (selectedTermFilter !== ALL_TERMS_FILTER) {
       filteredEntries = filteredEntries.filter(
         ({ subject }) => normalizeSubjectTerm(subject?.school_term) === selectedTermFilter
       );
@@ -586,27 +602,7 @@ export default function SubjectsPage({
     return order.filter((term) => present.has(term) || term === 'fall_term');
   }, [subjects]);
 
-  const scopeButtonLabel = useMemo(() => {
-    const childLabel = selectedChildFilter === 'all'
-      ? 'All children'
-      : (
-        safeChildren.find((child) => String(child.id) === String(selectedChildFilter))?.first_name
-        || safeChildren.find((child) => String(child.id) === String(selectedChildFilter))?.name
-        || 'Child'
-      );
-
-    const now = new Date();
-    const currentAcademicYear = (now.getMonth() + 1 >= 8)
-      ? `${now.getFullYear()}/${String(now.getFullYear() + 1).slice(-2)}`
-      : `${now.getFullYear() - 1}/${String(now.getFullYear()).slice(-2)}`;
-
-    const yearLabel = selectedYearFilter !== 'all'
-      ? selectedYearFilter
-      : (registeredYears.find((year) => year === currentAcademicYear) || registeredYears[0] || 'All years');
-
-    const termLabel = selectedTermFilter !== 'all' ? getSubjectTermLabel(selectedTermFilter) : 'All terms';
-    return [childLabel, yearLabel, termLabel].filter(Boolean).join(' · ');
-  }, [selectedChildFilter, selectedYearFilter, selectedTermFilter, safeChildren, registeredYears]);
+  const scopeButtonLabel = 'Scope';
 
   // Overall averages across filtered subjects (for compact summary card)
   const overallSummary = useMemo(() => {
@@ -1075,58 +1071,56 @@ export default function SubjectsPage({
                         })}
                       </View>
                     </View>
-                    {registeredYears.length > 0 && <View style={styles.headerFiltersDivider} />}
-                    {registeredYears.length > 0 && (
-                      <View>
-                        <View style={styles.headerFiltersSectionTitleRow}>
-                          <Text style={styles.headerFiltersSectionTitle}>Year</Text>
-                        </View>
-                        <View style={styles.headerFiltersSection}>
-                        <View style={styles.filterChecklist}>
-                          <TouchableOpacity
-                            style={[
-                              styles.filterOptionChip,
-                              selectedYearFilter === 'all' && styles.filterOptionChipActive,
-                            ]}
-                            onPress={() => setSelectedYearFilter('all')}
-                          >
-                            <Text
-                              style={[
-                                styles.filterOptionChipText,
-                                selectedYearFilter === 'all' && styles.filterOptionChipTextActive,
-                              ]}
-                              numberOfLines={1}
-                            >
-                              All years
-                            </Text>
-                          </TouchableOpacity>
-                          {registeredYears.map((year) => {
-                            const isActive = selectedYearFilter === year;
-                            return (
-                              <TouchableOpacity
-                                key={year}
-                                style={[
-                                  styles.filterOptionChip,
-                                  isActive && styles.filterOptionChipActive,
-                                ]}
-                                onPress={() => setSelectedYearFilter(year)}
-                              >
-                                <Text
-                                  style={[
-                                    styles.filterOptionChipText,
-                                    isActive && styles.filterOptionChipTextActive,
-                                  ]}
-                                  numberOfLines={1}
-                                >
-                                  {year}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                        </View>
+                    <View style={styles.headerFiltersDivider} />
+                    <View>
+                      <View style={styles.headerFiltersSectionTitleRow}>
+                        <Text style={styles.headerFiltersSectionTitle}>Year</Text>
                       </View>
-                    )}
+                      <View style={styles.headerFiltersSection}>
+                      <View style={styles.filterChecklist}>
+                        <TouchableOpacity
+                          style={[
+                            styles.filterOptionChip,
+                            selectedYearFilter === ALL_YEARS_FILTER && styles.filterOptionChipActive,
+                          ]}
+                          onPress={() => setSelectedYearFilter(ALL_YEARS_FILTER)}
+                        >
+                          <Text
+                            style={[
+                              styles.filterOptionChipText,
+                              selectedYearFilter === ALL_YEARS_FILTER && styles.filterOptionChipTextActive,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            All years
+                          </Text>
+                        </TouchableOpacity>
+                        {registeredYears.map((year) => {
+                          const isActive = selectedYearFilter === year;
+                          return (
+                            <TouchableOpacity
+                              key={year}
+                              style={[
+                                styles.filterOptionChip,
+                                isActive && styles.filterOptionChipActive,
+                              ]}
+                              onPress={() => setSelectedYearFilter(year)}
+                            >
+                              <Text
+                                style={[
+                                  styles.filterOptionChipText,
+                                  isActive && styles.filterOptionChipTextActive,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {year}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                      </View>
+                    </View>
                     {registeredTerms.length > 0 && <View style={styles.headerFiltersDivider} />}
                     {registeredTerms.length > 0 && (
                       <View>
@@ -1138,14 +1132,14 @@ export default function SubjectsPage({
                             <TouchableOpacity
                               style={[
                                 styles.filterOptionChip,
-                                selectedTermFilter === 'all' && styles.filterOptionChipActive,
+                                selectedTermFilter === ALL_TERMS_FILTER && styles.filterOptionChipActive,
                               ]}
-                              onPress={() => setSelectedTermFilter('all')}
+                              onPress={() => setSelectedTermFilter(ALL_TERMS_FILTER)}
                             >
                               <Text
                                 style={[
                                   styles.filterOptionChipText,
-                                  selectedTermFilter === 'all' && styles.filterOptionChipTextActive,
+                                  selectedTermFilter === ALL_TERMS_FILTER && styles.filterOptionChipTextActive,
                                 ]}
                                 numberOfLines={1}
                               >
@@ -1533,9 +1527,6 @@ const styles = StyleSheet.create({
     minHeight: 44,
     paddingVertical: 10,
     paddingHorizontal: 12,
-    maxWidth: 260,
-    minWidth: 180,
-    flexShrink: 1,
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   headerFiltersButtonText: {
@@ -1939,8 +1930,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 52,
     left: 0,
-    minWidth: 200,
-    maxWidth: 350,
+    minWidth: 336,
+    maxWidth: 356,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.08)',
@@ -2024,7 +2015,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(139, 92, 246, 0.12)',
   },
   filterOptionChipText: {
-    fontSize: 15,
+    fontSize: 14,
     color: 'rgba(15,23,42,0.9)',
     fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },

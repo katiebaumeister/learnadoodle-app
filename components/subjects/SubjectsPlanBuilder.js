@@ -9,7 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Upload, X } from 'lucide-react';
 import { applyToCalendar, getAcademicYear, getPlanHealth } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
@@ -443,7 +443,6 @@ export default function SubjectsPlanBuilder({
   visibleSubjects = [],
   allSubjects = [],
   onDone,
-  onOpenSubject,
 }) {
   const toast = useToast();
   const presentScope = useMemo(() => getPresentAcademicScope(new Date()), []);
@@ -1141,19 +1140,6 @@ export default function SubjectsPlanBuilder({
     return { ids: effectiveIds, label };
   }, [allChildIds, childNameById]);
 
-  const openSubjectDetails = useCallback((subjectId) => {
-    const safeId = String(subjectId || '').trim();
-    if (!safeId) return;
-    if (typeof onOpenSubject === 'function') {
-      onOpenSubject(safeId);
-      return;
-    }
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.history.pushState({}, '', `/subjects/${safeId}`);
-      window.dispatchEvent(new CustomEvent('refreshSubjects'));
-    }
-  }, [onOpenSubject]);
-
   const openAddSubjectForCurrentSlot = useCallback(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     window.dispatchEvent(
@@ -1171,176 +1157,189 @@ export default function SubjectsPlanBuilder({
       <View style={styles.wrap}>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           {isHomeschoolMode ? (
-            <View style={styles.yearProgressCard}>
-              <View style={styles.yearProgressTopRow}>
-                <View>
-                  <Text style={styles.yearProgressTitle}>
-                    {displaySchoolYear?.label || 'Academic Year'}
-                  </Text>
-                  <Text style={styles.yearProgressSubtitle}>
-                    {yearStats.completedDays} completed · {yearStats.remaining} remaining
-                  </Text>
-                </View>
-                <View style={styles.yearProgressStatWrap}>
-                  <Text style={styles.yearProgressBig}>
-                    {yearStats.plannedDays} / {yearStats.targetDays}
-                  </Text>
-                  <Text style={styles.yearProgressStatLabel}>planned class days</Text>
-                </View>
-              </View>
-              <View style={styles.yearProgressFooter}>
-                <Text style={styles.yearProgressToday}>
+            <View style={styles.yearCard}>
+              <View>
+                <Text style={yearStyles.title}>{displaySchoolYear?.label || 'Academic Year'}</Text>
+                <Text style={yearStyles.meta}>
+                  {yearStats.completedDays} completed · {yearStats.remaining} remaining
+                </Text>
+                <Text style={yearStyles.status}>
                   {yearStats.todayIsClassDay ? 'Today: Class day' : 'Today: No class'}
                 </Text>
-                <Text style={styles.yearProgressNext}>{nextScheduledLabel}</Text>
+                <Text style={yearStyles.next}>{nextScheduledLabel}</Text>
+              </View>
+
+              <View style={yearStyles.right}>
+                <Text style={yearStyles.big}>
+                  {yearStats.plannedDays} / {yearStats.targetDays}
+                </Text>
+                <Text style={yearStyles.label}>planned class days</Text>
               </View>
             </View>
           ) : null}
 
           <View style={styles.emptyScheduleSection}>
-            <View style={styles.currentSchedulePlaceholderCard}>
-              <View style={styles.termCardHeader}>
-                <View style={styles.termCardTitleWrap}>
-                  {!hasPinnedFilters ? (
-                    <View style={styles.currentScheduleHeaderNavShell}>
-                      <TouchableOpacity
-                        style={[styles.currentScheduleNavBtn, !canNavigatePrevTerm && styles.currentScheduleNavBtnDisabled]}
-                        onPress={() => shiftCurrentScheduleTerm(-1)}
-                        disabled={!canNavigatePrevTerm}
-                        accessibilityRole="button"
-                        accessibilityLabel="Previous term"
-                      >
-                        <ChevronLeft size={16} color="rgba(15,23,42,0.4)" />
-                      </TouchableOpacity>
-                      <View style={styles.currentScheduleHeaderTitleWrap}>
-                        <Text style={[styles.currentSchedulePlaceholderTitle, styles.currentSchedulePlaceholderTitleCentered]} numberOfLines={1}>
-                          {currentScheduleHeading}
-                        </Text>
+            <View style={styles.termCard}>
+              <View style={styles.termHeader}>
+                <View style={styles.termHeaderLeft}>
+                  <View style={styles.termTitleRow}>
+                    <TouchableOpacity
+                      style={[styles.arrowButton, !canNavigatePrevTerm && styles.arrowButtonDisabled]}
+                      onPress={() => shiftCurrentScheduleTerm(-1)}
+                      disabled={!canNavigatePrevTerm}
+                      accessibilityRole="button"
+                      accessibilityLabel="Previous term"
+                    >
+                      <Text style={styles.arrowText}>‹</Text>
+                    </TouchableOpacity>
+
+                    <Text style={styles.termTitle} numberOfLines={1}>
+                      {hasPinnedFilters
+                        ? `${displaySchoolYear?.label || ''} ${displayTermOption.label}`.trim()
+                        : currentScheduleHeading}
+                    </Text>
+
+                    <TouchableOpacity
+                      style={[styles.arrowButton, !canNavigateNextTerm && styles.arrowButtonDisabled]}
+                      onPress={() => shiftCurrentScheduleTerm(1)}
+                      disabled={!canNavigateNextTerm}
+                      accessibilityRole="button"
+                      accessibilityLabel="Next term"
+                    >
+                      <Text style={styles.arrowText}>›</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={styles.termSubtext}>
+                    Whole family · Current saved planning rules
+                  </Text>
+                </View>
+
+                <View style={styles.termActions}>
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => openSubjectPicker('edit')}>
+                    <Text style={styles.secondaryButtonText}>Edit plan</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={styles.primaryButton} onPress={() => openSubjectPicker('add')}>
+                    <Text style={styles.primaryButtonText}>+ Add plan</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={styles.weekGrid}>
+                {activeScheduleDayRows.map((row) => {
+                  const lessons = (row.dayEntries || []).map((entry, idx) => ({
+                    key: `${row.key}-${entry.subjectName}-${entry.startTime}-${idx}`,
+                    title: entry.subjectName,
+                    time: toAmPm(entry.startTime),
+                  }));
+                  return (
+                    <View key={row.key} style={styles.dayColumn}>
+                      <Text style={styles.dayLabel}>{row.dayLabel}</Text>
+
+                      <View style={styles.dayBody}>
+                        {lessons.length > 0 ? (
+                          lessons.map((lesson) => (
+                            <TouchableOpacity key={lesson.key} style={styles.lessonChip} activeOpacity={0.8}>
+                              <Text style={styles.lessonTitle}>{lesson.title}</Text>
+                              <Text style={styles.lessonTime}>{lesson.time}</Text>
+                            </TouchableOpacity>
+                          ))
+                        ) : (
+                          <TouchableOpacity
+                            style={styles.addSlotButton}
+                            onPress={() => openSubjectPicker('add')}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={styles.addSlotText}>+</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
-                      <TouchableOpacity
-                        style={[styles.currentScheduleNavBtn, !canNavigateNextTerm && styles.currentScheduleNavBtnDisabled]}
-                        onPress={() => shiftCurrentScheduleTerm(1)}
-                        disabled={!canNavigateNextTerm}
-                        accessibilityRole="button"
-                        accessibilityLabel="Next term"
-                      >
-                        <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
+                    </View>
+                  );
+                })}
+              </View>
+
+              <View style={styles.sectionDivider} />
+
+              <View style={styles.subjectSection}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionTitle}>Subject plans</Text>
+                  <Text style={styles.sectionHint}>What gets placed into the weekly cadence</Text>
+                </View>
+
+                <View style={styles.subjectRows}>
+                  {subjectPlans.length === 0 ? (
+                    <View style={styles.subjectRow}>
+                      <View style={styles.subjectCadence}>
+                        <Text style={styles.subjectCadenceText}>No subjects for this term yet.</Text>
+                      </View>
+                      <TouchableOpacity style={styles.addMiniButton} onPress={openAddSubjectForCurrentSlot}>
+                        <Text style={styles.addMiniButtonText}>+ Add</Text>
                       </TouchableOpacity>
                     </View>
                   ) : (
-                    <Text style={styles.currentSchedulePlaceholderTitle}>{`${displaySchoolYear?.label || ''} ${displayTermOption.label}`.trim()}</Text>
-                  )}
-                </View>
-                <View style={styles.termHeaderActions}>
-                  <TouchableOpacity style={styles.termActionBtn} onPress={() => openSubjectPicker('edit')}>
-                    <Sparkles size={14} color="#374151" />
-                    <Text style={styles.termActionBtnText}>Edit a Plan</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.termPrimaryBtn} onPress={() => openSubjectPicker('add')}>
-                    <Plus size={14} color="#FFFFFF" />
-                    <Text style={styles.termPrimaryBtnText}>Add New Plan</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+                    subjectPlans.map((row, index) => {
+                      const status = row.hasPlan ? 'Active' : 'Needs plan';
+                      return (
+                        <View
+                          key={`plan-${row.id}`}
+                          style={[
+                            styles.subjectRow,
+                            index === subjectPlans.length - 1 && styles.subjectRowLast,
+                          ]}
+                        >
+                          <View style={styles.subjectMain}>
+                            <Text style={styles.subjectName}>{row.name}</Text>
+                            <Text style={styles.subjectMeta}>
+                              {row.attachedStudentsLabel || 'Whole family'}
+                            </Text>
+                          </View>
 
-              <View style={styles.currentSchedulePlaceholderBody}>
-                <View style={styles.scheduleSummaryList}>
-                  {activeScheduleDayRows.map((row) => (
-                    <View key={row.key} style={styles.scheduleSummaryRow}>
-                      <Text style={styles.scheduleSummaryDay}>{row.dayLabel}</Text>
-                      <View style={styles.dayPillsWrap}>
-                        {(row.dayEntries || []).length > 0 ? (
-                          (row.dayEntries || []).map((entry, idx) => (
-                            <View key={`${row.key}-${entry.subjectName}-${entry.startTime}-${idx}`} style={styles.scheduleLessonPill}>
-                              <Text style={styles.scheduleLessonPillText}>
-                                {entry.subjectName} {toAmPm(entry.startTime)}
+                          <View style={styles.subjectCadence}>
+                            <Text style={styles.subjectCadenceText}>
+                              {row.cadenceText || 'No plan yet'}
+                            </Text>
+                          </View>
+
+                          <View style={styles.subjectRight}>
+                            <View
+                              style={[
+                                styles.statusPill,
+                                row.hasPlan ? styles.statusActive : styles.statusEmpty,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.statusText,
+                                  row.hasPlan ? styles.statusTextActive : styles.statusTextEmpty,
+                                ]}
+                              >
+                                {status}
                               </Text>
                             </View>
-                          ))
-                        ) : (
-                          <TouchableOpacity style={styles.scheduleEmptyPill} onPress={() => openSubjectPicker('add')} activeOpacity={0.8}>
-                            <Text style={styles.scheduleEmptyPillText}>+</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </View>
 
-              <Text style={[styles.currentSchedulePlaceholderTitle, styles.subjectPlansSectionTitle]}>Subject Plans</Text>
-              <View style={styles.subjectPlansList}>
-                {subjectPlans.length === 0 ? (
-                  <View style={styles.subjectPlansEmptyWrap}>
-                    <Text style={styles.subjectPlansEmptyText}>
-                      No subjects for this term.{' '}
-                    </Text>
-                    <TouchableOpacity onPress={openAddSubjectForCurrentSlot} activeOpacity={0.75}>
-                      <Text style={styles.subjectPlansEmptyLink}>Add one now.</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  subjectPlans.map((row) => (
-                    <View key={`plan-${row.id}`} style={styles.subjectPlansRow}>
-                      <View style={styles.subjectPlansTextWrap}>
-                        <Text style={styles.subjectPlansName}>{row.name}</Text>
-                        {row.attachedStudentsLabel ? (
-                          <View style={styles.subjectPlansStudentsRow}>
-                            <ChildAvatarCluster
-                              childIds={row.attachedStudentIds || []}
-                              familyChildren={children}
-                              size={28}
-                              overlap={-8}
-                            />
-                            <Text style={styles.subjectPlansStudents}>{row.attachedStudentsLabel}</Text>
+                            {row.hasPlan ? (
+                              <TouchableOpacity
+                                style={styles.iconButton}
+                                onPress={() => openBuilderForSubject(row.id, 'edit')}
+                              >
+                                <Text style={styles.iconButtonText}>•••</Text>
+                              </TouchableOpacity>
+                            ) : (
+                              <TouchableOpacity
+                                style={styles.addMiniButton}
+                                onPress={() => openBuilderForSubject(row.id, 'add')}
+                              >
+                                <Text style={styles.addMiniButtonText}>+ Add</Text>
+                              </TouchableOpacity>
+                            )}
                           </View>
-                        ) : null}
-                        <Text style={styles.subjectPlansStatus}>
-                          {row.hasPlan
-                            ? `Plan created${row.cadenceText ? ` • ${row.cadenceText}` : ''}`
-                            : 'No plan yet'}
-                        </Text>
-                      <TouchableOpacity
-                        style={styles.subjectPlansDetailsLinkButton}
-                        onPress={() => openSubjectDetails(row.id)}
-                        activeOpacity={0.75}
-                        accessibilityRole="link"
-                        accessibilityLabel={`Open ${row.name} details`}
-                      >
-                        <Text style={styles.subjectPlansDetailsLinkText}>Go to Subject Details</Text>
-                      </TouchableOpacity>
-                      </View>
-                      <View style={styles.subjectPlansActions}>
-                        {row.hasPlan ? (
-                          <>
-                            <TouchableOpacity
-                              style={styles.minorBtn}
-                              onPress={() => openBuilderForSubject(row.id, 'edit')}
-                            >
-                              <Pencil size={16} color="#6B7280" />
-                              <Text style={styles.minorBtnText}>Edit plan</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                              style={styles.minorBtn}
-                              onPress={() => openBuilderForSubject(row.id, 'delete')}
-                            >
-                              <Trash2 size={16} color="#6B7280" />
-                              <Text style={styles.minorBtnText}>Delete plan</Text>
-                            </TouchableOpacity>
-                          </>
-                        ) : (
-                          <TouchableOpacity
-                            style={styles.subjectPlansAddPlanBtn}
-                            onPress={() => openBuilderForSubject(row.id, 'add')}
-                          >
-                            <Plus size={14} color="#6BB3E8" />
-                            <Text style={styles.subjectPlansAddPlanBtnText}>Add plan</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    </View>
-                  ))
-                )}
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
               </View>
             </View>
           </View>
@@ -1715,6 +1714,46 @@ export default function SubjectsPlanBuilder({
   );
 }
 
+const yearStyles = StyleSheet.create({
+  title: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#172033',
+  },
+  meta: {
+    marginTop: 3,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#8A94A6',
+  },
+  status: {
+    marginTop: 12,
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#172033',
+  },
+  next: {
+    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#7C8798',
+  },
+  right: {
+    alignItems: 'flex-end',
+  },
+  big: {
+    fontSize: 30,
+    fontWeight: '900',
+    color: '#7C5CFF',
+  },
+  label: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8A94A6',
+  },
+});
+
 const styles = StyleSheet.create({
   wrap: {
     flex: 1,
@@ -1871,6 +1910,293 @@ const styles = StyleSheet.create({
   },
   emptyScheduleSection: {
     marginBottom: 14,
+  },
+  yearCard: {
+    minHeight: 96,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E4DAFF',
+    backgroundColor: '#F5F1FF',
+    padding: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  termCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#EAEDF5',
+    padding: 18,
+    gap: 18,
+    maxWidth: 1400,
+    width: '100%',
+  },
+  termHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+    flexWrap: 'wrap',
+  },
+  termHeaderLeft: {
+    flex: 1,
+    minWidth: 260,
+  },
+  termTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  arrowButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  arrowButtonDisabled: {
+    opacity: 0.45,
+    ...(Platform.OS === 'web' && { cursor: 'default' }),
+  },
+  arrowText: {
+    fontSize: 24,
+    color: '#9AA3B2',
+    fontWeight: '700',
+  },
+  termTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#172033',
+    flexShrink: 1,
+  },
+  termSubtext: {
+    marginTop: 4,
+    marginLeft: 38,
+    fontSize: 13,
+    color: '#8A94A6',
+    fontWeight: '600',
+  },
+  termActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  secondaryButton: {
+    height: 40,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E6EF',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  secondaryButtonText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#445066',
+  },
+  primaryButton: {
+    height: 40,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    backgroundColor: '#7C5CFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  primaryButtonText: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  weekGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  dayColumn: {
+    flex: 1,
+    minWidth: 140,
+    minHeight: 124,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#EEF0F6',
+    backgroundColor: '#FBFCFF',
+    padding: 10,
+  },
+  dayLabel: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#5E6879',
+    marginBottom: 10,
+    textTransform: 'uppercase',
+  },
+  dayBody: {
+    flex: 1,
+    gap: 8,
+  },
+  lessonChip: {
+    borderRadius: 14,
+    backgroundColor: '#EEE7FF',
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#D7CAFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  lessonTitle: {
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#6D4DFF',
+  },
+  lessonTime: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8A78E8',
+  },
+  addSlotButton: {
+    height: 42,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E1E6F0',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  addSlotText: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#9AA3B2',
+  },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: '#EEF0F6',
+  },
+  subjectSection: {
+    gap: 12,
+  },
+  sectionHeaderRow: {
+    gap: 2,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#172033',
+  },
+  sectionHint: {
+    fontSize: 13,
+    color: '#8A94A6',
+    fontWeight: '600',
+  },
+  subjectRows: {
+    borderWidth: 1,
+    borderColor: '#EEF0F6',
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  subjectRow: {
+    minHeight: 68,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F2F7',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  subjectRowLast: {
+    borderBottomWidth: 0,
+  },
+  subjectMain: {
+    width: 150,
+  },
+  subjectName: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#172033',
+  },
+  subjectMeta: {
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#9AA3B2',
+  },
+  subjectCadence: {
+    flex: 1,
+  },
+  subjectCadenceText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#667085',
+  },
+  subjectRight: {
+    width: 190,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  statusPill: {
+    height: 28,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusActive: {
+    backgroundColor: '#EAFBF1',
+  },
+  statusEmpty: {
+    backgroundColor: '#F4F6FB',
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  statusTextActive: {
+    color: '#23A667',
+  },
+  statusTextEmpty: {
+    color: '#7C8798',
+  },
+  iconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#E3E7F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  iconButtonText: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#7C8798',
+  },
+  addMiniButton: {
+    height: 32,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#9ED3FF',
+    backgroundColor: '#F8FCFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  addMiniButtonText: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#5AAEF2',
   },
   yearProgressCard: {
     backgroundColor: '#F8F7FF',
