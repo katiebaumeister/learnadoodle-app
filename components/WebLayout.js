@@ -186,6 +186,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [inviteChildModalPrefillId, setInviteChildModalPrefillId] = useState(null);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
   const [editingSubject, setEditingSubject] = useState(null);
+  const [addSubjectPrefill, setAddSubjectPrefill] = useState({ schoolYear: null, schoolTerm: null });
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
   const [eventModalEventId, setEventModalEventId] = useState(null);
@@ -1998,7 +1999,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
       // If event has detail (subject object), it's edit mode
       const subject = e.detail?.subject || null;
+      const incomingSchoolYear = e.detail?.schoolYear || null;
+      const incomingSchoolTerm = e.detail?.schoolTerm || null;
       setEditingSubject(subject);
+      setAddSubjectPrefill({
+        schoolYear: subject ? null : incomingSchoolYear,
+        schoolTerm: subject ? null : incomingSchoolTerm,
+      });
       setShowAddSubjectModal(true);
     };
     window.addEventListener('openAddSubjectModal', handler);
@@ -4303,13 +4310,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         onClose={() => {
           setShowAddSubjectModal(false);
           setEditingSubject(null);
+          setAddSubjectPrefill({ schoolYear: null, schoolTerm: null });
         }}
         familyId={familyId}
         subject={editingSubject}
+        initialSchoolYear={addSubjectPrefill.schoolYear}
+        initialSchoolTerm={addSubjectPrefill.schoolTerm}
         children={children}
         onSubjectAdded={(newSubject) => {
           const wasNewSubject = !editingSubject;
           setEditingSubject(null);
+          setAddSubjectPrefill({ schoolYear: null, schoolTerm: null });
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
           }

@@ -15,6 +15,9 @@ import {
   Calendar,
   Clock,
   Plus,
+  FileText,
+  ExternalLink,
+  Trash2,
   CheckCircle,
   XCircle,
   Download,
@@ -44,7 +47,11 @@ import {
   SubjectAttendanceYearHeatmap,
   SubjectAttendanceMonthDrilldown,
 } from './SubjectSectionDrilldownPanels';
+import { supabase } from '../../lib/supabase';
 import SubjectProgressPlanSection from './SubjectProgressPlanSection';
+import AddMaterialModal from '../materials/AddMaterialModal';
+import MaterialDetailsModal from '../materials/MaterialDetailsModal';
+import { archiveMaterial } from '../../lib/services/materialsClient';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_PROGRESS = false;
@@ -189,6 +196,8 @@ export default function SubjectDetailPage({
   const [materialDocViewerUrl, setMaterialDocViewerUrl] = useState('');
   const [materialDocViewerTitle, setMaterialDocViewerTitle] = useState('');
   const [materialDocViewerKind, setMaterialDocViewerKind] = useState('pdf');
+  const [viewingMaterial, setViewingMaterial] = useState(null);
+  const [editingMaterial, setEditingMaterial] = useState(null);
   const [highlightedMaterialId, setHighlightedMaterialId] = useState(null);
   const [subjectPlanYearId, setSubjectPlanYearId] = useState(null);
   const [subjectPlanData, setSubjectPlanData] = useState(null);
@@ -197,6 +206,7 @@ export default function SubjectDetailPage({
   const openingPlanBuilderRef = useRef(false);
   const autoOpenedMaterialKeyRef = useRef(null);
   const materialHighlightTimeoutRef = useRef(null);
+  const materialContextMenuIdRef = useRef(`subject-detail-material-context-menu-${Math.random().toString(36).slice(2)}`);
   /** Parent often passes inline callbacks; keep loadSubjectDetail stable so mount effect does not loop. */
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -360,6 +370,10 @@ export default function SubjectDetailPage({
         clearTimeout(materialHighlightTimeoutRef.current);
         materialHighlightTimeoutRef.current = null;
       }
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        const existingMenu = document.getElementById(materialContextMenuIdRef.current);
+        if (existingMenu) existingMenu.remove();
+      }
     };
   }, []);
 
@@ -405,9 +419,6 @@ export default function SubjectDetailPage({
     () => buildClassScheduleSummary(subjectPlanData, subject?.id),
     [subjectPlanData, subject?.id]
   );
-  const classScheduleHeaderLine = classScheduleSummary
-    ? `Class Schedule: ${classScheduleSummary}`
-    : 'Class Schedule: Create a plan for this subject to see a class schedule here';
   const logisticsHeaderLine = useMemo(() => buildLogisticsHeaderLine(subject), [subject]);
   const calendarConnectionsHeaderLine = useMemo(
     () => buildCalendarConnectionsHeaderLine(subject),
@@ -450,6 +461,146 @@ export default function SubjectDetailPage({
       })
     );
   }, [subject?.id, subject?.name, assignedChildren]);
+
+  const handleDeleteMaterial = useCallback(async (material) => {
+    if (!material?.id) return;
+    const itemName = material.title || material.provider_name || 'this attachment';
+    const confirmed = Platform.OS === 'web' && typeof window !== 'undefined'
+      ? window.confirm(`Delete "${itemName}"?`)
+      : true;
+    if (!confirmed) return;
+    try {
+      await archiveMaterial(material.id, familyId);
+      toast.push(`${itemName} deleted`, 'success');
+      await loadSubjectDetail({ silent: true });
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+    } catch (err) {
+      toast.push(err?.message || `Failed to delete ${itemName}`, 'error');
+    }
+  }, [familyId, loadSubjectDetail, toast]);
+
+  const handleOpenInNewTab = useCallback(async (material) => {
+    try {
+      const { getMaterial } = await import('../../lib/services/materialsClient');
+      const freshMaterial = await getMaterial(material.id);
+      if (freshMaterial?.storage_path) {
+        const { data: signedUrlData, error: signedError } = await supabase.storage
+          .from('evidence')
+          .createSignedUrl(freshMaterial.storage_path, 3600);
+        if (signedError || !signedUrlData?.signedUrl) {
+          toast.push('Unable to open this attachment in a new tab.', 'error');
+          return;
+        }
+        window.open(signedUrlData.signedUrl, '_blank');
+        return;
+      }
+      if (freshMaterial?.provider_url) {
+        window.open(freshMaterial.provider_url, '_blank');
+        return;
+      }
+      toast.push('This attachment does not have a URL to open.', 'info');
+    } catch (_) {
+      toast.push('Unable to open attachment in a new tab.', 'error');
+    }
+  }, [toast]);
+
+  const showMaterialContextMenu = useCallback((material, clientX, clientY) => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const existingMenu = document.getElementById(materialContextMenuIdRef.current);
+    if (existingMenu) existingMenu.remove();
+    const menuItems = [
+      { text: 'Attachment details', action: () => setViewingMaterial(material), icon: FileText },
+      { text: 'Edit attachment details', action: () => setEditingMaterial(material), icon: Edit2 },
+      { text: 'Open in new tab', action: () => handleOpenInNewTab(material), icon: ExternalLink },
+      { text: 'Delete', action: () => handleDeleteMaterial(material), icon: Trash2, isDelete: true },
+    ];
+    const iconPathFor = (icon) => {
+      if (icon === FileText) return 'M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8';
+      if (icon === Edit2) return 'M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7 M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z';
+      if (icon === ExternalLink) return 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6 M15 3h6v6 M10 14L21 3';
+      if (icon === Trash2) return 'M3 6h18 M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6 M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2';
+      return '';
+    };
+    const menu = document.createElement('div');
+    menu.id = materialContextMenuIdRef.current;
+    menu.style.cssText = `
+      position: fixed;
+      top: ${Math.max(8, clientY)}px;
+      left: ${Math.max(8, clientX)}px;
+      background-color: #ffffff;
+      border-radius: 12px;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
+      z-index: 999999;
+      min-width: 240px;
+      padding: 8px 0;
+      font-family: "League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    `;
+    menuItems.forEach((menuItem, index) => {
+      const row = document.createElement('div');
+      row.style.cssText = `
+        padding: 16px 24px;
+        color: ${menuItem.isDelete ? '#dc2626' : '#374151'};
+        font-size: 16px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        border-bottom: ${index < menuItems.length - 1 ? '1px solid #f3f4f6' : 'none'};
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      `;
+      row.addEventListener('mouseenter', () => {
+        row.style.backgroundColor = menuItem.isDelete ? '#fef2f2' : '#f8fafc';
+      });
+      row.addEventListener('mouseleave', () => {
+        row.style.backgroundColor = 'transparent';
+      });
+      const iconContainer = document.createElement('div');
+      iconContainer.style.cssText = 'display:flex;align-items:center;justify-content:center;flex-shrink:0;width:16px;height:16px;';
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('width', '16');
+      svg.setAttribute('height', '16');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', menuItem.isDelete ? '#dc2626' : '#374151');
+      svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round');
+      svg.setAttribute('stroke-linejoin', 'round');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', iconPathFor(menuItem.icon));
+      svg.appendChild(path);
+      iconContainer.appendChild(svg);
+      const textNode = document.createElement('span');
+      textNode.textContent = menuItem.text;
+      row.appendChild(iconContainer);
+      row.appendChild(textNode);
+      row.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const activeMenu = document.getElementById(materialContextMenuIdRef.current);
+        if (activeMenu) activeMenu.remove();
+        setTimeout(() => menuItem.action(), 10);
+      });
+      menu.appendChild(row);
+    });
+    document.body.appendChild(menu);
+    const closeMenu = (event) => {
+      const activeMenu = document.getElementById(materialContextMenuIdRef.current);
+      if (!activeMenu) return;
+      if (!activeMenu.contains(event.target)) {
+        activeMenu.remove();
+        document.removeEventListener('click', closeMenu);
+        document.removeEventListener('mousedown', closeMenu, true);
+        document.removeEventListener('contextmenu', closeMenu, true);
+      }
+    };
+    document.addEventListener('click', closeMenu);
+    document.addEventListener('mousedown', closeMenu, true);
+    document.addEventListener('contextmenu', closeMenu, true);
+  }, [handleDeleteMaterial, handleOpenInNewTab]);
 
   useEffect(() => {
     if (!familyId || !subject?.id) {
@@ -513,15 +664,6 @@ export default function SubjectDetailPage({
         const cached = getSubjectProgressCache(familyId, subject.id);
         resolvedPlanYearId = cached?.academicYearId || subjectPlanYearIdFromEvents || null;
       }
-      if (!resolvedPlanYearId && familyId) {
-        try {
-          const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
-          resolvedPlanYearId = fetched?.academicYearId || null;
-          setSubjectPlanYearId(resolvedPlanYearId);
-        } catch (_) {
-          resolvedPlanYearId = null;
-        }
-      }
       if (resolvedPlanYearId) {
         window.dispatchEvent(
           new CustomEvent('openPlanYearModal', {
@@ -539,6 +681,7 @@ export default function SubjectDetailPage({
         );
         return;
       }
+      // Open immediately for new-plan flow if we don't already have a resolved plan id.
       window.dispatchEvent(
         new CustomEvent('openPlanYearModal', {
           detail: {
@@ -816,7 +959,21 @@ export default function SubjectDetailPage({
               {childrenNames.length > 0 && (
                 <Text style={styles.subtext}>Students: {childrenNames.join(', ')}</Text>
               )}
-              <Text style={styles.subtext}>{classScheduleHeaderLine}</Text>
+              {classScheduleSummary ? (
+                <Text style={styles.subtext}>Schedule: {classScheduleSummary}</Text>
+              ) : (
+                <Text style={styles.subtext}>
+                  Schedule:{' '}
+                  <Text
+                    style={styles.subtextInlineLink}
+                    onPress={handleOpenPlanBuilder}
+                    accessibilityRole="link"
+                  >
+                    Create a plan
+                  </Text>{' '}
+                  for this subject to see a class schedule here
+                </Text>
+              )}
               {logisticsHeaderLine ? (
                 <Text style={styles.subtext}>{logisticsHeaderLine}</Text>
               ) : null}
@@ -1012,6 +1169,14 @@ export default function SubjectDetailPage({
                           : null,
                       ]}
                       onPress={() => handleMaterialChipPress(material)}
+                      {...(Platform.OS === 'web' && {
+                        onContextMenu: (e) => {
+                          e.preventDefault?.();
+                          const x = e?.clientX ?? e?.nativeEvent?.clientX ?? 0;
+                          const y = e?.clientY ?? e?.nativeEvent?.clientY ?? 0;
+                          showMaterialContextMenu(material, x, y);
+                        },
+                      })}
                       activeOpacity={0.7}
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
@@ -1535,6 +1700,34 @@ export default function SubjectDetailPage({
         title={materialDocViewerTitle}
         viewerKind={materialDocViewerKind}
       />
+      <MaterialDetailsModal
+        visible={!!viewingMaterial}
+        onClose={() => setViewingMaterial(null)}
+        material={viewingMaterial}
+        familyId={familyId}
+        children={children}
+        onEdit={(material) => {
+          setViewingMaterial(null);
+          setEditingMaterial(material);
+        }}
+        onDelete={async (material) => {
+          setViewingMaterial(null);
+          await handleDeleteMaterial(material);
+        }}
+      />
+      <AddMaterialModal
+        visible={!!editingMaterial}
+        onClose={() => setEditingMaterial(null)}
+        onSaved={async () => {
+          setEditingMaterial(null);
+          await loadSubjectDetail({ silent: true });
+          toast.push('Attachment details saved', 'success');
+        }}
+        familyId={familyId}
+        children={children}
+        material={editingMaterial}
+        allSubjects={subject ? [subject] : []}
+      />
       <RespondToHelpRequestModal
         visible={!!helpModalAssignment}
         assignment={helpModalAssignment}
@@ -1674,6 +1867,13 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subtextInlineLink: {
+    color: '#4F46E5',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
     }),
   },
   headerActions: {
@@ -2068,7 +2268,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     gap: 10,
     flexWrap: 'wrap',
   },
@@ -2077,34 +2277,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     flexWrap: 'wrap',
-    marginLeft: 'auto',
+    marginLeft: 0,
   },
   attendanceInsightsPanelWrap: {
     marginTop: 12,
   },
   sectionModePill: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.28)',
-    backgroundColor: '#FFFFFF',
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    backgroundColor: '#F9FAFB',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   sectionModePillActive: {
-    borderColor: 'rgba(107, 179, 232, 0.85)',
-    backgroundColor: 'rgba(133, 196, 242, 0.16)',
+    borderColor: 'rgba(107, 179, 232, 0.55)',
+    backgroundColor: 'rgba(133, 196, 242, 0.14)',
   },
   sectionModePillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#64748B',
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   sectionModePillTextActive: {
-    color: '#2b6ea6',
+    color: '#2F6FA8',
   },
   gradesSectionTitleRow: {
     flexDirection: 'row',

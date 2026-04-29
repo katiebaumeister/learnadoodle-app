@@ -6,6 +6,7 @@ import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 import { getMaterials } from '../lib/services/materialsClient';
 import { useSession } from '../contexts/SessionContext';
+import ReactDOM from 'react-dom';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { parseChildIds } from '../lib/services/subjectsClient';
 import { getFamilyPlannerSettings, saveFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
@@ -114,6 +115,8 @@ export default function AddSubjectModal({
   familyId,
   defaultChildId = null,
   defaultSubjectName = null,
+  initialSchoolYear = null,
+  initialSchoolTerm = null,
   subject = null, // If provided, edit mode
   children: propChildren = [] // Pre-loaded children from parent
 }) {
@@ -122,9 +125,9 @@ export default function AddSubjectModal({
   const [additionalNotes, setAdditionalNotes] = useState('');
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [grade, setGrade] = useState(GRADE_OPTIONS[0] || '');
-  const [schoolYear, setSchoolYear] = useState(getDefaultSchoolYear());
+  const [schoolYear, setSchoolYear] = useState(initialSchoolYear || getDefaultSchoolYear());
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
-  const [schoolTerm, setSchoolTerm] = useState(getDefaultSchoolTerm());
+  const [schoolTerm, setSchoolTerm] = useState(initialSchoolTerm || getDefaultSchoolTerm());
   const [showSchoolTermDropdown, setShowSchoolTermDropdown] = useState(false);
   const [credits, setCredits] = useState('');
   const [defaultTargetDays, setDefaultTargetDays] = useState('');
@@ -238,8 +241,8 @@ export default function AddSubjectModal({
       } else {
         // Add mode - use defaults
         setAdditionalNotes('');
-        setSchoolYear(getDefaultSchoolYear());
-        setSchoolTerm(getDefaultSchoolTerm());
+        setSchoolYear(initialSchoolYear || getDefaultSchoolYear());
+        setSchoolTerm(initialSchoolTerm || getDefaultSchoolTerm());
         setSelectedSyllabusMaterialId(null);
         setSelectedLessonPlanMaterialId(null);
         setMaterialDropdownSlot(null);
@@ -296,7 +299,7 @@ export default function AddSubjectModal({
       setOpeningAddUnits(false);
       hasPrefilledFromFamilyRef.current = false;
     }
-  }, [visible, defaultChildId, defaultSubjectName, subject]);
+  }, [visible, defaultChildId, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject]);
 
   // Clear transient validation/banner errors as soon as form state is corrected.
   useEffect(() => {
@@ -2096,38 +2099,74 @@ export default function AddSubjectModal({
         onCancel={() => setDeleteEventsConfirm({ visible: false })}
       />
 
-      <RNModal
-        visible={showCurrentUnitsModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowCurrentUnitsModal(false)}
-      >
-        <View style={styles.currentUnitsModalBackdrop}>
-          <View style={styles.currentUnitsModalCard}>
-            <View style={styles.currentUnitsModalHeader}>
-              <Text style={styles.currentUnitsModalTitle}>Current units</Text>
-              <TouchableOpacity onPress={() => setShowCurrentUnitsModal(false)} activeOpacity={0.7} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                <Text style={styles.currentUnitsModalClose}>Close</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.currentUnitsModalScroll} contentContainerStyle={styles.currentUnitsModalScrollContent}>
-              {unitsForCurrentUnitsModal.map((unit, index) => (
-                <View key={`${unit.title || 'unit'}-${index}`} style={styles.currentUnitCard}>
-                  <Text style={styles.currentUnitTitle}>{unit.title || `Unit ${index + 1}`}</Text>
-                  {(unit.lessons || []).map((lesson, lessonIndex) => (
-                    <Text
-                      key={`${lesson.id || lesson.title || 'lesson'}-${lessonIndex}`}
-                      style={styles.currentLessonRow}
-                    >
-                      {lessonIndex + 1}. {lesson.title || 'Lesson'}
-                    </Text>
-                  ))}
+      {Platform.OS === 'web'
+        ? (
+          showCurrentUnitsModal && typeof document !== 'undefined'
+            ? ReactDOM.createPortal(
+              <View style={styles.currentUnitsModalWebLayer}>
+                <View style={styles.currentUnitsModalBackdrop}>
+                  <View style={styles.currentUnitsModalCard}>
+                    <View style={styles.currentUnitsModalHeader}>
+                      <Text style={styles.currentUnitsModalTitle}>Current units</Text>
+                      <TouchableOpacity onPress={() => setShowCurrentUnitsModal(false)} activeOpacity={0.7} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                        <Text style={styles.currentUnitsModalClose}>Close</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <ScrollView style={styles.currentUnitsModalScroll} contentContainerStyle={styles.currentUnitsModalScrollContent}>
+                      {unitsForCurrentUnitsModal.map((unit, index) => (
+                        <View key={`${unit.title || 'unit'}-${index}`} style={styles.currentUnitCard}>
+                          <Text style={styles.currentUnitTitle}>{unit.title || `Unit ${index + 1}`}</Text>
+                          {(unit.lessons || []).map((lesson, lessonIndex) => (
+                            <Text
+                              key={`${lesson.id || lesson.title || 'lesson'}-${lessonIndex}`}
+                              style={styles.currentLessonRow}
+                            >
+                              {lessonIndex + 1}. {lesson.title || 'Lesson'}
+                            </Text>
+                          ))}
+                        </View>
+                      ))}
+                    </ScrollView>
+                  </View>
                 </View>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </RNModal>
+              </View>,
+              document.body
+            )
+            : null
+        ) : (
+          <RNModal
+            visible={showCurrentUnitsModal}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowCurrentUnitsModal(false)}
+          >
+            <View style={styles.currentUnitsModalBackdrop}>
+              <View style={styles.currentUnitsModalCard}>
+                <View style={styles.currentUnitsModalHeader}>
+                  <Text style={styles.currentUnitsModalTitle}>Current units</Text>
+                  <TouchableOpacity onPress={() => setShowCurrentUnitsModal(false)} activeOpacity={0.7}>
+                    <Text style={styles.currentUnitsModalClose}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+                <ScrollView style={styles.currentUnitsModalScroll} contentContainerStyle={styles.currentUnitsModalScrollContent}>
+                  {unitsForCurrentUnitsModal.map((unit, index) => (
+                    <View key={`${unit.title || 'unit'}-${index}`} style={styles.currentUnitCard}>
+                      <Text style={styles.currentUnitTitle}>{unit.title || `Unit ${index + 1}`}</Text>
+                      {(unit.lessons || []).map((lesson, lessonIndex) => (
+                        <Text
+                          key={`${lesson.id || lesson.title || 'lesson'}-${lessonIndex}`}
+                          style={styles.currentLessonRow}
+                        >
+                          {lessonIndex + 1}. {lesson.title || 'Lesson'}
+                        </Text>
+                      ))}
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
+            </View>
+          </RNModal>
+        )}
     </RNModal>
 
     <AddMaterialModal
@@ -2815,6 +2854,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
+  },
+  currentUnitsModalWebLayer: {
+    position: 'fixed',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 2147483000,
   },
   currentUnitsModalCard: {
     width: '100%',

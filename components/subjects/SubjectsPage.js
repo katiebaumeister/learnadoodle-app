@@ -103,7 +103,7 @@ function readStoredSubjectsMode(storageKey) {
   if (Platform.OS !== 'web' || typeof window === 'undefined' || !storageKey) return null;
   try {
     const raw = window.localStorage.getItem(storageKey);
-    return raw === 'plan' || raw === 'view' ? raw : null;
+    return raw === 'plan' || raw === 'view' || raw === 'progress' ? raw : null;
   } catch (_) {
     return null;
   }
@@ -952,6 +952,12 @@ export default function SubjectsPage({
     setSelectedModeFilter(nextMode);
   }, []);
 
+  const progressAttendanceHeading = useMemo(() => {
+    const yearLabel = selectedYearFilter !== 'all' ? selectedYearFilter : 'All years';
+    const termLabel = selectedTermFilter !== 'all' ? getSubjectTermLabel(selectedTermFilter) : 'All terms';
+    return `${yearLabel} ${termLabel} Attendance`;
+  }, [selectedYearFilter, selectedTermFilter]);
+
   // If a subject is selected, show detail view
   if (selectedSubjectId) {
     return (
@@ -1229,7 +1235,24 @@ export default function SubjectsPage({
                     ]}
                     numberOfLines={1}
                   >
-                    Class Schedule
+                    Schedule
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modeSegment,
+                    selectedModeFilter === 'progress' && styles.modeSegmentActive,
+                  ]}
+                  onPress={() => handleModeFilterChange('progress')}
+                >
+                  <Text
+                    style={[
+                      styles.modeSegmentText,
+                      selectedModeFilter === 'progress' && styles.modeSegmentTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Progress
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1340,7 +1363,7 @@ export default function SubjectsPage({
           position={helpPopoverPosition}
           onMouseEnter={clearHelpPopoverCloseTimer}
           onMouseLeave={scheduleHelpPopoverClose}
-          descriptionText={"Courses is your family's subject overview page. Switch to Class Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page."}
+          descriptionText={"Courses is your family's subject overview page. Switch to Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page."}
         />
       )}
 
@@ -1352,7 +1375,34 @@ export default function SubjectsPage({
           visibleSubjects={filteredSubjects}
           allSubjects={subjects}
           onDone={() => setSelectedModeFilter('view')}
+          onOpenSubject={(subjectId) => {
+            const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
+            if (match) {
+              handleSubjectClick(match);
+            }
+          }}
         />
+      ) : selectedModeFilter === 'progress' ? (
+        <ScrollView
+          style={styles.subjectsList}
+          contentContainerStyle={styles.subjectsListContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.progressCard}>
+            <Text style={styles.progressCardTitle}>{progressAttendanceHeading}</Text>
+            <View style={styles.progressCardBody}>
+              <Text style={styles.progressCardBodyText}>Attendance summary will appear here.</Text>
+              <View style={styles.progressCardActions}>
+                <TouchableOpacity style={styles.progressPillBtn} activeOpacity={0.75}>
+                  <Text style={styles.progressPillBtnText}>Year heatmap grid</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.progressPillBtn} activeOpacity={0.75}>
+                  <Text style={styles.progressPillBtnText}>Month drill-down</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </ScrollView>
       ) : loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#60a5fa" />
@@ -2208,5 +2258,61 @@ const styles = StyleSheet.create({
   },
   subjectsListContent: {
     paddingBottom: 40,
+  },
+  progressCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+  },
+  progressCardTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  progressCardBody: {
+    marginTop: 8,
+    minHeight: 112,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 10,
+    justifyContent: 'space-between',
+  },
+  progressCardBodyText: {
+    fontSize: 13,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  progressCardActions: {
+    marginTop: 10,
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  progressPillBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    borderRadius: 999,
+    backgroundColor: '#F9FAFB',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  progressPillBtnText: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

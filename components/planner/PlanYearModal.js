@@ -8246,6 +8246,9 @@ export default function PlanYearModal({
   const savePlanLabel = buildPlanSubjectName
     ? `Save ${buildPlanSubjectName} Plan`
     : 'Save plan';
+  const modalHeaderPlanTitle = buildPlanSubjectName
+    ? `Add a New ${buildPlanSubjectName} Plan`
+    : 'Add a New Plan';
   const unitHeaderSubtitle =
     unitFocusSubjectNameForHeader && effectiveSubjectIds.length > 1 && (planStep === 'source' || planStep === 'unit_structure')
       ? t('planMyYear.multiSubjectUnits.headerUnitsFor', { subjectName: unitFocusSubjectNameForHeader })
@@ -10830,7 +10833,7 @@ export default function PlanYearModal({
                         </Text>
                       </View>
                       <Text style={styles.modalHeaderTitle}>
-                        {isEditingExistingPlanFlow ? 'Edit Structured Class Plans' : 'Build Structured Class Plans'}
+                        {modalHeaderPlanTitle}
                       </Text>
                     </View>
                   </View>

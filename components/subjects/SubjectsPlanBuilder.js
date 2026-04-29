@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Platform,
   ScrollView,
@@ -183,8 +183,7 @@ function subjectMatchesYearTerm(subject, yearLabel, termId) {
   if (!subjectYear || !slotYear || subjectYear !== slotYear) return false;
   const subjectTerm = normalizeSubjectTerm(subject?.school_term);
   const slotTerm = normalizeSubjectTerm(termId);
-  if (slotTerm === 'full_year') return subjectTerm === 'full_year';
-  return subjectTerm === 'full_year' || subjectTerm === slotTerm;
+  return subjectTerm === slotTerm;
 }
 
 function extractSubjectNamesFromBlock(block) {
@@ -391,7 +390,7 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
   return request;
 }
 
-export default function SubjectsPlanBuilder({ familyId, children = [], visibleSubjects = [], allSubjects = [], onDone }) {
+export default function SubjectsPlanBuilder({ familyId, children = [], visibleSubjects = [], allSubjects = [], onDone, onOpenSubject }) {
   const toast = useToast();
   const presentScope = useMemo(() => getPresentAcademicScope(new Date()), []);
   const [surfaceMode, setSurfaceMode] = useState('home'); // home | builder
@@ -597,19 +596,10 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     const selectedStartYear = Number(selectedSchoolYear?.start_year);
     const selectedScope = String(selectedTerm || '').trim();
     if (!Number.isFinite(selectedStartYear) || !selectedScope) return null;
-    const exact = (planCores || []).find((core) => (
+    return (planCores || []).find((core) => (
       Number(core?.startYear) === selectedStartYear
       && String(core?.scopeId || '').trim() === selectedScope
     )) || null;
-    if (exact) return exact;
-    // Many existing plans are full-year; use those for fall/spring browsing when no term-specific plan exists.
-    if (selectedScope === 'fall_term' || selectedScope === 'spring_term') {
-      return (planCores || []).find((core) => (
-        Number(core?.startYear) === selectedStartYear
-        && String(core?.scopeId || '').trim() === 'full_year'
-      )) || null;
-    }
-    return null;
   }, [planCores, selectedSchoolYear, selectedTerm]);
 
   const currentSchedule = useMemo(() => {
@@ -701,18 +691,10 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   const subjectPlans = useMemo(() => {
     const selectedStartYear = Number(selectedSchoolYear?.start_year);
     const slotKey = buildPlanSlotKey(selectedStartYear, selectedTerm);
-    const fullYearSlotKey = buildPlanSlotKey(selectedStartYear, 'full_year');
-    const fallbackToFullYear = selectedTerm === 'fall_term' || selectedTerm === 'spring_term';
     const slotSubjectIds = slotKey ? (planSubjectIdsBySlot?.[slotKey] || []) : [];
     const slotSubjectNames = slotKey ? (planSubjectNamesBySlot?.[slotKey] || []) : [];
-    const mergedSubjectIds = fallbackToFullYear
-      ? [...new Set([...(slotSubjectIds || []), ...((planSubjectIdsBySlot?.[fullYearSlotKey] || []))])]
-      : slotSubjectIds;
-    const mergedSubjectNames = fallbackToFullYear
-      ? [...new Set([...(slotSubjectNames || []), ...((planSubjectNamesBySlot?.[fullYearSlotKey] || []))])]
-      : slotSubjectNames;
-    const plannedSet = new Set((mergedSubjectIds || []).map((id) => String(id)));
-    const plannedNameSet = new Set((mergedSubjectNames || []).map((name) => normalizeSubjectName(name)));
+    const plannedSet = new Set((slotSubjectIds || []).map((id) => String(id)));
+    const plannedNameSet = new Set((slotSubjectNames || []).map((name) => normalizeSubjectName(name)));
     return (slotScopedSubjects || []).map((subject) => {
       const subjectId = String(subject?.id || '');
       const normalizedName = normalizeSubjectName(subject?.name);
@@ -931,6 +913,31 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     setSurfaceMode('builder');
   };
 
+  const openSubjectDetails = useCallback((subjectId) => {
+    const safeId = String(subjectId || '').trim();
+    if (!safeId) return;
+    if (typeof onOpenSubject === 'function') {
+      onOpenSubject(safeId);
+      return;
+    }
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.history.pushState({}, '', `/subjects/${safeId}`);
+      window.dispatchEvent(new CustomEvent('refreshSubjects'));
+    }
+  }, [onOpenSubject]);
+
+  const openAddSubjectForCurrentSlot = useCallback(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    window.dispatchEvent(
+      new CustomEvent('openAddSubjectModal', {
+        detail: {
+          schoolYear: selectedSchoolYear?.label || null,
+          schoolTerm: selectedTerm || null,
+        },
+      })
+    );
+  }, [selectedSchoolYear?.label, selectedTerm]);
+
   if (surfaceMode === 'home') {
     return (
       <View style={styles.wrap}>
@@ -981,45 +988,66 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
             <View style={styles.currentSchedulePlaceholderCard}>
               <Text style={styles.currentSchedulePlaceholderTitle}>Subject Plans</Text>
               <View style={styles.subjectPlansList}>
-                {subjectPlans.map((row) => (
-                  <View key={`plan-${row.id}`} style={styles.subjectPlansRow}>
-                    <View style={styles.subjectPlansTextWrap}>
-                      <Text style={styles.subjectPlansName}>{row.name}</Text>
-                      <Text style={styles.subjectPlansStatus}>{row.hasPlan ? 'Plan created' : 'No plan yet'}</Text>
-                    </View>
-                    <View style={styles.subjectPlansActions}>
-                      {row.hasPlan ? (
-                        <>
-                          <TouchableOpacity
-                            style={styles.minorBtn}
-                            onPress={() => openBuilderForSubject(row.id, 'edit')}
-                          >
-                            <Pencil size={16} color="#6B7280" />
-                            <Text style={styles.minorBtnText}>Edit plan</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.minorBtn}
-                            onPress={() => openBuilderForSubject(row.id, 'delete')}
-                          >
-                            <Trash2 size={16} color="#6B7280" />
-                            <Text style={styles.minorBtnText}>Delete plan</Text>
-                          </TouchableOpacity>
-                        </>
-                      ) : (
-                        <TouchableOpacity
-                          style={styles.subjectPlansAddPlanBtn}
-                          onPress={() => openBuilderForSubject(row.id, 'add')}
-                        >
-                          <Plus size={14} color="#6BB3E8" />
-                          <Text style={styles.subjectPlansAddPlanBtnText}>Add plan</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
+                {subjectPlans.length === 0 ? (
+                  <View style={styles.subjectPlansEmptyWrap}>
+                    <Text style={styles.subjectPlansEmptyText}>
+                      No subjects for this term.{' '}
+                    </Text>
+                    <TouchableOpacity onPress={openAddSubjectForCurrentSlot} activeOpacity={0.75}>
+                      <Text style={styles.subjectPlansEmptyLink}>Add one now.</Text>
+                    </TouchableOpacity>
                   </View>
-                ))}
+                ) : (
+                  subjectPlans.map((row) => (
+                    <View key={`plan-${row.id}`} style={styles.subjectPlansRow}>
+                      <View style={styles.subjectPlansTextWrap}>
+                        <Text style={styles.subjectPlansName}>{row.name}</Text>
+                        <Text style={styles.subjectPlansStatus}>{row.hasPlan ? 'Plan created' : 'No plan yet'}</Text>
+                      <TouchableOpacity
+                        style={styles.subjectPlansDetailsLinkButton}
+                        onPress={() => openSubjectDetails(row.id)}
+                        activeOpacity={0.75}
+                        accessibilityRole="link"
+                        accessibilityLabel={`Open ${row.name} details`}
+                      >
+                        <Text style={styles.subjectPlansDetailsLinkText}>Go to Subject Details</Text>
+                      </TouchableOpacity>
+                      </View>
+                      <View style={styles.subjectPlansActions}>
+                        {row.hasPlan ? (
+                          <>
+                            <TouchableOpacity
+                              style={styles.minorBtn}
+                              onPress={() => openBuilderForSubject(row.id, 'edit')}
+                            >
+                              <Pencil size={16} color="#6B7280" />
+                              <Text style={styles.minorBtnText}>Edit plan</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={styles.minorBtn}
+                              onPress={() => openBuilderForSubject(row.id, 'delete')}
+                            >
+                              <Trash2 size={16} color="#6B7280" />
+                              <Text style={styles.minorBtnText}>Delete plan</Text>
+                            </TouchableOpacity>
+                          </>
+                        ) : (
+                          <TouchableOpacity
+                            style={styles.subjectPlansAddPlanBtn}
+                            onPress={() => openBuilderForSubject(row.id, 'add')}
+                          >
+                            <Plus size={14} color="#6BB3E8" />
+                            <Text style={styles.subjectPlansAddPlanBtnText}>Add plan</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                  ))
+                )}
               </View>
             </View>
           </View>
+
         </ScrollView>
       </View>
     );
@@ -1592,6 +1620,27 @@ const styles = StyleSheet.create({
     marginTop: 8,
     gap: 0,
   },
+  subjectPlansEmptyWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+  },
+  subjectPlansEmptyText: {
+    fontSize: 14,
+    color: SUB,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPlansEmptyLink: {
+    fontSize: 14,
+    color: ACCENT,
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      cursor: 'pointer',
+    }),
+  },
   subjectPlansRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1621,6 +1670,19 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  subjectPlansDetailsLinkButton: {
+    marginTop: 4,
+    alignSelf: 'flex-start',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  subjectPlansDetailsLinkText: {
+    fontSize: 13,
+    color: ACCENT,
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   subjectPlansActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1644,6 +1706,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: '#6BB3E8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendancePlaceholderBody: {
+    marginTop: 8,
+    minHeight: 112,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 10,
+    justifyContent: 'space-between',
+  },
+  attendancePlaceholderText: {
+    fontSize: 13,
+    color: SUB,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendancePlaceholderActions: {
+    marginTop: 10,
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  attendancePillBtn: {
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    borderRadius: 999,
+    backgroundColor: '#F9FAFB',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  attendancePillBtnText: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
