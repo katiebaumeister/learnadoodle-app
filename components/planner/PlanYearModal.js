@@ -7108,6 +7108,71 @@ export default function PlanYearModal({
       if (data?.academic_year_id) {
         setAcademicYearId(data.academic_year_id);
       }
+      // Keep Subject modal Planning Preferences in sync with plan scope/targets.
+      const subjectIdsForSync = [
+        ...new Set(
+          [
+            ...(Array.isArray(payload?.subjects) ? payload.subjects : []),
+            ...((Array.isArray(payload?.blocks) ? payload.blocks : [])
+              .map((b) => b?.subject_id)
+              .filter(Boolean)),
+          ].map((id) => String(id)).filter(Boolean)
+        ),
+      ];
+      if (resolvedScopeUsesSchoolYear && familyId && subjectIdsForSync.length > 0 && selectedSchoolYearOption?.label) {
+        let syncedSchoolTerm = null;
+        if (resolvedSchoolDurationScopeForPayload === 'fall_term' || resolvedSchoolDurationScopeForPayload === 'spring_term' || resolvedSchoolDurationScopeForPayload === 'full_year') {
+          syncedSchoolTerm = resolvedSchoolDurationScopeForPayload;
+        } else if (resolvedRunScopeTypeForPayload === 'term') {
+          const termName = String(selectedTermOption?.name || '').toLowerCase();
+          if (termName.includes('fall')) syncedSchoolTerm = 'fall_term';
+          else if (termName.includes('spring')) syncedSchoolTerm = 'spring_term';
+        } else if (resolvedRunScopeTypeForPayload === 'full_year') {
+          syncedSchoolTerm = 'full_year';
+        }
+        if (syncedSchoolTerm) {
+          try {
+            await supabase
+              .from('subject')
+              .update({
+                school_year: selectedSchoolYearOption.label,
+                school_term: syncedSchoolTerm,
+              })
+              .eq('family_id', familyId)
+              .in('id', subjectIdsForSync);
+          } catch (e) {
+            console.warn('[PlanYearModal] Failed syncing subject year/term from plan:', e);
+          }
+        }
+      }
+      if (payload?.subject_targets && typeof payload.subject_targets === 'object' && !Array.isArray(payload.subject_targets)) {
+        try {
+          await Promise.all(
+            Object.entries(payload.subject_targets).map(async ([subjectId, target]) => {
+              const sid = String(subjectId || '').trim();
+              if (!sid) return;
+              const t = target && typeof target === 'object' ? target : {};
+              const hasDays = t.target_days != null && Number.isFinite(Number(t.target_days));
+              const hasHours = t.target_hours != null && Number.isFinite(Number(t.target_hours));
+              const mode = hasDays ? 'days' : (hasHours ? 'hours' : 'none');
+              await supabase
+                .from('subject')
+                .update({
+                  default_constraint_mode: mode,
+                  default_target_days: hasDays ? Number(t.target_days) : null,
+                  default_target_hours: hasHours ? Number(t.target_hours) : null,
+                })
+                .eq('id', sid)
+                .eq('family_id', familyId);
+            })
+          );
+        } catch (e) {
+          console.warn('[PlanYearModal] Failed syncing subject target defaults from plan:', e);
+        }
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
       if (typeof window !== 'undefined' && data?.academic_year_id) {
         const optimisticSlotLines = buildPreviewSlotLinesForPlanYear({
           startDate,
@@ -8788,6 +8853,149 @@ export default function PlanYearModal({
       </View>,
       document.body,
     );
+  };
+
+  const renderCalendarPickerContent = ({
+    calendarMonth,
+    setCalendarMonth,
+    selectedYmd,
+    onSelectYmd,
+    onClose,
+  }) => (
+    <TouchableOpacity
+      style={styles.calendarOverlay}
+      activeOpacity={1}
+      onPress={onClose}
+    >
+      <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.calendarModal}>
+        <View style={styles.calendarNavRow}>
+          <TouchableOpacity
+            onPress={() => {
+              const d = new Date(calendarMonth);
+              d.setMonth(d.getMonth() - 1);
+              setCalendarMonth(d);
+            }}
+            style={styles.calendarNavButton}
+          >
+            <ChevronLeft size={20} color={FG} />
+          </TouchableOpacity>
+          <Text style={styles.calendarMonthTitle}>
+            {calendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+          </Text>
+          <TouchableOpacity
+            onPress={() => {
+              const d = new Date(calendarMonth);
+              d.setMonth(d.getMonth() + 1);
+              setCalendarMonth(d);
+            }}
+            style={styles.calendarNavButton}
+          >
+            <ChevronRight size={20} color={FG} />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.calendarYearRow}>
+          <TouchableOpacity
+            onPress={() => {
+              const d = new Date(calendarMonth);
+              d.setFullYear(d.getFullYear() - 1);
+              setCalendarMonth(d);
+            }}
+            style={styles.calendarNavButton}
+          >
+            <Text style={styles.calendarYearLink}>← Year</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => {
+              const today = new Date();
+              setCalendarMonth(today);
+              onSelectYmd(toLocalYYYYMMDD(today));
+              onClose();
+            }}
+            style={styles.calendarNavButton}
+          >
+            <Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => {
+              const d = new Date(calendarMonth);
+              d.setFullYear(d.getFullYear() + 1);
+              setCalendarMonth(d);
+            }}
+            style={styles.calendarNavButton}
+          >
+            <Text style={styles.calendarYearLink}>Year →</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.calendarDayHeaders}>
+          {WEEKDAY_LABELS.map((day) => (
+            <View key={day} style={styles.calendarDayHeader}>
+              <Text style={styles.calendarDayHeaderText}>{day}</Text>
+            </View>
+          ))}
+        </View>
+        {(() => {
+          const year = calendarMonth.getFullYear();
+          const month = calendarMonth.getMonth();
+          const firstDay = new Date(year, month, 1);
+          const startDateGrid = new Date(firstDay);
+          startDateGrid.setDate(startDateGrid.getDate() - startDateGrid.getDay());
+          const days = [];
+          const current = new Date(startDateGrid);
+          for (let i = 0; i < 42; i++) {
+            days.push(new Date(current));
+            current.setDate(current.getDate() + 1);
+          }
+          return (
+            <View>
+              {[0, 1, 2, 3, 4, 5].map((week) => (
+                <View key={week} style={styles.calendarWeekRow}>
+                  {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
+                    const isCurrentMonth = day.getMonth() === month;
+                    const ymd = toLocalYYYYMMDD(day);
+                    const isSelected = selectedYmd === ymd;
+                    const isToday = ymd === toLocalYYYYMMDD(new Date());
+                    return (
+                      <TouchableOpacity
+                        key={idx}
+                        onPress={() => {
+                          onSelectYmd(ymd);
+                          onClose();
+                        }}
+                        style={[
+                          styles.calendarDayCell,
+                          isSelected && styles.calendarDayCellSelected,
+                          isToday && !isSelected && styles.calendarDayCellToday,
+                        ]}
+                      >
+                        <Text style={[
+                          styles.calendarDayText,
+                          isSelected && styles.calendarDayTextSelected,
+                          !isCurrentMonth && styles.calendarDayTextMuted,
+                        ]}>
+                          {day.getDate()}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))}
+            </View>
+          );
+        })()}
+      </TouchableOpacity>
+    </TouchableOpacity>
+  );
+
+  const renderCalendarPickerPortal = (options) => {
+    if (Platform.OS !== 'web' || !options?.visible) return null;
+    let ReactDOM;
+    try {
+      ReactDOM = require('react-dom');
+    } catch (_) {
+      return null;
+    }
+    if (!ReactDOM?.createPortal || typeof document === 'undefined' || !document.body) return null;
+    return ReactDOM.createPortal(renderCalendarPickerContent(options), document.body);
   };
 
   const renderWebDraftUnitMenuPortal = () => {
@@ -13887,268 +14095,60 @@ export default function PlanYearModal({
 
           {/* Start Date Calendar Picker (same as Add Event modal) */}
           {showStartDatePicker && (
-            <Modal
-              animationType="fade"
-              transparent
-              visible={showStartDatePicker}
-              onRequestClose={() => setShowStartDatePicker(false)}
-            >
-              <TouchableOpacity
-                style={styles.calendarOverlay}
-                activeOpacity={1}
-                onPress={() => setShowStartDatePicker(false)}
-              >
-                <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.calendarModal}>
-                  <View style={styles.calendarNavRow}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const d = new Date(startDateCalendarMonth);
-                        d.setMonth(d.getMonth() - 1);
-                        setStartDateCalendarMonth(d);
-                      }}
-                      style={styles.calendarNavButton}
-                    >
-                      <ChevronLeft size={20} color={FG} />
-                    </TouchableOpacity>
-                    <Text style={styles.calendarMonthTitle}>
-                      {startDateCalendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const d = new Date(startDateCalendarMonth);
-                        d.setMonth(d.getMonth() + 1);
-                        setStartDateCalendarMonth(d);
-                      }}
-                      style={styles.calendarNavButton}
-                    >
-                      <ChevronRight size={20} color={FG} />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.calendarYearRow}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const d = new Date(startDateCalendarMonth);
-                        d.setFullYear(d.getFullYear() - 1);
-                        setStartDateCalendarMonth(d);
-                      }}
-                      style={styles.calendarNavButton}
-                    >
-                      <Text style={styles.calendarYearLink}>← Year</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const today = new Date();
-                        setStartDateCalendarMonth(today);
-                        handleStartDateChange(toLocalYYYYMMDD(today));
-                        setShowStartDatePicker(false);
-                      }}
-                      style={styles.calendarNavButton}
-                    >
-                      <Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const d = new Date(startDateCalendarMonth);
-                        d.setFullYear(d.getFullYear() + 1);
-                        setStartDateCalendarMonth(d);
-                      }}
-                      style={styles.calendarNavButton}
-                    >
-                      <Text style={styles.calendarYearLink}>Year →</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.calendarDayHeaders}>
-                    {WEEKDAY_LABELS.map((day) => (
-                      <View key={day} style={styles.calendarDayHeader}>
-                        <Text style={styles.calendarDayHeaderText}>{day}</Text>
-                      </View>
-                    ))}
-                  </View>
-                  {(() => {
-                    const year = startDateCalendarMonth.getFullYear();
-                    const month = startDateCalendarMonth.getMonth();
-                    const firstDay = new Date(year, month, 1);
-                    const startDateGrid = new Date(firstDay);
-                    startDateGrid.setDate(startDateGrid.getDate() - startDateGrid.getDay());
-                    const days = [];
-                    const current = new Date(startDateGrid);
-                    for (let i = 0; i < 42; i++) {
-                      days.push(new Date(current));
-                      current.setDate(current.getDate() + 1);
-                    }
-                    return (
-                      <View>
-                        {[0, 1, 2, 3, 4, 5].map((week) => (
-                          <View key={week} style={styles.calendarWeekRow}>
-                            {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
-                              const isCurrentMonth = day.getMonth() === month;
-                              const ymd = toLocalYYYYMMDD(day);
-                              const isSelected = startDate === ymd;
-                              const isToday = ymd === toLocalYYYYMMDD(new Date());
-                              return (
-                                <TouchableOpacity
-                                  key={idx}
-                                  onPress={() => {
-                                    handleStartDateChange(ymd);
-                                    setShowStartDatePicker(false);
-                                  }}
-                                  style={[
-                                    styles.calendarDayCell,
-                                    isSelected && styles.calendarDayCellSelected,
-                                    isToday && !isSelected && styles.calendarDayCellToday,
-                                  ]}
-                                >
-                                  <Text style={[
-                                    styles.calendarDayText,
-                                    isSelected && styles.calendarDayTextSelected,
-                                    !isCurrentMonth && styles.calendarDayTextMuted,
-                                  ]}>
-                                    {day.getDate()}
-                                  </Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </View>
-                        ))}
-                      </View>
-                    );
-                  })()}
-                </TouchableOpacity>
-              </TouchableOpacity>
-            </Modal>
+            Platform.OS === 'web'
+              ? renderCalendarPickerPortal({
+                  visible: showStartDatePicker,
+                  calendarMonth: startDateCalendarMonth,
+                  setCalendarMonth: setStartDateCalendarMonth,
+                  selectedYmd: startDate,
+                  onSelectYmd: handleStartDateChange,
+                  onClose: () => setShowStartDatePicker(false),
+                })
+              : (
+                <Modal
+                  animationType="fade"
+                  transparent
+                  visible={showStartDatePicker}
+                  onRequestClose={() => setShowStartDatePicker(false)}
+                >
+                  {renderCalendarPickerContent({
+                    calendarMonth: startDateCalendarMonth,
+                    setCalendarMonth: setStartDateCalendarMonth,
+                    selectedYmd: startDate,
+                    onSelectYmd: handleStartDateChange,
+                    onClose: () => setShowStartDatePicker(false),
+                  })}
+                </Modal>
+              )
           )}
 
           {/* End Date Calendar Picker (same as Add Event modal) */}
           {showEndDatePicker && (
-            <Modal
-              animationType="fade"
-              transparent
-              visible={showEndDatePicker}
-              onRequestClose={() => setShowEndDatePicker(false)}
-            >
-              <TouchableOpacity
-                style={styles.calendarOverlay}
-                activeOpacity={1}
-                onPress={() => setShowEndDatePicker(false)}
-              >
-                <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.calendarModal}>
-                  <View style={styles.calendarNavRow}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const d = new Date(endDateCalendarMonth);
-                        d.setMonth(d.getMonth() - 1);
-                        setEndDateCalendarMonth(d);
-                      }}
-                      style={styles.calendarNavButton}
-                    >
-                      <ChevronLeft size={20} color={FG} />
-                    </TouchableOpacity>
-                    <Text style={styles.calendarMonthTitle}>
-                      {endDateCalendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const d = new Date(endDateCalendarMonth);
-                        d.setMonth(d.getMonth() + 1);
-                        setEndDateCalendarMonth(d);
-                      }}
-                      style={styles.calendarNavButton}
-                    >
-                      <ChevronRight size={20} color={FG} />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.calendarYearRow}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const d = new Date(endDateCalendarMonth);
-                        d.setFullYear(d.getFullYear() - 1);
-                        setEndDateCalendarMonth(d);
-                      }}
-                      style={styles.calendarNavButton}
-                    >
-                      <Text style={styles.calendarYearLink}>← Year</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const today = new Date();
-                        setEndDateCalendarMonth(today);
-                        handleEndDateChange(toLocalYYYYMMDD(today));
-                        setShowEndDatePicker(false);
-                      }}
-                      style={styles.calendarNavButton}
-                    >
-                      <Text style={[styles.calendarYearLink, { textDecorationLine: 'underline' }]}>Today</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const d = new Date(endDateCalendarMonth);
-                        d.setFullYear(d.getFullYear() + 1);
-                        setEndDateCalendarMonth(d);
-                      }}
-                      style={styles.calendarNavButton}
-                    >
-                      <Text style={styles.calendarYearLink}>Year →</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.calendarDayHeaders}>
-                    {WEEKDAY_LABELS.map((day) => (
-                      <View key={day} style={styles.calendarDayHeader}>
-                        <Text style={styles.calendarDayHeaderText}>{day}</Text>
-                      </View>
-                    ))}
-                  </View>
-                  {(() => {
-                    const year = endDateCalendarMonth.getFullYear();
-                    const month = endDateCalendarMonth.getMonth();
-                    const firstDay = new Date(year, month, 1);
-                    const startDateGrid = new Date(firstDay);
-                    startDateGrid.setDate(startDateGrid.getDate() - startDateGrid.getDay());
-                    const days = [];
-                    const current = new Date(startDateGrid);
-                    for (let i = 0; i < 42; i++) {
-                      days.push(new Date(current));
-                      current.setDate(current.getDate() + 1);
-                    }
-                    return (
-                      <View>
-                        {[0, 1, 2, 3, 4, 5].map((week) => (
-                          <View key={week} style={styles.calendarWeekRow}>
-                            {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
-                              const isCurrentMonth = day.getMonth() === month;
-                              const ymd = toLocalYYYYMMDD(day);
-                              const isSelected = endDate === ymd;
-                              const isToday = ymd === toLocalYYYYMMDD(new Date());
-                              return (
-                                <TouchableOpacity
-                                  key={idx}
-                                  onPress={() => {
-                                    handleEndDateChange(ymd);
-                                    setShowEndDatePicker(false);
-                                  }}
-                                  style={[
-                                    styles.calendarDayCell,
-                                    isSelected && styles.calendarDayCellSelected,
-                                    isToday && !isSelected && styles.calendarDayCellToday,
-                                  ]}
-                                >
-                                  <Text style={[
-                                    styles.calendarDayText,
-                                    isSelected && styles.calendarDayTextSelected,
-                                    !isCurrentMonth && styles.calendarDayTextMuted,
-                                  ]}>
-                                    {day.getDate()}
-                                  </Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </View>
-                        ))}
-                      </View>
-                    );
-                  })()}
-                </TouchableOpacity>
-              </TouchableOpacity>
-            </Modal>
+            Platform.OS === 'web'
+              ? renderCalendarPickerPortal({
+                  visible: showEndDatePicker,
+                  calendarMonth: endDateCalendarMonth,
+                  setCalendarMonth: setEndDateCalendarMonth,
+                  selectedYmd: endDate,
+                  onSelectYmd: handleEndDateChange,
+                  onClose: () => setShowEndDatePicker(false),
+                })
+              : (
+                <Modal
+                  animationType="fade"
+                  transparent
+                  visible={showEndDatePicker}
+                  onRequestClose={() => setShowEndDatePicker(false)}
+                >
+                  {renderCalendarPickerContent({
+                    calendarMonth: endDateCalendarMonth,
+                    setCalendarMonth: setEndDateCalendarMonth,
+                    selectedYmd: endDate,
+                    onSelectYmd: handleEndDateChange,
+                    onClose: () => setShowEndDatePicker(false),
+                  })}
+                </Modal>
+              )
           )}
 
           {/* Custom Holiday Date Calendar Picker */}
@@ -16464,6 +16464,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
     justifyContent: 'center',
     alignItems: 'center',
+    ...(Platform.OS === 'web' && {
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 9999999999,
+    }),
   },
   calendarModal: {
     backgroundColor: BG,
@@ -16472,7 +16480,11 @@ const styles = StyleSheet.create({
     width: Platform.OS === 'web' ? 320 : '90%',
     maxWidth: 320,
     ...(Platform.OS === 'web'
-      ? { boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }
+      ? {
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+          position: 'relative',
+          zIndex: 10000000000,
+        }
       : {
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 4 },

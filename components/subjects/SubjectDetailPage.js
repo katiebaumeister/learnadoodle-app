@@ -48,6 +48,103 @@ import SubjectProgressPlanSection from './SubjectProgressPlanSection';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_PROGRESS = false;
+const WEEKDAY_PLURALS = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+
+function formatWeekdayList(days = []) {
+  const labels = [...new Set(days)]
+    .map((day) => WEEKDAY_PLURALS[day])
+    .filter(Boolean);
+  if (labels.length <= 1) return labels[0] || '';
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`;
+}
+
+function formatScheduleTime(startTime) {
+  const match = String(startTime || '').match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  let hour = parseInt(match[1], 10);
+  const minute = match[2];
+  const period = hour >= 12 ? 'p.m.' : 'a.m.';
+  if (hour === 0) hour = 12;
+  if (hour > 12) hour -= 12;
+  if (minute === '00') return `${hour} ${period}`;
+  return `${hour}:${minute} ${period}`;
+}
+
+function buildClassScheduleSummary(planData, subjectId) {
+  if (!planData?.plan || !subjectId) return null;
+  const sid = String(subjectId);
+  const blocks = Array.isArray(planData.plan.blocks) ? planData.plan.blocks : [];
+  const match = blocks.find((b) => {
+    if (String(b?.subject_id ?? '') === sid) return true;
+    const ids = Array.isArray(b?.subject_ids) ? b.subject_ids.map(String) : [];
+    return ids.includes(sid);
+  });
+  if (!match || !Array.isArray(match.weekdays) || match.weekdays.length === 0) return null;
+  const weekdays = match.weekdays
+    .map((day) => parseInt(day, 10))
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+  if (weekdays.length === 0) return null;
+  const dayLabel = formatWeekdayList(weekdays);
+  if (!dayLabel) return null;
+  if (match.all_day) return `${dayLabel} (all day)`;
+  const timeLabel = formatScheduleTime(match.start_time);
+  return timeLabel ? `${dayLabel} at ${timeLabel}` : dayLabel;
+}
+
+function toTitleWord(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+function normalizeCalendarTargets(raw) {
+  if (Array.isArray(raw)) {
+    return raw.map((value) => String(value || '').toLowerCase().trim()).filter(Boolean);
+  }
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((value) => String(value || '').toLowerCase().trim()).filter(Boolean);
+      }
+    } catch (_) {
+      return [];
+    }
+  }
+  return [];
+}
+
+function buildLogisticsHeaderLine(subject) {
+  if (!subject) return null;
+  const mode = toTitleWord(subject.mode);
+  const location = String(subject.location || '').trim();
+  const instructor = String(subject.instructor || '').trim();
+  const pieces = [];
+  if (mode) {
+    pieces.push(mode);
+  }
+  if (location) {
+    pieces.push(`at ${location}`);
+  }
+  if (instructor) {
+    pieces.push(`with ${instructor}`);
+  }
+  if (pieces.length === 0) return null;
+  return `Logistics: ${pieces.join(' ')}.`;
+}
+
+function buildCalendarConnectionsHeaderLine(subject) {
+  if (!subject) return null;
+  const labels = normalizeCalendarTargets(subject.connected_calendar_targets)
+    .map((value) => (value === 'google' ? 'Google' : value === 'apple' ? 'Apple' : null))
+    .filter(Boolean);
+  const unique = [...new Set(labels)];
+  if (unique.length === 0) return null;
+  return unique.length === 1
+    ? `Calendar connection: ${unique[0]}`
+    : `Calendar connections: ${unique.join(', ')}`;
+}
 
 function firstLinkedEventId(raw) {
   if (Array.isArray(raw) && raw.length > 0) return String(raw[0]);
@@ -94,6 +191,7 @@ export default function SubjectDetailPage({
   const [materialDocViewerKind, setMaterialDocViewerKind] = useState('pdf');
   const [highlightedMaterialId, setHighlightedMaterialId] = useState(null);
   const [subjectPlanYearId, setSubjectPlanYearId] = useState(null);
+  const [subjectPlanData, setSubjectPlanData] = useState(null);
   const [attendanceInsightsMode, setAttendanceInsightsMode] = useState(null);
   const loadingRef = useRef(false);
   const openingPlanBuilderRef = useRef(false);
@@ -303,6 +401,18 @@ export default function SubjectDetailPage({
   }, [subject, subjectData?.events]);
 
   const childrenNames = assignedChildren.map(getChildName).filter(Boolean);
+  const classScheduleSummary = useMemo(
+    () => buildClassScheduleSummary(subjectPlanData, subject?.id),
+    [subjectPlanData, subject?.id]
+  );
+  const classScheduleHeaderLine = classScheduleSummary
+    ? `Class Schedule: ${classScheduleSummary}`
+    : 'Class Schedule: Create a plan for this subject to see a class schedule here';
+  const logisticsHeaderLine = useMemo(() => buildLogisticsHeaderLine(subject), [subject]);
+  const calendarConnectionsHeaderLine = useMemo(
+    () => buildCalendarConnectionsHeaderLine(subject),
+    [subject]
+  );
 
   useEffect(() => {
     if (!initialOpenMaterialId) return;
@@ -344,12 +454,41 @@ export default function SubjectDetailPage({
   useEffect(() => {
     if (!familyId || !subject?.id) {
       setSubjectPlanYearId(null);
+      setSubjectPlanData(null);
       return;
     }
     const cached = getSubjectProgressCache(familyId, subject.id);
     const nextPlanYearId = cached?.academicYearId || subjectPlanYearIdFromEvents || null;
     setSubjectPlanYearId(nextPlanYearId);
+    setSubjectPlanData(cached?.planData || null);
   }, [familyId, subject?.id, subjectPlanYearIdFromEvents]);
+
+  useEffect(() => {
+    if (!familyId || !subject?.id) return;
+    let cancelled = false;
+    const hydratePlanData = async () => {
+      const cached = getSubjectProgressCache(familyId, subject.id);
+      if (cached?.planData) {
+        setSubjectPlanData(cached.planData);
+        return;
+      }
+      if (!subjectPlanYearId && !subjectPlanYearIdFromEvents) {
+        setSubjectPlanData(null);
+        return;
+      }
+      try {
+        const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
+        if (cancelled) return;
+        setSubjectPlanData(fetched?.planData || null);
+      } catch (_) {
+        if (!cancelled) setSubjectPlanData(null);
+      }
+    };
+    hydratePlanData();
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId, subject?.id, subjectPlanYearId, subjectPlanYearIdFromEvents]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -358,6 +497,7 @@ export default function SubjectDetailPage({
       if (String(fid) !== String(familyId) || String(sid) !== String(subject?.id)) return;
       const cached = getSubjectProgressCache(familyId, subject.id);
       setSubjectPlanYearId(cached?.academicYearId || subjectPlanYearIdFromEvents || null);
+      setSubjectPlanData(cached?.planData || null);
     };
     window.addEventListener('subjectProgressPlanCacheUpdated', onCacheUpdate);
     return () => window.removeEventListener('subjectProgressPlanCacheUpdated', onCacheUpdate);
@@ -676,6 +816,13 @@ export default function SubjectDetailPage({
               {childrenNames.length > 0 && (
                 <Text style={styles.subtext}>Students: {childrenNames.join(', ')}</Text>
               )}
+              <Text style={styles.subtext}>{classScheduleHeaderLine}</Text>
+              {logisticsHeaderLine ? (
+                <Text style={styles.subtext}>{logisticsHeaderLine}</Text>
+              ) : null}
+              {calendarConnectionsHeaderLine ? (
+                <Text style={styles.subtext}>{calendarConnectionsHeaderLine}</Text>
+              ) : null}
             </View>
             <View style={styles.headerActions}>
               {onEditSubject && (

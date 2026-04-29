@@ -100,6 +100,11 @@ function toLocalYYYYMMDD(d) {
   return `${y}-${m}-${day}`;
 }
 
+function isUuidLike(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized);
+}
+
 /** Avatar column may be prof1–10 or a real URL — same rules as children fetch. */
 function validateChildAvatarUrl(url) {
   if (!url || typeof url !== 'string') return null;
@@ -1663,7 +1668,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   useEffect(() => {
     if (!authUserId || !session) return;
-    if (!session.family_id) return;
+    if (!isUuidLike(session.family_id)) return;
     let mounted = true;
     const fetchAcademicYears = async () => {
       const { data, error } = await supabase

@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Check, ChevronDown, ChevronUp, Pencil, Plus, Sparkles, Upload } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Trash2, Upload } from 'lucide-react';
 import { applyToCalendar, getAcademicYear, getPlanHealth } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
@@ -34,6 +34,23 @@ const OVERVIEW_CACHE_TTL_MS = 2 * 60 * 1000;
 const overviewCacheByFamily = new Map();
 const overviewInflightByFamily = new Map();
 let schoolYearTemplateCache = null;
+
+function getPresentAcademicScope(now = new Date()) {
+  const month = now.getMonth() + 1;
+  const startYear = month >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return {
+    startYear,
+    endYear: startYear + 1,
+    termId: month >= 8 ? 'fall_term' : 'spring_term',
+  };
+}
+
+function formatScheduleScopeLabel(scopeId) {
+  if (scopeId === 'fall_term') return 'Fall Term';
+  if (scopeId === 'spring_term') return 'Spring Term';
+  if (scopeId === 'full_year') return 'Full Year';
+  return '';
+}
 
 function formatYmdFromTemplateYear(startYear, endYear, scope) {
   const safeStart = Number(startYear);
@@ -97,6 +114,90 @@ function normalizeFamilyKey(familyId) {
   return String(familyId || '').trim();
 }
 
+function isUuidLike(value) {
+  const normalized = normalizeFamilyKey(value).toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized);
+}
+
+function extractSubjectIdsFromBlock(block) {
+  const ids = [];
+  if (block?.subject_id != null && String(block.subject_id).trim()) {
+    ids.push(String(block.subject_id));
+  }
+  if (Array.isArray(block?.subject_ids)) {
+    block.subject_ids.forEach((id) => {
+      if (id != null && String(id).trim()) ids.push(String(id));
+    });
+  }
+  return [...new Set(ids)];
+}
+
+function normalizeSubjectName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function parseYearFromYmd(ymd) {
+  const year = Number(String(ymd || '').slice(0, 4));
+  return Number.isFinite(year) ? year : null;
+}
+
+function resolveScheduleStartYear(row, scopeId) {
+  const startYear = parseYearFromYmd(row?.start_date);
+  const endYear = parseYearFromYmd(row?.end_date);
+  if (scopeId === 'spring_term' && Number.isFinite(endYear)) return endYear - 1;
+  return Number.isFinite(startYear) ? startYear : null;
+}
+
+function inferScopeFromDates(row) {
+  const start = String(row?.start_date || '').slice(0, 10);
+  const end = String(row?.end_date || '').slice(0, 10);
+  const startMonth = Number(start.slice(5, 7));
+  const endMonth = Number(end.slice(5, 7));
+  const startYear = parseYearFromYmd(start);
+  const endYear = parseYearFromYmd(end);
+  if (startYear && endYear && endYear > startYear) return 'full_year';
+  if (Number.isFinite(startMonth) && Number.isFinite(endMonth)) {
+    if (startMonth >= 8 && endMonth <= 12) return 'fall_term';
+    if (startMonth >= 1 && startMonth <= 3 && endMonth >= 4 && endMonth <= 6) return 'spring_term';
+  }
+  return '';
+}
+
+function buildPlanSlotKey(startYear, scopeId) {
+  const year = Number(startYear);
+  const scope = String(scopeId || '').trim();
+  if (!Number.isFinite(year) || !scope) return null;
+  return `${year}::${scope}`;
+}
+
+function normalizeSubjectTerm(term) {
+  const raw = String(term || '').trim().toLowerCase();
+  if (raw === 'fall_term') return 'fall_term';
+  if (raw === 'spring_term') return 'spring_term';
+  return 'full_year';
+}
+
+function subjectMatchesYearTerm(subject, yearLabel, termId) {
+  const subjectYear = String(subject?.school_year || '').trim();
+  const slotYear = String(yearLabel || '').trim();
+  if (!subjectYear || !slotYear || subjectYear !== slotYear) return false;
+  const subjectTerm = normalizeSubjectTerm(subject?.school_term);
+  const slotTerm = normalizeSubjectTerm(termId);
+  if (slotTerm === 'full_year') return subjectTerm === 'full_year';
+  return subjectTerm === 'full_year' || subjectTerm === slotTerm;
+}
+
+function extractSubjectNamesFromBlock(block) {
+  const names = [];
+  if (block?.subject_name != null && String(block.subject_name).trim()) {
+    names.push(String(block.subject_name));
+  }
+  if (block?.subject_title != null && String(block.subject_title).trim()) {
+    names.push(String(block.subject_title));
+  }
+  return [...new Set(names)];
+}
+
 function getCachedOverview(familyId, { allowStale = true } = {}) {
   const key = normalizeFamilyKey(familyId);
   if (!key) return null;
@@ -109,7 +210,18 @@ function getCachedOverview(familyId, { allowStale = true } = {}) {
 
 async function fetchAndCacheOverview(familyId, { force = false } = {}) {
   const key = normalizeFamilyKey(familyId);
-  if (!key) return { activeScheduleCore: null, otherPlans: [], updatedAt: Date.now() };
+  if (!key || !isUuidLike(key)) {
+    return {
+      activeScheduleCore: null,
+      planCores: [],
+      planSubjectIdsBySlot: {},
+      planSubjectNamesBySlot: {},
+      subjectsWithAnyPlan: [],
+      subjectsWithAnyPlanNames: [],
+      otherPlans: [],
+      updatedAt: Date.now(),
+    };
+  }
   if (!force) {
     const fresh = getCachedOverview(key, { allowStale: false });
     if (fresh) return fresh;
@@ -120,7 +232,7 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
     const [{ data: rows, error }, healthResult] = await Promise.all([
       supabase
         .from('academic_years')
-        .select('id, year_name, start_date, end_date, updated_at, run_scope_type, school_duration_scope')
+        .select('id, year_name, start_date, end_date, updated_at')
         .eq('family_id', familyId)
         .order('updated_at', { ascending: false }),
       getPlanHealth(familyId),
@@ -143,38 +255,130 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
         }
       })
     );
-    const activeDetails = activeRow?.id ? (yearDetailById[String(activeRow.id)] || null) : null;
-    const blocks = Array.isArray(activeDetails?.plan?.blocks) ? activeDetails.plan.blocks : [];
-    const dayNums = [...new Set(blocks.flatMap((b) => Array.isArray(b.weekdays) ? b.weekdays : []))];
-    const timePairs = [...new Set(blocks.map((b) => `${b?.start_time || '09:00'}-${b?.end_time || '10:00'}`))];
-    const uniformTime = timePairs.length === 1 ? timePairs[0] : null;
-    const subjectIds = [...new Set(blocks.map((b) => b?.subject_id).filter(Boolean).map(String))];
-    const subjectsWithAnyPlanSet = new Set();
-    allPlanRows.forEach((row) => {
+    const planCores = allPlanRows.map((row) => {
       const detail = yearDetailById[String(row?.id)] || null;
+      const plan = detail?.plan || {};
       const planBlocks = Array.isArray(detail?.plan?.blocks) ? detail.plan.blocks : [];
-      planBlocks.forEach((block) => {
-        const sid = block?.subject_id;
-        if (sid) subjectsWithAnyPlanSet.add(String(sid));
+      const dayNums = [...new Set(planBlocks.flatMap((b) => Array.isArray(b.weekdays) ? b.weekdays : []))];
+      const timePairs = [...new Set(planBlocks.map((b) => `${b?.start_time || '09:00'}-${b?.end_time || '10:00'}`))];
+      const uniformTime = timePairs.length === 1 ? timePairs[0] : null;
+      const scopeId = String(detail?.school_duration_scope || row?.school_duration_scope || inferScopeFromDates(row)).trim();
+      const subjectIdSet = new Set(planBlocks.flatMap((b) => extractSubjectIdsFromBlock(b)));
+      const labels = Array.isArray(plan?.plan_slot_labels) ? plan.plan_slot_labels : [];
+      labels.forEach((label) => {
+        if (label?.subject_id != null && String(label.subject_id).trim()) {
+          subjectIdSet.add(String(label.subject_id));
+        }
       });
-    });
-    const payload = {
-      activeScheduleCore: activeRow ? {
-        row: activeRow,
-        health,
+      const eventDates = Array.isArray(plan?.plan_event_dates) ? plan.plan_event_dates : [];
+      eventDates.forEach((entry) => {
+        if (entry?.subject_id != null && String(entry.subject_id).trim()) {
+          subjectIdSet.add(String(entry.subject_id));
+        }
+      });
+      const slotDates = Array.isArray(plan?.plan_slot_dates) ? plan.plan_slot_dates : [];
+      slotDates.forEach((entry) => {
+        if (entry?.subject_id != null && String(entry.subject_id).trim()) {
+          subjectIdSet.add(String(entry.subject_id));
+        }
+      });
+      const targets = plan?.subject_targets_override;
+      if (targets && typeof targets === 'object' && !Array.isArray(targets)) {
+        Object.keys(targets).forEach((sid) => {
+          if (sid != null && String(sid).trim()) subjectIdSet.add(String(sid));
+        });
+      }
+      const subjectIds = [...subjectIdSet];
+      return {
+        row,
+        startYear: resolveScheduleStartYear(row, scopeId),
+        scopeId,
         subjectIds,
-        blocksLite: blocks.map((block) => ({
-          subject_id: block?.subject_id != null ? String(block.subject_id) : null,
+        blocksLite: planBlocks.map((block) => ({
+          subject_ids: extractSubjectIdsFromBlock(block),
           weekdays: Array.isArray(block?.weekdays) ? block.weekdays.map((d) => Number(d)).filter((d) => Number.isInteger(d)) : [],
           start_time: block?.start_time || '09:00',
           end_time: block?.end_time || '10:00',
-        })).filter((block) => block.subject_id),
+        })).filter((block) => Array.isArray(block.subject_ids) && block.subject_ids.length > 0),
         weekdaySummary: formatWeekdaySummary(dayNums),
         timeSummary: uniformTime
           ? `${toAmPm(uniformTime.split('-')[0])}-${toAmPm(uniformTime.split('-')[1])}`
           : 'Mixed times',
-      } : null,
+      };
+    });
+    const planSubjectIdsBySlot = {};
+    const planSubjectNamesBySlot = {};
+    planCores.forEach((core) => {
+      const slotKey = buildPlanSlotKey(core?.startYear, core?.scopeId);
+      if (!slotKey) return;
+      planSubjectIdsBySlot[slotKey] = Array.isArray(core?.subjectIds) ? core.subjectIds.map(String) : [];
+      const detail = yearDetailById[String(core?.row?.id)] || null;
+      const plan = detail?.plan || {};
+      const names = new Set();
+      const planBlocks = Array.isArray(plan?.blocks) ? plan.blocks : [];
+      planBlocks.forEach((block) => {
+        extractSubjectNamesFromBlock(block).forEach((name) => {
+          const normalized = normalizeSubjectName(name);
+          if (normalized) names.add(normalized);
+        });
+      });
+      const labels = Array.isArray(plan?.plan_slot_labels) ? plan.plan_slot_labels : [];
+      labels.forEach((label) => {
+        const normalized = normalizeSubjectName(label?.subject_name || label?.subject_key);
+        if (normalized) names.add(normalized);
+      });
+      planSubjectNamesBySlot[slotKey] = [...names];
+    });
+    const activePlanCore = activePlanId
+      ? planCores.find((core) => String(core?.row?.id || '') === String(activePlanId))
+      : null;
+    const subjectsWithAnyPlanSet = new Set();
+    const subjectsWithAnyPlanNameSet = new Set();
+    allPlanRows.forEach((row) => {
+      const detail = yearDetailById[String(row?.id)] || null;
+      const plan = detail?.plan || {};
+      const planBlocks = Array.isArray(plan?.blocks) ? plan.blocks : [];
+      planBlocks.forEach((block) => {
+        extractSubjectIdsFromBlock(block).forEach((sid) => subjectsWithAnyPlanSet.add(sid));
+        extractSubjectNamesFromBlock(block).forEach((name) => {
+          const normalized = normalizeSubjectName(name);
+          if (normalized) subjectsWithAnyPlanNameSet.add(normalized);
+        });
+      });
+      const labels = Array.isArray(plan?.plan_slot_labels) ? plan.plan_slot_labels : [];
+      labels.forEach((label) => {
+        if (label?.subject_id != null && String(label.subject_id).trim()) {
+          subjectsWithAnyPlanSet.add(String(label.subject_id));
+        }
+        const normalizedName = normalizeSubjectName(label?.subject_name || label?.subject_key);
+        if (normalizedName) subjectsWithAnyPlanNameSet.add(normalizedName);
+      });
+      const eventDates = Array.isArray(plan?.plan_event_dates) ? plan.plan_event_dates : [];
+      eventDates.forEach((entry) => {
+        if (entry?.subject_id != null && String(entry.subject_id).trim()) {
+          subjectsWithAnyPlanSet.add(String(entry.subject_id));
+        }
+      });
+      const slotDates = Array.isArray(plan?.plan_slot_dates) ? plan.plan_slot_dates : [];
+      slotDates.forEach((entry) => {
+        if (entry?.subject_id != null && String(entry.subject_id).trim()) {
+          subjectsWithAnyPlanSet.add(String(entry.subject_id));
+        }
+      });
+      const targets = plan?.subject_targets_override;
+      if (targets && typeof targets === 'object' && !Array.isArray(targets)) {
+        Object.keys(targets).forEach((sid) => {
+          if (sid != null && String(sid).trim()) subjectsWithAnyPlanSet.add(String(sid));
+        });
+      }
+    });
+    const payload = {
+      activeScheduleCore: activePlanCore ? { ...activePlanCore, health } : null,
+      planCores,
+      planSubjectIdsBySlot,
+      planSubjectNamesBySlot,
       subjectsWithAnyPlan: [...subjectsWithAnyPlanSet],
+      subjectsWithAnyPlanNames: [...subjectsWithAnyPlanNameSet],
       otherPlans: allPlanRows.filter((r) => String(r.id) !== String(activePlanId || '')),
       updatedAt: Date.now(),
     };
@@ -189,19 +393,29 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
 
 export default function SubjectsPlanBuilder({ familyId, children = [], visibleSubjects = [], allSubjects = [], onDone }) {
   const toast = useToast();
+  const presentScope = useMemo(() => getPresentAcademicScope(new Date()), []);
   const [surfaceMode, setSurfaceMode] = useState('home'); // home | builder
   const [overviewReloadKey, setOverviewReloadKey] = useState(0);
   const [overviewLoading, setOverviewLoading] = useState(() => !getCachedOverview(familyId));
   const [activeScheduleCore, setActiveScheduleCore] = useState(() => getCachedOverview(familyId)?.activeScheduleCore || null);
   const [subjectsWithAnyPlan, setSubjectsWithAnyPlan] = useState(() => getCachedOverview(familyId)?.subjectsWithAnyPlan || []);
+  const [subjectsWithAnyPlanNames, setSubjectsWithAnyPlanNames] = useState(() => getCachedOverview(familyId)?.subjectsWithAnyPlanNames || []);
   const [otherPlans, setOtherPlans] = useState(() => getCachedOverview(familyId)?.otherPlans || []);
+  const [planCores, setPlanCores] = useState(() => getCachedOverview(familyId)?.planCores || []);
+  const [planSubjectIdsBySlot, setPlanSubjectIdsBySlot] = useState(() => getCachedOverview(familyId)?.planSubjectIdsBySlot || {});
+  const [planSubjectNamesBySlot, setPlanSubjectNamesBySlot] = useState(() => getCachedOverview(familyId)?.planSubjectNamesBySlot || {});
+  const hasValidFamilyId = useMemo(() => isUuidLike(familyId), [familyId]);
   const [loadingYears, setLoadingYears] = useState(() => !Array.isArray(schoolYearTemplateCache) || schoolYearTemplateCache.length === 0);
   const [schoolYearOptions, setSchoolYearOptions] = useState(() => (Array.isArray(schoolYearTemplateCache) ? schoolYearTemplateCache : []));
   const [selectedSchoolYearId, setSelectedSchoolYearId] = useState(() => {
-    const first = Array.isArray(schoolYearTemplateCache) ? schoolYearTemplateCache[0] : null;
-    return first?.id || null;
+    if (!Array.isArray(schoolYearTemplateCache) || schoolYearTemplateCache.length === 0) return null;
+    const present = getPresentAcademicScope(new Date());
+    const matching = schoolYearTemplateCache.find(
+      (opt) => Number(opt?.start_year) === present.startYear && Number(opt?.end_year) === present.endYear
+    );
+    return matching?.id || schoolYearTemplateCache[0]?.id || null;
   });
-  const [selectedTerm, setSelectedTerm] = useState('full_year');
+  const [selectedTerm, setSelectedTerm] = useState(() => presentScope.termId);
   const [buildWithDefaults, setBuildWithDefaults] = useState(true);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
   const [showYearDropdown, setShowYearDropdown] = useState(false);
@@ -210,10 +424,12 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   const [saving, setSaving] = useState(false);
   const [blocksBySubject, setBlocksBySubject] = useState({});
 
-  const baseSubjects = useMemo(
-    () => ((Array.isArray(visibleSubjects) && visibleSubjects.length > 0) ? visibleSubjects : (Array.isArray(allSubjects) ? allSubjects : [])),
-    [visibleSubjects, allSubjects]
-  );
+  const baseSubjects = useMemo(() => {
+    if (Array.isArray(visibleSubjects)) return visibleSubjects;
+    if (Array.isArray(allSubjects)) return allSubjects;
+    return [];
+  }, [visibleSubjects, allSubjects]);
+  const allSubjectPool = useMemo(() => (Array.isArray(allSubjects) ? allSubjects : baseSubjects), [allSubjects, baseSubjects]);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,11 +459,17 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
       }));
       schoolYearTemplateCache = mapped;
       setSchoolYearOptions(mapped);
-      setSelectedSchoolYearId((prev) => prev || mapped[0]?.id || null);
+      setSelectedSchoolYearId((prev) => {
+        if (prev) return prev;
+        const matching = mapped.find(
+          (opt) => Number(opt?.start_year) === presentScope.startYear && Number(opt?.end_year) === presentScope.endYear
+        );
+        return matching?.id || mapped[0]?.id || null;
+      });
       setLoadingYears(false);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [presentScope.startYear, presentScope.endYear]);
 
   useEffect(() => {
     const ids = baseSubjects.map((s) => String(s?.id)).filter(Boolean);
@@ -272,6 +494,9 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     [schoolYearOptions, selectedSchoolYearId]
   );
   const selectedTermOption = useMemo(() => TERM_OPTIONS.find((x) => x.id === selectedTerm) || TERM_OPTIONS[0], [selectedTerm]);
+  const slotScopedSubjects = useMemo(() => (
+    (baseSubjects || []).filter((subject) => subjectMatchesYearTerm(subject, selectedSchoolYear?.label, selectedTerm))
+  ), [baseSubjects, selectedSchoolYear?.label, selectedTerm]);
   const dateRange = useMemo(
     () => (selectedSchoolYear ? formatYmdFromTemplateYear(selectedSchoolYear.start_year, selectedSchoolYear.end_year, selectedTerm) : null),
     [selectedSchoolYear, selectedTerm]
@@ -289,18 +514,26 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
       if (!cached) return false;
       setActiveScheduleCore(cached.activeScheduleCore || null);
       setSubjectsWithAnyPlan(Array.isArray(cached.subjectsWithAnyPlan) ? cached.subjectsWithAnyPlan : []);
+      setSubjectsWithAnyPlanNames(Array.isArray(cached.subjectsWithAnyPlanNames) ? cached.subjectsWithAnyPlanNames : []);
       setOtherPlans(Array.isArray(cached.otherPlans) ? cached.otherPlans : []);
+      setPlanCores(Array.isArray(cached.planCores) ? cached.planCores : []);
+      setPlanSubjectIdsBySlot(cached.planSubjectIdsBySlot && typeof cached.planSubjectIdsBySlot === 'object' ? cached.planSubjectIdsBySlot : {});
+      setPlanSubjectNamesBySlot(cached.planSubjectNamesBySlot && typeof cached.planSubjectNamesBySlot === 'object' ? cached.planSubjectNamesBySlot : {});
       setOverviewLoading(false);
       return true;
     };
     const syncOverview = async ({ force = false } = {}) => {
-      if (!familyId) return;
+      if (!hasValidFamilyId) return;
       try {
         const payload = await fetchAndCacheOverview(familyId, { force });
         if (cancelled) return;
         setActiveScheduleCore(payload.activeScheduleCore || null);
         setSubjectsWithAnyPlan(Array.isArray(payload.subjectsWithAnyPlan) ? payload.subjectsWithAnyPlan : []);
+        setSubjectsWithAnyPlanNames(Array.isArray(payload.subjectsWithAnyPlanNames) ? payload.subjectsWithAnyPlanNames : []);
         setOtherPlans(Array.isArray(payload.otherPlans) ? payload.otherPlans : []);
+        setPlanCores(Array.isArray(payload.planCores) ? payload.planCores : []);
+        setPlanSubjectIdsBySlot(payload.planSubjectIdsBySlot && typeof payload.planSubjectIdsBySlot === 'object' ? payload.planSubjectIdsBySlot : {});
+        setPlanSubjectNamesBySlot(payload.planSubjectNamesBySlot && typeof payload.planSubjectNamesBySlot === 'object' ? payload.planSubjectNamesBySlot : {});
         setOverviewLoading(false);
       } catch (_) {
         if (cancelled) return;
@@ -308,16 +541,24 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
         if (!hasCache) {
           setActiveScheduleCore(null);
           setSubjectsWithAnyPlan([]);
+          setSubjectsWithAnyPlanNames([]);
           setOtherPlans([]);
+          setPlanCores([]);
+          setPlanSubjectIdsBySlot({});
+          setPlanSubjectNamesBySlot({});
           setOverviewLoading(false);
         }
       }
     };
     (async () => {
-      if (!familyId) {
+      if (!hasValidFamilyId) {
         setActiveScheduleCore(null);
         setSubjectsWithAnyPlan([]);
+        setSubjectsWithAnyPlanNames([]);
         setOtherPlans([]);
+        setPlanCores([]);
+        setPlanSubjectIdsBySlot({});
+        setPlanSubjectNamesBySlot({});
         setOverviewLoading(false);
         return;
       }
@@ -338,7 +579,7 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
       };
     }
     return () => { cancelled = true; };
-  }, [familyId, overviewReloadKey]);
+  }, [familyId, hasValidFamilyId, overviewReloadKey]);
 
   const activeSchedule = useMemo(() => {
     if (!activeScheduleCore) return null;
@@ -351,38 +592,137 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     };
   }, [activeScheduleCore, baseSubjects]);
 
+  const viewedScheduleCore = useMemo(() => {
+    if (!selectedSchoolYear) return null;
+    const selectedStartYear = Number(selectedSchoolYear?.start_year);
+    const selectedScope = String(selectedTerm || '').trim();
+    if (!Number.isFinite(selectedStartYear) || !selectedScope) return null;
+    const exact = (planCores || []).find((core) => (
+      Number(core?.startYear) === selectedStartYear
+      && String(core?.scopeId || '').trim() === selectedScope
+    )) || null;
+    if (exact) return exact;
+    // Many existing plans are full-year; use those for fall/spring browsing when no term-specific plan exists.
+    if (selectedScope === 'fall_term' || selectedScope === 'spring_term') {
+      return (planCores || []).find((core) => (
+        Number(core?.startYear) === selectedStartYear
+        && String(core?.scopeId || '').trim() === 'full_year'
+      )) || null;
+    }
+    return null;
+  }, [planCores, selectedSchoolYear, selectedTerm]);
+
+  const currentSchedule = useMemo(() => {
+    if (!viewedScheduleCore) return null;
+    const subjectNames = (viewedScheduleCore.subjectIds || [])
+      .map((sid) => allSubjectPool.find((s) => String(s?.id) === String(sid))?.name)
+      .filter(Boolean);
+    return {
+      ...viewedScheduleCore,
+      subjectNames,
+    };
+  }, [viewedScheduleCore, allSubjectPool]);
+
+  const currentScheduleHeading = useMemo(() => {
+    const fallbackYear = String(selectedSchoolYear?.label || '').trim();
+    const fallbackTerm = formatScheduleScopeLabel(selectedTerm);
+    if (fallbackYear && fallbackTerm) return `${fallbackYear} ${fallbackTerm}`;
+    return fallbackYear || fallbackTerm || 'Current Schedule';
+  }, [selectedSchoolYear?.label, selectedTerm]);
+
   const activeScheduleDayRows = useMemo(() => {
-    const blocks = Array.isArray(activeSchedule?.blocksLite) ? activeSchedule.blocksLite : [];
+    const blocks = Array.isArray(currentSchedule?.blocksLite) ? currentSchedule.blocksLite : [];
     return WEEKDAY_NUMBERS.map((dayNum) => {
       const dayEntries = blocks
         .filter((block) => Array.isArray(block.weekdays) && block.weekdays.includes(dayNum))
         .sort((a, b) => String(a.start_time || '').localeCompare(String(b.start_time || '')))
-        .map((block) => {
-          const subjectName = baseSubjects.find((s) => String(s?.id) === String(block.subject_id))?.name || 'Subject';
-          return { subjectName, startTime: block.start_time || '09:00' };
+        .flatMap((block) => {
+          const ids = Array.isArray(block.subject_ids) ? block.subject_ids : [];
+          if (ids.length === 0) return [];
+          return ids.map((sid) => {
+            const subjectName = allSubjectPool.find((s) => String(s?.id) === String(sid))?.name || 'Subject';
+            return { subjectName, startTime: block.start_time || '09:00' };
+          });
         });
       const summaryText = dayEntries.length > 0
         ? dayEntries.map((entry) => `${entry.subjectName} at ${toAmPm(entry.startTime)}`).join(', ')
-        : 'No lessons';
+        : 'No lessons scheduled.';
       return {
         key: `day-${dayNum}`,
         dayLabel: WEEKDAY_FULL_LABELS[dayNum] || WEEKDAY_LABELS[dayNum] || `Day ${dayNum}`,
         summaryText,
       };
     });
-  }, [activeSchedule, baseSubjects]);
+  }, [currentSchedule, allSubjectPool]);
+
+  const homeTermOrder = useMemo(() => ['fall_term', 'spring_term'], []);
+  const selectedSchoolYearIndex = useMemo(
+    () => schoolYearOptions.findIndex((opt) => String(opt?.id) === String(selectedSchoolYearId || '')),
+    [schoolYearOptions, selectedSchoolYearId]
+  );
+  const selectedTermIndex = useMemo(
+    () => homeTermOrder.indexOf(String(selectedTerm || '').trim()),
+    [homeTermOrder, selectedTerm]
+  );
+  const canNavigatePrevTerm = selectedSchoolYearIndex > 0 || selectedTermIndex > 0;
+  const canNavigateNextTerm = (
+    (selectedSchoolYearIndex >= 0 && selectedSchoolYearIndex < schoolYearOptions.length - 1)
+    || (selectedTermIndex >= 0 && selectedTermIndex < homeTermOrder.length - 1)
+  );
+  const shiftCurrentScheduleTerm = (direction) => {
+    if (!Array.isArray(schoolYearOptions) || schoolYearOptions.length === 0) return;
+    let yearIdx = selectedSchoolYearIndex >= 0 ? selectedSchoolYearIndex : 0;
+    let termIdx = selectedTermIndex >= 0 ? selectedTermIndex : 0;
+    if (direction < 0) {
+      if (termIdx > 0) {
+        termIdx -= 1;
+      } else if (yearIdx > 0) {
+        yearIdx -= 1;
+        termIdx = homeTermOrder.length - 1;
+      } else {
+        return;
+      }
+    } else if (direction > 0) {
+      if (termIdx < homeTermOrder.length - 1) {
+        termIdx += 1;
+      } else if (yearIdx < schoolYearOptions.length - 1) {
+        yearIdx += 1;
+        termIdx = 0;
+      } else {
+        return;
+      }
+    } else {
+      return;
+    }
+    setSelectedSchoolYearId(schoolYearOptions[yearIdx]?.id || null);
+    setSelectedTerm(homeTermOrder[termIdx] || 'fall_term');
+  };
 
   const subjectPlans = useMemo(() => {
-    const plannedSet = new Set((subjectsWithAnyPlan || []).map((id) => String(id)));
-    return (baseSubjects || []).map((subject) => {
+    const selectedStartYear = Number(selectedSchoolYear?.start_year);
+    const slotKey = buildPlanSlotKey(selectedStartYear, selectedTerm);
+    const fullYearSlotKey = buildPlanSlotKey(selectedStartYear, 'full_year');
+    const fallbackToFullYear = selectedTerm === 'fall_term' || selectedTerm === 'spring_term';
+    const slotSubjectIds = slotKey ? (planSubjectIdsBySlot?.[slotKey] || []) : [];
+    const slotSubjectNames = slotKey ? (planSubjectNamesBySlot?.[slotKey] || []) : [];
+    const mergedSubjectIds = fallbackToFullYear
+      ? [...new Set([...(slotSubjectIds || []), ...((planSubjectIdsBySlot?.[fullYearSlotKey] || []))])]
+      : slotSubjectIds;
+    const mergedSubjectNames = fallbackToFullYear
+      ? [...new Set([...(slotSubjectNames || []), ...((planSubjectNamesBySlot?.[fullYearSlotKey] || []))])]
+      : slotSubjectNames;
+    const plannedSet = new Set((mergedSubjectIds || []).map((id) => String(id)));
+    const plannedNameSet = new Set((mergedSubjectNames || []).map((name) => normalizeSubjectName(name)));
+    return (slotScopedSubjects || []).map((subject) => {
       const subjectId = String(subject?.id || '');
+      const normalizedName = normalizeSubjectName(subject?.name);
       return {
         id: subjectId,
         name: subject?.name || 'Subject',
-        hasPlan: subjectId ? plannedSet.has(subjectId) : false,
+        hasPlan: (subjectId ? plannedSet.has(subjectId) : false) || (normalizedName ? plannedNameSet.has(normalizedName) : false),
       };
     });
-  }, [baseSubjects, subjectsWithAnyPlan]);
+  }, [slotScopedSubjects, selectedSchoolYear?.start_year, selectedTerm, planSubjectIdsBySlot, planSubjectNamesBySlot]);
 
   const step4Preview = useMemo(() => {
     if (!dateRange || selectedSubjectRows.length === 0) return null;
@@ -550,6 +890,30 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   const openBuilderForSubject = (subjectId, action = 'edit') => {
     const safeId = String(subjectId || '');
     if (!safeId) return;
+    if (action === 'add') {
+      const subject = (baseSubjects || []).find((s) => String(s?.id) === safeId) || null;
+      const assignedChildIds = Array.isArray(subject?.assignedChildren)
+        ? subject.assignedChildren.filter(Boolean)
+        : [];
+      const fallbackChildIds = (children || []).map((c) => c?.id).filter(Boolean);
+      const childIds = assignedChildIds.length > 0 ? assignedChildIds : fallbackChildIds;
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('openPlanYearModal', {
+            detail: {
+              from: 'subject_detail',
+              openAsModal: true,
+              skipPlanSummary: true,
+              openDirectlyToScope: true,
+              subjectId: safeId,
+              subjectName: subject?.name || null,
+              childIds,
+            },
+          })
+        );
+        return;
+      }
+    }
     if (action === 'delete') {
       const nextIds = (activeSchedule?.subjectIds || []).map(String).filter((id) => id !== safeId);
       if (nextIds.length === 0) {
@@ -573,32 +937,42 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.emptyScheduleSection}>
             <View style={styles.currentSchedulePlaceholderCard}>
-              <Text style={styles.currentSchedulePlaceholderTitle}>Current Schedule</Text>
-              <View style={styles.currentSchedulePlaceholderBody}>
-                {activeSchedule ? (
-                  <View style={styles.scheduleSummaryList}>
-                    {activeScheduleDayRows.map((row) => (
-                      <View key={row.key} style={styles.scheduleSummaryRow}>
-                        <Text style={styles.scheduleSummaryDay}>{row.dayLabel}</Text>
-                        <Text style={styles.scheduleSummaryText}>{row.summaryText}</Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : (
-                  <View style={styles.currentScheduleEmptyStateWrap}>
-                    <Text style={styles.currentScheduleEmptyStateTitle}>You don&apos;t have a current plan yet</Text>
-                    <Text style={styles.currentScheduleEmptyStateText}>
-                      Create your family schedule to auto-fill lesson times, track planning goals, and stay on track.
+              <View style={styles.currentScheduleHeaderRow}>
+                <View style={styles.currentScheduleHeaderNavShell}>
+                  <TouchableOpacity
+                    style={[styles.currentScheduleNavBtn, !canNavigatePrevTerm && styles.currentScheduleNavBtnDisabled]}
+                    onPress={() => shiftCurrentScheduleTerm(-1)}
+                    disabled={!canNavigatePrevTerm}
+                    accessibilityRole="button"
+                    accessibilityLabel="Previous term"
+                  >
+                    <ChevronLeft size={16} color="rgba(15,23,42,0.4)" />
+                  </TouchableOpacity>
+                  <View style={styles.currentScheduleHeaderTitleWrap}>
+                    <Text style={[styles.currentSchedulePlaceholderTitle, styles.currentSchedulePlaceholderTitleCentered]} numberOfLines={1}>
+                      {currentScheduleHeading}
                     </Text>
-                    <TouchableOpacity
-                      style={styles.currentScheduleEmptyStateButton}
-                      onPress={() => setSurfaceMode('builder')}
-                      activeOpacity={0.9}
-                    >
-                      <Text style={styles.currentScheduleEmptyStateButtonText}>Create Family Schedule</Text>
-                    </TouchableOpacity>
                   </View>
-                )}
+                  <TouchableOpacity
+                    style={[styles.currentScheduleNavBtn, !canNavigateNextTerm && styles.currentScheduleNavBtnDisabled]}
+                    onPress={() => shiftCurrentScheduleTerm(1)}
+                    disabled={!canNavigateNextTerm}
+                    accessibilityRole="button"
+                    accessibilityLabel="Next term"
+                  >
+                    <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={styles.currentSchedulePlaceholderBody}>
+                <View style={styles.scheduleSummaryList}>
+                  {activeScheduleDayRows.map((row) => (
+                    <View key={row.key} style={styles.scheduleSummaryRow}>
+                      <Text style={styles.scheduleSummaryDay}>{row.dayLabel}</Text>
+                      <Text style={styles.scheduleSummaryText}>{row.summaryText}</Text>
+                    </View>
+                  ))}
+                </View>
               </View>
             </View>
           </View>
@@ -620,21 +994,24 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
                             style={styles.minorBtn}
                             onPress={() => openBuilderForSubject(row.id, 'edit')}
                           >
-                            <Text style={styles.minorBtnText}>Edit</Text>
+                            <Pencil size={16} color="#6B7280" />
+                            <Text style={styles.minorBtnText}>Edit plan</Text>
                           </TouchableOpacity>
                           <TouchableOpacity
                             style={styles.minorBtn}
                             onPress={() => openBuilderForSubject(row.id, 'delete')}
                           >
-                            <Text style={styles.minorBtnText}>Delete</Text>
+                            <Trash2 size={16} color="#6B7280" />
+                            <Text style={styles.minorBtnText}>Delete plan</Text>
                           </TouchableOpacity>
                         </>
                       ) : (
                         <TouchableOpacity
-                          style={styles.minorBtn}
+                          style={styles.subjectPlansAddPlanBtn}
                           onPress={() => openBuilderForSubject(row.id, 'add')}
                         >
-                          <Text style={styles.minorBtnText}>Add plan</Text>
+                          <Plus size={14} color="#6BB3E8" />
+                          <Text style={styles.subjectPlansAddPlanBtnText}>Add plan</Text>
                         </TouchableOpacity>
                       )}
                     </View>
@@ -1018,18 +1395,28 @@ const styles = StyleSheet.create({
     color: MUTED,
   },
   minorBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'flex-start',
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#fff',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F9FAFB',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
   },
   minorBtnText: {
-    fontSize: 12,
-    color: FG,
-    fontWeight: '600',
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   primaryBuildCta: {
     marginTop: 2,
@@ -1087,6 +1474,39 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  currentScheduleHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  currentScheduleHeaderNavShell: {
+    width: 306,
+    maxWidth: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 4,
+  },
+  currentScheduleNavBtn: {
+    padding: 4,
+    width: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  currentScheduleHeaderTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  currentScheduleNavBtnDisabled: {
+    opacity: 0.45,
+    ...(Platform.OS === 'web' && { cursor: 'default' }),
+  },
+  currentSchedulePlaceholderTitleCentered: {
+    textAlign: 'center',
+    paddingHorizontal: 6,
   },
   currentSchedulePlaceholderBody: {
     flex: 1,
@@ -1206,6 +1626,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     flexShrink: 0,
+  },
+  subjectPlansAddPlanBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(133, 196, 242, 0.8)',
+    borderStyle: 'dashed',
+    backgroundColor: '#F4FAFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  subjectPlansAddPlanBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6BB3E8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   emptyStateTitle: {
     fontSize: 22,

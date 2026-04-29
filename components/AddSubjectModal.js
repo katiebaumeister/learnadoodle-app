@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput, Alert } from 'react-native';
-import { ChevronDown, ChevronUp, Plus, Trash2, CheckCircle, AlertTriangle, BookOpen, Library, SlidersHorizontal, FileText, Calendar } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, Trash2, CheckCircle, AlertTriangle, BookOpen, Library, SlidersHorizontal, FileText, Calendar, Sparkles, Upload, Pencil, MapPin } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -51,6 +51,16 @@ function getSchoolYearOptions() {
   return options;
 }
 const SCHOOL_YEAR_OPTIONS = getSchoolYearOptions();
+const TERM_OPTIONS = [
+  { id: 'full_year', label: 'Full year' },
+  { id: 'fall_term', label: 'Fall term' },
+  { id: 'spring_term', label: 'Spring term' },
+];
+const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
+const CALENDAR_CONNECTION_OPTIONS = [
+  { value: 'google', label: 'Google' },
+  { value: 'apple', label: 'Apple' },
+];
 
 const parsePositiveIntOrNull = (value) => {
   const n = parseInt(String(value ?? '').trim(), 10);
@@ -62,13 +72,31 @@ const parsePositiveFloatOrNull = (value) => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
-// Default: before May = current year/next (e.g. 2025/26), May or later = next year (e.g. 2026/27)
+const normalizeCalendarTargets = (raw) => {
+  if (Array.isArray(raw)) return raw.map((v) => String(v).toLowerCase()).filter(Boolean);
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map((v) => String(v).toLowerCase()).filter(Boolean);
+    } catch (_) {
+      return [];
+    }
+  }
+  return [];
+};
+
+// Default school year follows academic year starting in August (e.g. Apr 2026 -> 2025/26).
 function getDefaultSchoolYear() {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth(); // 0-11
-  if (month < 5) return `${year}/${String(year + 1).slice(-2)}`;
-  return `${year + 1}/${String(year + 2).slice(-2)}`;
+  const month = now.getMonth() + 1; // 1-12
+  const startYear = month >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${startYear}/${String(startYear + 1).slice(-2)}`;
+}
+
+function getDefaultSchoolTerm() {
+  const now = new Date();
+  const month = now.getMonth() + 1; // 1-12
+  return month >= 8 ? 'fall_term' : 'spring_term';
 }
 
 function normalizeLessonYmd(dateVal) {
@@ -96,9 +124,15 @@ export default function AddSubjectModal({
   const [grade, setGrade] = useState(GRADE_OPTIONS[0] || '');
   const [schoolYear, setSchoolYear] = useState(getDefaultSchoolYear());
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
+  const [schoolTerm, setSchoolTerm] = useState(getDefaultSchoolTerm());
+  const [showSchoolTermDropdown, setShowSchoolTermDropdown] = useState(false);
   const [credits, setCredits] = useState('');
   const [defaultTargetDays, setDefaultTargetDays] = useState('');
   const [defaultTargetHours, setDefaultTargetHours] = useState('');
+  const [logisticalLocation, setLogisticalLocation] = useState('');
+  const [logisticalMode, setLogisticalMode] = useState('');
+  const [logisticalInstructor, setLogisticalInstructor] = useState('');
+  const [connectedCalendarTargets, setConnectedCalendarTargets] = useState([]);
   const [goalModeForSubject, setGoalModeForSubject] = useState('overall'); // 'overall' | 'per_subject'
   const [targetMode, setTargetMode] = useState('none'); // 'none' | 'days' | 'hours'
   const [familyPlannerContext, setFamilyPlannerContext] = useState(null); // { targetScope, mode, days, hours } for prefill/display
@@ -145,6 +179,7 @@ export default function AddSubjectModal({
     if (!showMaterialsAccordion) setMaterialDropdownSlot(null);
   }, [showMaterialsAccordion]);
   const [showPlanningAccordion, setShowPlanningAccordion] = useState(false);
+  const [showLogisticsAccordion, setShowLogisticsAccordion] = useState(false);
   const [showAdditionalNotesAccordion, setShowAdditionalNotesAccordion] = useState(false);
   const [showEventMgmtAccordion, setShowEventMgmtAccordion] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
@@ -182,9 +217,14 @@ export default function AddSubjectModal({
         setAdditionalNotes(subject.notes || subject.summary || '');
         setGrade(subject.grade || GRADE_OPTIONS[0] || '');
         setSchoolYear(subject.school_year || getDefaultSchoolYear());
+        setSchoolTerm(subject.school_term || getDefaultSchoolTerm());
         setCredits(subject.credits ? String(subject.credits) : '');
         setDefaultTargetDays(subject.default_target_days != null ? String(subject.default_target_days) : '');
         setDefaultTargetHours(subject.default_target_hours != null ? String(subject.default_target_hours) : '');
+        setLogisticalLocation(subject.location || '');
+        setLogisticalMode(subject.mode || '');
+        setLogisticalInstructor(subject.instructor || '');
+        setConnectedCalendarTargets(normalizeCalendarTargets(subject.connected_calendar_targets));
         const hasSubjectValues = subject.default_constraint_mode != null || subject.default_target_days != null || subject.default_target_hours != null;
         setGoalModeForSubject(hasSubjectValues ? 'per_subject' : 'overall');
         const mode = subject.default_constraint_mode || (subject.default_target_days != null ? 'days' : subject.default_target_hours != null ? 'hours' : 'none');
@@ -199,9 +239,14 @@ export default function AddSubjectModal({
         // Add mode - use defaults
         setAdditionalNotes('');
         setSchoolYear(getDefaultSchoolYear());
+        setSchoolTerm(getDefaultSchoolTerm());
         setSelectedSyllabusMaterialId(null);
         setSelectedLessonPlanMaterialId(null);
         setMaterialDropdownSlot(null);
+        setLogisticalLocation('');
+        setLogisticalMode('');
+        setLogisticalInstructor('');
+        setConnectedCalendarTargets([]);
         if (defaultSubjectName) {
           setSubjectName(defaultSubjectName);
         }
@@ -217,9 +262,15 @@ export default function AddSubjectModal({
       setGrade(GRADE_OPTIONS[0] || '');
       setSchoolYear(getDefaultSchoolYear());
       setShowSchoolYearDropdown(false);
+      setSchoolTerm(getDefaultSchoolTerm());
+      setShowSchoolTermDropdown(false);
       setCredits('');
       setDefaultTargetDays('');
       setDefaultTargetHours('');
+      setLogisticalLocation('');
+      setLogisticalMode('');
+      setLogisticalInstructor('');
+      setConnectedCalendarTargets([]);
       setGoalModeForSubject('overall');
       setTargetMode('none');
       setFamilyPlannerContext(null);
@@ -238,6 +289,7 @@ export default function AddSubjectModal({
       setLoadingCurriculum(false);
       setShowMaterialsAccordion(false);
       setShowPlanningAccordion(false);
+      setShowLogisticsAccordion(false);
       setShowAdditionalNotesAccordion(false);
       setShowEventMgmtAccordion(false);
       setDraftSubjectId(null);
@@ -357,8 +409,13 @@ export default function AddSubjectModal({
       child_id: childIdString,
       grade: grade || null,
       school_year: schoolYear || getDefaultSchoolYear(),
+      school_term: schoolTerm || getDefaultSchoolTerm(),
       credits: credits ? parseFloat(credits) : null,
       notes: additionalNotes.trim() || null,
+      location: logisticalLocation.trim() || null,
+      mode: logisticalMode || null,
+      instructor: logisticalInstructor.trim() || null,
+      connected_calendar_targets: connectedCalendarTargets.length > 0 ? connectedCalendarTargets : [],
       default_constraint_mode: goalModeForSubject === 'per_subject' ? targetMode : null,
       default_target_days:
         goalModeForSubject === 'per_subject' &&
@@ -378,8 +435,13 @@ export default function AddSubjectModal({
     subjectName,
     grade,
     schoolYear,
+    schoolTerm,
     credits,
     additionalNotes,
+    logisticalLocation,
+    logisticalMode,
+    logisticalInstructor,
+    connectedCalendarTargets,
     goalModeForSubject,
     targetMode,
     defaultTargetDays,
@@ -1357,50 +1419,39 @@ export default function AddSubjectModal({
 
               return (
                 <>
-                  {hasUnitsOrLessonsContent ? (
+                  {hasUnitsOrLessonsContent && hasCurrentUnitsModalContent ? (
                     <View style={styles.addUnitsRow}>
-                      {hasCurrentUnitsModalContent ? (
-                        <>
-                          <TouchableOpacity onPress={() => setShowCurrentUnitsModal(true)} activeOpacity={0.7} {...addUnitsLinkWeb}>
-                            <Text style={styles.addUnitsLink}>View current units</Text>
-                          </TouchableOpacity>
-                          <Text style={styles.addUnitsSep}>·</Text>
-                        </>
-                      ) : null}
-                      <Text style={styles.addUnitsLabel}>Change units</Text>
-                      <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.7} {...addUnitsLinkWeb}>
-                        <Text style={styles.addUnitsLink}>Manual input</Text>
-                      </TouchableOpacity>
-                      <Text style={styles.addUnitsSep}>·</Text>
-                      <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.7} {...addUnitsLinkWeb}>
-                        <Text style={styles.addUnitsLink}>Paste plain text</Text>
-                      </TouchableOpacity>
-                      <Text style={styles.addUnitsSep}>·</Text>
-                      <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.7} {...addUnitsLinkWeb}>
-                        <Text style={styles.addUnitsLink}>Upload material</Text>
-                      </TouchableOpacity>
-                      <Text style={styles.addUnitsSep}>·</Text>
-                      <TouchableOpacity onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.7} {...addUnitsLinkWeb}>
-                        <Text style={styles.addUnitsLink}>Generate curriculum</Text>
+                      <TouchableOpacity onPress={() => setShowCurrentUnitsModal(true)} activeOpacity={0.7} {...addUnitsLinkWeb}>
+                        <Text style={styles.addUnitsLink}>View current units</Text>
                       </TouchableOpacity>
                     </View>
-                  ) : (
-                    <View style={styles.addUnitsPillsRow}>
-                      <Text style={styles.addUnitsLabel}>Add units</Text>
-                      <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                        <Text style={styles.secondaryActionText}>Manual input</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                        <Text style={styles.secondaryActionText}>Paste plain text</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                        <Text style={styles.secondaryActionText}>Upload material</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                  ) : null}
+                  <View style={styles.addUnitsPillsRow}>
+                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                      <View style={styles.secondaryActionInner}>
+                        <Plus size={14} color="#5E6C84" />
+                        <Text style={styles.secondaryActionText}>Add units</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                      <View style={styles.secondaryActionInner}>
+                        <Sparkles size={14} color="#5E6C84" />
                         <Text style={styles.secondaryActionText}>Generate curriculum</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                      <View style={styles.secondaryActionInner}>
+                        <Upload size={14} color="#5E6C84" />
+                        <Text style={styles.secondaryActionText}>Upload material</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                      <View style={styles.secondaryActionInner}>
+                        <Pencil size={14} color="#5E6C84" />
+                        <Text style={styles.secondaryActionText}>Paste plain text</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
                 <ModalSectionCard
                   Icon={Library}
                   title="Syllabus and lesson plan"
@@ -1549,7 +1600,10 @@ export default function AddSubjectModal({
                     <Text style={styles.label}>School year</Text>
                     <TouchableOpacity
                       style={styles.dropdownButton}
-                      onPress={() => setShowSchoolYearDropdown(!showSchoolYearDropdown)}
+                      onPress={() => {
+                        setShowSchoolTermDropdown(false);
+                        setShowSchoolYearDropdown(!showSchoolYearDropdown);
+                      }}
                       activeOpacity={0.7}
                     >
                       <Text style={styles.dropdownButtonText}>{schoolYear}</Text>
@@ -1573,6 +1627,41 @@ export default function AddSubjectModal({
                             </TouchableOpacity>
                           ))}
                         </ScrollView>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={[styles.formGroup, styles.planningDefaultsField]}>
+                    <Text style={styles.label}>Term</Text>
+                    <TouchableOpacity
+                      style={styles.dropdownButton}
+                      onPress={() => {
+                        setShowSchoolYearDropdown(false);
+                        setShowSchoolTermDropdown(!showSchoolTermDropdown);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.dropdownButtonText}>
+                        {(TERM_OPTIONS.find((opt) => opt.id === schoolTerm) || TERM_OPTIONS[0]).label}
+                      </Text>
+                      <ChevronDown size={18} color="#6b7280" />
+                    </TouchableOpacity>
+                    {showSchoolTermDropdown && (
+                      <View style={styles.dropdownList}>
+                        {TERM_OPTIONS.map((opt) => (
+                          <TouchableOpacity
+                            key={opt.id}
+                            style={[styles.dropdownOption, opt.id === schoolTerm && styles.dropdownOptionSelected]}
+                            onPress={() => {
+                              setSchoolTerm(opt.id);
+                              setShowSchoolTermDropdown(false);
+                            }}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={[styles.dropdownOptionText, opt.id === schoolTerm && styles.dropdownOptionTextSelected]}>{opt.label}</Text>
+                            {opt.id === schoolTerm && <CheckCircle size={16} color="#3b82f6" />}
+                          </TouchableOpacity>
+                        ))}
                       </View>
                     )}
                   </View>
@@ -1750,6 +1839,87 @@ export default function AddSubjectModal({
                     </View>
                   )}
                 </View>
+            </ModalSectionCard>
+
+            <ModalSectionCard
+              Icon={MapPin}
+              title="Logistical details"
+              subtitle="Location, mode, and calendar sync"
+              expanded={showLogisticsAccordion}
+              onPress={() => setShowLogisticsAccordion(!showLogisticsAccordion)}
+              accent="#5A92D6"
+            >
+              <View style={styles.accordionContent}>
+                <View style={styles.logisticsRow}>
+                  <View style={styles.logisticsField}>
+                    <Text style={styles.label}>Location (optional)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={logisticalLocation}
+                      onChangeText={setLogisticalLocation}
+                      placeholder="e.g. Library, Park, etc."
+                      placeholderTextColor="#9ca3af"
+                    />
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={styles.label}>Instructor / Host (optional)</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={logisticalInstructor}
+                        onChangeText={setLogisticalInstructor}
+                        placeholder="e.g. Elisa"
+                        placeholderTextColor="#9ca3af"
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.logisticsField}>
+                    <Text style={styles.label}>Mode (optional)</Text>
+                    <View style={styles.logisticsChipRow}>
+                      {MODE_OPTIONS.map((option) => {
+                        const isActive = logisticalMode === option;
+                        return (
+                          <TouchableOpacity
+                            key={option}
+                            onPress={() => setLogisticalMode(isActive ? '' : option)}
+                            style={[styles.logisticsChip, isActive && styles.logisticsChipActive]}
+                            activeOpacity={0.8}
+                          >
+                            <Text style={[styles.logisticsChipText, isActive && styles.logisticsChipTextActive]}>
+                              {option.charAt(0).toUpperCase() + option.slice(1)}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <Text style={[styles.label, { marginTop: 10 }]}>Add to connected calendar</Text>
+                    <View style={styles.logisticsChipRow}>
+                      {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
+                        const isSelected = connectedCalendarTargets.includes(provider.value);
+                        return (
+                          <TouchableOpacity
+                            key={provider.value}
+                            onPress={() =>
+                              setConnectedCalendarTargets((prev) =>
+                                prev.includes(provider.value)
+                                  ? prev.filter((value) => value !== provider.value)
+                                  : [...prev, provider.value]
+                              )
+                            }
+                            style={[styles.logisticsChip, isSelected && styles.logisticsChipActive]}
+                            activeOpacity={0.8}
+                          >
+                            <View style={styles.calendarChipContent}>
+                              {isSelected ? <CheckCircle size={12} color="#6BB3E8" /> : null}
+                              <Text style={[styles.logisticsChipText, isSelected && styles.logisticsChipTextActive]}>
+                                {provider.label}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                </View>
+              </View>
             </ModalSectionCard>
 
             {/* Additional notes — same card pattern as Add Child */}
@@ -2047,6 +2217,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
+  secondaryActionInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   secondaryActionText: {
     fontSize: 13,
     fontWeight: '700',
@@ -2152,6 +2327,47 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text || '#0f172a',
     marginBottom: 5,
+  },
+  logisticsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    marginBottom: 12,
+  },
+  logisticsField: {
+    flex: 1,
+    minWidth: 240,
+  },
+  logisticsChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  logisticsChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+  },
+  logisticsChipActive: {
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
+  },
+  logisticsChipText: {
+    fontSize: 13,
+    color: '#6b7280',
+    fontWeight: '500',
+  },
+  logisticsChipTextActive: {
+    color: '#6BB3E8',
+    fontWeight: '700',
+  },
+  calendarChipContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   addUnitsRow: {
     flexDirection: 'row',

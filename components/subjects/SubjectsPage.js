@@ -84,6 +84,38 @@ function computeSearchScore(entry, tokens, queryNormalized) {
   return score;
 }
 
+function normalizeSubjectTerm(term) {
+  const raw = String(term || '').trim().toLowerCase();
+  if (raw === 'fall_term') return 'fall_term';
+  if (raw === 'spring_term') return 'spring_term';
+  return 'full_year';
+}
+
+function getSubjectTermLabel(term) {
+  if (term === 'fall_term') return 'Fall term';
+  if (term === 'spring_term') return 'Spring term';
+  return 'Full year';
+}
+
+const SUBJECTS_MODE_STORAGE_PREFIX = 'subjects:selected-mode';
+
+function readStoredSubjectsMode(storageKey) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !storageKey) return null;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    return raw === 'plan' || raw === 'view' ? raw : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeStoredSubjectsMode(storageKey, mode) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !storageKey) return;
+  try {
+    window.localStorage.setItem(storageKey, mode);
+  } catch (_) {}
+}
+
 export default function SubjectsPage({
   familyId,
   children = [],
@@ -109,6 +141,10 @@ export default function SubjectsPage({
   // Determine if this is a child/student view
   const isChildView = userRole === 'child' || userRole === 'student';
   const childId = isChildView && safeAccessibleChildren.length > 0 ? (safeAccessibleChildren[0]?.id ?? safeAccessibleChildren[0]) : null;
+  const modeStorageKey = useMemo(
+    () => `${SUBJECTS_MODE_STORAGE_PREFIX}:${familyId || 'unknown'}:${isChildView ? 'child' : 'family'}`,
+    [familyId, isChildView]
+  );
   
   const [subjects, setSubjects] = useState(preloadedSubjects || []);
   const [loading, setLoading] = useState(!preloadedSubjects);
@@ -118,9 +154,10 @@ export default function SubjectsPage({
   const [selectedChildFilter, setSelectedChildFilter] = useState(
     isChildView && childId ? childId : 'all'
   );
-  const [selectedModeFilter, setSelectedModeFilter] = useState('view');
+  const [selectedModeFilter, setSelectedModeFilter] = useState(() => readStoredSubjectsMode(modeStorageKey) || 'view');
   const [showHeaderFilters, setShowHeaderFilters] = useState(false);
   const [selectedYearFilter, setSelectedYearFilter] = useState('all');
+  const [selectedTermFilter, setSelectedTermFilter] = useState('all');
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
   const [pendingScrollToSectionId, setPendingScrollToSectionId] = useState(null);
@@ -131,6 +168,7 @@ export default function SubjectsPage({
   const [attendanceByChildForCompliance, setAttendanceByChildForCompliance] = useState(null); // { [childId]: { daysPresent } }
   const loadingRef = useRef(false);
   const preloadingRef = useRef(false);
+  const headerFiltersAnchorRef = useRef(null);
   const helpButtonRef = useRef(null);
   const helpPopoverCloseTimerRef = useRef(null);
   const [showHelpPopover, setShowHelpPopover] = useState(false);
@@ -171,6 +209,22 @@ export default function SubjectsPage({
   }, [clearHelpPopoverCloseTimer]);
 
   useEffect(() => () => clearHelpPopoverCloseTimer(), [clearHelpPopoverCloseTimer]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined' || !showHeaderFilters) return;
+    const handleOutsidePointer = (event) => {
+      const node = headerFiltersAnchorRef.current?._nativeNode || headerFiltersAnchorRef.current;
+      if (!node || typeof node.contains !== 'function') return;
+      if (node.contains(event.target)) return;
+      setShowHeaderFilters(false);
+    };
+    document.addEventListener('mousedown', handleOutsidePointer);
+    document.addEventListener('touchstart', handleOutsidePointer);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsidePointer);
+      document.removeEventListener('touchstart', handleOutsidePointer);
+    };
+  }, [showHeaderFilters]);
 
   // Update local cache when prop changes
   useEffect(() => {
@@ -287,6 +341,15 @@ export default function SubjectsPage({
     }
   }, [preloadedSubjects]);
 
+  useEffect(() => {
+    const storedMode = readStoredSubjectsMode(modeStorageKey);
+    setSelectedModeFilter(storedMode || 'view');
+  }, [modeStorageKey]);
+
+  useEffect(() => {
+    writeStoredSubjectsMode(modeStorageKey, selectedModeFilter);
+  }, [modeStorageKey, selectedModeFilter]);
+
   const searchQueryNormalized = useMemo(() => String(searchQuery || '').toLowerCase().trim(), [searchQuery]);
   const searchTokens = useMemo(() => tokenizeSearchQuery(searchQuery), [searchQuery]);
   const sectionSearchKeywords = useMemo(
@@ -326,6 +389,7 @@ export default function SubjectsPage({
         .split(/[^0-9a-z]+/gi)
         .map((token) => token.trim())
         .filter(Boolean);
+      const schoolTerm = normalizeSubjectTerm(subject?.school_term);
       const textParts = [
         subject?.name,
         subject?.description,
@@ -334,6 +398,8 @@ export default function SubjectsPage({
         schoolYear,
         schoolYear.replace('/', ' '),
         schoolYearTokens.join(' '),
+        schoolTerm.replace('_', ' '),
+        getSubjectTermLabel(schoolTerm),
         assignedChildNames.join(' '),
       ];
 
@@ -471,6 +537,11 @@ export default function SubjectsPage({
         ({ subject }) => (subject.school_year || '2025/26') === selectedYearFilter
       );
     }
+    if (selectedTermFilter !== 'all') {
+      filteredEntries = filteredEntries.filter(
+        ({ subject }) => normalizeSubjectTerm(subject?.school_term) === selectedTermFilter
+      );
+    }
 
     return filteredEntries.map((entry) => entry.subject).filter(Boolean);
   }, [
@@ -480,6 +551,7 @@ export default function SubjectsPage({
     detectedSectionFromSearch,
     selectedChildFilter,
     selectedYearFilter,
+    selectedTermFilter,
     searchQueryNormalized,
   ]);
 
@@ -505,6 +577,21 @@ export default function SubjectsPage({
     const years = [...new Set(subjects.map(s => s.school_year || '2025/26').filter(Boolean))];
     return years.sort();
   }, [subjects]);
+
+  const registeredTerms = useMemo(() => {
+    if (!subjects || subjects.length === 0) return [];
+    const order = ['full_year', 'fall_term', 'spring_term'];
+    const terms = [...new Set(subjects.map((s) => normalizeSubjectTerm(s?.school_term)).filter(Boolean))];
+    return terms.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  }, [subjects]);
+
+  const activeHeaderFilterCount = useMemo(() => {
+    let count = 0;
+    if (selectedChildFilter !== 'all') count += 1;
+    if (selectedYearFilter !== 'all') count += 1;
+    if (selectedTermFilter !== 'all') count += 1;
+    return count;
+  }, [selectedChildFilter, selectedYearFilter, selectedTermFilter]);
 
   // Overall averages across filtered subjects (for compact summary card)
   const overallSummary = useMemo(() => {
@@ -907,13 +994,15 @@ export default function SubjectsPage({
         {!isChildView && (
           <View style={styles.headerModeWrap}>
             <View style={styles.headerModeControls}>
-              <View style={styles.headerFiltersAnchor}>
+              <View ref={headerFiltersAnchorRef} style={styles.headerFiltersAnchor}>
                 <TouchableOpacity
                   style={styles.headerFiltersButton}
                   onPress={() => setShowHeaderFilters((prev) => !prev)}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.headerFiltersButtonText}>Filters</Text>
+                  <Text style={styles.headerFiltersButtonText}>
+                    {activeHeaderFilterCount > 0 ? `Filters (${activeHeaderFilterCount})` : 'Filters'}
+                  </Text>
                   {showHeaderFilters ? <ChevronUp size={14} color="rgba(15,23,42,0.7)" /> : <ChevronDown size={14} color="rgba(15,23,42,0.7)" />}
                 </TouchableOpacity>
                 {showHeaderFilters && (
@@ -1040,6 +1129,68 @@ export default function SubjectsPage({
                             );
                           })}
                         </View>
+                        </View>
+                      </View>
+                    )}
+                    {registeredTerms.length > 0 && <View style={styles.headerFiltersDivider} />}
+                    {registeredTerms.length > 0 && (
+                      <View>
+                        <View style={styles.headerFiltersSectionTitleRow}>
+                          <Text style={styles.headerFiltersSectionTitle}>Term</Text>
+                        </View>
+                        <View style={styles.headerFiltersSection}>
+                          <View style={styles.filterChecklist}>
+                            <TouchableOpacity
+                              style={styles.filterOptionRow}
+                              onPress={() => setSelectedTermFilter('all')}
+                            >
+                              <View
+                                style={[
+                                  styles.filterOptionCheck,
+                                  selectedTermFilter === 'all' && styles.filterOptionCheckActive,
+                                ]}
+                              >
+                                {selectedTermFilter === 'all' && <Check size={10} color="#FFFFFF" />}
+                              </View>
+                              <Text
+                                style={[
+                                  styles.filterOptionLabel,
+                                  selectedTermFilter === 'all' && styles.filterOptionLabelActive,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                All terms
+                              </Text>
+                            </TouchableOpacity>
+                            {registeredTerms.map((term) => {
+                              const isActive = selectedTermFilter === term;
+                              return (
+                                <TouchableOpacity
+                                  key={term}
+                                  style={styles.filterOptionRow}
+                                  onPress={() => setSelectedTermFilter(term)}
+                                >
+                                  <View
+                                    style={[
+                                      styles.filterOptionCheck,
+                                      isActive && styles.filterOptionCheckActive,
+                                    ]}
+                                  >
+                                    {isActive && <Check size={10} color="#FFFFFF" />}
+                                  </View>
+                                  <Text
+                                    style={[
+                                      styles.filterOptionLabel,
+                                      isActive && styles.filterOptionLabelActive,
+                                    ]}
+                                    numberOfLines={1}
+                                  >
+                                    {getSubjectTermLabel(term)}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
                         </View>
                       </View>
                     )}
@@ -1189,7 +1340,7 @@ export default function SubjectsPage({
           position={helpPopoverPosition}
           onMouseEnter={clearHelpPopoverCloseTimer}
           onMouseLeave={scheduleHelpPopoverClose}
-          descriptionText={"View Subjects is your family's subject overview page. Switch to Build Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page."}
+          descriptionText={"Courses is your family's subject overview page. Switch to Class Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page."}
         />
       )}
 
