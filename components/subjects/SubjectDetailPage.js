@@ -105,6 +105,40 @@ function toTitleWord(value) {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
+function getSubjectTermLabel(term) {
+  const raw = String(term || '').trim().toLowerCase();
+  if (raw === 'full_year') return 'Full year';
+  if (raw === 'fall_term') return 'Fall term';
+  if (raw === 'spring_term') return 'Spring term';
+  return '';
+}
+
+function formatSubjectGradeLabel(grade) {
+  if (grade == null || grade === '') return '';
+  const raw = String(grade).trim();
+  if (!raw) return '';
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n)) {
+    return /grade/i.test(raw) ? raw : `${raw} Grade`;
+  }
+  if (n === 0) return 'Kindergarten';
+  if (n >= 1 && n <= 12) {
+    const ord = n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
+    return `${n}${ord} Grade`;
+  }
+  return /grade/i.test(raw) ? raw : `${raw} Grade`;
+}
+
+function buildHeaderMetaLine(subject) {
+  if (!subject) return null;
+  const schoolYear = String(subject.school_year || '').trim();
+  const schoolTermLabel = getSubjectTermLabel(subject.school_term);
+  const gradeLabel = formatSubjectGradeLabel(subject.grade);
+  const parts = [schoolYear, schoolTermLabel, gradeLabel].filter(Boolean);
+  if (parts.length === 0) return null;
+  return parts.join(' · ');
+}
+
 function normalizeCalendarTargets(raw) {
   if (Array.isArray(raw)) {
     return raw.map((value) => String(value || '').toLowerCase().trim()).filter(Boolean);
@@ -419,6 +453,7 @@ export default function SubjectDetailPage({
     () => buildClassScheduleSummary(subjectPlanData, subject?.id),
     [subjectPlanData, subject?.id]
   );
+  const headerMetaLine = useMemo(() => buildHeaderMetaLine(subject), [subject]);
   const logisticsHeaderLine = useMemo(() => buildLogisticsHeaderLine(subject), [subject]);
   const calendarConnectionsHeaderLine = useMemo(
     () => buildCalendarConnectionsHeaderLine(subject),
@@ -953,9 +988,9 @@ export default function SubjectDetailPage({
             )}
             <View style={styles.headerTitleSection}>
               <Text style={styles.title}>{subject.name}</Text>
-              {subject.grade && (
-                <Text style={styles.subtext}>Grade: {subject.grade}</Text>
-              )}
+              {headerMetaLine ? (
+                <Text style={styles.subtext}>{headerMetaLine}</Text>
+              ) : null}
               {childrenNames.length > 0 && (
                 <Text style={styles.subtext}>Students: {childrenNames.join(', ')}</Text>
               )}

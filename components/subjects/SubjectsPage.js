@@ -33,6 +33,7 @@ import SubjectDetailPage from './SubjectDetailPage';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
 import HelpPopover from '../planner/HelpPopover';
+import AttendanceView from '../planner/attendance/AttendanceView';
 
 const SEARCH_SECTION_KEYWORDS = {
   'attendance-section': ['attendance', 'attended', 'present', 'absent', 'lesson', 'lessons', 'event', 'events'],
@@ -952,12 +953,6 @@ export default function SubjectsPage({
     setSelectedModeFilter(nextMode);
   }, []);
 
-  const progressAttendanceHeading = useMemo(() => {
-    const yearLabel = selectedYearFilter !== 'all' ? selectedYearFilter : 'All years';
-    const termLabel = selectedTermFilter !== 'all' ? getSubjectTermLabel(selectedTermFilter) : 'All terms';
-    return `${yearLabel} ${termLabel} Attendance`;
-  }, [selectedYearFilter, selectedTermFilter]);
-
   // If a subject is selected, show detail view
   if (selectedSubjectId) {
     return (
@@ -1383,26 +1378,11 @@ export default function SubjectsPage({
           }}
         />
       ) : selectedModeFilter === 'progress' ? (
-        <ScrollView
-          style={styles.subjectsList}
-          contentContainerStyle={styles.subjectsListContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.progressCard}>
-            <Text style={styles.progressCardTitle}>{progressAttendanceHeading}</Text>
-            <View style={styles.progressCardBody}>
-              <Text style={styles.progressCardBodyText}>Attendance summary will appear here.</Text>
-              <View style={styles.progressCardActions}>
-                <TouchableOpacity style={styles.progressPillBtn} activeOpacity={0.75}>
-                  <Text style={styles.progressPillBtnText}>Year heatmap grid</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.progressPillBtn} activeOpacity={0.75}>
-                  <Text style={styles.progressPillBtnText}>Month drill-down</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </ScrollView>
+        <AttendanceView
+          familyId={familyId}
+          children={safeChildren}
+          mode="overview"
+        />
       ) : loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#60a5fa" />

@@ -7,6 +7,31 @@ import { useSession } from '../../contexts/SessionContext';
 import { getMaterialFileTypeLabel } from '../materials/MaterialDocViewerModal';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 
+function getSubjectTermLabel(term) {
+  const raw = String(term || '').trim().toLowerCase();
+  if (raw === 'full_year') return 'Full year';
+  if (raw === 'fall_term') return 'Fall term';
+  if (raw === 'spring_term') return 'Spring term';
+  return '';
+}
+
+function buildYearTermLine(subject) {
+  if (!subject) return '';
+  const schoolYear = String(subject.school_year || '').trim();
+  const termLabel = getSubjectTermLabel(subject.school_term);
+  if (!schoolYear && !termLabel) return '';
+  if (schoolYear && termLabel) return `${schoolYear} · ${termLabel}`;
+  return schoolYear || termLabel;
+}
+
+function formatNaturalList(items = []) {
+  const list = (items || []).map((v) => String(v || '').trim()).filter(Boolean);
+  if (list.length === 0) return '';
+  if (list.length === 1) return list[0];
+  if (list.length === 2) return `${list[0]} and ${list[1]}`;
+  return `${list.slice(0, -1).join(', ')}, and ${list[list.length - 1]}`;
+}
+
 export default function SubjectOverviewCard({
   subject,
   children = [],
@@ -207,6 +232,9 @@ export default function SubjectOverviewCard({
     session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
   const parentAssignmentAttentionCount = subject.parentAssignmentAttentionCount || 0;
   const parentNeedHelpCount = subject.parentNeedHelpCount || 0;
+  const yearTermLine = buildYearTermLine(subject);
+  const studentsMetaLine = formatNaturalList(childrenNames);
+  const headerMetaLine = [yearTermLine, studentsMetaLine].filter(Boolean).join(' · ');
 
   const openHomeReviewList = (e) => {
     if (e?.stopPropagation) e.stopPropagation();
@@ -499,14 +527,11 @@ export default function SubjectOverviewCard({
               </View>
             )}
           </View>
+          {headerMetaLine ? (
+            <Text style={styles.subjectMetaLine}>{headerMetaLine}</Text>
+          ) : null}
           {subjectIntent && (
             <Text style={styles.subjectIntent}>{subjectIntent}</Text>
-          )}
-          {childrenNames.length > 0 && (
-            <View style={styles.studentsRow}>
-              <Text style={styles.studentsLabel}>Students:</Text>
-              <Text style={styles.studentsList}>{childrenNames.join(', ')}</Text>
-            </View>
           )}
           {isParentViewer && parentAssignmentAttentionCount > 0 ? (
             <View style={styles.parentAttentionBanner}>
@@ -810,6 +835,17 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     lineHeight: 20,
     marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectMetaLine: {
+    marginTop: 4,
+    marginBottom: 6,
+    fontSize: 12,
+    color: '#374151',
+    lineHeight: 16,
+    fontWeight: '400',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
