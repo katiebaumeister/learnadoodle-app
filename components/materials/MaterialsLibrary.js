@@ -2337,22 +2337,21 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   roleChipActive: {
-    borderColor: '#8B5CF6',
-    backgroundColor: 'rgba(139,92,246,0.14)',
+    borderColor: 'rgba(139, 92, 246, 0.5)',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
   },
   roleChipText: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontWeight: '400',
+    fontSize: 14,
+    color: 'rgba(15,23,42,0.9)',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   roleChipTextActive: {
     color: '#6366F1',
-    fontWeight: '700',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   roleHelperText: {
@@ -2393,22 +2392,21 @@ const styles = StyleSheet.create({
     }),
   },
   subjectChipActive: {
-    borderColor: '#8B5CF6',
-    backgroundColor: 'rgba(139,92,246,0.14)',
+    borderColor: 'rgba(139, 92, 246, 0.5)',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
   },
   subjectChipText: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontWeight: '400',
+    fontSize: 14,
+    color: 'rgba(15,23,42,0.9)',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   subjectChipTextActive: {
     color: '#6366F1',
-    fontWeight: '700',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   sortChipRow: {
@@ -2432,22 +2430,21 @@ const styles = StyleSheet.create({
     }),
   },
   sortChipActive: {
-    borderColor: '#8B5CF6',
-    backgroundColor: 'rgba(139,92,246,0.14)',
+    borderColor: 'rgba(139, 92, 246, 0.5)',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
   },
   sortChipText: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontWeight: '400',
+    fontSize: 14,
+    color: 'rgba(15,23,42,0.9)',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   sortChipTextActive: {
     color: '#6366F1',
-    fontWeight: '700',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   childChip: {
@@ -2466,8 +2463,8 @@ const styles = StyleSheet.create({
     }),
   },
   childChipActive: {
-    borderColor: '#8B5CF6',
-    backgroundColor: 'rgba(139,92,246,0.14)',
+    borderColor: 'rgba(139, 92, 246, 0.5)',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
   },
   childAvatar: {
     width: 22,
@@ -2483,18 +2480,17 @@ const styles = StyleSheet.create({
     borderColor: '#8B5CF6',
   },
   childChipText: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontWeight: '400',
+    fontSize: 14,
+    color: 'rgba(15,23,42,0.9)',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   childChipTextActive: {
     color: '#6366F1',
-    fontWeight: '700',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   searchInput: {
@@ -2583,21 +2579,21 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   filterChipActive: {
-    borderColor: '#8B5CF6',
-    backgroundColor: 'rgba(139,92,246,0.14)',
+    borderColor: 'rgba(139, 92, 246, 0.5)',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
   },
   filterChipText: {
     fontSize: 14,
-    color: '#6b7280',
+    color: 'rgba(15,23,42,0.9)',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   filterChipTextActive: {
     color: '#6366F1',
-    fontWeight: '700',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   // (removed "Reuse candidates only" UI)
@@ -2956,20 +2952,19 @@ const styles = StyleSheet.create({
     }),
   },
   childrenFilterChipActive: {
-    borderColor: '#8B5CF6',
-    backgroundColor: 'rgba(139,92,246,0.14)',
+    borderColor: 'rgba(139, 92, 246, 0.5)',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
   },
   childrenFilterChipText: {
     fontSize: 14,
-    color: '#6b7280',
-    fontWeight: '500',
+    color: 'rgba(15,23,42,0.9)',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   childrenFilterChipTextActive: {
     color: '#6366F1',
-    fontWeight: '700',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

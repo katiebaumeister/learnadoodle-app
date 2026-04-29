@@ -64,13 +64,13 @@ export default function HelpPopover({
         >
           <Text style={{
             fontSize: 15,
-            color: '#3b82f6',
+            color: '#6BB3E8',
             fontWeight: '500',
             fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
           }}>
             Visit help forum
           </Text>
-          <ExternalLink size={16} color="#3b82f6" />
+          <ExternalLink size={16} color="#6BB3E8" />
         </TouchableOpacity>
       </View>
     </View>

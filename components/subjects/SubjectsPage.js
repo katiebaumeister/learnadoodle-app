@@ -36,7 +36,6 @@ import SubjectDetailPage from './SubjectDetailPage';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
 import HelpPopover from '../planner/HelpPopover';
-import ProgressTab from './ProgressTab';
 
 const SEARCH_SECTION_KEYWORDS = {
   'attendance-section': ['attendance', 'attended', 'present', 'absent', 'lesson', 'lessons', 'event', 'events'],
@@ -143,7 +142,7 @@ function readStoredSubjectsMode(storageKey) {
   if (Platform.OS !== 'web' || typeof window === 'undefined' || !storageKey) return null;
   try {
     const raw = window.localStorage.getItem(storageKey);
-    return raw === 'plan' || raw === 'view' || raw === 'progress' ? raw : null;
+    return raw === 'plan' || raw === 'view' ? raw : null;
   } catch (_) {
     return null;
   }
@@ -209,9 +208,12 @@ export default function SubjectsPage({
   const loadingRef = useRef(false);
   const preloadingRef = useRef(false);
   const helpButtonRef = useRef(null);
+  const exportButtonRef = useRef(null);
   const helpPopoverCloseTimerRef = useRef(null);
   const [showHelpPopover, setShowHelpPopover] = useState(false);
   const [helpPopoverPosition, setHelpPopoverPosition] = useState({ top: 0, left: 0 });
+  const [showExportHint, setShowExportHint] = useState(false);
+  const [exportHintPosition, setExportHintPosition] = useState({ top: 0, left: 0 });
   const [showSubjectsExportModal, setShowSubjectsExportModal] = useState(false);
   const [subjectsExportType, setSubjectsExportType] = useState('schedule');
   const [subjectsExportFormat, setSubjectsExportFormat] = useState('excel');
@@ -255,6 +257,24 @@ export default function SubjectsPage({
     updateHelpPopoverPosition();
     setShowHelpPopover(true);
   }, [clearHelpPopoverCloseTimer, updateHelpPopoverPosition]);
+
+  const openExportHint = useCallback(() => {
+    if (Platform.OS === 'web' && exportButtonRef.current) {
+      const node = exportButtonRef.current._nativeNode || exportButtonRef.current;
+      if (node && typeof node.getBoundingClientRect === 'function') {
+        const rect = node.getBoundingClientRect();
+        setExportHintPosition({
+          top: rect.bottom + 8,
+          left: rect.left - 30,
+        });
+      }
+    }
+    setShowExportHint(true);
+  }, []);
+
+  const closeExportHint = useCallback(() => {
+    setShowExportHint(false);
+  }, []);
 
   const scheduleHelpPopoverClose = useCallback(() => {
     clearHelpPopoverCloseTimer();
@@ -817,27 +837,103 @@ export default function SubjectsPage({
         const termLabel = selectedTermFilter === ALL_TERMS_FILTER
           ? `${selectedCoursesYear} School Year`
           : `${getSubjectTermLabel(selectedTermFilter)} ${selectedCoursesYear}`;
-        const gradesPayload = filteredSubjects.map((subject) => {
-          const detail = subjectDetailCache?.[subject?.id] || null;
-          const grades = Array.isArray(detail?.grades) ? detail.grades : [];
-          const gradeCandidates = grades
-            .filter((g) => selectedChildIds.includes(String(g?.child_id)))
-            .map((g) => {
+        const toDate = (value) => {
+          if (!value) return null;
+          const dt = new Date(value);
+          return Number.isNaN(dt.getTime()) ? null : dt;
+        };
+        const inRange = (value) => {
+          const dt = toDate(value);
+          if (!dt) return false;
+          return dt >= startDate && dt <= endDate;
+        };
+        for (const childId of selectedChildIds) {
+          const gradesPayload = [];
+          for (const subject of filteredSubjects) {
+            let detail = subjectDetailCache?.[subject?.id] || null;
+            if (!detail && subject?.id && familyId) {
+              try {
+                detail = await getSubjectDetail(subject.id, familyId, childId);
+              } catch (_) {
+                detail = null;
+              }
+            }
+
+            const gradeRows = Array.isArray(detail?.grades) ? detail.grades : [];
+            const eventRows = Array.isArray(detail?.events) ? detail.events : [];
+            const eventOutcomes = Array.isArray(detail?.eventOutcomes) ? detail.eventOutcomes : [];
+            const eventMap = eventRows.reduce((acc, ev) => {
+              acc[String(ev?.id)] = ev;
+              return acc;
+            }, {});
+
+            const normalizedChildId = String(childId);
+            const childGrades = gradeRows.filter((g) => {
+              if (String(g?.child_id) !== normalizedChildId) return false;
+              if (!g?.created_at) return true;
+              return inRange(g.created_at);
+            });
+            const childEventOutcomes = eventOutcomes.filter((eo) => {
+              if (String(eo?.child_id) !== normalizedChildId) return false;
+              const linkedEvent = eventMap[String(eo?.event_id)];
+              const eventStart = linkedEvent?.start_ts || linkedEvent?.start || linkedEvent?.start_local || eo?.created_at;
+              return inRange(eventStart);
+            });
+
+            const scorePercents = [];
+            childGrades.forEach((g) => {
               const possible = Number(g?.possible);
               const score = Number(g?.score);
               if (Number.isFinite(score) && Number.isFinite(possible) && possible > 0) {
-                return `${Math.round((score / possible) * 100)}%`;
+                scorePercents.push((score / possible) * 100);
               }
-              if (g?.grade != null && String(g.grade).trim()) return String(g.grade).trim();
-              return null;
-            })
-            .filter(Boolean);
-          return {
-            subject: subject?.name || 'Subject',
-            grade: gradeCandidates[0] || 'N/A',
-          };
-        });
-        for (const childId of selectedChildIds) {
+            });
+
+            const explicitGrades = [
+              ...childGrades.map((g) => (g?.grade != null ? String(g.grade).trim() : '')).filter(Boolean),
+              ...childEventOutcomes.map((eo) => (eo?.grade != null ? String(eo.grade).trim() : '')).filter(Boolean),
+            ];
+
+            let overallGrade = 'Ungraded';
+            if (scorePercents.length > 0) {
+              const avgPct = Math.round(scorePercents.reduce((sum, val) => sum + val, 0) / scorePercents.length);
+              overallGrade = `${avgPct}%`;
+            } else if (explicitGrades.length > 0) {
+              overallGrade = explicitGrades[0];
+            }
+
+            const byEvent = childEventOutcomes.map((eo) => {
+              const linkedEvent = eventMap[String(eo?.event_id)];
+              return {
+                eventTitle: linkedEvent?.title || linkedEvent?.lesson_name || 'Event',
+                eventDate: linkedEvent?.start_ts || linkedEvent?.start || linkedEvent?.start_local || null,
+                grade: eo?.grade != null && String(eo.grade).trim() ? String(eo.grade).trim() : 'Ungraded',
+              };
+            });
+            if (byEvent.length === 0) {
+              eventRows
+                .filter((ev) => {
+                  const evChildId = ev?.child_id != null ? String(ev.child_id) : null;
+                  const includeForChild = !evChildId || evChildId === normalizedChildId;
+                  const evStart = ev?.start_ts || ev?.start || ev?.start_local;
+                  return includeForChild && inRange(evStart);
+                })
+                .forEach((ev) => {
+                  byEvent.push({
+                    eventTitle: ev?.title || ev?.lesson_name || 'Event',
+                    eventDate: ev?.start_ts || ev?.start || ev?.start_local || null,
+                    grade: 'Ungraded',
+                  });
+                });
+            }
+
+            gradesPayload.push({
+              subjectName: subject?.name || 'Subject',
+              grade: overallGrade,
+              eventBreakdown: byEvent,
+            });
+          }
+
           const result = await exportReportCard(childId, termLabel, gradesPayload, '', format);
           if (!result?.success) {
             throw new Error(result?.error || 'Report card export failed.');
@@ -861,6 +957,7 @@ export default function SubjectsPage({
     selectedCoursesYear,
     selectedTermFilter,
     subjectDetailCache,
+    familyId,
   ]);
   const renderCoursesHeaderFilters = useCallback((options = {}) => {
     const { showTermRow = true, showChildrenRow = true } = options;
@@ -1337,7 +1434,7 @@ export default function SubjectsPage({
   };
 
   const handleModeFilterChange = useCallback((nextMode) => {
-    setSelectedModeFilter(nextMode);
+    setSelectedModeFilter(nextMode === 'plan' ? 'plan' : 'view');
   }, []);
 
   // If a subject is selected, show detail view
@@ -1449,23 +1546,6 @@ export default function SubjectsPage({
                     Schedule
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.modeSegment,
-                    selectedModeFilter === 'progress' && styles.modeSegmentActive,
-                  ]}
-                  onPress={() => handleModeFilterChange('progress')}
-                >
-                  <Text
-                    style={[
-                      styles.modeSegmentText,
-                      selectedModeFilter === 'progress' && styles.modeSegmentTextActive,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    Progress
-                  </Text>
-                </TouchableOpacity>
               </View>
               <TouchableOpacity
                 ref={helpButtonRef}
@@ -1491,12 +1571,20 @@ export default function SubjectsPage({
                 <HelpCircle size={22} color="rgba(15,23,42,0.7)" />
               </TouchableOpacity>
               <TouchableOpacity
+                ref={exportButtonRef}
                 style={styles.exportHeaderButton}
-                onPress={openSubjectsExportModal}
+                onPress={() => {
+                  closeExportHint();
+                  openSubjectsExportModal();
+                }}
                 activeOpacity={0.8}
                 accessibilityRole="button"
                 accessibilityLabel="Export subjects data"
-                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                {...(Platform.OS === 'web' ? {
+                  cursor: 'pointer',
+                  onMouseEnter: openExportHint,
+                  onMouseLeave: closeExportHint,
+                } : {})}
               >
                 <Download size={20} color="rgba(15,23,42,0.7)" />
               </TouchableOpacity>
@@ -1570,6 +1658,11 @@ export default function SubjectsPage({
         </View>
       </View>
       <View style={styles.divider} />
+      {showExportHint && Platform.OS === 'web' && (
+        <View style={[styles.exportHintTooltip, { top: exportHintPosition.top, left: exportHintPosition.left }]}>
+          <Text style={styles.exportHintTooltipText}>Export Subjects data</Text>
+        </View>
+      )}
       {showHelpPopover && Platform.OS === 'web' && (
         <HelpPopover
           visible={showHelpPopover}
@@ -1580,7 +1673,7 @@ export default function SubjectsPage({
           position={helpPopoverPosition}
           onMouseEnter={clearHelpPopoverCloseTimer}
           onMouseLeave={scheduleHelpPopoverClose}
-          descriptionText={"Courses is your family's subject overview page. Switch to Schedule for the multi-subject planning layer, or build out structured class plans directly within each subject's detail page. Switch to Progress for multi-subject analytics -- attendance, performance, and gaps in learning."}
+          descriptionText={"Courses is your family's subject overview page. Click any subject card to open the Subject Details page. Switch to Schedule for the multi-subject planning layer, or build out structured class plans directly within each Subject Details page."}
         />
       )}
       <Modal
@@ -1685,7 +1778,7 @@ export default function SubjectsPage({
                     <Text style={[styles.exportStudentChipText, selected && styles.exportStudentChipTextActive]}>
                       {child?.name || child?.first_name || 'Student'}
                     </Text>
-                    {selected ? <Check size={14} color="#2563EB" /> : null}
+                    {selected ? <Check size={14} color="#6BB3E8" /> : null}
                   </TouchableOpacity>
                 );
               })}
@@ -1729,23 +1822,6 @@ export default function SubjectsPage({
               if (match) {
                 handleSubjectClick(match);
               }
-            }}
-          />
-        </View>
-      ) : selectedModeFilter === 'progress' ? (
-        <View style={styles.coursesTabContent}>
-          {renderCoursesHeaderFilters()}
-          <ProgressTab
-            children={safeChildren}
-            filteredSubjects={filteredSubjects}
-            subjectDetailCache={subjectDetailCache}
-            selectedChildFilter={selectedChildFilter}
-            selectedYearFilter={selectedYearFilter}
-            hideYearHeader
-            onEditSubject={onEditSubject}
-            onOpenSubject={(subjectId) => {
-              const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
-              if (match) handleSubjectClick(match);
             }}
           />
         </View>
@@ -2022,6 +2098,22 @@ const styles = StyleSheet.create({
     position: 'relative',
     zIndex: 10,
   },
+  exportHintTooltip: {
+    position: 'fixed',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(15,23,42,0.92)',
+    zIndex: 10020,
+    pointerEvents: 'none',
+  },
+  exportHintTooltipText: {
+    fontSize: 14,
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   exportModalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(15,23,42,0.35)',
@@ -2074,26 +2166,29 @@ const styles = StyleSheet.create({
   exportTypeChip: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: '#e5e7eb',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 6,
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   exportTypeChipActive: {
-    borderColor: '#93C5FD',
-    backgroundColor: '#EFF6FF',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   exportTypeChipText: {
-    fontSize: 13,
-    color: '#334155',
+    fontSize: 12,
+    color: '#6b7280',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   exportTypeChipTextActive: {
-    color: '#1D4ED8',
-    fontWeight: '600',
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   exportDateRow: {
     flexDirection: 'row',
@@ -2127,26 +2222,29 @@ const styles = StyleSheet.create({
     gap: 6,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: '#e5e7eb',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 6,
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   exportStudentChipActive: {
-    borderColor: '#93C5FD',
-    backgroundColor: '#EFF6FF',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   exportStudentChipText: {
-    fontSize: 13,
-    color: '#334155',
+    fontSize: 12,
+    color: '#6b7280',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   exportStudentChipTextActive: {
-    color: '#1D4ED8',
-    fontWeight: '600',
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   exportModalActions: {
     marginTop: 14,

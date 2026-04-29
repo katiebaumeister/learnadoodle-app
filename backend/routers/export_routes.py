@@ -2267,15 +2267,15 @@ def generate_report_card_pdf(
     story.append(Paragraph(f"<b>Term:</b> {term}", styles['Normal']))
     story.append(Spacer(1, 0.3*inch))
 
-    # Grades Section
+    # Grades Section (overall by subject)
     if grades:
         story.append(Paragraph("<b>Grades</b>", styles['Heading2']))
         story.append(Spacer(1, 0.1*inch))
         
-        grade_data = [["Subject", "Grade"]]
+        grade_data = [["Subject", "Overall Grade"]]
         for grade_item in grades:
-            subject_name = grade_item.get("subjectName", "Unknown")
-            grade = grade_item.get("grade", "N/A")
+            subject_name = grade_item.get("subjectName") or grade_item.get("subject") or "Unknown"
+            grade = grade_item.get("grade", "Ungraded")
             grade_data.append([subject_name, grade])
         
         grade_table = Table(grade_data, colWidths=[4*inch, 2*inch])
@@ -2292,6 +2292,50 @@ def generate_report_card_pdf(
         ]))
         story.append(grade_table)
         story.append(Spacer(1, 0.3*inch))
+
+        # Event-by-event breakdown (optional; driven by payload)
+        has_any_breakdown = any(
+            isinstance(item.get("eventBreakdown"), list) and len(item.get("eventBreakdown")) > 0
+            for item in grades
+        )
+        if has_any_breakdown:
+            story.append(Paragraph("<b>Event Breakdown</b>", styles['Heading2']))
+            story.append(Spacer(1, 0.1*inch))
+            for grade_item in grades:
+                subject_name = grade_item.get("subjectName") or grade_item.get("subject") or "Unknown"
+                breakdown_rows = grade_item.get("eventBreakdown") or []
+                if not isinstance(breakdown_rows, list) or len(breakdown_rows) == 0:
+                    continue
+
+                story.append(Paragraph(f"<b>{subject_name}</b>", styles['Heading3']))
+                detail_data = [["Event", "Date", "Grade"]]
+                for row in breakdown_rows:
+                    event_title = str(row.get("eventTitle") or "Event")
+                    event_grade = str(row.get("grade") or "Ungraded")
+                    raw_date = row.get("eventDate")
+                    event_date = "—"
+                    if raw_date:
+                        try:
+                            parsed = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00"))
+                            event_date = parsed.strftime("%b %d, %Y")
+                        except Exception:
+                            event_date = str(raw_date)[:10]
+                    detail_data.append([event_title, event_date, event_grade])
+
+                detail_table = Table(detail_data, colWidths=[3.6*inch, 1.4*inch, 1.0*inch])
+                detail_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.HexColor('#e5e7eb')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.black),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('ALIGN', (2, 1), (2, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('FONTSIZE', (0, 1), (-1, -1), 9),
+                    ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ]))
+                story.append(detail_table)
+                story.append(Spacer(1, 0.15*inch))
     else:
         story.append(Paragraph("<i>No grades available for this term.</i>", styles['Normal']))
         story.append(Spacer(1, 0.3*inch))

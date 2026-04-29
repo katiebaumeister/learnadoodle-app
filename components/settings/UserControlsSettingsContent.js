@@ -355,6 +355,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
     alignSelf: 'center',
     flexShrink: 0,
     backgroundColor: '#ffffff',

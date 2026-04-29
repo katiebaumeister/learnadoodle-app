@@ -468,7 +468,6 @@ export default function SubjectsPlanBuilder({
     return matching?.id || schoolYearTemplateCache[0]?.id || null;
   });
   const [selectedTerm, setSelectedTerm] = useState(() => presentScope.termId);
-  const [expandedTerms, setExpandedTerms] = useState({});
   const lastAppliedScopeYearFilterRef = useRef(null);
   const [buildWithDefaults, setBuildWithDefaults] = useState(true);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
@@ -803,14 +802,6 @@ export default function SubjectsPlanBuilder({
       };
     });
   }, [displaySchoolYear, homeTermOrder, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById]);
-
-  useEffect(() => {
-    const isCurrentYear = Number(displaySchoolYear?.start_year) === Number(presentScope.startYear);
-    const defaultExpanded = isCurrentYear
-      ? { [presentScope.termId]: true }
-      : {};
-    setExpandedTerms(defaultExpanded);
-  }, [displaySchoolYear?.start_year, presentScope.startYear, presentScope.termId]);
 
   const subjectPlans = useMemo(() => {
     const selectedStartYear = Number(displaySchoolYear?.start_year);
@@ -1177,50 +1168,44 @@ export default function SubjectsPlanBuilder({
       <View style={styles.wrap}>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.emptyScheduleSection}>
-            {termSections.map((termSection) => {
-              const isExpanded = Boolean(expandedTerms?.[termSection.id]);
+            {termSections.map((termSection, index) => {
               return (
-                <View key={termSection.id} style={styles.termCard}>
-                  <TouchableOpacity
-                    style={styles.termHeaderCompact}
-                    onPress={() => setExpandedTerms((prev) => ({ ...prev, [termSection.id]: !prev?.[termSection.id] }))}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.termHeaderMeta}>
-                      <Text style={styles.termHeaderCompactTitle}>{termSection.title}</Text>
-                      <Text style={styles.termHeaderCompactStatus}>
-                        {termSection.title} · {termSection.plannedDays} planned days · {termSection.status}
-                      </Text>
-                    </View>
-                    <View style={styles.termHeaderRight}>
-                      <Text style={styles.termDaysText}>{termSection.plannedDays} days</Text>
-                      {isExpanded ? <ChevronUp size={18} color="#7C8798" /> : <ChevronDown size={18} color="#7C8798" />}
-                    </View>
-                  </TouchableOpacity>
+                <View
+                  key={termSection.id}
+                  style={[
+                    styles.termCard,
+                    index > 0 && styles.termCardSpaced,
+                  ]}
+                >
+                  <View style={styles.termSectionHeaderRow}>
+                    <Text style={styles.termHeaderCompactTitle}>{termSection.title}</Text>
+                    <View style={styles.termActions}>
+                      <TouchableOpacity
+                        style={styles.secondaryButton}
+                        onPress={() => {
+                          setSelectedTerm(termSection.id);
+                          openSubjectPicker('edit');
+                        }}
+                      >
+                        <Pencil size={16} color="#374151" />
+                        <Text style={styles.secondaryButtonText}>Edit plan</Text>
+                      </TouchableOpacity>
 
-                  {isExpanded ? (
+                      <TouchableOpacity
+                        style={styles.primaryButton}
+                        onPress={() => {
+                          setSelectedTerm(termSection.id);
+                          openSubjectPicker('add');
+                        }}
+                      >
+                        <Plus size={18} color="#374151" />
+                        <Text style={styles.primaryButtonText}>Add plan</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <View style={styles.termHeaderDivider} />
+
                     <>
-                      <View style={styles.termActions}>
-                        <TouchableOpacity
-                          style={styles.secondaryButton}
-                          onPress={() => {
-                            setSelectedTerm(termSection.id);
-                            openSubjectPicker('edit');
-                          }}
-                        >
-                          <Text style={styles.secondaryButtonText}>Edit plan</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={styles.primaryButton}
-                          onPress={() => {
-                            setSelectedTerm(termSection.id);
-                            openSubjectPicker('add');
-                          }}
-                        >
-                          <Text style={styles.primaryButtonText}>+ Add plan</Text>
-                        </TouchableOpacity>
-                      </View>
 
                       <View style={styles.weekGrid}>
                         {termSection.dayRows.map((row) => {
@@ -1259,22 +1244,15 @@ export default function SubjectsPlanBuilder({
                         })}
                       </View>
 
-                      <View style={styles.sectionDivider} />
-
                       <View style={styles.subjectSection}>
-                        <View style={styles.sectionHeaderRow}>
-                          <Text style={styles.sectionTitle}>Subject plans</Text>
-                          <Text style={styles.sectionHint}>What gets placed into the weekly cadence</Text>
-                        </View>
-
                         <View style={styles.subjectRows}>
                           {termSection.subjectPlans.length === 0 ? (
-                            <View style={styles.subjectRow}>
+                            <View style={[styles.subjectRow, styles.subjectRowLast]}>
                               <View style={styles.subjectCadence}>
-                                <Text style={styles.subjectCadenceText}>No subjects for this term yet.</Text>
+                                <Text style={styles.subjectCadenceText}>No subjects for this term yet. Create a new subject, then add a plan.</Text>
                               </View>
                               <TouchableOpacity style={styles.addMiniButton} onPress={() => openAddSubjectForCurrentSlot(termSection.id)}>
-                                <Text style={styles.addMiniButtonText}>+ Add</Text>
+                                <Text style={styles.addMiniButtonText}>+ Add subject</Text>
                               </TouchableOpacity>
                             </View>
                           ) : (
@@ -1297,7 +1275,7 @@ export default function SubjectsPlanBuilder({
 
                                   <View style={styles.subjectCadence}>
                                     <Text style={styles.subjectCadenceText}>
-                                      {row.cadenceText || 'No plan yet'}
+                                      {row.cadenceText || 'No scheduled plan yet.'}
                                     </Text>
                                   </View>
 
@@ -1330,7 +1308,7 @@ export default function SubjectsPlanBuilder({
                                         style={styles.addMiniButton}
                                         onPress={() => openBuilderForSubject(row.id, 'add', termSection.id)}
                                       >
-                                        <Text style={styles.addMiniButtonText}>+ Add</Text>
+                                        <Text style={styles.addMiniButtonText}>+ Add plan</Text>
                                       </TouchableOpacity>
                                     )}
                                   </View>
@@ -1341,7 +1319,6 @@ export default function SubjectsPlanBuilder({
                         </View>
                       </View>
                     </>
-                  ) : null}
                 </View>
               );
             })}
@@ -1362,12 +1339,12 @@ export default function SubjectsPlanBuilder({
               <View style={styles.subjectPickerHeader}>
                 <View style={styles.subjectPickerHeaderTextWrap}>
                   <Text style={styles.subjectPickerTitle}>
-                    {subjectPickerAction === 'edit' ? 'Choose a subject to edit' : 'Choose a subject for new plan'}
+                    {subjectPickerAction === 'edit' ? 'Choose a subject to edit' : 'Choose a subject to add to plan'}
                   </Text>
                   <Text style={styles.subjectPickerSubtitle}>
                     {subjectPickerAction === 'edit'
                       ? 'Select a subject with an existing plan.'
-                      : 'Select the subject you want to plan.'}
+                      : 'Select the subject you want to create or update a plan for.'}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -1873,50 +1850,44 @@ const styles = StyleSheet.create({
   },
   emptyScheduleSection: {
     marginBottom: 14,
-    gap: 12,
+    gap: 0,
   },
   termCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: '#EAEDF5',
-    padding: 18,
-    gap: 18,
+    backgroundColor: 'transparent',
+    borderRadius: 0,
+    borderWidth: 0,
+    borderBottomWidth: 0,
+    paddingVertical: 16,
+    paddingHorizontal: 0,
+    gap: 0,
     maxWidth: 1400,
     width: '100%',
     marginBottom: 0,
   },
-  termHeaderCompact: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  termCardSpaced: {
+    marginTop: 32,
   },
-  termHeaderMeta: {
-    flex: 1,
-    minWidth: 240,
+  termSectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    marginTop: 0,
+    gap: 8,
+    paddingHorizontal: 2,
+  },
+  termHeaderDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginBottom: 20,
   },
   termHeaderCompactTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#172033',
-  },
-  termHeaderCompactStatus: {
-    marginTop: 4,
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#8A94A6',
-  },
-  termHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  termDaysText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#6B7280',
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   termHeader: {
     flexDirection: 'row',
@@ -1949,38 +1920,48 @@ const styles = StyleSheet.create({
   },
   termActions: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
     justifyContent: 'flex-end',
   },
   secondaryButton: {
-    height: 40,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#E2E6EF',
-    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   secondaryButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#445066',
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   primaryButton: {
-    height: 40,
-    paddingHorizontal: 18,
-    borderRadius: 999,
-    backgroundColor: '#7C5CFF',
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   primaryButtonText: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   weekGrid: {
     flexDirection: 'row',
@@ -2043,37 +2024,20 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#9AA3B2',
   },
-  sectionDivider: {
-    height: 1,
-    backgroundColor: '#EEF0F6',
-  },
   subjectSection: {
     gap: 12,
   },
-  sectionHeaderRow: {
-    gap: 2,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: '#172033',
-  },
-  sectionHint: {
-    fontSize: 13,
-    color: '#8A94A6',
-    fontWeight: '600',
-  },
   subjectRows: {
-    borderWidth: 1,
-    borderColor: '#EEF0F6',
-    borderRadius: 18,
-    overflow: 'hidden',
+    borderTopWidth: 0,
+    borderRadius: 0,
+    borderWidth: 0,
+    overflow: 'visible',
   },
   subjectRow: {
     minHeight: 68,
-    paddingHorizontal: 14,
+    paddingHorizontal: 2,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
     borderBottomWidth: 1,
     borderBottomColor: '#F0F2F7',
     flexDirection: 'row',
@@ -2163,9 +2127,12 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   addMiniButtonText: {
-    fontSize: 12,
-    fontWeight: '900',
+    fontSize: 14,
+    fontWeight: '600',
     color: '#5AAEF2',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   yearProgressCard: {
     backgroundColor: '#F8F7FF',

@@ -39,8 +39,8 @@ const TEXT_BLACK = '#000000';
 const ACCENT = LEARNADOODLE_LIGHT_BLUE;
 const BORDER = '#E2E8F0';
 /** Selected chips — planner violet border/text + soft lavender fill */
-const CHIP_SELECTED_BORDER = designTokens.colors.primary;
-const CHIP_SELECTED_BG = designTokens.softAccents.core;
+const CHIP_SELECTED_BORDER = 'rgba(139, 92, 246, 0.5)';
+const CHIP_SELECTED_BG = 'rgba(139, 92, 246, 0.15)';
 
 const parsePositiveIntOrNull = (value) => {
   const n = parseInt(String(value ?? '').trim(), 10);
@@ -628,11 +628,10 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
     }),
   };
   const addOutlineButtonStyle = {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    minHeight: 42,
-    paddingHorizontal: 18,
+    justifyContent: 'center',
+    height: 32,
+    paddingHorizontal: 12,
     borderRadius: 999,
     borderWidth: 1,
     borderStyle: 'dashed',
@@ -1015,8 +1014,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                   style={addOutlineButtonStyle}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color="#5AAEF2" />
-                  <Text style={addOutlineButtonTextStyle}>{PLANNING_PREFERENCES_UI.addDay}</Text>
+                  <Text style={addOutlineButtonTextStyle}>+ {PLANNING_PREFERENCES_UI.addDay}</Text>
                 </TouchableOpacity>
               )}
           </View>
@@ -1137,8 +1135,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                   style={addOutlineButtonStyle}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Plus size={16} color="#5AAEF2" />
-                  <Text style={addOutlineButtonTextStyle}>{PLANNING_PREFERENCES_UI.addRange}</Text>
+                  <Text style={addOutlineButtonTextStyle}>+ {PLANNING_PREFERENCES_UI.addRange}</Text>
                 </TouchableOpacity>
               )}
           </View>
