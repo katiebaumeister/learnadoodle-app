@@ -33,7 +33,7 @@ import SubjectDetailPage from './SubjectDetailPage';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
 import HelpPopover from '../planner/HelpPopover';
-import AttendanceView from '../planner/attendance/AttendanceView';
+import ProgressTab from './ProgressTab';
 
 const SEARCH_SECTION_KEYWORDS = {
   'attendance-section': ['attendance', 'attended', 'present', 'absent', 'lesson', 'lessons', 'event', 'events'],
@@ -99,6 +99,18 @@ function getSubjectTermLabel(term) {
 }
 
 const SUBJECTS_MODE_STORAGE_PREFIX = 'subjects:selected-mode';
+const SUBJECT_TAB_INTRO = {
+  view: {
+    eyebrow: 'COURSES',
+    title: "Your family's courses",
+    subtitle: 'See each subject at a glance and open details to manage plans, materials, and outcomes.',
+  },
+  plan: {
+    eyebrow: 'SCHEDULE',
+    title: 'Build your weekly subject plan',
+    subtitle: 'Plan learning across subjects, balance workload, and turn goals into an actionable schedule.',
+  },
+};
 
 function readStoredSubjectsMode(storageKey) {
   if (Platform.OS !== 'web' || typeof window === 'undefined' || !storageKey) return null;
@@ -873,6 +885,8 @@ export default function SubjectsPage({
     };
   }, [filteredSubjects, subjectDetailCache, getChildName, effectiveComplianceStateCodes, selectedChildFilter, attendanceByChildForCompliance]);
 
+  const tabIntro = selectedModeFilter === 'progress' ? null : SUBJECT_TAB_INTRO[selectedModeFilter] || null;
+
   const handleBack = () => {
     setSelectedSubjectId(null);
     setPendingScrollToSectionId(null);
@@ -1363,6 +1377,13 @@ export default function SubjectsPage({
       )}
 
       {/* Content */}
+      {tabIntro ? (
+        <View style={styles.tabIntro}>
+          <Text style={styles.tabIntroEyebrow}>{tabIntro.eyebrow}</Text>
+          <Text style={styles.tabIntroTitle}>{tabIntro.title}</Text>
+          <Text style={styles.tabIntroSubtitle}>{tabIntro.subtitle}</Text>
+        </View>
+      ) : null}
       {selectedModeFilter === 'plan' ? (
         <SubjectsPlanBuilder
           familyId={familyId}
@@ -1378,10 +1399,11 @@ export default function SubjectsPage({
           }}
         />
       ) : selectedModeFilter === 'progress' ? (
-        <AttendanceView
-          familyId={familyId}
+        <ProgressTab
           children={safeChildren}
-          mode="overview"
+          filteredSubjects={filteredSubjects}
+          subjectDetailCache={subjectDetailCache}
+          selectedChildFilter={selectedChildFilter}
         />
       ) : loading ? (
         <View style={styles.loadingContainer}>
@@ -2235,6 +2257,30 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 24,
     paddingTop: 8,
+  },
+  tabIntro: {
+    paddingHorizontal: 22,
+    paddingTop: 12,
+    paddingBottom: 6,
+  },
+  tabIntroEyebrow: {
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    color: '#8B6CFF',
+    marginBottom: 6,
+  },
+  tabIntroTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#1F2937',
+  },
+  tabIntroSubtitle: {
+    marginTop: 6,
+    fontSize: 14,
+    color: '#7B8798',
+    maxWidth: 620,
+    lineHeight: 20,
   },
   subjectsListContent: {
     paddingBottom: 40,
