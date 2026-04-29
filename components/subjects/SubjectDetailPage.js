@@ -1025,8 +1025,7 @@ export default function SubjectDetailPage({
                     accessibilityRole="link"
                   >
                     Create a plan
-                  </Text>{' '}
-                  for this subject to see a class schedule here
+                  </Text>
                 </Text>
               )}
               {logisticsHeaderLine ? (
