@@ -1269,7 +1269,7 @@ export default function MaterialsLibrary({
         {/* Search, Add Material Button, and Trash */}
         <View style={styles.searchRow}>
           <Text style={styles.totalFilesText}>
-            TOTAL MATERIALS ({libraryReady ? allMaterials.length : '—'})
+            Total Materials ({libraryReady ? allMaterials.length : '—'})
           </Text>
           <View style={styles.searchAndButtonContainer}>
             <View style={styles.searchContainer}>
@@ -2247,8 +2247,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   totalFilesText: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 24,
+    fontWeight: '600',
     color: colors.text,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2740,8 +2740,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dropdownCheckboxActive: {
-    borderColor: '#8B5CF6',
-    backgroundColor: '#8B5CF6',
+    borderColor: '#6BB3E8',
+    backgroundColor: '#6BB3E8',
   },
   dropdownOptionText: {
     fontSize: 13,
@@ -2945,13 +2945,12 @@ const styles = StyleSheet.create({
   childrenFilterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     backgroundColor: '#ffffff',
-    marginRight: 8,
     ...Platform.select({
       web: { cursor: 'pointer' },
     }),
@@ -2961,18 +2960,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(133,196,242,0.2)',
   },
   childrenFilterChipText: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#6b7280',
-    fontWeight: '400',
+    fontWeight: '500',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   childrenFilterChipTextActive: {
     color: '#6BB3E8',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   allFilesContainer: {

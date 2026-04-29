@@ -186,7 +186,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [inviteChildModalPrefillId, setInviteChildModalPrefillId] = useState(null);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
   const [editingSubject, setEditingSubject] = useState(null);
-  const [addSubjectPrefill, setAddSubjectPrefill] = useState({ schoolYear: null, schoolTerm: null });
+  const [addSubjectPrefill, setAddSubjectPrefill] = useState({ schoolYear: null, schoolTerm: null, childIds: [] });
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
   const [eventModalEventId, setEventModalEventId] = useState(null);
@@ -2005,10 +2005,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const subject = e.detail?.subject || null;
       const incomingSchoolYear = e.detail?.schoolYear || null;
       const incomingSchoolTerm = e.detail?.schoolTerm || null;
+      const incomingChildIds = Array.isArray(e.detail?.childIds) ? e.detail.childIds.filter(Boolean) : [];
       setEditingSubject(subject);
       setAddSubjectPrefill({
         schoolYear: subject ? null : incomingSchoolYear,
         schoolTerm: subject ? null : incomingSchoolTerm,
+        childIds: subject ? [] : incomingChildIds,
       });
       setShowAddSubjectModal(true);
     };
@@ -4320,12 +4322,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         onClose={() => {
           setShowAddSubjectModal(false);
           setEditingSubject(null);
-          setAddSubjectPrefill({ schoolYear: null, schoolTerm: null });
+          setAddSubjectPrefill({ schoolYear: null, schoolTerm: null, childIds: [] });
         }}
         familyId={familyId}
         subject={editingSubject}
         initialSchoolYear={addSubjectPrefill.schoolYear}
         initialSchoolTerm={addSubjectPrefill.schoolTerm}
+        defaultChildIds={addSubjectPrefill.childIds}
         children={children}
         onSubjectAdded={(newSubject) => {
           const wasNewSubject = !editingSubject;
@@ -4339,7 +4342,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             return next;
           });
           setEditingSubject(null);
-          setAddSubjectPrefill({ schoolYear: null, schoolTerm: null });
+          setAddSubjectPrefill({ schoolYear: null, schoolTerm: null, childIds: [] });
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             if (newSubject?.id) {
               window.dispatchEvent(new CustomEvent('subjectRecordUpserted', { detail: { subject: newSubject } }));

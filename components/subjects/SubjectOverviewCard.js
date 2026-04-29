@@ -97,7 +97,7 @@ export default function SubjectOverviewCard({
     const now = new Date();
     const diffTime = now - date;
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-    
+
     if (diffDays === 0) return 'Today';
     if (diffDays === 1) return '1 day ago';
     return `${diffDays} days ago`;
@@ -215,7 +215,6 @@ export default function SubjectOverviewCard({
   };
   const statusInfo = statusConfig[status] || statusConfig.not_started;
 
-  // Format metrics
   const progressPercent = subject.progressPercent !== null && subject.progressPercent !== undefined
     ? subject.progressPercent
     : null;
@@ -559,7 +558,6 @@ export default function SubjectOverviewCard({
         </View>
       </View>
 
-      {/* Micro-metrics row */}
       <View style={styles.metricsRow}>
         <View style={styles.metricItem}>
           <TrendingUp size={14} color={colors.muted || '#6B7280'} />
@@ -581,19 +579,18 @@ export default function SubjectOverviewCard({
         </View>
       </View>
 
-      {/* Compact progress bar */}
       <View style={styles.progressBarContainer}>
         <View style={styles.progressBarBackground}>
-          <View 
+          <View
             style={[
-              styles.progressBarFill, 
+              styles.progressBarFill,
               { width: `${progressPercent !== null ? progressPercent : 0}%` }
-            ]} 
+            ]}
           />
         </View>
-        {progressPercent === null && (
+        {progressPercent === null ? (
           <Text style={styles.progressBarLabel}>Not started</Text>
-        )}
+        ) : null}
       </View>
 
       {/* What's next decision row */}
@@ -930,7 +927,7 @@ const styles = StyleSheet.create({
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: Platform.OS === 'web' ? 'transparent' : (colors.accent || '#4F46E5'), // Fallback for native
+    backgroundColor: Platform.OS === 'web' ? 'transparent' : (colors.accent || '#4F46E5'),
     borderRadius: 2,
     ...(Platform.OS === 'web' && {
       backgroundImage: 'linear-gradient(90deg, #f4b4f8 0%, #c4b5fd 20%, #93c5fd 40%, #a5f3fc 60%, #bbf7d0 80%, #facc15 100%)',

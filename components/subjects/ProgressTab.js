@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 
 const WEB_HEADING_FONT = Platform.OS === 'web'
   ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
@@ -39,15 +38,13 @@ function gradeToPercent(value) {
   return map[raw] ?? null;
 }
 
-function formatMonthYear(dateObj) {
-  return dateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-}
-
 export default function ProgressTab({
   children = [],
   filteredSubjects = [],
   subjectDetailCache = {},
   selectedChildFilter = 'all',
+  selectedYearFilter = 'all_years',
+  hideYearHeader = false,
   onOpenSubject,
 }) {
   const students = useMemo(
@@ -81,6 +78,14 @@ export default function ProgressTab({
     [today]
   );
   const [selectedAcademicYearStart, setSelectedAcademicYearStart] = useState(presentAcademicYearStart);
+  useEffect(() => {
+    const raw = String(selectedYearFilter || '').trim();
+    const m = raw.match(/^(\d{4})\/\d{2}$/);
+    if (!m) return;
+    const startYear = Number(m[1]);
+    if (!Number.isFinite(startYear)) return;
+    setSelectedAcademicYearStart(startYear);
+  }, [selectedYearFilter]);
   const selectedAcademicYearLabel = useMemo(
     () => `${selectedAcademicYearStart}/${String(selectedAcademicYearStart + 1).slice(-2)}`,
     [selectedAcademicYearStart]
@@ -202,32 +207,6 @@ export default function ProgressTab({
     return rows.slice(0, 6);
   }, [subjectDetails, selectedStudentId]);
 
-  const busiestWeekday = useMemo(() => {
-    const labels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const counts = {};
-    subjectDetails.forEach(({ detail }) => {
-      (detail?.events || []).forEach((event) => {
-        const start = event?.start_ts || event?.start || event?.start_local;
-        if (!start) return;
-        if (
-          selectedStudentId
-          && event?.child_id
-          && String(event.child_id) !== String(selectedStudentId)
-        ) {
-          return;
-        }
-        const date = new Date(start);
-        if (Number.isNaN(date.getTime())) return;
-        if (date < monthStart || date > monthEnd) return;
-        const idx = date.getDay();
-        counts[idx] = (counts[idx] || 0) + 1;
-      });
-    });
-    const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-    if (!best) return null;
-    return labels[Number(best[0])] || null;
-  }, [subjectDetails, selectedStudentId, monthStart, monthEnd]);
-
   const stats = useMemo(() => {
     const attended = calendarDays.filter((d) => d.status === 'attended').length;
     const unattended = calendarDays.filter((d) => d.status === 'unattended').length;
@@ -335,7 +314,6 @@ export default function ProgressTab({
         const progress = Math.max(0, Math.min(100, Math.round(Number(progressRaw) || 0)));
 
         const attendanceByDayForSubject = {};
-        let attendedMarkedCount = 0;
         (detail?.attendanceRecords || []).forEach((record) => {
           if (
             selectedStudentId
@@ -351,9 +329,6 @@ export default function ProgressTab({
           if (dayDate < academicYearStartDate || dayDate > academicYearEndDate) return;
           if (!attendanceByDayForSubject[day]) attendanceByDayForSubject[day] = [];
           attendanceByDayForSubject[day].push(record?.status || '');
-          if (record?.status === 'present' || record?.status === 'partial') {
-            attendedMarkedCount += 1;
-          }
         });
         const subjectAttendanceTotals = Object.values(attendanceByDayForSubject).reduce(
           (acc, statuses) => {
@@ -410,91 +385,97 @@ export default function ProgressTab({
           if (Number.isNaN(dt.getTime())) return false;
           return dt >= academicYearStartDate && dt <= academicYearEndDate;
         });
-        const totalEventsCount = eventsInYear.length;
         const eventsAttachedToPlanCount = eventsInYear.filter(
           (event) => !!(event?.year_plan_id || event?.source_block_id)
         ).length;
 
         const paceDelta = progress - expectedProgress;
+        const paceLabel = !eventsAttachedToPlanCount
+          ? 'Not planned'
+          : paceDelta < -8
+            ? 'Behind'
+            : paceDelta > 8
+              ? 'Ahead'
+              : 'On track';
+        const isFreeform = eventsAttachedToPlanCount === 0 && eventsInYear.length === 0;
+        const performanceLabel = gradePercent != null
+          ? `${gradePercent}%`
+          : gradeLetter || '—';
 
         return {
           id: String(subject?.id || ''),
           subject: subject?.name || 'Subject',
-          progress,
-          childIds: Array.isArray(subject?.assignedChildren)
-            ? subject.assignedChildren.filter(Boolean)
-            : [],
-          childNames: Array.isArray(subject?.assignedChildren)
-            ? subject.assignedChildren
-              .map((childId) => children.find((child) => String(child?.id) === String(childId)))
-              .filter(Boolean)
-              .map((child) => child?.first_name || child?.name || 'Child')
-              .join(', ')
-            : '',
-          planEventsLine: eventsAttachedToPlanCount > 0
-            ? `${eventsAttachedToPlanCount} event${eventsAttachedToPlanCount === 1 ? '' : 's'} attached to plan`
-            : 'No plan created',
-          totalEventsLine: `${totalEventsCount} event${totalEventsCount === 1 ? '' : 's'} total attached to this subject`,
-          attendedEventsLine: `${attendedMarkedCount} marked as attended`,
+          plannedLabel: isFreeform ? 'Freeform' : `${eventsAttachedToPlanCount} lessons`,
+          doneLabel: isFreeform ? '—' : `${subjectAttendanceTotals.present} done`,
+          paceLabel: isFreeform ? 'Not counted' : paceLabel,
+          performanceLabel: isFreeform ? '—' : performanceLabel,
+          hasPlan: eventsAttachedToPlanCount > 0,
           paceDelta,
         };
       })
       .filter((row) => row.id);
-  }, [subjectDetails, selectedStudentId, academicYearStartDate, academicYearEndDate, children]);
+  }, [subjectDetails, selectedStudentId, academicYearStartDate, academicYearEndDate]);
 
-  const flags = useMemo(() => {
+  const needsAttention = useMemo(() => {
     const list = [];
     const worstSubject = [...subjectProgressRows].sort((a, b) => a.paceDelta - b.paceDelta)[0];
     if (worstSubject && worstSubject.paceDelta < -8) {
       list.push({
         id: 'behind-subject',
-        type: `Behind in ${worstSubject.subject}`,
-        text: 'Suggestion: Add 1 session this week.',
+        title: `${worstSubject.subject} is behind pace`,
+        fixText: 'Fix: add 1 session this week',
         actionView: 'plan-year',
       });
     }
-    if (busiestWeekday) {
+
+    const noPlanSubject = subjectProgressRows.find((row) => !row.hasPlan);
+    if (noPlanSubject) {
       list.push({
-        id: 'overload',
-        type: `${busiestWeekday} overload`,
-        text: 'Suggestion: Move 1 lesson to a lighter day.',
-        actionView: 'month',
+        id: 'no-plan-subject',
+        title: `${noPlanSubject.subject} has no plan`,
+        fixText: 'Fix: create plan',
+        actionView: 'plan-year',
       });
     }
-    if (stats.unattended > 0) {
-      list.push({
-        id: 'attendance-gap',
-        type: `${stats.unattended} missed day${stats.unattended === 1 ? '' : 's'}`,
-        text: 'Suggestion: Mark attendance and close missing days.',
-        actionView: 'attendance',
-      });
-    }
+
     if (list.length === 0) {
       list.push({
         id: 'clear',
-        type: 'No major flags',
-        text: 'Everything looks steady this month.',
+        title: 'No urgent actions',
+        fixText: 'Everything looks steady this week',
         actionView: null,
       });
     }
-    return list.slice(0, 3);
-  }, [stats.unattended, busiestWeekday, subjectProgressRows]);
+    return list.slice(0, 2);
+  }, [subjectProgressRows]);
+  const familyProgress = useMemo(() => {
+    const plannedDays = Number(stats.annualAttendanceMarked) || 0;
+    const plannedTargetDays = Math.max(1, Number(stats.annualAttendanceTarget) || 180);
+    const plannedPercent = Math.max(0, Math.min(100, Math.round((plannedDays / plannedTargetDays) * 100)));
 
-  const trends = useMemo(() => ([
-    { id: 'attendance', label: 'Attendance', value: stats.attendanceRate, display: `${stats.attendanceRate}%` },
-    { id: 'completion', label: 'Completion', value: stats.completionRate, display: `${stats.completionRate}%` },
-    {
-      id: 'grades',
-      label: 'Grades',
-      value: stats.gradeAverage == null ? 0 : stats.gradeAverage,
-      display: stats.gradeAverage == null ? '—' : `${stats.gradeAverage}%`,
-    },
-  ]), [stats.attendanceRate, stats.completionRate, stats.gradeAverage]);
+    const completedDays = Number(stats.annualAttendancePresent) || 0;
+    const completedScheduledDays = Math.max(0, plannedDays);
+    const attendancePercent = completedScheduledDays > 0
+      ? Math.max(0, Math.min(100, Math.round((completedDays / completedScheduledDays) * 100)))
+      : 0;
 
-  const monthlyNoEventsCount = useMemo(
-    () => calendarDays.filter((day) => day.status === 'noEvents').length,
-    [calendarDays]
-  );
+    const remainingDays = Math.max(0, plannedTargetDays - completedDays);
+    const nowTs = today.getTime();
+    const endTs = academicYearEndDate.getTime();
+    const remainingWeeks = Math.max(1 / 7, (endTs - nowTs) / (1000 * 60 * 60 * 24 * 7));
+    const paceNeededPerWeek = remainingDays / remainingWeeks;
+
+    return {
+      plannedDays,
+      plannedTargetDays,
+      plannedPercent,
+      completedDays,
+      completedScheduledDays,
+      attendancePercent,
+      paceLabel: stats.paceLabel || 'On track',
+      paceNeededPerWeek,
+    };
+  }, [stats, today, academicYearEndDate]);
 
   const openSubjectDetails = (subjectId) => {
     if (!subjectId) return;
@@ -518,53 +499,92 @@ export default function ProgressTab({
   return (
     <View style={styles.page}>
       <View style={styles.content}>
-      <View style={styles.headerRow}>
-        <View style={styles.yearHeaderNavShell}>
-          <TouchableOpacity
-            style={styles.yearHeaderNavBtn}
-            onPress={() => setSelectedAcademicYearStart((prev) => prev - 1)}
-            accessibilityRole="button"
-            accessibilityLabel="Previous year"
-          >
-            <ChevronLeft size={24} color="#9CA3AF" />
-          </TouchableOpacity>
-          <Text style={styles.yearHeaderTitle}>{selectedAcademicYearLabel}</Text>
-          <TouchableOpacity
-            style={styles.yearHeaderNavBtn}
-            onPress={() => setSelectedAcademicYearStart((prev) => prev + 1)}
-            accessibilityRole="button"
-            accessibilityLabel="Next year"
-          >
-            <ChevronRight size={24} color="#9CA3AF" />
-          </TouchableOpacity>
+      {!hideYearHeader ? (
+        <View style={styles.headerRow}>
+          <View style={styles.yearHeaderNavShell}>
+            <TouchableOpacity
+              style={styles.yearHeaderNavBtn}
+              onPress={() => setSelectedAcademicYearStart((prev) => prev - 1)}
+              accessibilityRole="button"
+              accessibilityLabel="Previous year"
+            >
+              <ChevronLeft size={24} color="#9CA3AF" />
+            </TouchableOpacity>
+            <Text style={styles.yearHeaderTitle}>{selectedAcademicYearLabel}</Text>
+            <TouchableOpacity
+              style={styles.yearHeaderNavBtn}
+              onPress={() => setSelectedAcademicYearStart((prev) => prev + 1)}
+              accessibilityRole="button"
+              accessibilityLabel="Next year"
+            >
+              <ChevronRight size={24} color="#9CA3AF" />
+            </TouchableOpacity>
+          </View>
         </View>
-
-      </View>
+      ) : null}
 
       <View style={styles.mainColumns}>
         <View style={styles.leftColumn}>
-          <View style={[styles.sectionHeaderRow, styles.sectionHeaderRowCompact]}>
-            <Text style={styles.sectionTitle}>Progress by Subject</Text>
+          <View style={styles.familyProgressCard}>
+            <View style={styles.familyProgressHeaderRow}>
+              <Text style={styles.familyProgressTitle}>Family progress</Text>
+            </View>
+            <View style={styles.familyProgressColumns}>
+              <View style={styles.familyProgressCol}>
+                <Text style={styles.familyProgressColLabel}>Planned</Text>
+                <Text style={styles.familyProgressColValue}>
+                  {familyProgress.plannedDays} / {familyProgress.plannedTargetDays} class days
+                </Text>
+                <Text style={styles.familyProgressColMeta}>{familyProgress.plannedPercent}% of yearly target</Text>
+              </View>
+              <View style={styles.familyProgressCol}>
+                <Text style={styles.familyProgressColLabel}>Completed</Text>
+                <Text style={styles.familyProgressColValue}>
+                  {familyProgress.completedDays} / {familyProgress.completedScheduledDays} scheduled days
+                </Text>
+                <Text style={styles.familyProgressColMeta}>{familyProgress.attendancePercent}% attendance</Text>
+              </View>
+              <View style={styles.familyProgressCol}>
+                <Text style={styles.familyProgressColLabel}>Pace</Text>
+                <Text style={styles.familyProgressColValue}>{familyProgress.paceLabel}</Text>
+                <Text style={styles.familyProgressColMeta}>
+                  Need {familyProgress.paceNeededPerWeek.toFixed(1)} class days/week to finish
+                </Text>
+              </View>
+            </View>
           </View>
-          <View style={styles.subjectCardsList}>
+
+          <View style={styles.subjectTableCard}>
+            <Text style={styles.sectionTitle}>Subject progress</Text>
             {subjectProgressRows.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyStateText}>No subjects available for this student yet.</Text>
               </View>
             ) : (
-              subjectProgressRows.map((row) => (
-                <SubjectProgressCard
-                  key={row.id}
-                  subject={row.subject}
-                  childIds={row.childIds}
-                  childNames={row.childNames}
-                  familyChildren={children}
-                  planEventsLine={row.planEventsLine}
-                  totalEventsLine={row.totalEventsLine}
-                  attendedEventsLine={row.attendedEventsLine}
-                  onViewDetails={() => openSubjectDetails(row.id)}
-                />
-              ))
+              <View style={styles.subjectTableWrap}>
+                <View style={styles.subjectTableHeaderRow}>
+                  <Text style={[styles.subjectTableHeaderCell, styles.colSubject]}>Subject</Text>
+                  <Text style={[styles.subjectTableHeaderCell, styles.colPlanned]}>Planned</Text>
+                  <Text style={[styles.subjectTableHeaderCell, styles.colDone]}>Done</Text>
+                  <Text style={[styles.subjectTableHeaderCell, styles.colPace]}>Pace</Text>
+                  <Text style={[styles.subjectTableHeaderCell, styles.colPerformance]}>Performance</Text>
+                </View>
+                {subjectProgressRows.map((row) => (
+                  <View key={row.id} style={styles.subjectTableBodyRow}>
+                    <TouchableOpacity
+                      style={styles.colSubject}
+                      onPress={() => openSubjectDetails(row.id)}
+                      {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                    >
+                      <Text style={styles.subjectTableSubjectText}>{row.subject}</Text>
+                    </TouchableOpacity>
+                    <Text style={[styles.subjectTableBodyCell, styles.colPlanned]}>{row.plannedLabel}</Text>
+                    <Text style={[styles.subjectTableBodyCell, styles.colDone]}>{row.doneLabel}</Text>
+                    <Text style={[styles.subjectTableBodyCell, styles.colPace]}>{row.paceLabel}</Text>
+                    <Text style={[styles.subjectTableBodyCell, styles.colPerformance]}>{row.performanceLabel}</Text>
+                  </View>
+                ))}
+              </View>
             )}
           </View>
 
@@ -573,15 +593,15 @@ export default function ProgressTab({
         <View style={styles.rightColumn}>
           <View style={styles.card}>
             <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>Flags</Text>
+              <Text style={styles.sectionTitle}>Needs attention</Text>
             </View>
             <View style={styles.flagList}>
-              {flags.map((flag) => (
+              {needsAttention.map((flag) => (
                 <View key={flag.id} style={styles.flagRow}>
                   <View style={styles.flagIcon} />
                   <View style={styles.flagBody}>
-                    <Text style={styles.flagType}>⚠ {flag.type}</Text>
-                    <Text style={styles.flagText}>{flag.text}</Text>
+                    <Text style={styles.flagType}>⚠ {flag.title}</Text>
+                    <Text style={styles.flagText}>{flag.fixText}</Text>
                   </View>
                   {flag.actionView ? (
                     <TouchableOpacity
@@ -595,88 +615,9 @@ export default function ProgressTab({
               ))}
             </View>
           </View>
-
-          <View style={styles.trendsBlock}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>Trends</Text>
-            </View>
-            <View style={styles.trendList}>
-              {trends.map((trend) => (
-                <MiniTrendRow
-                  key={trend.id}
-                  label={trend.label}
-                  value={trend.value}
-                  display={trend.display}
-                />
-              ))}
-            </View>
-          </View>
         </View>
       </View>
       </View>
-    </View>
-  );
-}
-
-function MetricCard({ label, value, subtext, isLast = false }) {
-  return (
-    <View style={[styles.metricBlock, isLast && styles.metricBlockLast]}>
-      <Text style={styles.metricLabel}>{label}</Text>
-      <Text style={styles.metricValue}>{value}</Text>
-      <Text style={styles.metricSubtext}>{subtext}</Text>
-    </View>
-  );
-}
-
-function SubjectProgressCard({
-  subject,
-  childIds = [],
-  childNames = '',
-  familyChildren = [],
-  planEventsLine,
-  totalEventsLine,
-  attendedEventsLine,
-  onViewDetails,
-}) {
-  return (
-    <View style={styles.subjectCard}>
-      <Text style={styles.subjectCardTitle}>{subject}</Text>
-      {childIds.length > 0 ? (
-        <View style={styles.subjectCardChildrenRow}>
-          <ChildAvatarCluster
-            childIds={childIds}
-            familyChildren={familyChildren}
-            size={20}
-            overlap={-6}
-          />
-          <Text style={styles.subjectCardChildrenText} numberOfLines={1}>
-            {childNames}
-          </Text>
-        </View>
-      ) : null}
-      <View style={styles.subjectStatsRow}>
-        <Text style={styles.subjectStat}>{planEventsLine}</Text>
-        <Text style={styles.subjectStat}>{totalEventsLine}</Text>
-        <Text style={styles.subjectStat}>{attendedEventsLine}</Text>
-      </View>
-      <TouchableOpacity style={styles.viewDetailsButton} onPress={onViewDetails}>
-        <Text style={styles.viewDetailsButtonText}>View details</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-function MiniTrendRow({ label, value, display }) {
-  const normalized = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
-  const filled = Math.round(normalized / 20);
-  const blocks = Array.from({ length: 5 }, (_, idx) => (idx < filled ? '▓' : '░')).join('');
-  return (
-    <View style={styles.trendRow}>
-      <View style={styles.trendTopRow}>
-        <Text style={styles.trendLabel}>{label}</Text>
-        <Text style={styles.trendValue}>{display}</Text>
-      </View>
-      <Text style={styles.trendBlocks}>{blocks}</Text>
     </View>
   );
 }
@@ -747,7 +688,7 @@ const styles = StyleSheet.create({
   },
 
   studentChipText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     color: '#6B7280',
     ...WEB_HEADING_FONT,
@@ -758,51 +699,72 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  metricsRow: {
-    flexDirection: 'row',
-    gap: 10,
-    alignItems: 'stretch',
+  familyProgressCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 12,
   },
 
-  metricBlock: {
+  familyProgressHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+
+  familyProgressTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111827',
+    letterSpacing: -0.2,
+    ...WEB_HEADING_FONT,
+  },
+
+  familyProgressColumns: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+
+  familyProgressCol: {
     flex: 1,
-    minHeight: 88,
+    minWidth: 220,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.24)',
+    borderColor: 'rgba(148, 163, 184, 0.22)',
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 3,
   },
 
-  metricBlockLast: {
-    borderRightWidth: 1,
-  },
-
-  metricLabel: {
-    fontSize: 11,
+  familyProgressColLabel: {
+    fontSize: 12,
     fontWeight: '600',
     color: '#6B7280',
     textTransform: 'uppercase',
-    letterSpacing: 0.4,
+    letterSpacing: 0.35,
     ...WEB_HEADING_FONT,
   },
 
-  metricValue: {
-    marginTop: 4,
-    fontSize: 32,
+  familyProgressColValue: {
+    fontSize: 22,
     fontWeight: '700',
     color: '#111827',
-    lineHeight: 34,
+    lineHeight: 26,
     ...WEB_HEADING_FONT,
   },
 
-  metricSubtext: {
-    marginTop: 4,
-    fontSize: 12,
-    color: '#64748B',
-    lineHeight: 16,
+  familyProgressColMeta: {
+    fontSize: 14,
+    color: '#475569',
+    lineHeight: 18,
     ...WEB_BODY_FONT,
   },
 
@@ -845,7 +807,7 @@ const styles = StyleSheet.create({
   },
 
   sectionTitle: {
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: '500',
     color: '#111827',
     ...WEB_HEADING_FONT,
@@ -853,7 +815,7 @@ const styles = StyleSheet.create({
 
   sectionMeta: {
     marginTop: 2,
-    fontSize: 12,
+    fontSize: 13,
     color: '#6B7280',
     ...WEB_BODY_FONT,
   },
@@ -868,7 +830,7 @@ const styles = StyleSheet.create({
   },
 
   sectionButtonText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     color: '#374151',
     ...WEB_HEADING_FONT,
@@ -901,7 +863,7 @@ const styles = StyleSheet.create({
   },
 
   dayText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '600',
     color: '#6B7280',
     ...WEB_BODY_FONT,
@@ -923,43 +885,9 @@ const styles = StyleSheet.create({
   },
 
   legendText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '400',
     color: '#4B5563',
-    ...WEB_BODY_FONT,
-  },
-
-  trendList: {
-    gap: 10,
-  },
-
-  trendRow: {
-    gap: 3,
-  },
-
-  trendTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-
-  trendLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#374151',
-    ...WEB_HEADING_FONT,
-  },
-
-  trendValue: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#111827',
-    ...WEB_BODY_FONT,
-  },
-
-  trendBlocks: {
-    fontSize: 12,
-    color: '#6366F1',
-    letterSpacing: 0.8,
     ...WEB_BODY_FONT,
   },
 
@@ -992,7 +920,7 @@ const styles = StyleSheet.create({
   },
 
   flagType: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     color: '#111827',
     ...WEB_HEADING_FONT,
@@ -1000,9 +928,9 @@ const styles = StyleSheet.create({
 
   flagText: {
     marginTop: 2,
-    fontSize: 12,
+    fontSize: 13,
     color: '#6B7280',
-    lineHeight: 16,
+    lineHeight: 18,
     ...WEB_BODY_FONT,
   },
 
@@ -1016,113 +944,78 @@ const styles = StyleSheet.create({
   },
 
   flagFixBtnText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     color: '#4F46E5',
     ...WEB_HEADING_FONT,
   },
 
-  attendanceBlock: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.05)',
-    paddingTop: 16,
-  },
-
-  trendsBlock: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.05)',
-    paddingTop: 14,
-  },
-
-  subjectCardsList: {
-    gap: 12,
-  },
-
-  subjectCard: {
+  subjectTableCard: {
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.05)',
     borderRadius: 12,
     padding: 16,
     backgroundColor: '#FFFFFF',
+    gap: 10,
   },
-
-  subjectCardTitle: {
-    fontSize: 14,
+  subjectTableWrap: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  subjectTableHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  subjectTableHeaderCell: {
+    fontSize: 12,
     fontWeight: '700',
+    textTransform: 'uppercase',
+    color: '#6B7280',
+    letterSpacing: 0.3,
+    ...WEB_HEADING_FONT,
+  },
+  subjectTableBodyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEF2F7',
+  },
+  subjectTableSubjectText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#111827',
     ...WEB_HEADING_FONT,
   },
-
-  subjectCardChildrenRow: {
-    marginTop: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-
-  subjectCardChildrenText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#64748B',
-    ...WEB_BODY_FONT,
-  },
-
-  subjectProgressTrack: {
-    marginTop: 10,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: '#EEF2FF',
-    overflow: 'hidden',
-  },
-
-  subjectProgressFill: {
-    height: '100%',
-    borderRadius: 999,
-    backgroundColor: '#8B5CF6',
-  },
-
-  subjectProgressMeta: {
-    marginTop: 8,
-    fontSize: 12,
-    fontWeight: '500',
+  subjectTableBodyCell: {
+    fontSize: 14,
     color: '#374151',
     ...WEB_BODY_FONT,
   },
-
-  subjectNextLine: {
-    marginTop: 6,
-    fontSize: 12,
-    color: '#6B7280',
-    ...WEB_BODY_FONT,
+  colSubject: {
+    flex: 2.1,
   },
-
-  subjectStatsRow: {
-    marginTop: 10,
-    gap: 4,
+  colPlanned: {
+    flex: 1.5,
   },
-
-  subjectStat: {
-    fontSize: 12,
-    color: '#374151',
-    ...WEB_BODY_FONT,
+  colDone: {
+    flex: 1.2,
   },
-
-  viewDetailsButton: {
-    marginTop: 12,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.05)',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  colPace: {
+    flex: 1.3,
   },
-
-  viewDetailsButtonText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#4F46E5',
-    ...WEB_HEADING_FONT,
+  colPerformance: {
+    flex: 1.1,
   },
 
   emptyState: {
@@ -1133,7 +1026,7 @@ const styles = StyleSheet.create({
   },
 
   emptyStateText: {
-    fontSize: 13,
+    fontSize: 14,
     color: '#6B7280',
     ...WEB_BODY_FONT,
   },

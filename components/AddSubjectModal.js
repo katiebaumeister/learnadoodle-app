@@ -114,6 +114,7 @@ export default function AddSubjectModal({
   onSubjectAdded,
   familyId,
   defaultChildId = null,
+  defaultChildIds = [],
   defaultSubjectName = null,
   initialSchoolYear = null,
   initialSchoolTerm = null,
@@ -253,7 +254,9 @@ export default function AddSubjectModal({
         if (defaultSubjectName) {
           setSubjectName(defaultSubjectName);
         }
-        if (defaultChildId) {
+        if (Array.isArray(defaultChildIds) && defaultChildIds.length > 0) {
+          setSelectedChildIds(defaultChildIds.filter(Boolean));
+        } else if (defaultChildId) {
           setSelectedChildIds([defaultChildId]);
         }
       }
@@ -299,7 +302,7 @@ export default function AddSubjectModal({
       setOpeningAddUnits(false);
       hasPrefilledFromFamilyRef.current = false;
     }
-  }, [visible, defaultChildId, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject]);
+  }, [visible, defaultChildId, defaultChildIds, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject]);
 
   // Clear transient validation/banner errors as soon as form state is corrected.
   useEffect(() => {
@@ -921,10 +924,17 @@ export default function AddSubjectModal({
   // Set default to first child when children are loaded (if no defaultChildId and no children selected)
   // BUT only in add mode (not edit mode)
   useEffect(() => {
-    if (visible && children.length > 0 && selectedChildIds.length === 0 && !defaultChildId && !subject) {
+    if (
+      visible
+      && children.length > 0
+      && selectedChildIds.length === 0
+      && !defaultChildId
+      && (!Array.isArray(defaultChildIds) || defaultChildIds.length === 0)
+      && !subject
+    ) {
       setSelectedChildIds([children[0].id]);
     }
-  }, [children, visible, defaultChildId, selectedChildIds.length, subject]);
+  }, [children, visible, defaultChildId, defaultChildIds, selectedChildIds.length, subject]);
 
   const loadMaterials = async () => {
     if (!familyId) return;
