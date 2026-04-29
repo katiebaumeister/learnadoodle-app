@@ -8821,6 +8821,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           return (
             <SubjectsPage
               familyId={subjectsFamilyId}
+              planningMode={propFamily?.default_planning_mode || null}
               children={children || []}
               preloadedSubjects={subjectsOverviewCache}
               preloadedSubjectDetailCache={subjectDetailCache}

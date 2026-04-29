@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
 import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Heart, FileText, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw, CalendarPlus } from 'lucide-react';
-import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount } from '../../lib/apiClient';
+import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount, setOnboardingPlanningMode } from '../../lib/apiClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
@@ -84,6 +84,16 @@ function subscriptionSidebarProductLabel(planKey) {
   }
 }
 
+const ONBOARDING_GOAL_OPTIONS = [
+  { id: 'HOMESCHOOL_COMPLIANCE', label: 'Homeschooling' },
+  { id: 'AFTERSCHOOL_GOALS', label: 'Afterschooling' },
+  { id: 'NONE', label: 'Just scheduling' },
+];
+
+function getOnboardingGoalLabel(goalId) {
+  return ONBOARDING_GOAL_OPTIONS.find((opt) => opt.id === goalId)?.label || '—';
+}
+
 export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
   const currentChildId = propCurrentChildId ?? null;
@@ -128,6 +138,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [profileUsername, setProfileUsername] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [viewingAsChildEmail, setViewingAsChildEmail] = useState(null);
+  const [showGoalDropdown, setShowGoalDropdown] = useState(false);
+  const [pendingOnboardingGoal, setPendingOnboardingGoal] = useState(null);
+  const [showGoalChangeConfirmModal, setShowGoalChangeConfirmModal] = useState(false);
+  const [savingOnboardingGoal, setSavingOnboardingGoal] = useState(false);
   const lastProfileSaveRef = useRef(0);
   const preferencesLoadedRef = useRef(false);
   const skipPreferencesSaveRef = useRef(true);
@@ -1228,6 +1242,47 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
+  const handleRequestGoalChange = (nextGoalId) => {
+    if (!nextGoalId) return;
+    setShowGoalDropdown(false);
+    if (nextGoalId === family?.default_planning_mode) return;
+    setPendingOnboardingGoal(nextGoalId);
+    setShowGoalChangeConfirmModal(true);
+  };
+
+  const handleConfirmGoalChange = async () => {
+    const nextGoalId = pendingOnboardingGoal;
+    const resolvedFamilyId = family?.id || familyId;
+    if (!nextGoalId || !resolvedFamilyId) {
+      setShowGoalChangeConfirmModal(false);
+      setPendingOnboardingGoal(null);
+      return;
+    }
+
+    setSavingOnboardingGoal(true);
+    try {
+      const res = await setOnboardingPlanningMode({
+        family_id: resolvedFamilyId,
+        planning_mode: nextGoalId,
+      });
+      if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to update goal');
+
+      const updatedFamily = { ...(family || {}), default_planning_mode: nextGoalId };
+      setFamily(updatedFamily);
+      onFamilyUpdate?.(updatedFamily);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshFamily'));
+      }
+      toast.push('Goal updated. Your experience will now match this goal. All existing data was kept.', 'success');
+    } catch (err) {
+      toast.push(err?.message || 'Failed to update goal', 'error');
+    } finally {
+      setSavingOnboardingGoal(false);
+      setShowGoalChangeConfirmModal(false);
+      setPendingOnboardingGoal(null);
+    }
+  };
+
   // Sync email from auth.users to profiles when email is verified
   useEffect(() => {
     if (!user) return;
@@ -2239,6 +2294,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         const isViewingAsChild = Boolean(viewingAsChildId);
         const displayEmail = isViewingAsChild ? (viewingAsChildEmail ?? 'No account linked') : profileEmail;
         const hasProfileChanges = !isViewingAsChild && (profileEmail.trim() !== (profile?.email || user?.email || ''));
+        const onboardingGoalId = family?.default_planning_mode || null;
+        const onboardingGoalLabel = getOnboardingGoalLabel(onboardingGoalId);
+        const canEditOnboardingGoal = !isViewingAsChild && !isChildMode && !isTutorViewer && !profileEditLocked && Boolean(family?.id || familyId);
         
         return (
           <View style={styles.mainContentInner}>
@@ -2324,6 +2382,62 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <Text style={styles.profileResetPasswordHint}>
                 We'll send you an email with a link to reset your password.
               </Text>
+            </View>
+
+            <View style={styles.profileSectionSpacer}>
+              <Text style={styles.subsectionTitle}>User Experience</Text>
+              <View style={styles.subsectionDivider} />
+            </View>
+
+            <View style={styles.profileFieldGroup}>
+              <Text style={styles.profileFieldLabel}>Goal</Text>
+              <View style={styles.profileReadOnlyValue}>
+                <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
+              </View>
+              {canEditOnboardingGoal && (
+                <>
+                  <Text style={styles.profileGoalHint}>
+                    Switching this changes parts of your planning experience, but all your existing data stays intact.
+                  </Text>
+                  <View style={styles.profileGoalDropdownWrap}>
+                    <TouchableOpacity
+                      style={styles.profileGoalDropdownTrigger}
+                      onPress={() => setShowGoalDropdown((prev) => !prev)}
+                      disabled={savingOnboardingGoal}
+                      {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
+                    >
+                      <Text style={styles.profileGoalDropdownTriggerText}>{onboardingGoalLabel}</Text>
+                      <ChevronDown
+                        size={16}
+                        color="#6b7280"
+                        style={showGoalDropdown ? { transform: [{ rotate: '180deg' }] } : undefined}
+                      />
+                    </TouchableOpacity>
+
+                    {showGoalDropdown && (
+                      <View style={styles.profileGoalDropdownMenu}>
+                        {ONBOARDING_GOAL_OPTIONS.map((option) => {
+                          const selected = onboardingGoalId === option.id;
+                          return (
+                            <TouchableOpacity
+                              key={option.id}
+                              style={styles.profileGoalDropdownItem}
+                              onPress={() => handleRequestGoalChange(option.id)}
+                              disabled={savingOnboardingGoal}
+                              {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
+                            >
+                              <Text style={[styles.profileGoalDropdownItemText, selected && styles.profileGoalDropdownItemTextSelected]}>
+                                {option.label}
+                              </Text>
+                              {selected ? <Check size={14} color="#2563eb" /> : null}
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
+                </>
+              )}
             </View>
 
             {/* Danger Zone - Delete account (parents only) */}
@@ -4269,6 +4383,80 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
       {/* Modals */}
       <Modal
+        visible={showGoalChangeConfirmModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (savingOnboardingGoal) return;
+          setShowGoalChangeConfirmModal(false);
+          setPendingOnboardingGoal(null);
+        }}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            if (savingOnboardingGoal) return;
+            setShowGoalChangeConfirmModal(false);
+            setPendingOnboardingGoal(null);
+          }}
+        >
+          <TouchableOpacity style={styles.inviteUrlModal} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.inviteUrlModalHeader}>
+              <Text style={styles.inviteUrlModalTitle}>Switch Goal?</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  if (savingOnboardingGoal) return;
+                  setShowGoalChangeConfirmModal(false);
+                  setPendingOnboardingGoal(null);
+                }}
+                style={styles.inviteUrlModalClose}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                disabled={savingOnboardingGoal}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inviteUrlModalDescription}>
+              You are switching your goal to {getOnboardingGoalLabel(pendingOnboardingGoal)}.
+            </Text>
+            <Text style={styles.goalConfirmBodyText}>
+              This will adjust parts of your planner experience and recommendations to match this goal.
+              Your existing children, subjects, schedules, and records will all be kept.
+            </Text>
+
+            <View style={styles.inviteUrlModalActions}>
+              <TouchableOpacity
+                style={styles.inviteUrlDoneButton}
+                onPress={() => {
+                  if (savingOnboardingGoal) return;
+                  setShowGoalChangeConfirmModal(false);
+                  setPendingOnboardingGoal(null);
+                }}
+                {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
+                disabled={savingOnboardingGoal}
+              >
+                <Text style={styles.inviteUrlDoneButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.inviteUrlCopyButton, savingOnboardingGoal && styles.inviteUrlCopyButtonDisabled]}
+                onPress={handleConfirmGoalChange}
+                disabled={savingOnboardingGoal}
+                {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
+              >
+                {savingOnboardingGoal ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.inviteUrlCopyButtonText}>Confirm switch</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
         visible={showComingSoonModal}
         transparent
         animationType="fade"
@@ -5819,6 +6007,9 @@ function createStyles(tokens) {
       marginTop: 0,
       marginBottom: 32,
     },
+    profileSectionSpacer: {
+      marginTop: 6,
+    },
     profileFieldLabel: {
       fontSize: 15,
       fontWeight: '700',
@@ -5958,6 +6149,87 @@ function createStyles(tokens) {
       color: '#6b7280',
       marginTop: 12,
       lineHeight: 20,
+    },
+    profileReadOnlyValue: {
+      minHeight: 46,
+      paddingHorizontal: 16,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      backgroundColor: '#f9fafb',
+      justifyContent: 'center',
+    },
+    profileReadOnlyValueText: {
+      fontSize: 15,
+      color: '#111827',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    profileGoalHint: {
+      fontSize: 13,
+      color: '#6b7280',
+      marginTop: 12,
+      lineHeight: 20,
+      marginBottom: 10,
+    },
+    profileGoalDropdownWrap: {
+      marginTop: 2,
+      maxWidth: 280,
+    },
+    profileGoalDropdownTrigger: {
+      minHeight: 40,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: '#d1d5db',
+      backgroundColor: '#ffffff',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    profileGoalDropdownTriggerText: {
+      fontSize: 13,
+      color: '#374151',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    profileGoalDropdownMenu: {
+      marginTop: 6,
+      borderWidth: 1,
+      borderColor: '#d1d5db',
+      borderRadius: 10,
+      backgroundColor: '#ffffff',
+      overflow: 'hidden',
+    },
+    profileGoalDropdownItem: {
+      minHeight: 40,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: 1,
+      borderBottomColor: '#f3f4f6',
+    },
+    profileGoalDropdownItemText: {
+      fontSize: 13,
+      color: '#374151',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    profileGoalDropdownItemTextSelected: {
+      fontWeight: '700',
+      color: '#1d4ed8',
+    },
+    goalConfirmBodyText: {
+      fontSize: 13,
+      color: '#4b5563',
+      lineHeight: 20,
+      marginTop: 4,
     },
     dangerZoneSection: {
       marginTop: 40,

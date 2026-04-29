@@ -99,18 +99,6 @@ function getSubjectTermLabel(term) {
 }
 
 const SUBJECTS_MODE_STORAGE_PREFIX = 'subjects:selected-mode';
-const SUBJECT_TAB_INTRO = {
-  view: {
-    eyebrow: 'COURSES',
-    title: "Your family's courses",
-    subtitle: 'See each subject at a glance and open details to manage plans, materials, and outcomes.',
-  },
-  plan: {
-    eyebrow: 'SCHEDULE',
-    title: 'Build your weekly subject plan',
-    subtitle: 'Plan learning across subjects, balance workload, and turn goals into an actionable schedule.',
-  },
-};
 
 function readStoredSubjectsMode(storageKey) {
   if (Platform.OS !== 'web' || typeof window === 'undefined' || !storageKey) return null;
@@ -131,6 +119,7 @@ function writeStoredSubjectsMode(storageKey, mode) {
 
 export default function SubjectsPage({
   familyId,
+  planningMode = null,
   children = [],
   preloadedSubjects = null,
   preloadedSubjectDetailCache = {},
@@ -885,8 +874,6 @@ export default function SubjectsPage({
     };
   }, [filteredSubjects, subjectDetailCache, getChildName, effectiveComplianceStateCodes, selectedChildFilter, attendanceByChildForCompliance]);
 
-  const tabIntro = selectedModeFilter === 'progress' ? null : SUBJECT_TAB_INTRO[selectedModeFilter] || null;
-
   const handleBack = () => {
     setSelectedSubjectId(null);
     setPendingScrollToSectionId(null);
@@ -1016,7 +1003,7 @@ export default function SubjectsPage({
                   activeOpacity={0.8}
                 >
                   <Text style={styles.headerFiltersButtonText}>
-                    {activeHeaderFilterCount > 0 ? `Filters (${activeHeaderFilterCount})` : 'Filters'}
+                    {activeHeaderFilterCount > 0 ? `Scope (${activeHeaderFilterCount})` : 'Scope'}
                   </Text>
                   {showHeaderFilters ? <ChevronUp size={14} color="rgba(15,23,42,0.7)" /> : <ChevronDown size={14} color="rgba(15,23,42,0.7)" />}
                 </TouchableOpacity>
@@ -1377,16 +1364,12 @@ export default function SubjectsPage({
       )}
 
       {/* Content */}
-      {tabIntro ? (
-        <View style={styles.tabIntro}>
-          <Text style={styles.tabIntroEyebrow}>{tabIntro.eyebrow}</Text>
-          <Text style={styles.tabIntroTitle}>{tabIntro.title}</Text>
-          <Text style={styles.tabIntroSubtitle}>{tabIntro.subtitle}</Text>
-        </View>
-      ) : null}
       {selectedModeFilter === 'plan' ? (
         <SubjectsPlanBuilder
           familyId={familyId}
+          planningMode={planningMode}
+          selectedYearFilter={selectedYearFilter}
+          selectedTermFilter={selectedTermFilter}
           children={safeChildren}
           visibleSubjects={filteredSubjects}
           allSubjects={subjects}
@@ -1404,6 +1387,10 @@ export default function SubjectsPage({
           filteredSubjects={filteredSubjects}
           subjectDetailCache={subjectDetailCache}
           selectedChildFilter={selectedChildFilter}
+          onOpenSubject={(subjectId) => {
+            const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
+            if (match) handleSubjectClick(match);
+          }}
         />
       ) : loading ? (
         <View style={styles.loadingContainer}>
@@ -2257,30 +2244,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 24,
     paddingTop: 8,
-  },
-  tabIntro: {
-    paddingHorizontal: 22,
-    paddingTop: 12,
-    paddingBottom: 6,
-  },
-  tabIntroEyebrow: {
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-    color: '#8B6CFF',
-    marginBottom: 6,
-  },
-  tabIntroTitle: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: '#1F2937',
-  },
-  tabIntroSubtitle: {
-    marginTop: 6,
-    fontSize: 14,
-    color: '#7B8798',
-    maxWidth: 620,
-    lineHeight: 20,
   },
   subjectsListContent: {
     paddingBottom: 40,

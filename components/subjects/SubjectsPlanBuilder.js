@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -8,10 +9,11 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Trash2, Upload } from 'lucide-react';
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { applyToCalendar, getAcademicYear, getPlanHealth } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
+import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 
 const FG = '#111827';
 const SUB = '#64748b';
@@ -50,6 +52,14 @@ function formatScheduleScopeLabel(scopeId) {
   if (scopeId === 'spring_term') return 'Spring Term';
   if (scopeId === 'full_year') return 'Full Year';
   return '';
+}
+
+function normalizePlanningMode(mode) {
+  const raw = String(mode || '').trim().toLowerCase();
+  if (!raw) return 'afterschool';
+  if (raw.includes('home')) return 'homeschool';
+  if (raw.includes('after')) return 'afterschool';
+  return 'afterschool';
 }
 
 function formatYmdFromTemplateYear(startYear, endYear, scope) {
@@ -424,7 +434,17 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
   return request;
 }
 
-export default function SubjectsPlanBuilder({ familyId, children = [], visibleSubjects = [], allSubjects = [], onDone, onOpenSubject }) {
+export default function SubjectsPlanBuilder({
+  familyId,
+  planningMode = null,
+  selectedYearFilter = 'all',
+  selectedTermFilter = 'all',
+  children = [],
+  visibleSubjects = [],
+  allSubjects = [],
+  onDone,
+  onOpenSubject,
+}) {
   const toast = useToast();
   const presentScope = useMemo(() => getPresentAcademicScope(new Date()), []);
   const [surfaceMode, setSurfaceMode] = useState('home'); // home | builder
@@ -454,6 +474,8 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   const [showYearDropdown, setShowYearDropdown] = useState(false);
   const [showTermDropdown, setShowTermDropdown] = useState(false);
   const [showFullSchedulePreview, setShowFullSchedulePreview] = useState(false);
+  const [showSubjectPickerModal, setShowSubjectPickerModal] = useState(false);
+  const [subjectPickerAction, setSubjectPickerAction] = useState('add'); // add | edit
   const [saving, setSaving] = useState(false);
   const [blocksBySubject, setBlocksBySubject] = useState({});
 
@@ -527,9 +549,28 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     [schoolYearOptions, selectedSchoolYearId]
   );
   const selectedTermOption = useMemo(() => TERM_OPTIONS.find((x) => x.id === selectedTerm) || TERM_OPTIONS[0], [selectedTerm]);
+  const currentUserMode = useMemo(() => normalizePlanningMode(planningMode), [planningMode]);
+  const isHomeschoolMode = currentUserMode === 'homeschool';
+  const displaySchoolYear = useMemo(() => {
+    if (selectedYearFilter !== 'all') {
+      return schoolYearOptions.find((opt) => String(opt?.label || '').trim() === String(selectedYearFilter).trim()) || selectedSchoolYear;
+    }
+    return selectedSchoolYear;
+  }, [schoolYearOptions, selectedSchoolYear, selectedYearFilter]);
+  const displayTerm = useMemo(() => {
+    if (selectedTermFilter === 'fall_term' || selectedTermFilter === 'spring_term' || selectedTermFilter === 'full_year') {
+      return selectedTermFilter;
+    }
+    return selectedTerm;
+  }, [selectedTermFilter, selectedTerm]);
+  const displayTermOption = useMemo(() => TERM_OPTIONS.find((x) => x.id === displayTerm) || TERM_OPTIONS[0], [displayTerm]);
+  const hasPinnedFilters = selectedYearFilter !== 'all' || selectedTermFilter !== 'all';
   const slotScopedSubjects = useMemo(() => (
     (baseSubjects || []).filter((subject) => subjectMatchesYearTerm(subject, selectedSchoolYear?.label, selectedTerm))
   ), [baseSubjects, selectedSchoolYear?.label, selectedTerm]);
+  const homeSlotScopedSubjects = useMemo(() => (
+    (baseSubjects || []).filter((subject) => subjectMatchesYearTerm(subject, displaySchoolYear?.label, displayTerm))
+  ), [baseSubjects, displaySchoolYear?.label, displayTerm]);
   const dateRange = useMemo(
     () => (selectedSchoolYear ? formatYmdFromTemplateYear(selectedSchoolYear.start_year, selectedSchoolYear.end_year, selectedTerm) : null),
     [selectedSchoolYear, selectedTerm]
@@ -538,6 +579,19 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   const selectedSubjectRows = useMemo(
     () => baseSubjects.filter((s) => selectedSubjectIds.includes(String(s?.id))),
     [baseSubjects, selectedSubjectIds]
+  );
+  const childNameById = useMemo(() => {
+    const map = {};
+    (children || []).forEach((child) => {
+      const id = String(child?.id || '').trim();
+      if (!id) return;
+      map[id] = String(child?.first_name || child?.name || 'Student').trim();
+    });
+    return map;
+  }, [children]);
+  const allChildIds = useMemo(
+    () => (children || []).map((child) => String(child?.id || '').trim()).filter(Boolean),
+    [children]
   );
 
   useEffect(() => {
@@ -626,15 +680,15 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   }, [activeScheduleCore, baseSubjects]);
 
   const viewedScheduleCore = useMemo(() => {
-    if (!selectedSchoolYear) return null;
-    const selectedStartYear = Number(selectedSchoolYear?.start_year);
-    const selectedScope = String(selectedTerm || '').trim();
+    if (!displaySchoolYear) return null;
+    const selectedStartYear = Number(displaySchoolYear?.start_year);
+    const selectedScope = String(displayTerm || '').trim();
     if (!Number.isFinite(selectedStartYear) || !selectedScope) return null;
     return (planCores || []).find((core) => (
       Number(core?.startYear) === selectedStartYear
       && String(core?.scopeId || '').trim() === selectedScope
     )) || null;
-  }, [planCores, selectedSchoolYear, selectedTerm]);
+  }, [planCores, displaySchoolYear, displayTerm]);
 
   const currentSchedule = useMemo(() => {
     if (!viewedScheduleCore) return null;
@@ -648,11 +702,11 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   }, [viewedScheduleCore, allSubjectPool]);
 
   const currentScheduleHeading = useMemo(() => {
-    const fallbackYear = String(selectedSchoolYear?.label || '').trim();
-    const fallbackTerm = formatScheduleScopeLabel(selectedTerm);
+    const fallbackYear = String(displaySchoolYear?.label || '').trim();
+    const fallbackTerm = formatScheduleScopeLabel(displayTerm);
     if (fallbackYear && fallbackTerm) return `${fallbackYear} ${fallbackTerm}`;
     return fallbackYear || fallbackTerm || 'Current Schedule';
-  }, [selectedSchoolYear?.label, selectedTerm]);
+  }, [displaySchoolYear?.label, displayTerm]);
 
   const activeScheduleDayRows = useMemo(() => {
     const blocks = Array.isArray(currentSchedule?.blocksLite) ? currentSchedule.blocksLite : [];
@@ -674,6 +728,7 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
       return {
         key: `day-${dayNum}`,
         dayLabel: WEEKDAY_FULL_LABELS[dayNum] || WEEKDAY_LABELS[dayNum] || `Day ${dayNum}`,
+        dayEntries,
         summaryText,
       };
     });
@@ -681,12 +736,12 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
 
   const homeTermOrder = useMemo(() => ['fall_term', 'spring_term'], []);
   const selectedSchoolYearIndex = useMemo(
-    () => schoolYearOptions.findIndex((opt) => String(opt?.id) === String(selectedSchoolYearId || '')),
-    [schoolYearOptions, selectedSchoolYearId]
+    () => schoolYearOptions.findIndex((opt) => String(opt?.id) === String(displaySchoolYear?.id || selectedSchoolYearId || '')),
+    [schoolYearOptions, displaySchoolYear?.id, selectedSchoolYearId]
   );
   const selectedTermIndex = useMemo(
-    () => homeTermOrder.indexOf(String(selectedTerm || '').trim()),
-    [homeTermOrder, selectedTerm]
+    () => homeTermOrder.indexOf(String(displayTerm || '').trim()),
+    [homeTermOrder, displayTerm]
   );
   const canNavigatePrevTerm = selectedSchoolYearIndex > 0 || selectedTermIndex > 0;
   const canNavigateNextTerm = (
@@ -723,28 +778,94 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
   };
 
   const subjectPlans = useMemo(() => {
-    const selectedStartYear = Number(selectedSchoolYear?.start_year);
-    const slotKey = buildPlanSlotKey(selectedStartYear, selectedTerm);
+    const selectedStartYear = Number(displaySchoolYear?.start_year);
+    const slotKey = buildPlanSlotKey(selectedStartYear, displayTerm);
     const slotSubjectIds = slotKey ? (planSubjectIdsBySlot?.[slotKey] || []) : [];
     const slotSubjectNames = slotKey ? (planSubjectNamesBySlot?.[slotKey] || []) : [];
     const plannedSet = new Set((slotSubjectIds || []).map((id) => String(id)));
     const plannedNameSet = new Set((slotSubjectNames || []).map((name) => normalizeSubjectName(name)));
     const blocks = Array.isArray(viewedScheduleCore?.blocksLite) ? viewedScheduleCore.blocksLite : [];
-    return (slotScopedSubjects || []).map((subject) => {
+    return (homeSlotScopedSubjects || []).map((subject) => {
       const subjectId = String(subject?.id || '');
       const normalizedName = normalizeSubjectName(subject?.name);
       const blocksForSubject = blocks.filter((block) =>
         Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
       );
       const cadenceText = formatSubjectCadence(blocksForSubject);
+      const attachedIds = Array.isArray(subject?.assignedChildren)
+        ? subject.assignedChildren.map((id) => String(id)).filter(Boolean)
+        : [];
+      const effectiveAttachedIds = attachedIds.length > 0
+        ? attachedIds
+        : allChildIds;
+      const attachedStudentNames = effectiveAttachedIds
+        .map((childId) => childNameById[String(childId)] || null)
+        .filter(Boolean);
       return {
         id: subjectId,
         name: subject?.name || 'Subject',
         hasPlan: (subjectId ? plannedSet.has(subjectId) : false) || (normalizedName ? plannedNameSet.has(normalizedName) : false),
         cadenceText,
+        attachedStudentIds: effectiveAttachedIds,
+        attachedStudentsLabel: attachedStudentNames.join(', '),
       };
     });
-  }, [slotScopedSubjects, selectedSchoolYear?.start_year, selectedTerm, planSubjectIdsBySlot, planSubjectNamesBySlot, viewedScheduleCore]);
+  }, [homeSlotScopedSubjects, displaySchoolYear?.start_year, displayTerm, planSubjectIdsBySlot, planSubjectNamesBySlot, viewedScheduleCore, childNameById, allChildIds]);
+
+  const yearStats = useMemo(() => {
+    const targetDays = 180;
+    if (!displaySchoolYear) {
+      return {
+        targetDays,
+        completedDays: 0,
+        plannedDays: 0,
+        remaining: targetDays,
+        todayIsClassDay: false,
+      };
+    }
+    const schoolYearRange = formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year');
+    const scheduleBlocks = Array.isArray(currentSchedule?.blocksLite) ? currentSchedule.blocksLite : [];
+    const daySet = new Set(
+      scheduleBlocks.flatMap((block) => (
+        Array.isArray(block?.weekdays)
+          ? block.weekdays.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+          : []
+      ))
+    );
+    const scheduledWeekdays = [...daySet];
+    const plannedDays = schoolYearRange
+      ? countOccurrencesInRange(schoolYearRange.start_date, schoolYearRange.end_date, scheduledWeekdays)
+      : 0;
+    const now = new Date();
+    const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const cappedToday = schoolYearRange ? (todayYmd > schoolYearRange.end_date ? schoolYearRange.end_date : todayYmd) : todayYmd;
+    const completedDays = schoolYearRange
+      ? countOccurrencesInRange(schoolYearRange.start_date, cappedToday, scheduledWeekdays)
+      : 0;
+    const inRangeToday = schoolYearRange ? (todayYmd >= schoolYearRange.start_date && todayYmd <= schoolYearRange.end_date) : false;
+    return {
+      targetDays,
+      completedDays,
+      plannedDays,
+      remaining: Math.max(targetDays - completedDays, 0),
+      todayIsClassDay: inRangeToday && scheduledWeekdays.includes(now.getDay()),
+    };
+  }, [displaySchoolYear, currentSchedule]);
+
+  const nextScheduledLabel = useMemo(() => {
+    const rows = activeScheduleDayRows || [];
+    if (rows.length === 0) return 'Next: no lessons scheduled';
+    const today = new Date().getDay();
+    for (let offset = 0; offset < 7; offset += 1) {
+      const idx = (today + offset) % 7;
+      const row = rows[idx];
+      const firstEntry = row?.dayEntries?.[0];
+      if (firstEntry) {
+        return `Next: ${firstEntry.subjectName} · ${toAmPm(firstEntry.startTime)}`;
+      }
+    }
+    return 'Next: no lessons scheduled';
+  }, [activeScheduleDayRows]);
 
   const step4Preview = useMemo(() => {
     if (!dateRange || selectedSubjectRows.length === 0) return null;
@@ -953,6 +1074,73 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     setSurfaceMode('builder');
   };
 
+  const subjectPickerPool = useMemo(
+    () => (homeSlotScopedSubjects.length > 0 ? homeSlotScopedSubjects : baseSubjects),
+    [homeSlotScopedSubjects, baseSubjects]
+  );
+
+  const subjectPickerHasAnyPlan = useMemo(
+    () => (subjectPlans || []).some((row) => row?.hasPlan),
+    [subjectPlans]
+  );
+
+  const subjectPickerHasAnyWithoutPlan = useMemo(
+    () => (subjectPlans || []).some((row) => !row?.hasPlan),
+    [subjectPlans]
+  );
+
+  const subjectPickerOptions = useMemo(() => {
+    const pool = subjectPickerPool;
+    const plannedSet = new Set((subjectPlans || []).filter((row) => row?.hasPlan).map((row) => String(row.id)));
+    if (subjectPickerAction === 'edit') {
+      return (pool || []).filter((subject) => plannedSet.has(String(subject?.id || '')));
+    }
+    return (pool || []).filter((subject) => !plannedSet.has(String(subject?.id || '')));
+  }, [subjectPickerAction, subjectPickerPool, subjectPlans]);
+
+  const subjectPickerEmptyMessage = useMemo(() => {
+    if (subjectPickerAction === 'edit') {
+      if ((subjectPickerPool || []).length === 0) {
+        return "You don't have any subjects for this year and term, please add a new subject to create a plan";
+      }
+      if (!subjectPickerHasAnyPlan) {
+        return "You don't have any plans for this year and term yet, please create a new plan first.";
+      }
+      return '';
+    }
+    if ((subjectPickerPool || []).length === 0) {
+      return "You don't have any subjects for this year and term, please add a new subject to create a plan";
+    }
+    if (!subjectPickerHasAnyWithoutPlan && subjectPickerHasAnyPlan) {
+      return "All of your family's subjects for this year and term have plans created, please create a new subject if you want to create a new plan.";
+    }
+    return '';
+  }, [subjectPickerAction, subjectPickerPool, subjectPickerHasAnyWithoutPlan, subjectPickerHasAnyPlan]);
+
+  const openSubjectPicker = useCallback((action = 'add') => {
+    const mode = action === 'edit' ? 'edit' : 'add';
+    setSubjectPickerAction(mode);
+    setShowSubjectPickerModal(true);
+  }, []);
+
+  const handlePickSubjectFromModal = useCallback((subjectId) => {
+    const mode = subjectPickerAction === 'edit' ? 'edit' : 'add';
+    setShowSubjectPickerModal(false);
+    openBuilderForSubject(subjectId, mode);
+  }, [subjectPickerAction, openBuilderForSubject]);
+
+  const getSubjectStudentMeta = useCallback((subject) => {
+    const attachedIds = Array.isArray(subject?.assignedChildren)
+      ? subject.assignedChildren.map((id) => String(id)).filter(Boolean)
+      : [];
+    const effectiveIds = attachedIds.length > 0 ? attachedIds : allChildIds;
+    const label = effectiveIds
+      .map((childId) => childNameById[String(childId)] || null)
+      .filter(Boolean)
+      .join(', ');
+    return { ids: effectiveIds, label };
+  }, [allChildIds, childNameById]);
+
   const openSubjectDetails = useCallback((subjectId) => {
     const safeId = String(subjectId || '').trim();
     if (!safeId) return;
@@ -971,62 +1159,116 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
     window.dispatchEvent(
       new CustomEvent('openAddSubjectModal', {
         detail: {
-          schoolYear: selectedSchoolYear?.label || null,
-          schoolTerm: selectedTerm || null,
+          schoolYear: displaySchoolYear?.label || null,
+          schoolTerm: displayTerm || null,
         },
       })
     );
-  }, [selectedSchoolYear?.label, selectedTerm]);
+  }, [displaySchoolYear?.label, displayTerm]);
 
   if (surfaceMode === 'home') {
     return (
       <View style={styles.wrap}>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          {isHomeschoolMode ? (
+            <View style={styles.yearProgressCard}>
+              <View style={styles.yearProgressTopRow}>
+                <View>
+                  <Text style={styles.yearProgressTitle}>
+                    {displaySchoolYear?.label || 'Academic Year'}
+                  </Text>
+                  <Text style={styles.yearProgressSubtitle}>
+                    {yearStats.completedDays} completed · {yearStats.remaining} remaining
+                  </Text>
+                </View>
+                <View style={styles.yearProgressStatWrap}>
+                  <Text style={styles.yearProgressBig}>
+                    {yearStats.plannedDays} / {yearStats.targetDays}
+                  </Text>
+                  <Text style={styles.yearProgressStatLabel}>planned class days</Text>
+                </View>
+              </View>
+              <View style={styles.yearProgressFooter}>
+                <Text style={styles.yearProgressToday}>
+                  {yearStats.todayIsClassDay ? 'Today: Class day' : 'Today: No class'}
+                </Text>
+                <Text style={styles.yearProgressNext}>{nextScheduledLabel}</Text>
+              </View>
+            </View>
+          ) : null}
+
           <View style={styles.emptyScheduleSection}>
             <View style={styles.currentSchedulePlaceholderCard}>
-              <View style={styles.currentScheduleHeaderRow}>
-                <View style={styles.currentScheduleHeaderNavShell}>
-                  <TouchableOpacity
-                    style={[styles.currentScheduleNavBtn, !canNavigatePrevTerm && styles.currentScheduleNavBtnDisabled]}
-                    onPress={() => shiftCurrentScheduleTerm(-1)}
-                    disabled={!canNavigatePrevTerm}
-                    accessibilityRole="button"
-                    accessibilityLabel="Previous term"
-                  >
-                    <ChevronLeft size={16} color="rgba(15,23,42,0.4)" />
+              <View style={styles.termCardHeader}>
+                <View style={styles.termCardTitleWrap}>
+                  {!hasPinnedFilters ? (
+                    <View style={styles.currentScheduleHeaderNavShell}>
+                      <TouchableOpacity
+                        style={[styles.currentScheduleNavBtn, !canNavigatePrevTerm && styles.currentScheduleNavBtnDisabled]}
+                        onPress={() => shiftCurrentScheduleTerm(-1)}
+                        disabled={!canNavigatePrevTerm}
+                        accessibilityRole="button"
+                        accessibilityLabel="Previous term"
+                      >
+                        <ChevronLeft size={16} color="rgba(15,23,42,0.4)" />
+                      </TouchableOpacity>
+                      <View style={styles.currentScheduleHeaderTitleWrap}>
+                        <Text style={[styles.currentSchedulePlaceholderTitle, styles.currentSchedulePlaceholderTitleCentered]} numberOfLines={1}>
+                          {currentScheduleHeading}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={[styles.currentScheduleNavBtn, !canNavigateNextTerm && styles.currentScheduleNavBtnDisabled]}
+                        onPress={() => shiftCurrentScheduleTerm(1)}
+                        disabled={!canNavigateNextTerm}
+                        accessibilityRole="button"
+                        accessibilityLabel="Next term"
+                      >
+                        <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <Text style={styles.currentSchedulePlaceholderTitle}>{`${displaySchoolYear?.label || ''} ${displayTermOption.label}`.trim()}</Text>
+                  )}
+                </View>
+                <View style={styles.termHeaderActions}>
+                  <TouchableOpacity style={styles.termActionBtn} onPress={() => openSubjectPicker('edit')}>
+                    <Sparkles size={14} color="#374151" />
+                    <Text style={styles.termActionBtnText}>Edit a Plan</Text>
                   </TouchableOpacity>
-                  <View style={styles.currentScheduleHeaderTitleWrap}>
-                    <Text style={[styles.currentSchedulePlaceholderTitle, styles.currentSchedulePlaceholderTitleCentered]} numberOfLines={1}>
-                      {currentScheduleHeading}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={[styles.currentScheduleNavBtn, !canNavigateNextTerm && styles.currentScheduleNavBtnDisabled]}
-                    onPress={() => shiftCurrentScheduleTerm(1)}
-                    disabled={!canNavigateNextTerm}
-                    accessibilityRole="button"
-                    accessibilityLabel="Next term"
-                  >
-                    <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
+                  <TouchableOpacity style={styles.termPrimaryBtn} onPress={() => openSubjectPicker('add')}>
+                    <Plus size={14} color="#FFFFFF" />
+                    <Text style={styles.termPrimaryBtnText}>Add New Plan</Text>
                   </TouchableOpacity>
                 </View>
               </View>
+
               <View style={styles.currentSchedulePlaceholderBody}>
                 <View style={styles.scheduleSummaryList}>
                   {activeScheduleDayRows.map((row) => (
                     <View key={row.key} style={styles.scheduleSummaryRow}>
                       <Text style={styles.scheduleSummaryDay}>{row.dayLabel}</Text>
-                      <Text style={styles.scheduleSummaryText}>{row.summaryText}</Text>
+                      <View style={styles.dayPillsWrap}>
+                        {(row.dayEntries || []).length > 0 ? (
+                          (row.dayEntries || []).map((entry, idx) => (
+                            <View key={`${row.key}-${entry.subjectName}-${entry.startTime}-${idx}`} style={styles.scheduleLessonPill}>
+                              <Text style={styles.scheduleLessonPillText}>
+                                {entry.subjectName} {toAmPm(entry.startTime)}
+                              </Text>
+                            </View>
+                          ))
+                        ) : (
+                          <TouchableOpacity style={styles.scheduleEmptyPill} onPress={() => openSubjectPicker('add')} activeOpacity={0.8}>
+                            <Text style={styles.scheduleEmptyPillText}>+</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
                     </View>
                   ))}
                 </View>
               </View>
-            </View>
-          </View>
 
-          <View style={styles.emptyScheduleSection}>
-            <View style={styles.currentSchedulePlaceholderCard}>
-              <Text style={styles.currentSchedulePlaceholderTitle}>Subject Plans</Text>
+              <Text style={[styles.currentSchedulePlaceholderTitle, styles.subjectPlansSectionTitle]}>Subject Plans</Text>
               <View style={styles.subjectPlansList}>
                 {subjectPlans.length === 0 ? (
                   <View style={styles.subjectPlansEmptyWrap}>
@@ -1042,6 +1284,17 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
                     <View key={`plan-${row.id}`} style={styles.subjectPlansRow}>
                       <View style={styles.subjectPlansTextWrap}>
                         <Text style={styles.subjectPlansName}>{row.name}</Text>
+                        {row.attachedStudentsLabel ? (
+                          <View style={styles.subjectPlansStudentsRow}>
+                            <ChildAvatarCluster
+                              childIds={row.attachedStudentIds || []}
+                              familyChildren={children}
+                              size={28}
+                              overlap={-8}
+                            />
+                            <Text style={styles.subjectPlansStudents}>{row.attachedStudentsLabel}</Text>
+                          </View>
+                        ) : null}
                         <Text style={styles.subjectPlansStatus}>
                           {row.hasPlan
                             ? `Plan created${row.cadenceText ? ` • ${row.cadenceText}` : ''}`
@@ -1091,8 +1344,101 @@ export default function SubjectsPlanBuilder({ familyId, children = [], visibleSu
               </View>
             </View>
           </View>
-
         </ScrollView>
+        <Modal
+          visible={showSubjectPickerModal}
+          transparent
+          animationType="none"
+          onRequestClose={() => setShowSubjectPickerModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.subjectPickerOverlay}
+            activeOpacity={1}
+            onPress={() => setShowSubjectPickerModal(false)}
+          >
+            <TouchableOpacity style={styles.subjectPickerModal} activeOpacity={1} onPress={() => {}}>
+              <View style={styles.subjectPickerHeader}>
+                <View style={styles.subjectPickerHeaderTextWrap}>
+                  <Text style={styles.subjectPickerTitle}>
+                    {subjectPickerAction === 'edit' ? 'Choose a subject to edit' : 'Choose a subject for new plan'}
+                  </Text>
+                  <Text style={styles.subjectPickerSubtitle}>
+                    {subjectPickerAction === 'edit'
+                      ? 'Select a subject with an existing plan.'
+                      : 'Select the subject you want to plan.'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.subjectPickerClose}
+                  onPress={() => setShowSubjectPickerModal(false)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <X size={20} color="#6b7280" />
+                </TouchableOpacity>
+              </View>
+
+              {subjectPickerOptions.length > 0 ? (
+                <View style={styles.subjectPickerList}>
+                  {subjectPickerOptions.map((subject, index) => {
+                    const studentMeta = getSubjectStudentMeta(subject);
+                    return (
+                    <TouchableOpacity
+                      key={String(subject?.id || index)}
+                      style={[
+                        styles.subjectPickerItem,
+                        index === subjectPickerOptions.length - 1 && styles.subjectPickerItemLast,
+                      ]}
+                      onPress={() => handlePickSubjectFromModal(subject?.id)}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <View style={styles.subjectPickerItemTextWrap}>
+                        <Text style={styles.subjectPickerItemText}>{subject?.name || 'Subject'}</Text>
+                        {studentMeta.label ? (
+                          <View style={styles.subjectPickerStudentsRow}>
+                            <ChildAvatarCluster
+                              childIds={studentMeta.ids}
+                              familyChildren={children}
+                              size={28}
+                              overlap={-8}
+                            />
+                            <Text style={styles.subjectPickerStudentsText}>{studentMeta.label}</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <ChevronRight size={16} color="#6b7280" />
+                    </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : subjectPickerEmptyMessage ? (
+                <View style={styles.subjectPickerEmptyWrap}>
+                  <Text style={styles.subjectPickerEmptyText}>{subjectPickerEmptyMessage}</Text>
+                </View>
+              ) : null}
+              <View style={styles.subjectPickerActions}>
+                <TouchableOpacity
+                  style={styles.subjectPickerCancelBtn}
+                  onPress={() => setShowSubjectPickerModal(false)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.subjectPickerCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.subjectPickerNewSubjectBtn}
+                  onPress={() => {
+                    setShowSubjectPickerModal(false);
+                    openAddSubjectForCurrentSlot();
+                  }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Sparkles size={14} color="#ffffff" />
+                  <Text style={styles.subjectPickerNewSubjectBtnText}>New Subject</Text>
+                </TouchableOpacity>
+              </View>
+
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
       </View>
     );
   }
@@ -1526,6 +1872,71 @@ const styles = StyleSheet.create({
   emptyScheduleSection: {
     marginBottom: 14,
   },
+  yearProgressCard: {
+    backgroundColor: '#F8F7FF',
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#E6E2FF',
+    marginBottom: 14,
+  },
+  yearProgressTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  yearProgressTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: SUB,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressStatWrap: {
+    alignItems: 'flex-end',
+  },
+  yearProgressBig: {
+    fontSize: 30,
+    fontWeight: '900',
+    color: '#6D5DF6',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressStatLabel: {
+    fontSize: 12,
+    color: '#8A95A8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressFooter: {
+    marginTop: 10,
+    gap: 4,
+  },
+  yearProgressToday: {
+    fontWeight: '700',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressNext: {
+    color: SUB,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   currentSchedulePlaceholderCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
@@ -1551,6 +1962,63 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
+  },
+  termCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+    flexWrap: 'wrap',
+  },
+  termCardTitleWrap: {
+    flex: 1,
+    minWidth: 240,
+  },
+  termHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  termActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    minHeight: 40,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: BORDER,
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  termActionBtnText: {
+    color: '#374151',
+    fontSize: 14,
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  termPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    minHeight: 40,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: '#6D5DF6',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  termPrimaryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   currentScheduleHeaderNavShell: {
     width: 306,
@@ -1581,9 +2049,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   currentSchedulePlaceholderBody: {
-    flex: 1,
-    minHeight: 132,
-    justifyContent: 'center',
+    minHeight: 0,
+    justifyContent: 'flex-start',
   },
   scheduleSummaryList: {
     gap: 8,
@@ -1591,7 +2058,7 @@ const styles = StyleSheet.create({
   },
   scheduleSummaryRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 12,
     paddingVertical: 6,
     borderBottomWidth: 1,
@@ -1600,7 +2067,8 @@ const styles = StyleSheet.create({
   scheduleSummaryDay: {
     width: 92,
     flexShrink: 0,
-    fontSize: 13,
+    fontSize: 15,
+    lineHeight: 21,
     fontWeight: '700',
     color: FG,
     ...(Platform.OS === 'web' && {
@@ -1616,6 +2084,44 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  dayPillsWrap: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  scheduleLessonPill: {
+    backgroundColor: '#EDE7FF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  scheduleLessonPillText: {
+    fontWeight: '700',
+    color: '#4F46E5',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  scheduleEmptyPill: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    minWidth: 32,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  scheduleEmptyPillText: {
+    color: '#9CA3AF',
+    fontWeight: '700',
+    fontSize: 13,
   },
   currentScheduleEmptyStateWrap: {
     alignItems: 'center',
@@ -1664,6 +2170,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
     gap: 0,
   },
+  subjectPlansSectionTitle: {
+    marginTop: 10,
+  },
   subjectPlansEmptyWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1699,7 +2208,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   subjectPlansName: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
     color: FG,
     ...(Platform.OS === 'web' && {
@@ -1710,6 +2219,23 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 12,
     color: SUB,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPlansStudentsRow: {
+    marginTop: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
+  },
+  subjectPlansStudents: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '400',
+    flex: 1,
+    minWidth: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -1737,9 +2263,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 8,
+    minHeight: 40,
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    borderRadius: 16,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: 'rgba(133, 196, 242, 0.8)',
     borderStyle: 'dashed',
@@ -1747,11 +2274,177 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   subjectPlansAddPlanBtnText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
     color: '#6BB3E8',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  subjectPickerModal: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    padding: 32,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
+    }),
+  },
+  subjectPickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  subjectPickerHeaderTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  subjectPickerClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  subjectPickerTitle: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#111827',
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPickerSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#6b7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPickerList: {
+    marginTop: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    overflow: 'hidden',
+  },
+  subjectPickerItem: {
+    minHeight: 56,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  subjectPickerItemLast: {
+    borderBottomWidth: 0,
+  },
+  subjectPickerItemText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPickerItemTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  subjectPickerStudentsRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
+  },
+  subjectPickerStudentsText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#94A3B8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPickerEmptyWrap: {
+    marginTop: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    backgroundColor: '#ffffff',
+  },
+  subjectPickerEmptyText: {
+    fontSize: 14,
+    color: '#6b7280',
+    lineHeight: 22,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPickerActions: {
+    marginTop: 18,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  subjectPickerCancelBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  subjectPickerCancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectPickerNewSubjectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: '#9ECFFB',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
+      cursor: 'pointer',
+    }),
+  },
+  subjectPickerNewSubjectBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   attendancePlaceholderBody: {
