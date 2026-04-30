@@ -682,6 +682,7 @@ export default function SubjectsPlanBuilder({
   const [subjectPickerAction, setSubjectPickerAction] = useState('add'); // add | edit
   const [saving, setSaving] = useState(false);
   const [applyingSuggestionSubjectId, setApplyingSuggestionSubjectId] = useState(null);
+  const [expandedYearTargetSuggestions, setExpandedYearTargetSuggestions] = useState({});
   const [blocksBySubject, setBlocksBySubject] = useState({});
   const [instructionalEventsBySubject, setInstructionalEventsBySubject] = useState({});
   const [showSubjectEventsModal, setShowSubjectEventsModal] = useState(false);
@@ -2311,6 +2312,16 @@ export default function SubjectsPlanBuilder({
     };
   }, [yearTargetSummary]);
 
+  const yearTargetCatchUpById = useMemo(() => {
+    const out = {};
+    (yearTargetSummary?.perSubjectCatchUp || []).forEach((row) => {
+      const key = String(row?.id || '').trim();
+      if (!key) return;
+      out[key] = row;
+    });
+    return out;
+  }, [yearTargetSummary]);
+
   if (surfaceMode === 'home') {
     return (
       <View style={styles.wrap}>
@@ -2374,6 +2385,10 @@ export default function SubjectsPlanBuilder({
                                 : (deltaDays == null
                                   ? 'on_track'
                                   : (deltaDays < 0 ? 'behind' : (deltaDays > 0 ? 'ahead' : 'on_track')));
+                              const canToggleYearTargetSuggestion = (
+                                (statusTone === 'behind' || statusTone === 'ahead')
+                                && Boolean(yearTargetCatchUpById[String(row?.id || '').trim()])
+                              );
                               const statusDetail = !hasCadence
                                 ? 'Completed events can still count toward the yearly target.'
                                 : (deltaDays == null
@@ -2418,7 +2433,7 @@ export default function SubjectsPlanBuilder({
                                   <View style={[styles.subjectProgressCol, styles.cadenceStatusProgressCol]}>
                                     <Text style={styles.subjectProgressMetric}>{progressSummary}</Text>
                                     <View style={styles.subjectProgressMetaRow}>
-                                      <View
+                                      <TouchableOpacity
                                         style={[
                                           styles.subjectProgressChip,
                                           statusTone === 'behind' && styles.subjectProgressChipBehind,
@@ -2426,6 +2441,15 @@ export default function SubjectsPlanBuilder({
                                           statusTone === 'on_track' && styles.subjectProgressChipOnTrack,
                                           statusTone === 'no_cadence' && styles.subjectProgressChipNoCadence,
                                         ]}
+                                        onPress={() => {
+                                          if (!canToggleYearTargetSuggestion) return;
+                                          const subjectId = String(row?.id || '').trim();
+                                          if (!subjectId) return;
+                                          setExpandedYearTargetSuggestions((prev) => ({ ...prev, [subjectId]: !prev?.[subjectId] }));
+                                        }}
+                                        activeOpacity={canToggleYearTargetSuggestion ? 0.8 : 1}
+                                        disabled={!canToggleYearTargetSuggestion}
+                                        {...(Platform.OS === 'web' && canToggleYearTargetSuggestion && { cursor: 'pointer' })}
                                       >
                                         <Text
                                           style={[
@@ -2438,7 +2462,7 @@ export default function SubjectsPlanBuilder({
                                         >
                                           {statusLabel}
                                         </Text>
-                                      </View>
+                                      </TouchableOpacity>
                                     </View>
                                   </View>
 
@@ -2519,8 +2543,21 @@ export default function SubjectsPlanBuilder({
                           <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Gap</Text>
                         </View>
                       </View>
-                      {(yearTargetSummary.perSubjectRows || []).map((row) => (
-                        <View key={`year-target-row-${row.id}`} style={[styles.yearTargetsTableRow, styles.yearTargetsTableBodyRow]}>
+                      {(yearTargetSummary.perSubjectRows || []).map((row) => {
+                        const catchUpRow = yearTargetCatchUpById[String(row?.id || '').trim()] || null;
+                        const showSuggestion = Boolean(catchUpRow);
+                        const suggestionSummary = String(catchUpRow?.suggestionSummaryText || '').trim();
+                        const suggestedDaysText = catchUpRow?.extensionAddedDatesLabel || catchUpRow?.suggestedAddedDaysLabel || '';
+                        const isExpanded = expandedYearTargetSuggestions[String(row?.id || '').trim()] === true;
+                        return (
+                        <React.Fragment key={`year-target-row-${row.id}`}>
+                        <View
+                          style={[
+                            styles.yearTargetsTableRow,
+                            styles.yearTargetsTableBodyRow,
+                            isExpanded && styles.yearTargetsTableBodyRowExpanded,
+                          ]}
+                        >
                           <View style={[styles.yearTargetsSubjectCol, styles.yearTargetsSubjectCell]}>
                             <Text style={styles.yearTargetsSubjectCellName}>{row.name}</Text>
                             <View style={styles.yearTargetsSubjectCadenceSlot}>
@@ -2556,85 +2593,86 @@ export default function SubjectsPlanBuilder({
                             </Text>
                           </View>
                           <View style={[styles.yearTargetsCellWrap, styles.yearTargetsBalanceCol, styles.yearTargetsGapCellWrap]}>
-                            <Text
-                              style={[
-                                styles.yearTargetsBalancePill,
-                                styles.yearTargetsGapPill,
-                                row.gapDays < 0 && styles.yearTargetsNegativeBalancePill,
-                                row.gapDays > 0 && styles.yearTargetsPositiveGapPill,
-                                row.gapDays < 0 && styles.yearTargetsNegativeBalanceText,
-                                row.gapDays > 0 && styles.yearTargetsPositiveGapText,
-                              ]}
+                            <TouchableOpacity
+                              onPress={() => {
+                                if (!showSuggestion) return;
+                                const rowId = String(row?.id || '').trim();
+                                if (!rowId) return;
+                                setExpandedYearTargetSuggestions((prev) => ({ ...prev, [rowId]: !prev?.[rowId] }));
+                              }}
+                              activeOpacity={showSuggestion ? 0.8 : 1}
+                              disabled={!showSuggestion}
+                              {...(Platform.OS === 'web' && showSuggestion && { cursor: 'pointer' })}
                             >
-                              {`${row.gapDays > 0 ? `+${row.gapDays}` : row.gapDays} days`}
-                            </Text>
+                              <Text
+                                style={[
+                                  styles.yearTargetsBalancePill,
+                                  styles.yearTargetsGapPill,
+                                  row.gapDays < 0 && styles.yearTargetsNegativeBalancePill,
+                                  row.gapDays > 0 && styles.yearTargetsPositiveGapPill,
+                                  row.gapDays < 0 && styles.yearTargetsNegativeBalanceText,
+                                  row.gapDays > 0 && styles.yearTargetsPositiveGapText,
+                                ]}
+                              >
+                                {`${row.gapDays > 0 ? `+${row.gapDays}` : row.gapDays} days`}
+                              </Text>
+                            </TouchableOpacity>
                           </View>
                         </View>
-                      ))}
-                    </View>
-                  </View>
-                  <View style={styles.yearTargetsPredictiveCard}>
-                    {(yearTargetSummary.perSubjectCatchUp || [])
-                      .slice(0, 3)
-                      .map((row, index) => {
-                        const suggestionSummary = String(row?.suggestionSummaryText || '').trim();
-                        const suggestedDaysText = row.extensionAddedDatesLabel || row.suggestedAddedDaysLabel || '';
-                        return (
-                        <View
-                          key={`adjust-row-${row.id}`}
-                          style={[
-                            styles.yearTargetsPredictiveItemBlock,
-                            index > 0 && styles.yearTargetsPredictiveItemBlockSpaced,
-                          ]}
-                        >
-                          <View style={styles.yearTargetsPredictiveItemRow}>
-                            <Text style={styles.yearTargetsPredictiveItemSubject}>{row.name}</Text>
-                            <Text style={styles.yearTargetsPredictiveItemGap}>{`${row.shortDays} days short`}</Text>
-                            <View style={styles.yearTargetsPredictiveItemPaceWrap}>
-                              <Text style={styles.yearTargetsPredictiveItemArrow}>→</Text>
-                              <Text style={styles.yearTargetsPredictiveItemPace}>
-                                {`+${row.lowSessionsPerWeek}${row.highSessionsPerWeek > row.lowSessionsPerWeek ? `-${row.highSessionsPerWeek}` : ''}/week`}
-                              </Text>
-                            </View>
-                          </View>
-                          {suggestionSummary ? (
-                            <View style={styles.yearTargetsPredictiveSuggestionRow}>
-                              <Text style={styles.yearTargetsPredictiveSuggestionLine}>
-                                {`Suggestion: ${suggestionSummary}`}
-                              </Text>
-                            </View>
-                          ) : null}
-                          {suggestedDaysText ? (
-                            <View style={styles.yearTargetsPredictiveSuggestionRow}>
-                              <Text style={styles.yearTargetsPredictiveSuggestionLine}>
-                                {`Suggested days: ${suggestedDaysText}.`}
-                              </Text>
-                              {row.suggestedEndYmd ? (
-                              <TouchableOpacity
-                                onPress={() => applySuggestedTermExtension(row)}
-                                activeOpacity={0.85}
-                                disabled={applyingSuggestionSubjectId === row.id}
-                                style={[
-                                  styles.yearTargetsPredictiveSuggestionButton,
-                                  applyingSuggestionSubjectId === row.id && styles.yearTargetsPredictiveSuggestionButtonDisabled,
-                                ]}
-                                {...(Platform.OS === 'web' && { cursor: applyingSuggestionSubjectId === row.id ? 'default' : 'pointer' })}
-                              >
-                                <Text
-                                  style={[
-                                    styles.yearTargetsPredictiveSuggestionButtonText,
-                                    applyingSuggestionSubjectId === row.id && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
-                                  ]}
-                                >
-                                  {applyingSuggestionSubjectId === row.id ? 'Applying...' : 'Apply'}
-                                </Text>
-                              </TouchableOpacity>
+                        {showSuggestion && isExpanded ? (
+                          <View style={[styles.yearTargetsTableRow, styles.yearTargetsExpandedSuggestionRow]}>
+                            <View style={styles.yearTargetsExpandedSuggestionContainer}>
+                              <View style={styles.yearTargetsExpandedSuggestionTopLine}>
+                                <Text style={styles.yearTargetsPredictiveItemGap}>{`${catchUpRow.shortDays} days short`}</Text>
+                                <View style={styles.yearTargetsPredictiveItemPaceWrap}>
+                                  <Text style={styles.yearTargetsPredictiveItemArrow}>→</Text>
+                                  <Text style={styles.yearTargetsPredictiveItemPace}>
+                                    {`+${catchUpRow.lowSessionsPerWeek}${catchUpRow.highSessionsPerWeek > catchUpRow.lowSessionsPerWeek ? `-${catchUpRow.highSessionsPerWeek}` : ''}/week`}
+                                  </Text>
+                                </View>
+                              </View>
+                              {suggestionSummary ? (
+                                <View style={styles.yearTargetsExpandedSuggestionLineRow}>
+                                  <Text style={styles.yearTargetsPredictiveSuggestionLine}>
+                                    {`Suggestion: ${suggestionSummary}`}
+                                  </Text>
+                                </View>
+                              ) : null}
+                              {suggestedDaysText ? (
+                                <View style={styles.yearTargetsExpandedSuggestionLineRow}>
+                                  <Text style={styles.yearTargetsPredictiveSuggestionLine}>
+                                    {`Suggested days: ${suggestedDaysText}.`}
+                                  </Text>
+                                  {catchUpRow.suggestedEndYmd ? (
+                                    <TouchableOpacity
+                                      onPress={() => applySuggestedTermExtension(catchUpRow)}
+                                      activeOpacity={0.85}
+                                      disabled={applyingSuggestionSubjectId === catchUpRow.id}
+                                      style={[
+                                        styles.yearTargetsPredictiveSuggestionButton,
+                                        applyingSuggestionSubjectId === catchUpRow.id && styles.yearTargetsPredictiveSuggestionButtonDisabled,
+                                      ]}
+                                      {...(Platform.OS === 'web' && { cursor: applyingSuggestionSubjectId === catchUpRow.id ? 'default' : 'pointer' })}
+                                    >
+                                      <Text
+                                        style={[
+                                          styles.yearTargetsPredictiveSuggestionButtonText,
+                                          applyingSuggestionSubjectId === catchUpRow.id && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
+                                        ]}
+                                      >
+                                        {applyingSuggestionSubjectId === catchUpRow.id ? 'Applying...' : 'Apply'}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ) : null}
+                                </View>
                               ) : null}
                             </View>
-                          ) : null}
-                        </View>
+                          </View>
+                        ) : null}
+                        </React.Fragment>
                         );
                       })}
+                    </View>
                   </View>
                 </View>
               </View>
@@ -3562,6 +3600,9 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 8,
   },
+  yearTargetsTableBodyRowExpanded: {
+    borderBottomWidth: 0,
+  },
   yearTargetsTableHeaderRow: {
     backgroundColor: '#F8FAFC',
     minHeight: 48,
@@ -3973,6 +4014,33 @@ const styles = StyleSheet.create({
   yearTargetsPredictiveSuggestionRow: {
     marginLeft: 80,
     marginTop: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  yearTargetsExpandedSuggestionRow: {
+    paddingHorizontal: 20,
+    paddingTop: 0,
+    paddingBottom: 10,
+  },
+  yearTargetsExpandedSuggestionContainer: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+    borderRadius: 12,
+    backgroundColor: '#F8FAFF',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  yearTargetsExpandedSuggestionTopLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  yearTargetsExpandedSuggestionLineRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -4560,7 +4628,7 @@ const styles = StyleSheet.create({
   },
   subjectRowActions: {
     flexDirection: 'column',
-    gap: 4,
+    gap: 5,
     alignItems: 'flex-end',
     justifyContent: 'flex-end',
   },
@@ -4569,7 +4637,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   subjectRowActionLinkText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     color: '#374151',
     ...(Platform.OS === 'web' && {
