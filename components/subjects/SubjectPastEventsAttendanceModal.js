@@ -37,6 +37,19 @@ function isPastEvent(e, nowMs = Date.now()) {
   return t < nowMs;
 }
 
+function eventDedupKey(e) {
+  if (!e) return '';
+  const sourceBlockId = String(e?.source_block_id || '').trim();
+  const startTs = String(e?.start_ts || e?.due_ts || e?.end_ts || '').trim();
+  const title = String(e?.title || e?.lesson_name || '').trim().toLowerCase();
+  if (sourceBlockId) return `block:${sourceBlockId}:${startTs}:${title}`;
+
+  const subjectId = String(e?.subject_id || '').trim();
+  if (startTs || title) return `slot:${subjectId}:${startTs}:${title}`;
+
+  return `event:${String(e?.id || '').trim()}`;
+}
+
 function summarizeAttendanceForEvent(eventId, logs, eventStatus = null) {
   const rows = logs.filter((l) => String(l.event_id) === String(eventId));
   if (rows.length === 0) {
@@ -48,6 +61,18 @@ function summarizeAttendanceForEvent(eventId, logs, eventStatus = null) {
   if (present > 0 && absent === 0) return 'present';
   if (absent > 0 && present === 0) return 'absent';
   return 'mixed';
+}
+
+function summarizeAttendanceForEvents(events, logs) {
+  const statuses = (events || []).map((event) => summarizeAttendanceForEvent(event?.id, logs, event?.status));
+  if (statuses.length === 0) return 'none';
+  if (statuses.includes('mixed')) return 'mixed';
+  const hasPresent = statuses.includes('present');
+  const hasAbsent = statuses.includes('absent');
+  if (hasPresent && hasAbsent) return 'mixed';
+  if (hasPresent) return 'present';
+  if (hasAbsent) return 'absent';
+  return 'none';
 }
 
 function attendanceLabel(key) {
@@ -122,6 +147,18 @@ export default function SubjectPastEventsAttendanceModal({
     list.sort((a, b) => (eventPrimaryMs(a) || 0) - (eventPrimaryMs(b) || 0));
     return list;
   }, [pastEvents]);
+  const pastEventGroupsChronological = useMemo(() => {
+    const byKey = new Map();
+    for (const ev of pastEventsChronological) {
+      const key = eventDedupKey(ev) || `event:${String(ev?.id || '').trim()}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, { key, representative: ev, events: [ev] });
+      } else {
+        byKey.get(key).events.push(ev);
+      }
+    }
+    return Array.from(byKey.values());
+  }, [pastEventsChronological]);
 
   const eventIds = useMemo(() => pastEvents.map((e) => e.id).filter(Boolean), [pastEvents]);
   const attendanceCacheKey = useMemo(
@@ -197,8 +234,11 @@ export default function SubjectPastEventsAttendanceModal({
       toast.push('Select the last lesson you’ve completed through.', 'info');
       return;
     }
-    const slice = pastEventsChronological.slice(0, cutoffIndex + 1).filter((e) => e.status !== 'done');
-    if (slice.length === 0) {
+    const selectedGroups = pastEventGroupsChronological.slice(0, cutoffIndex + 1);
+    const actionableGroups = selectedGroups.filter((group) =>
+      (group.events || []).some((event) => event?.status !== 'done')
+    );
+    if (actionableGroups.length === 0) {
       toast.push('Nothing to update — those lessons are already complete.', 'info');
       return;
     }
@@ -207,13 +247,18 @@ export default function SubjectPastEventsAttendanceModal({
       let ok = 0;
       let failed = 0;
       let firstError = null;
-      for (const ev of slice) {
-        const { error } = await completeEvent(ev.id, null, { requirePersist: true });
-        if (error == null) ok += 1;
-        else {
-          failed += 1;
-          if (!firstError) firstError = error;
+      for (const group of actionableGroups) {
+        let groupFailed = false;
+        for (const ev of group.events || []) {
+          if (ev?.status === 'done') continue;
+          const { error } = await completeEvent(ev.id, null, { requirePersist: true });
+          if (error != null) {
+            groupFailed = true;
+            if (!firstError) firstError = error;
+          }
         }
+        if (groupFailed) failed += 1;
+        else ok += 1;
       }
       if (ok > 0) {
         toast.push(
@@ -238,23 +283,29 @@ export default function SubjectPastEventsAttendanceModal({
     } finally {
       setApplyingThrough(false);
     }
-  }, [cutoffIndex, pastEventsChronological, toast, subjectId, onCompleted, onClose, refreshLogs]);
+  }, [cutoffIndex, pastEventGroupsChronological, toast, subjectId, onCompleted, onClose, refreshLogs]);
 
   const handleSaveChanges = useCallback(async () => {
     if (!pendingAction || saving || !familyId) return;
     if (pendingAction === 'markAll') {
-      if (!pastEvents.length) return;
+      if (!pastEventGroupsChronological.length) return;
       setSaving(true);
       let succeeded = 0;
       let failed = 0;
       let firstError = null;
       try {
-        for (const ev of pastEvents) {
-          const { error } = await completeEvent(ev.id, null, { requirePersist: true });
-          if (error) {
-            failed += 1;
-            if (!firstError) firstError = error;
-          } else succeeded += 1;
+        for (const group of pastEventGroupsChronological) {
+          let groupFailed = false;
+          for (const ev of group.events || []) {
+            if (ev?.status === 'done') continue;
+            const { error } = await completeEvent(ev.id, null, { requirePersist: true });
+            if (error) {
+              groupFailed = true;
+              if (!firstError) firstError = error;
+            }
+          }
+          if (groupFailed) failed += 1;
+          else succeeded += 1;
         }
         if (succeeded > 0) {
           toast.push(
@@ -281,7 +332,7 @@ export default function SubjectPastEventsAttendanceModal({
       return;
     }
     if (pendingAction === 'deleteAll') {
-      const n = pastEvents.length;
+      const n = pastEventGroupsChronological.length;
       const ok =
         Platform.OS === 'web' && typeof window !== 'undefined'
           ? window.confirm(
@@ -293,9 +344,13 @@ export default function SubjectPastEventsAttendanceModal({
       let succeeded = 0;
       let failed = 0;
       try {
-        for (const ev of pastEvents) {
-          const { error } = await deletePlannerEvent(ev.id, familyId);
-          if (error) failed += 1;
+        for (const group of pastEventGroupsChronological) {
+          let groupFailed = false;
+          for (const ev of group.events || []) {
+            const { error } = await deletePlannerEvent(ev.id, familyId);
+            if (error) groupFailed = true;
+          }
+          if (groupFailed) failed += 1;
           else succeeded += 1;
         }
         if (succeeded > 0) {
@@ -316,7 +371,7 @@ export default function SubjectPastEventsAttendanceModal({
         setSaving(false);
       }
     }
-  }, [pendingAction, saving, familyId, pastEvents, toast, subjectId, onCompleted, onClose, refreshLogs]);
+  }, [pendingAction, saving, familyId, pastEventGroupsChronological, toast, subjectId, onCompleted, onClose, refreshLogs]);
 
   const handleCancel = useCallback(() => {
     setPendingAction(null);
@@ -328,7 +383,7 @@ export default function SubjectPastEventsAttendanceModal({
   const footerShowsSave = hasPendingChanges;
 
   const selectedLesson =
-    cutoffIndex != null && cutoffIndex >= 0 ? pastEventsChronological[cutoffIndex] : null;
+    cutoffIndex != null && cutoffIndex >= 0 ? pastEventGroupsChronological[cutoffIndex]?.representative : null;
   const throughDateShort = selectedLesson?.start_ts
     ? new Date(selectedLesson.start_ts).toLocaleDateString(undefined, {
         month: 'short',
@@ -337,7 +392,10 @@ export default function SubjectPastEventsAttendanceModal({
     : null;
   const lessonsToMarkCount =
     cutoffIndex != null && cutoffIndex >= 0
-      ? pastEventsChronological.slice(0, cutoffIndex + 1).filter((e) => e.status !== 'done').length
+      ? pastEventGroupsChronological
+          .slice(0, cutoffIndex + 1)
+          .filter((group) => (group.events || []).some((event) => event?.status !== 'done'))
+          .length
       : 0;
   const primaryFlowDisabled = applyingThrough || saving || cutoffIndex == null;
   const primaryLabel =
@@ -416,15 +474,16 @@ export default function SubjectPastEventsAttendanceModal({
                 <View style={styles.pendingBanner}>
                   <Text style={styles.pendingBannerText}>
                     {pendingAction === 'markAll'
-                      ? `Ready to mark ${pastEvents.length} past lesson${pastEvents.length !== 1 ? 's' : ''} complete and attended.`
-                      : `Ready to remove ${pastEvents.length} past lesson${pastEvents.length !== 1 ? 's' : ''} from your calendar.`}
+                      ? `Ready to mark ${pastEventGroupsChronological.length} past lesson${pastEventGroupsChronological.length !== 1 ? 's' : ''} complete and attended.`
+                      : `Ready to remove ${pastEventGroupsChronological.length} past lesson${pastEventGroupsChronological.length !== 1 ? 's' : ''} from your calendar.`}
                   </Text>
                 </View>
               ) : null}
 
               <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
-                {pastEventsChronological.map((ev, idx) => {
-                  const att = summarizeAttendanceForEvent(ev.id, attendanceLogs, ev.status);
+                {pastEventGroupsChronological.map((group, idx) => {
+                  const ev = group.representative;
+                  const att = summarizeAttendanceForEvents(group.events, attendanceLogs);
                   const when = ev.start_ts
                     ? new Date(ev.start_ts).toLocaleString(undefined, {
                         month: 'short',
@@ -434,22 +493,31 @@ export default function SubjectPastEventsAttendanceModal({
                         minute: '2-digit',
                       })
                     : '';
-                  const childIds =
-                    ev.child_ids && Array.isArray(ev.child_ids) && ev.child_ids.length > 0
-                      ? ev.child_ids
-                      : ev.child_id
-                        ? [ev.child_id]
-                        : [];
+                  const childIds = Array.from(new Set(group.events.flatMap((event) => (
+                    event?.child_ids && Array.isArray(event.child_ids) && event.child_ids.length > 0
+                      ? event.child_ids
+                      : event?.child_id
+                        ? [event.child_id]
+                        : []
+                  ))));
                   const childLabel =
                     childIds.length > 0 && typeof getChildName === 'function'
                       ? childIds.map((id) => getChildName(id)).filter(Boolean).join(', ')
                       : '';
-                  const selected = cutoffIndex != null && idx <= cutoffIndex;
-                  const selectedCutoff = cutoffIndex === idx;
                   const previewWillMarkAttended =
                     (pendingAction == null && cutoffIndex != null && idx <= cutoffIndex) ||
                     pendingAction === 'markAll';
                   const displayAttendance = previewWillMarkAttended ? 'present' : att;
+                  const attendedByHistory =
+                    pendingAction == null &&
+                    cutoffIndex == null &&
+                    displayAttendance === 'present';
+                  const selected =
+                    (cutoffIndex != null && idx <= cutoffIndex) ||
+                    attendedByHistory;
+                  const selectedCutoff =
+                    cutoffIndex === idx ||
+                    (cutoffIndex == null && attendedByHistory);
                   const calRaw = ev.status === 'done' ? 'Complete' : ev.status || 'scheduled';
                   const calLabel =
                     typeof calRaw === 'string' && calRaw.length
@@ -464,7 +532,7 @@ export default function SubjectPastEventsAttendanceModal({
                       : {};
                   return (
                     <TouchableOpacity
-                      key={ev.id}
+                      key={group.key}
                       style={[
                         styles.selectRow,
                         selected && styles.selectRowSelected,

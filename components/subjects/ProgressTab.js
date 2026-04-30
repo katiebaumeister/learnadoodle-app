@@ -25,6 +25,18 @@ function getChildLabel(child) {
   );
 }
 
+function getEventUnitTitle(event) {
+  const value = (
+    event?.unit_name
+    || event?.curriculum_unit_title
+    || event?.unit
+    || event?.unit_title
+    || event?.unit_topic
+    || ''
+  );
+  return String(value).trim();
+}
+
 function gradeToPercent(value) {
   if (value == null || value === '') return null;
   const raw = String(value).trim().toUpperCase();
@@ -71,6 +83,16 @@ export default function ProgressTab({
   useEffect(() => {
     setSelectedStudentId(preferredStudentId);
   }, [preferredStudentId]);
+  const selectedStudentName = useMemo(() => {
+    if (!selectedStudentId) return null;
+    const match = students.find((student) => String(student.id) === String(selectedStudentId));
+    return match?.name || null;
+  }, [students, selectedStudentId]);
+  const possessiveStudentLabel = useMemo(() => {
+    const base = String(selectedStudentName || 'Child').trim();
+    if (!base) return "Child's";
+    return base.toLowerCase().endsWith('s') ? `${base}'` : `${base}'s`;
+  }, [selectedStudentName]);
 
   const today = useMemo(() => new Date(), []);
   const presentAcademicYearStart = useMemo(
@@ -206,6 +228,129 @@ export default function ProgressTab({
     rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     return rows.slice(0, 6);
   }, [subjectDetails, selectedStudentId]);
+
+  const childProgressRows = useMemo(() => {
+    const studentsInScope = selectedStudentId
+      ? students.filter((student) => String(student.id) === String(selectedStudentId))
+      : students;
+
+    return studentsInScope.map((student) => {
+      const attendanceByDayForChild = {};
+      const unitTitles = new Set();
+      const gradeScores = [];
+
+      subjectDetails.forEach(({ detail }) => {
+        const events = Array.isArray(detail?.events) ? detail.events : [];
+        const eventById = events.reduce((acc, event) => {
+          const id = String(event?.id || '').trim();
+          if (id) acc[id] = event;
+          return acc;
+        }, {});
+
+        (detail?.attendanceRecords || []).forEach((record) => {
+          if (
+            record?.child_id
+            && String(record.child_id) !== String(student.id)
+          ) {
+            return;
+          }
+          const day = String(record?.day_date || '').slice(0, 10);
+          if (!day) return;
+          const dayDate = new Date(day);
+          if (Number.isNaN(dayDate.getTime())) return;
+          if (dayDate < academicYearStartDate || dayDate > academicYearEndDate) return;
+          if (!attendanceByDayForChild[day]) attendanceByDayForChild[day] = [];
+          attendanceByDayForChild[day].push(String(record?.status || '').toLowerCase());
+
+          const isAchieved = ['present', 'partial', 'completed'].includes(
+            String(record?.status || '').toLowerCase()
+          );
+          if (!isAchieved) return;
+          const eventId = String(record?.event_id || '').trim();
+          const unitTitle = eventId ? getEventUnitTitle(eventById[eventId]) : '';
+          if (unitTitle) unitTitles.add(unitTitle);
+        });
+
+        events.forEach((event) => {
+          if (
+            event?.child_id
+            && String(event.child_id) !== String(student.id)
+          ) {
+            return;
+          }
+          const start = event?.start_ts || event?.start || event?.start_local;
+          if (!start) return;
+          const dt = new Date(start);
+          if (Number.isNaN(dt.getTime())) return;
+          if (dt < academicYearStartDate || dt > academicYearEndDate) return;
+          const status = String(event?.status || '').toLowerCase();
+          if (!['completed', 'done', 'attended'].includes(status)) return;
+          const unitTitle = getEventUnitTitle(event);
+          if (unitTitle) unitTitles.add(unitTitle);
+        });
+
+        (detail?.grades || []).forEach((grade) => {
+          if (
+            grade?.child_id
+            && String(grade.child_id) !== String(student.id)
+          ) {
+            return;
+          }
+          const percentFromScore = (
+            grade?.score != null
+            && grade?.possible != null
+            && Number(grade.possible) > 0
+          )
+            ? Math.round((Number(grade.score) / Number(grade.possible)) * 100)
+            : null;
+          const percentRawScore = (
+            grade?.score != null
+            && Number(grade.score) >= 0
+            && Number(grade.score) <= 100
+          )
+            ? Number(grade.score)
+            : null;
+          const score = percentFromScore ?? percentRawScore ?? gradeToPercent(grade?.grade);
+          if (score != null) gradeScores.push(score);
+        });
+      });
+
+      const attendanceTotals = Object.values(attendanceByDayForChild).reduce(
+        (acc, statuses) => {
+          if (statuses.some((status) => status === 'absent')) {
+            acc.absent += 1;
+            return acc;
+          }
+          if (statuses.some((status) => status === 'present' || status === 'partial' || status === 'completed')) {
+            acc.present += 1;
+          }
+          return acc;
+        },
+        { present: 0, absent: 0 }
+      );
+      const attendanceMarked = attendanceTotals.present + attendanceTotals.absent;
+      const attendanceRate = attendanceMarked > 0
+        ? Math.round((attendanceTotals.present / attendanceMarked) * 100)
+        : null;
+      const gradeAverage = gradeScores.length
+        ? Math.round(gradeScores.reduce((sum, score) => sum + score, 0) / gradeScores.length)
+        : null;
+      const achievedUnits = Array.from(unitTitles).slice(0, 3);
+      const extraUnitCount = Math.max(0, unitTitles.size - achievedUnits.length);
+
+      return {
+        id: String(student.id),
+        childName: student.name || 'Student',
+        attendanceLabel: attendanceRate == null
+          ? 'No attendance yet'
+          : `${attendanceRate}% (${attendanceTotals.present}/${attendanceMarked})`,
+        gradeLabel: gradeAverage == null ? 'No grades yet' : `${gradeAverage}%`,
+        learningLabel: achievedUnits.length === 0
+          ? 'No units achieved yet'
+          : `${achievedUnits.join(', ')}${extraUnitCount > 0 ? ` +${extraUnitCount} more` : ''}`,
+      };
+    });
+  }, [subjectDetails, students, selectedStudentId, academicYearStartDate, academicYearEndDate]);
 
   const stats = useMemo(() => {
     const attended = calendarDays.filter((d) => d.status === 'attended').length;
@@ -527,7 +672,7 @@ export default function ProgressTab({
         <View style={styles.leftColumn}>
           <View style={styles.familyProgressCard}>
             <View style={styles.familyProgressHeaderRow}>
-              <Text style={styles.familyProgressTitle}>Family progress</Text>
+              <Text style={styles.familyProgressTitle}>{possessiveStudentLabel} Progress</Text>
             </View>
             <View style={styles.familyProgressColumns}>
               <View style={styles.familyProgressCol}>
@@ -555,7 +700,37 @@ export default function ProgressTab({
           </View>
 
           <View style={styles.subjectTableCard}>
-            <Text style={styles.sectionTitle}>Subject progress</Text>
+            <Text style={styles.sectionTitle}>{possessiveStudentLabel} Progress</Text>
+            {childProgressRows.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyStateText}>No child progress data yet.</Text>
+              </View>
+            ) : (
+              <View style={styles.subjectTableWrap}>
+                <View style={styles.subjectTableHeaderRow}>
+                  <Text style={[styles.subjectTableHeaderCell, styles.colChild]}>Child</Text>
+                  <Text style={[styles.subjectTableHeaderCell, styles.colAttendance]}>Attendance</Text>
+                  <Text style={[styles.subjectTableHeaderCell, styles.colGrade]}>Grades</Text>
+                  <Text style={[styles.subjectTableHeaderCell, styles.colLearning]}>Learning achieved (units)</Text>
+                </View>
+                {childProgressRows.map((row) => (
+                  <View key={row.id} style={styles.subjectTableBodyRow}>
+                    <View style={styles.colChild}>
+                      <Text style={styles.subjectTableSubjectText}>{row.childName}</Text>
+                    </View>
+                    <Text style={[styles.subjectTableBodyCell, styles.colAttendance]}>{row.attendanceLabel}</Text>
+                    <Text style={[styles.subjectTableBodyCell, styles.colGrade]}>{row.gradeLabel}</Text>
+                    <Text style={[styles.subjectTableBodyCell, styles.colLearning]} numberOfLines={1}>
+                      {row.learningLabel}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+
+          <View style={styles.subjectTableCard}>
+            <Text style={styles.sectionTitle}>{possessiveStudentLabel} Subject Progress</Text>
             {subjectProgressRows.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyStateText}>No subjects available for this student yet.</Text>
@@ -593,7 +768,7 @@ export default function ProgressTab({
         <View style={styles.rightColumn}>
           <View style={styles.card}>
             <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>Needs attention</Text>
+              <Text style={styles.sectionTitle}>{possessiveStudentLabel} Needs Attention</Text>
             </View>
             <View style={styles.flagList}>
               {needsAttention.map((flag) => (
@@ -1016,6 +1191,18 @@ const styles = StyleSheet.create({
   },
   colPerformance: {
     flex: 1.1,
+  },
+  colChild: {
+    flex: 1.3,
+  },
+  colAttendance: {
+    flex: 1.5,
+  },
+  colGrade: {
+    flex: 1,
+  },
+  colLearning: {
+    flex: 2.7,
   },
 
   emptyState: {

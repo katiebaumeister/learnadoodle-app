@@ -28,6 +28,19 @@ function isPastEvent(e, nowMs = Date.now()) {
   return t < nowMs;
 }
 
+function eventDedupKey(e) {
+  if (!e) return '';
+  const sourceBlockId = String(e?.source_block_id || '').trim();
+  const startTs = String(e?.start_ts || e?.due_ts || e?.end_ts || '').trim();
+  const title = String(e?.title || e?.lesson_name || '').trim().toLowerCase();
+  if (sourceBlockId) return `block:${sourceBlockId}:${startTs}:${title}`;
+
+  const subjectId = String(e?.subject_id || '').trim();
+  if (startTs || title) return `slot:${subjectId}:${startTs}:${title}`;
+
+  return `event:${String(e?.id || '').trim()}`;
+}
+
 function normalizeGradeValue(raw) {
   if (raw == null) return null;
   const v = String(raw).trim();
@@ -74,6 +87,28 @@ export default function SubjectPastEventsGradesModal({
     return past;
   }, [events, subjectId]);
 
+  const pastEventGroups = useMemo(() => {
+    const byKey = new Map();
+    for (const ev of pastEvents) {
+      const key = eventDedupKey(ev) || `event:${String(ev?.id || '').trim()}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          key,
+          representative: ev,
+          events: [ev],
+        });
+      } else {
+        const group = byKey.get(key);
+        group.events.push(ev);
+      }
+    }
+    const list = Array.from(byKey.values());
+    list.sort(
+      (a, b) => (eventPrimaryMs(b.representative) || 0) - (eventPrimaryMs(a.representative) || 0)
+    );
+    return list;
+  }, [pastEvents]);
+
   const outcomesByEventId = useMemo(() => {
     const map = {};
     for (const row of eventOutcomes || []) {
@@ -86,13 +121,20 @@ export default function SubjectPastEventsGradesModal({
 
   const initialGrades = useMemo(() => {
     const map = {};
-    for (const ev of pastEvents) {
-      const outcome = outcomesByEventId[String(ev.id)];
-      const base = normalizeGradeValue(outcome?.grade ?? ev?.grade);
-      map[String(ev.id)] = base || '';
+    for (const group of pastEventGroups) {
+      let base = null;
+      for (const ev of group.events) {
+        const outcome = outcomesByEventId[String(ev.id)];
+        const gradeValue = normalizeGradeValue(outcome?.grade ?? ev?.grade);
+        if (gradeValue) {
+          base = gradeValue;
+          break;
+        }
+      }
+      map[group.key] = base || '';
     }
     return map;
-  }, [pastEvents, outcomesByEventId]);
+  }, [pastEventGroups, outcomesByEventId]);
 
   useEffect(() => {
     if (!visible) return;
@@ -110,83 +152,93 @@ export default function SubjectPastEventsGradesModal({
 
   const hasPendingChanges = useMemo(() => {
     if (!visible) return false;
-    return pastEvents.some((ev) => {
-      const id = String(ev.id);
-      const prev = normalizeGradeValue(initialGrades[id]);
-      const next = normalizeGradeValue(draftGrades[id]);
+    return pastEventGroups.some((group) => {
+      const prev = normalizeGradeValue(initialGrades[group.key]);
+      const next = normalizeGradeValue(draftGrades[group.key]);
       return prev !== next;
     });
-  }, [visible, pastEvents, initialGrades, draftGrades]);
+  }, [visible, pastEventGroups, initialGrades, draftGrades]);
 
   const applyFillUngradedPass = useCallback(() => {
     setDraftGrades((prev) => {
       const next = { ...prev };
-      for (const ev of pastEvents) {
-        const id = String(ev.id);
-        if (!normalizeGradeValue(next[id])) {
-          next[id] = 'Pass';
+      for (const group of pastEventGroups) {
+        if (!normalizeGradeValue(next[group.key])) {
+          next[group.key] = 'Pass';
         }
       }
       return next;
     });
-  }, [pastEvents]);
+  }, [pastEventGroups]);
 
   const applyClearAll = useCallback(() => {
     setDraftGrades((prev) => {
       const next = { ...prev };
-      for (const ev of pastEvents) {
-        next[String(ev.id)] = '';
+      for (const group of pastEventGroups) {
+        next[group.key] = '';
       }
       return next;
     });
-  }, [pastEvents]);
+  }, [pastEventGroups]);
 
   const handleSave = useCallback(async () => {
     if (!familyId || !subjectId || saving || !hasPendingChanges) return;
     setSaving(true);
     let updated = 0;
     let failed = 0;
+    let firstError = null;
 
     try {
-      for (const ev of pastEvents) {
-        const id = String(ev.id);
-        const prev = normalizeGradeValue(initialGrades[id]);
-        const next = normalizeGradeValue(draftGrades[id]);
+      for (const group of pastEventGroups) {
+        const prev = normalizeGradeValue(initialGrades[group.key]);
+        const next = normalizeGradeValue(draftGrades[group.key]);
         if (prev === next) continue;
 
-        const outcome = outcomesByEventId[id];
-        try {
-          if (outcome?.id) {
-            const { error: updateOutcomeError } = await supabase
-              .from('event_outcomes')
+        let groupFailed = false;
+        for (const ev of group.events) {
+          const outcome = outcomesByEventId[String(ev.id)];
+          try {
+            if (outcome?.id) {
+              const { error: updateOutcomeError } = await supabase
+                .from('event_outcomes')
+                .update({ grade: next })
+                .eq('id', outcome.id);
+              if (updateOutcomeError) throw updateOutcomeError;
+            } else if (next != null) {
+              const childId =
+                ev?.child_id ||
+                (Array.isArray(ev?.child_ids) && ev.child_ids.length > 0 ? ev.child_ids[0] : null);
+              if (!childId) {
+                throw new Error('Missing child for outcome insert');
+              }
+              const payload = {
+                family_id: familyId,
+                subject_id: ev?.subject_id || subjectId,
+                event_id: ev.id,
+                child_id: childId,
+                grade: next,
+              };
+              const { error: insertOutcomeError } = await supabase
+                .from('event_outcomes')
+                .insert(payload);
+              if (insertOutcomeError) throw insertOutcomeError;
+            }
+
+            const { error: updateEventError } = await supabase
+              .from('events')
               .update({ grade: next })
-              .eq('id', outcome.id);
-            if (updateOutcomeError) throw updateOutcomeError;
-          } else if (next != null) {
-            const childId =
-              ev?.child_id ||
-              (Array.isArray(ev?.child_ids) && ev.child_ids.length > 0 ? ev.child_ids[0] : null);
-            const payload = {
-              event_id: ev.id,
-              grade: next,
-            };
-            if (childId) payload.child_id = childId;
-            const { error: insertOutcomeError } = await supabase
-              .from('event_outcomes')
-              .insert(payload);
-            if (insertOutcomeError) throw insertOutcomeError;
+              .eq('id', ev.id);
+            if (updateEventError) throw updateEventError;
+          } catch (err) {
+            groupFailed = true;
+            if (!firstError) firstError = err;
+            console.warn('[SubjectPastEventsGradesModal] save row failed', err);
           }
-
-          const { error: updateEventError } = await supabase
-            .from('events')
-            .update({ grade: next })
-            .eq('id', ev.id);
-          if (updateEventError) throw updateEventError;
-
-          updated += 1;
-        } catch (err) {
+        }
+        if (groupFailed) {
           failed += 1;
-          console.warn('[SubjectPastEventsGradesModal] save row failed', err);
+        } else {
+          updated += 1;
         }
       }
 
@@ -199,7 +251,11 @@ export default function SubjectPastEventsGradesModal({
         onCompleted?.();
         onClose?.();
       } else if (failed > 0) {
-        toast.push('Could not save grades. Please try again.', 'error');
+        const detail = String(firstError?.message || firstError?.detail || '').trim();
+        toast.push(
+          detail ? `Could not save grades: ${detail}` : 'Could not save grades. Please try again.',
+          'error'
+        );
       } else {
         toast.push('No grade changes to save.', 'info');
       }
@@ -212,6 +268,7 @@ export default function SubjectPastEventsGradesModal({
     saving,
     hasPendingChanges,
     pastEvents,
+    pastEventGroups,
     initialGrades,
     draftGrades,
     outcomesByEventId,
@@ -292,7 +349,8 @@ export default function SubjectPastEventsGradesModal({
               </Text>
 
               <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
-                {pastEvents.map((ev, idx) => {
+                {pastEventGroups.map((group, idx) => {
+                  const ev = group.representative;
                   const when = ev.start_ts
                     ? new Date(ev.start_ts).toLocaleString(undefined, {
                         month: 'short',
@@ -302,12 +360,13 @@ export default function SubjectPastEventsGradesModal({
                         minute: '2-digit',
                       })
                     : '';
-                  const childIds =
-                    ev.child_ids && Array.isArray(ev.child_ids) && ev.child_ids.length > 0
-                      ? ev.child_ids
-                      : ev.child_id
-                        ? [ev.child_id]
-                        : [];
+                  const childIds = Array.from(new Set(group.events.flatMap((event) => (
+                    event?.child_ids && Array.isArray(event.child_ids) && event.child_ids.length > 0
+                      ? event.child_ids
+                      : event?.child_id
+                        ? [event.child_id]
+                        : []
+                  ))));
                   const childLabel =
                     childIds.length > 0 && typeof getChildName === 'function'
                       ? childIds.map((id) => getChildName(id)).filter(Boolean).join(', ')
@@ -327,7 +386,7 @@ export default function SubjectPastEventsGradesModal({
 
                   return (
                     <View
-                      key={ev.id}
+                      key={group.key}
                       style={[
                         styles.selectRow,
                         Platform.OS === 'web' && hoveredRowIndex === idx && styles.selectRowHover,
@@ -356,9 +415,9 @@ export default function SubjectPastEventsGradesModal({
                         <View style={styles.gradeInputRow}>
                           <Text style={styles.gradeLabel}>Grade</Text>
                           <TextInput
-                            value={draftGrades[String(ev.id)] ?? ''}
+                            value={draftGrades[group.key] ?? ''}
                             onChangeText={(text) =>
-                              setDraftGrades((prev) => ({ ...prev, [String(ev.id)]: text }))
+                              setDraftGrades((prev) => ({ ...prev, [group.key]: text }))
                             }
                             placeholder="e.g. A-, 92, Pass"
                             placeholderTextColor="#94a3b8"

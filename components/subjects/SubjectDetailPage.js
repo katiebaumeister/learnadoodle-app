@@ -662,7 +662,6 @@ export default function SubjectDetailPage({
 
   // Metrics (with proper null/undefined handling)
   const attendanceRate30 = subjectData?.attendanceRate30 ?? null;
-  const avgGradePercent = subjectData?.avgGradePercent ?? null;
 
   // Get assigned children (IDs)
   const assignedChildren = useMemo(() => {
@@ -1399,6 +1398,11 @@ export default function SubjectDetailPage({
 
   // Process graded items
   const gradedItems = useMemo(() => {
+    const outcomeEventIds = new Set(
+      (eventOutcomes || [])
+        .filter((eo) => eo?.grade && eo?.event_id)
+        .map((eo) => String(eo.event_id))
+    );
     const items = [
       ...grades.map(g => {
         let percent = null;
@@ -1436,14 +1440,16 @@ export default function SubjectDetailPage({
           eventId: eo.event_id,
           event: event || null,
           name: event?.title || 'Assessment',
-          date: eo.created_at,
+          date: event?.end_ts || event?.start_ts || eo.created_at,
           score: null,
           possible: null,
           grade: eo.grade,
           percent,
         };
       }),
-      ...(subjectData?.events || []).filter(e => e.grade).map(e => {
+      ...(subjectData?.events || [])
+        .filter((e) => e.grade && !outcomeEventIds.has(String(e.id)))
+        .map(e => {
         const gradeMap = {
           'A+': 98, 'A': 95, 'A-': 92,
           'B+': 87, 'B': 85, 'B-': 82,
@@ -1467,18 +1473,6 @@ export default function SubjectDetailPage({
     ];
     return items.sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
   }, [grades, eventOutcomes, subjectData?.events]);
-
-  /** Shown in Grades header: API aggregate when present, else average of percents on listed items. */
-  const displayGradeAveragePercent = useMemo(() => {
-    const clamp = (n) => Math.max(0, Math.min(100, Math.round(Number(n))));
-    if (avgGradePercent != null && Number.isFinite(Number(avgGradePercent))) {
-      return clamp(avgGradePercent);
-    }
-    const withPct = gradedItems.filter((i) => i.percent != null && Number.isFinite(i.percent));
-    if (withPct.length === 0) return null;
-    const sum = withPct.reduce((s, i) => s + i.percent, 0);
-    return clamp(sum / withPct.length);
-  }, [avgGradePercent, gradedItems]);
 
   const assignmentAttentionByEventId = subjectData?.assignmentAttentionByEventId;
   const assignmentsNeedingHelp = subjectData?.assignmentsNeedingHelp || [];
@@ -2858,36 +2852,8 @@ export default function SubjectDetailPage({
               </Text>
             ) : null}
           </View>
-          {gradedItems.length > 0 && (
-            <View style={styles.gradeAverage}>
-              <View style={styles.gradeAverageRow}>
-                <Text style={styles.gradeAverageLabel}>Current average</Text>
-                <Text
-                  style={
-                    displayGradeAveragePercent != null
-                      ? styles.gradeAverageValue
-                      : styles.gradeAveragePlaceholder
-                  }
-                  accessibilityRole="text"
-                  accessibilityLabel={
-                    displayGradeAveragePercent != null
-                      ? `Current grade average, ${displayGradeAveragePercent} percent`
-                      : 'No numeric average yet'
-                  }
-                >
-                  {displayGradeAveragePercent != null ? `${displayGradeAveragePercent}%` : '—'}
-                </Text>
-              </View>
-              {displayGradeAveragePercent == null ? (
-                <Text style={styles.gradeAverageHint}>
-                  Average uses numeric scores or mapped letter grades. Add scores on assignments or assessments to see a
-                  percentage.
-                </Text>
-              ) : null}
-            </View>
-          )}
           {gradedItems.length > 0 ? (
-            <>
+            <View style={styles.emptyStateBox}>
               <View style={styles.gradesList}>
                 {gradedItems.map((item) => {
                   const Wrapper = item.eventId ? TouchableOpacity : View;
@@ -2959,7 +2925,7 @@ export default function SubjectDetailPage({
                   <Text style={styles.emptyStateButtonText}>Assigned to student</Text>
                 </TouchableOpacity>
               ) : null}
-            </>
+            </View>
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.emptyStateText}>
@@ -4927,53 +4893,6 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     width: 50,
     textAlign: 'right',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  gradeAverage: {
-    padding: 16,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  gradeAverageRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  gradeAverageLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6B7280',
-    flexShrink: 0,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  gradeAverageValue: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1F2937',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  gradeAveragePlaceholder: {
-    fontSize: 22,
-    fontWeight: '600',
-    color: '#9CA3AF',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  gradeAverageHint: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#6B7280',
-    marginTop: 8,
-    lineHeight: 18,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

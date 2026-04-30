@@ -34,6 +34,7 @@ import SubjectOverviewCard from './SubjectOverviewCard';
 import SubjectDetailPage from './SubjectDetailPage';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
+import ProgressTab from './ProgressTab';
 import HelpPopover from '../planner/HelpPopover';
 import PlannerSettingsContent from '../settings/PlannerSettingsContent';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
@@ -143,7 +144,7 @@ function readStoredSubjectsMode(storageKey) {
   if (Platform.OS !== 'web' || typeof window === 'undefined' || !storageKey) return null;
   try {
     const raw = window.localStorage.getItem(storageKey);
-    return raw === 'plan' || raw === 'view' ? raw : null;
+    return raw === 'plan' || raw === 'view' || raw === 'progress' ? raw : null;
   } catch (_) {
     return null;
   }
@@ -191,9 +192,11 @@ export default function SubjectsPage({
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   // Auto-set child filter for child/student role
-  const [selectedChildFilter, setSelectedChildFilter] = useState(
-    isChildView && childId ? childId : 'all'
-  );
+  const [selectedChildFilter, setSelectedChildFilter] = useState(() => {
+    if (isChildView && childId) return childId;
+    if (safeChildren.length > 0) return safeChildren[0].id;
+    return 'all';
+  });
   const [selectedModeFilter, setSelectedModeFilter] = useState(() => readStoredSubjectsMode(modeStorageKey) || 'view');
   const [selectedYearFilter, setSelectedYearFilter] = useState(() => getCurrentSchoolYear());
   const [selectedTermFilter, setSelectedTermFilter] = useState(ALL_TERMS_FILTER);
@@ -367,6 +370,14 @@ export default function SubjectsPage({
       setSelectedChildFilter(childId);
     }
   }, [isChildView, childId, selectedChildFilter]);
+  useEffect(() => {
+    if (isChildView) return;
+    if (!Array.isArray(safeChildren) || safeChildren.length === 0) return;
+    const currentIsValid = safeChildren.some((child) => String(child?.id) === String(selectedChildFilter));
+    if (!currentIsValid) {
+      setSelectedChildFilter(safeChildren[0].id);
+    }
+  }, [isChildView, safeChildren, selectedChildFilter]);
 
   useEffect(() => {
     if (!preloadedSubjects) {
@@ -1139,25 +1150,9 @@ export default function SubjectsPage({
           <Text style={styles.filterLabel}>Children</Text>
           <View style={styles.filterChipsWrap}>
             <View style={styles.filterChecklist}>
-              <TouchableOpacity
-                style={[
-                  styles.filterOptionChip,
-                  selectedChildFilter === 'all' && styles.filterOptionChipActive,
-                ]}
-                onPress={() => setSelectedChildFilter('all')}
-              >
-                <Text
-                  style={[
-                    styles.filterOptionChipText,
-                    selectedChildFilter === 'all' && styles.filterOptionChipTextActive,
-                  ]}
-                >
-                  All Children
-                </Text>
-              </TouchableOpacity>
               {safeChildren.map((child) => {
                 const childColor = getChildColorFromAvatar(child.avatar);
-                const isActive = selectedChildFilter === child.id;
+                const isActive = String(selectedChildFilter) === String(child.id);
                 return (
                   <TouchableOpacity
                     key={child.id}
@@ -1605,7 +1600,8 @@ export default function SubjectsPage({
   };
 
   const handleModeFilterChange = useCallback((nextMode) => {
-    setSelectedModeFilter(nextMode === 'plan' ? 'plan' : 'view');
+    const safeMode = nextMode === 'plan' || nextMode === 'progress' ? nextMode : 'view';
+    setSelectedModeFilter(safeMode);
   }, []);
 
   const renderSubjectsExportModal = () => (
@@ -1929,6 +1925,23 @@ export default function SubjectsPage({
                     Schedule
                   </Text>
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modeSegment,
+                    selectedModeFilter === 'progress' && styles.modeSegmentActive,
+                  ]}
+                  onPress={() => handleModeFilterChange('progress')}
+                >
+                  <Text
+                    style={[
+                      styles.modeSegmentText,
+                      selectedModeFilter === 'progress' && styles.modeSegmentTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Progress
+                  </Text>
+                </TouchableOpacity>
               </View>
               <TouchableOpacity
                 ref={helpButtonRef}
@@ -2056,7 +2069,7 @@ export default function SubjectsPage({
           position={helpPopoverPosition}
           onMouseEnter={clearHelpPopoverCloseTimer}
           onMouseLeave={scheduleHelpPopoverClose}
-          descriptionText={"Courses is your family's subject overview page. Click any subject card to open the Subject Details page. Switch to Schedule for the multi-subject planning layer, or build out structured class plans directly within each Subject Details page."}
+          descriptionText={"Courses is your family's subject overview page. Switch to Schedule for multi-subject planning, or Progress for child-level attendance, grades, and learning achieved by unit title."}
         />
       )}
       {renderPlanningPreferencesModal()}
@@ -2081,6 +2094,24 @@ export default function SubjectsPage({
               );
               setShowPlanningPreferencesModal(true);
             }}
+            onOpenSubject={(subjectId) => {
+              const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
+              if (match) {
+                handleSubjectClick(match);
+              }
+            }}
+          />
+        </View>
+      ) : selectedModeFilter === 'progress' ? (
+        <View style={styles.coursesTabContent}>
+          {renderCoursesHeaderFilters()}
+          <ProgressTab
+            children={safeChildren}
+            filteredSubjects={filteredSubjects}
+            subjectDetailCache={subjectDetailCache}
+            selectedChildFilter={selectedChildFilter}
+            selectedYearFilter={selectedYearFilter}
+            hideYearHeader
             onOpenSubject={(subjectId) => {
               const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
               if (match) {
