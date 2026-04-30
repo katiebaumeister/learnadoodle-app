@@ -96,6 +96,7 @@ export default function SubjectPastEventsAttendanceModal({
   onOpenEvent,
 }) {
   const toast = useToast();
+  const scopedSubjectId = String(subjectId || '').trim();
   const [attendanceLogs, setAttendanceLogs] = useState([]);
   const [pendingAction, setPendingAction] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -104,13 +105,15 @@ export default function SubjectPastEventsAttendanceModal({
   const [hoveredRowIndex, setHoveredRowIndex] = useState(null);
 
   const pastEvents = useMemo(() => {
-    const list = (events || []).filter(
-      (e) => e && String(e.subject_id) === String(subjectId) && !e.is_backlog && e.status !== 'canceled'
-    );
+    const list = (events || []).filter((e) => {
+      if (!e || e.is_backlog || e.status === 'canceled') return false;
+      if (!scopedSubjectId) return true;
+      return String(e.subject_id) === scopedSubjectId;
+    });
     const past = list.filter((e) => isPastEvent(e));
     past.sort((a, b) => (eventPrimaryMs(b) || 0) - (eventPrimaryMs(a) || 0));
     return past;
-  }, [events, subjectId]);
+  }, [events, scopedSubjectId]);
 
   /** Oldest → newest (same as progress check-in) for “mark through here”. */
   const pastEventsChronological = useMemo(() => {
@@ -281,7 +284,7 @@ export default function SubjectPastEventsAttendanceModal({
       const ok =
         Platform.OS === 'web' && typeof window !== 'undefined'
           ? window.confirm(
-              `Delete all ${n} past scheduled lesson${n !== 1 ? 's' : ''} for this subject? They will be removed from your calendar. This cannot be undone.`
+              `Delete all ${n} past scheduled lesson${n !== 1 ? 's' : ''}${scopedSubjectId ? ' for this subject' : ''}? They will be removed from your calendar. This cannot be undone.`
             )
           : true;
       if (!ok) return;
@@ -372,7 +375,9 @@ export default function SubjectPastEventsAttendanceModal({
           </View>
 
           {!hasPastEvents ? (
-            <Text style={styles.empty}>No past events loaded for this subject yet.</Text>
+            <Text style={styles.empty}>
+              {scopedSubjectId ? 'No past events loaded for this subject yet.' : 'No past events loaded yet.'}
+            </Text>
           ) : (
             <>
               <Text style={styles.headline}>Select the last lesson completed</Text>

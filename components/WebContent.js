@@ -8216,7 +8216,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       } else if (response.fetch === 'navigate_subjects' && onTabChange) {
         onTabChange('subjects');
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.history.replaceState({}, '', '/intelligence');
+          window.history.replaceState({}, '', '/subjects');
         }
       } else if (response.fetch === 'navigate_materials' && onTabChange) {
         onTabChange('materials');
@@ -8646,12 +8646,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             onSubjectDataUpdate={(data) => handleSubjectDetailUpdate(subjectId, data)}
             onBack={() => {
               if (onTabChange) {
-                onTabChange('intelligence');
+                onTabChange('subjects');
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.history.pushState({}, '', '/intelligence');
+                  window.history.pushState({}, '', '/subjects');
                 }
               } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                window.history.pushState({}, '', '/intelligence');
+                window.history.pushState({}, '', '/subjects');
                 window.location.reload();
               }
             }}

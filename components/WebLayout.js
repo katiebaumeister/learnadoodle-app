@@ -1892,13 +1892,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const subjectId = subjectDetailMatch[1];
         const expectedTab = `subject-${subjectId}`;
         setActiveTab(expectedTab);
-        setActiveTopNav('intelligence');
+        setActiveTopNav('subjects');
       } else if (pathname === '/subjects' || pathname === '/intelligence') {
-        // Default app entry should be Home. Legacy /subjects and hub /intelligence URLs
-        // were sending logged-in users straight to the Subjects/Intelligence screen.
-        window.history.replaceState({}, '', '/');
-        setActiveTab('home');
-        setActiveTopNav('home');
+        // Keep legacy /intelligence compatible but normalize to /subjects.
+        if (pathname === '/intelligence') {
+          window.history.replaceState({}, '', '/subjects');
+        }
+        setActiveTab('subjects');
+        setActiveTopNav('subjects');
       } else if (pathname === '/planner') {
         // Family panel uses pushState for About/Terms/Privacy; URL may still be /planner after switching to Family without a replace.
         if (isFamilyShellTab(activeTabRef.current)) {
@@ -2466,7 +2467,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } else if (target === 'navigate_subjects') {
       handleTabChange('subjects');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.replaceState({}, '', '/intelligence');
+        window.history.replaceState({}, '', '/subjects');
       }
     } else if (target === 'navigate_materials') {
       handleTabChange('materials');
@@ -2594,8 +2595,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         case 'subjects':
           handleTabChange('subjects');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            // Use hub path (not legacy /subjects) so it is not confused with default landing
-            window.history.pushState({}, '', '/intelligence');
+            window.history.pushState({}, '', '/subjects');
           }
           break;
         case 'review':

@@ -3112,7 +3112,6 @@ export default function PlanYearModal({
     };
   }, [blocks]);
   const step4TargetComparison = useMemo(() => {
-    if (!ENABLE_TARGET_PROGRESS_CALCULATIONS) return null;
     if (!previewSlotLines.length) return null;
     if ((effectiveSubjectIds || []).length !== 1) return null;
     const subjectId = String(effectiveSubjectIds[0] || '');
@@ -3166,21 +3165,49 @@ export default function PlanYearModal({
     const projectedHoursRaw = Number(projectedHoursBySubjectId?.[subjectId] || 0);
     const projectedHours = Math.round(projectedHoursRaw * 10) / 10;
     const projectedValue = mode === 'hours' ? projectedHours : projectedDays;
+    const subjectBlocks = (blocks || []).filter((block) => String(block?.subject_id || '') === subjectId);
+    const sessionMinutesList = subjectBlocks
+      .map((block) => blockMinutesForPlanYearBlock(block))
+      .filter((mins) => mins > 0);
+    const avgSessionMinutes = sessionMinutesList.length
+      ? sessionMinutesList.reduce((sum, mins) => sum + mins, 0) / sessionMinutesList.length
+      : 0;
+    const avgSessionHours = avgSessionMinutes > 0 ? Math.round((avgSessionMinutes / 60) * 10) / 10 : 0;
     const roundedTarget = mode === 'hours'
       ? Math.round(Number(targetValue) * 10) / 10
       : Math.round(Number(targetValue));
     const deltaRaw = Number(projectedValue) - Number(roundedTarget);
     const delta = mode === 'hours' ? Math.round(deltaRaw * 10) / 10 : Math.round(deltaRaw);
+    const deficit = Math.max(0, Number(roundedTarget) - Number(projectedValue));
+    const start = dateStringToDate(startDate);
+    const end = dateStringToDate(endDate);
+    const rangeDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1);
+    const sessionsPerWeek = projectedDays > 0 ? (projectedDays / (rangeDays / 7)) : 0;
+    const deficitSessions = mode === 'hours'
+      ? (avgSessionHours > 0 ? (deficit / avgSessionHours) : 0)
+      : deficit;
+    const suggestedEndYmd = (() => {
+      if (!(deficit > 0)) return null;
+      if (!(sessionsPerWeek > 0)) return null;
+      const addedCalendarDays = Math.max(1, Math.ceil((deficitSessions / sessionsPerWeek) * 7));
+      const next = new Date(end);
+      next.setDate(next.getDate() + addedCalendarDays);
+      return toLocalYYYYMMDD(next);
+    })();
 
     return {
       mode,
       projectedValue,
       targetValue: roundedTarget,
       delta,
+      calculationDetail: mode === 'hours'
+        ? `${projectedDays} sessions × ${avgSessionHours} hr/session`
+        : `${projectedDays} planned sessions in selected range`,
       isOverallAdjusted: targetScopeFromSettings === 'overall' && allocatedToOtherSubjects > 0,
       allocatedToOtherSubjects: mode === 'hours'
         ? Math.round(allocatedToOtherSubjects * 10) / 10
         : Math.round(allocatedToOtherSubjects),
+      suggestedEndYmd,
     };
   }, [
     targetScopeFromSettings,
@@ -3192,6 +3219,9 @@ export default function PlanYearModal({
     planSubjectTargetsOverride,
     previewSlotLines,
     projectedHoursBySubjectId,
+    blocks,
+    startDate,
+    endDate,
   ]);
   const previewAttendanceCalendar = useMemo(() => {
     if (!previewSlotLines.length || !startDate || !endDate) {
@@ -13528,6 +13558,9 @@ export default function PlanYearModal({
                                     ? `${step4TargetComparison.projectedValue} planned hours vs ${step4TargetComparison.targetValue} target hours`
                                     : `${step4TargetComparison.projectedValue} planned days vs ${step4TargetComparison.targetValue} target days`}
                                 </Text>
+                                <Text style={{ fontSize: 11, color: MUTED, marginTop: 2, lineHeight: 16 }}>
+                                  Calculated as {step4TargetComparison.calculationDetail}.
+                                </Text>
                                 {step4TargetComparison.delta !== 0 ? (
                                   <Text
                                     style={{
@@ -13546,6 +13579,11 @@ export default function PlanYearModal({
                                     On target
                                   </Text>
                                 )}
+                                {step4TargetComparison.delta < 0 && step4TargetComparison.suggestedEndYmd ? (
+                                  <Text style={{ fontSize: 11, color: MUTED, marginTop: 2, lineHeight: 16 }}>
+                                    Suggestion: extend term length to {formatDateDisplay(step4TargetComparison.suggestedEndYmd)}.
+                                  </Text>
+                                ) : null}
                                 {step4TargetComparison.isOverallAdjusted ? (
                                   <Text style={{ fontSize: 11, color: MUTED, marginTop: 2, lineHeight: 16 }}>
                                     {step4TargetComparison.mode === 'hours'

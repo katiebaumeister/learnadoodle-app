@@ -225,7 +225,7 @@ export default function SubjectsPage({
   const [subjectsExportBusy, setSubjectsExportBusy] = useState(false);
 
   useEffect(() => {
-    if (subjectsExportType === 'schedule' && subjectsExportFormat !== 'excel' && subjectsExportFormat !== 'pdf') {
+    if ((subjectsExportType === 'schedule' || subjectsExportType === 'schedule_tables') && subjectsExportFormat !== 'excel' && subjectsExportFormat !== 'pdf') {
       setSubjectsExportFormat('excel');
       return;
     }
@@ -705,12 +705,12 @@ export default function SubjectsPage({
     return `${selectedCoursesYear} / ${termLabel}`;
   }, [selectedCoursesYear, selectedTermFilter]);
   const openSubjectsExportModal = useCallback((preferredType = 'schedule') => {
-    const type = ['schedule', 'attendance', 'report_card', 'units_lessons'].includes(String(preferredType))
+    const type = ['schedule', 'schedule_tables', 'attendance', 'report_card', 'units_lessons'].includes(String(preferredType))
       ? String(preferredType)
       : 'schedule';
     const range = parseSchoolYearRange(selectedCoursesYear || getCurrentSchoolYear());
     setSubjectsExportType(type);
-    setSubjectsExportFormat(type === 'schedule' ? 'excel' : 'pdf');
+    setSubjectsExportFormat((type === 'schedule' || type === 'schedule_tables') ? 'excel' : 'pdf');
     setSubjectsExportStartDate(range.startDate);
     setSubjectsExportEndDate(range.endDate);
     setSubjectsExportChildIds(prefilledSubjectChildIds);
@@ -751,6 +751,17 @@ export default function SubjectsPage({
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     };
+    const toEventDate = (eventRow) => {
+      const raw = eventRow?.start_ts || eventRow?.start || eventRow?.start_local || eventRow?.date || null;
+      const dt = raw ? new Date(raw) : null;
+      return dt && !Number.isNaN(dt.getTime()) ? dt : null;
+    };
+    const escapeHtml = (value) => String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
 
     setSubjectsExportBusy(true);
     try {
@@ -809,6 +820,152 @@ export default function SubjectsPage({
             </html>
           `;
           const printWindow = window.open('', '_blank', 'width=980,height=720');
+          if (printWindow) {
+            printWindow.document.write(html);
+            printWindow.document.close();
+            printWindow.focus();
+            printWindow.print();
+          }
+        }
+      } else if (subjectsExportType === 'schedule_tables') {
+        const nowMs = Date.now();
+        const rowsBySubject = [];
+        for (const subject of filteredSubjects) {
+          let detail = subjectDetailCache?.[subject?.id] || null;
+          if (!detail && subject?.id && familyId) {
+            try {
+              detail = await getSubjectDetail(subject.id, familyId);
+            } catch (_) {
+              detail = null;
+            }
+          }
+          const events = Array.isArray(detail?.events) ? detail.events : [];
+          const relevantEvents = events
+            .filter((ev) => {
+              const evDate = toEventDate(ev);
+              if (!evDate) return false;
+              if (evDate < startDate || evDate > endDate) return false;
+              if (String(ev?.status || '').toLowerCase() === 'canceled') return false;
+              const eventChildIds = Array.isArray(ev?.child_ids)
+                ? ev.child_ids.map((id) => String(id))
+                : (ev?.child_id ? [String(ev.child_id)] : []);
+              if (eventChildIds.length === 0) return true;
+              return eventChildIds.some((id) => selectedChildIds.includes(id));
+            })
+            .map((ev) => {
+              const evDate = toEventDate(ev);
+              const ms = evDate ? evDate.getTime() : 0;
+              const isCompleted = String(ev?.status || '').toLowerCase() === 'done' || ms < nowMs;
+              const ymd = evDate ? toLocalYmd(evDate) : '';
+              return {
+                id: String(ev?.id || ''),
+                title: ev?.title || ev?.lesson_name || 'Event',
+                date: ymd,
+                time: evDate
+                  ? evDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                  : '—',
+                isCompleted,
+                statusBucket: isCompleted ? 'Done' : 'Upcoming',
+              };
+            })
+            .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+          const doneCount = relevantEvents.filter((ev) => ev.isCompleted).length;
+          const upcomingCount = relevantEvents.filter((ev) => !ev.isCompleted).length;
+          const projectedCount = relevantEvents.length;
+          const uniqueDays = [...new Set(relevantEvents.map((ev) => ev.date).filter(Boolean))];
+          rowsBySubject.push({
+            subjectName: subject?.name || 'Subject',
+            term: getSubjectTermLabel(normalizeSubjectTerm(subject?.school_term)),
+            targetDays: Number.isFinite(Number(subject?.default_target_days)) ? Number(subject.default_target_days) : null,
+            doneCount,
+            upcomingCount,
+            projectedCount,
+            uniqueDays,
+            events: relevantEvents,
+          });
+        }
+
+        if (subjectsExportFormat === 'excel') {
+          const csvLines = [];
+          csvLines.push('Schedule Tables Export');
+          csvLines.push(`Date range,${start},${end}`);
+          csvLines.push('');
+          csvLines.push('Subject,Term,Target days,Done,Upcoming,Projected (Done + Upcoming),Full days included');
+          rowsBySubject.forEach((row) => {
+            csvLines.push([
+              `"${String(row.subjectName).replace(/"/g, '""')}"`,
+              `"${String(row.term).replace(/"/g, '""')}"`,
+              row.targetDays != null ? row.targetDays : '',
+              row.doneCount,
+              row.upcomingCount,
+              row.projectedCount,
+              `"${row.uniqueDays.join('; ')}"`,
+            ].join(','));
+          });
+          csvLines.push('');
+          csvLines.push('Subject,Date,Time,Lesson,Bucket');
+          rowsBySubject.forEach((row) => {
+            row.events.forEach((eventRow) => {
+              csvLines.push([
+                `"${String(row.subjectName).replace(/"/g, '""')}"`,
+                eventRow.date,
+                `"${String(eventRow.time || '—').replace(/"/g, '""')}"`,
+                `"${String(eventRow.title || '').replace(/"/g, '""')}"`,
+                eventRow.statusBucket,
+              ].join(','));
+            });
+          });
+          const csvBlob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+          triggerBlobDownload(csvBlob, `schedule_tables_${start}_${end}.csv`);
+        } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          const html = `
+            <html>
+              <head><title>Schedule Tables Export</title></head>
+              <body style="font-family: Arial, sans-serif; padding: 24px;">
+                <h2>Schedule tables (${escapeHtml(selectedCoursesYear)})</h2>
+                <p>Date range: ${escapeHtml(start)} to ${escapeHtml(end)}</p>
+                <table border="1" cellspacing="0" cellpadding="8" style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
+                  <thead>
+                    <tr>
+                      <th>Subject</th><th>Term</th><th>Target days</th><th>Done</th><th>Upcoming</th><th>Projected (Done + Upcoming)</th><th>Full days included</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rowsBySubject.map((row) => `
+                      <tr>
+                        <td>${escapeHtml(row.subjectName)}</td>
+                        <td>${escapeHtml(row.term)}</td>
+                        <td>${row.targetDays != null ? row.targetDays : '—'}</td>
+                        <td>${row.doneCount}</td>
+                        <td>${row.upcomingCount}</td>
+                        <td>${row.projectedCount}</td>
+                        <td>${escapeHtml(row.uniqueDays.join(', '))}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+                ${rowsBySubject.map((row) => `
+                  <h3>${escapeHtml(row.subjectName)}</h3>
+                  <p><strong>Logic input days:</strong> ${escapeHtml(row.uniqueDays.join(', ') || 'None')}</p>
+                  <table border="1" cellspacing="0" cellpadding="8" style="border-collapse: collapse; width: 100%; margin-bottom: 18px;">
+                    <thead><tr><th>Date</th><th>Time</th><th>Lesson</th><th>Bucket</th></tr></thead>
+                    <tbody>
+                      ${row.events.map((eventRow) => `
+                        <tr>
+                          <td>${escapeHtml(eventRow.date || '—')}</td>
+                          <td>${escapeHtml(eventRow.time || '—')}</td>
+                          <td>${escapeHtml(eventRow.title || 'Event')}</td>
+                          <td>${escapeHtml(eventRow.statusBucket)}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                `).join('')}
+              </body>
+            </html>
+          `;
+          const printWindow = window.open('', '_blank', 'width=1080,height=760');
           if (printWindow) {
             printWindow.document.write(html);
             printWindow.document.close();
@@ -1484,7 +1641,8 @@ export default function SubjectsPage({
           <Text style={styles.exportModalLabel}>Data type</Text>
           <View style={styles.exportTypeRow}>
             {[
-              { id: 'schedule', label: 'Schedule' },
+              { id: 'schedule', label: 'Class Schedule' },
+              { id: 'schedule_tables', label: 'Schedule Tables' },
               { id: 'attendance', label: 'Attendance' },
               { id: 'report_card', label: 'Report card' },
               { id: 'units_lessons', label: 'Units/Lessons' },
@@ -1496,7 +1654,7 @@ export default function SubjectsPage({
                   style={[styles.exportTypeChip, active && styles.exportTypeChipActive]}
                   onPress={() => {
                     setSubjectsExportType(option.id);
-                    if (option.id === 'schedule') setSubjectsExportFormat('excel');
+                    if (option.id === 'schedule' || option.id === 'schedule_tables') setSubjectsExportFormat('excel');
                     if (option.id === 'attendance') setSubjectsExportFormat('pdf');
                     if (option.id === 'report_card') setSubjectsExportFormat('pdf');
                     if (option.id === 'units_lessons') setSubjectsExportFormat('pdf');
@@ -1510,7 +1668,7 @@ export default function SubjectsPage({
 
           <Text style={styles.exportModalLabel}>Format</Text>
           <View style={styles.exportTypeRow}>
-            {(subjectsExportType === 'schedule'
+            {((subjectsExportType === 'schedule' || subjectsExportType === 'schedule_tables')
               ? [{ id: 'excel', label: 'Excel (CSV)' }, { id: 'pdf', label: 'PDF' }]
               : subjectsExportType === 'attendance'
                 ? [{ id: 'pdf', label: 'PDF' }, { id: 'csv', label: 'CSV' }]

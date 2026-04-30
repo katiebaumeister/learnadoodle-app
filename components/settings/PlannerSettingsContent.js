@@ -332,8 +332,8 @@ export default function PlannerSettingsContent({
     setSubjects(subjectsList);
     const { subjectTargetsMap, firstActiveTarget } = deriveSubjectTargetState(subjectsList);
     setSubjectTargets(subjectTargetsMap);
-    if (firstActiveTarget) {
-      setTargetScope('per_subject');
+    const initialScope = s.target_scope || 'overall';
+    if (firstActiveTarget && initialScope === 'per_subject') {
       setGoalMode(firstActiveTarget.mode);
       if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '180');
       if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
@@ -428,19 +428,11 @@ export default function PlannerSettingsContent({
       setSubjects(subjectsData || []);
       const { subjectTargetsMap, firstActiveTarget } = deriveSubjectTargetState(subjectsData || []);
       setSubjectTargets(subjectTargetsMap);
-      if (firstActiveTarget) {
-        setTargetScope('per_subject');
+      const initialScope = s?.target_scope || 'overall';
+      if (firstActiveTarget && initialScope === 'per_subject') {
         setGoalMode(firstActiveTarget.mode);
         if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '180');
         if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
-        if (!readOnly) {
-          saveFamilyPlannerSettings(familyId, {
-            target_scope: 'per_subject',
-            default_constraint_mode: firstActiveTarget.mode,
-            default_target_days: firstActiveTarget.mode === 'days' ? parsePositiveIntOrNull(firstActiveTarget.days) : null,
-            default_target_hours: firstActiveTarget.mode === 'hours' ? parsePositiveFloatOrNull(firstActiveTarget.hours) : null,
-          }, selectedSchoolYearLabel).catch(() => {});
-        }
       }
     } catch (err) {
       setError(err?.message || 'Failed to load planner settings');
@@ -462,8 +454,7 @@ export default function PlannerSettingsContent({
       setSubjects(list);
       const { subjectTargetsMap, firstActiveTarget } = deriveSubjectTargetState(list);
       setSubjectTargets(subjectTargetsMap);
-      if (firstActiveTarget) {
-        setTargetScope('per_subject');
+      if (firstActiveTarget && stateRef.current?.targetScope === 'per_subject') {
         setGoalMode(firstActiveTarget.mode);
         if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '180');
         if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');

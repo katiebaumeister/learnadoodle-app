@@ -10,12 +10,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { CalendarPlus, Check, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Upload, X } from 'lucide-react';
+import { Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Plus, Sparkles, Upload, X } from 'lucide-react';
+import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 import { applyToCalendar, getAcademicYear, getPlanHealth } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
-import { getFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
+import { getAcademicYearExclusions, getFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
 import { useToast } from '../Toast';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
+import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
 
 const FG = '#111827';
 const SUB = '#64748b';
@@ -134,6 +136,49 @@ function formatEventDateTime(ts) {
   return `${dateLabel} · ${timeLabel}`;
 }
 
+function addDaysToYmd(ymd, daysToAdd = 0) {
+  const base = String(ymd || '').trim();
+  if (!base) return null;
+  const d = new Date(`${base}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() + Number(daysToAdd || 0));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function formatDateDisplayYmd(ymd) {
+  const base = String(ymd || '').trim();
+  if (!base) return '';
+  const d = new Date(`${base}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function listDatesForWeekdaysInRange(startYmd, endYmd, weekdays = []) {
+  if (!startYmd || !endYmd) return [];
+  const daySet = new Set(
+    (Array.isArray(weekdays) ? weekdays : [])
+      .map((day) => Number(day))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+  );
+  if (daySet.size === 0) return [];
+  const start = new Date(`${String(startYmd).slice(0, 10)}T12:00:00`);
+  const end = new Date(`${String(endYmd).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
+  const dates = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    if (daySet.has(cursor.getDay())) {
+      dates.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`);
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
 function formatWeekdaySummary(dayNums = []) {
   const unique = [...new Set((dayNums || []).map((d) => Number(d)).filter((d) => Number.isInteger(d)))].sort((a, b) => a - b);
   if (unique.length === 0) return 'No days set';
@@ -184,6 +229,15 @@ function formatSubjectCadenceCompact(blocks = []) {
   ].sort((a, b) => a - b);
   if (dayNums.length === 0) return '';
   return formatWeekdaySummary(dayNums);
+}
+
+function extractCadenceTimeLabel(cadenceText = '') {
+  const text = String(cadenceText || '').trim();
+  if (!text) return '';
+  const match = text.match(/\bat\s+(.+)$/i);
+  if (!match) return '';
+  const raw = String(match[1] || '').trim();
+  return raw ? raw.toUpperCase() : '';
 }
 
 function isInstructionalEvent(eventRow) {
@@ -614,6 +668,7 @@ export default function SubjectsPlanBuilder({
   const [showSubjectPickerModal, setShowSubjectPickerModal] = useState(false);
   const [subjectPickerAction, setSubjectPickerAction] = useState('add'); // add | edit
   const [saving, setSaving] = useState(false);
+  const [applyingSuggestionSubjectId, setApplyingSuggestionSubjectId] = useState(null);
   const [blocksBySubject, setBlocksBySubject] = useState({});
   const [instructionalEventsBySubject, setInstructionalEventsBySubject] = useState({});
   const [showSubjectEventsModal, setShowSubjectEventsModal] = useState(false);
@@ -622,7 +677,22 @@ export default function SubjectsPlanBuilder({
     termTitle: '',
     events: [],
   });
-  const [hoverHintKey, setHoverHintKey] = useState(null);
+  const [showPastEventsAttendanceModal, setShowPastEventsAttendanceModal] = useState(false);
+  const [attendanceModalData, setAttendanceModalData] = useState({
+    subjectId: null,
+    subjectName: '',
+    events: [],
+  });
+  const [showUpcomingEventsModal, setShowUpcomingEventsModal] = useState(false);
+  const [markingAttendanceEventId, setMarkingAttendanceEventId] = useState(null);
+  const [upcomingEventsModalData, setUpcomingEventsModalData] = useState({
+    subjectId: null,
+    subjectName: '',
+    termTitle: '',
+    events: [],
+    hasPlan: false,
+    schoolTermId: 'full_year',
+  });
   const [eventsRefreshKey, setEventsRefreshKey] = useState(0);
   const [familyPlannerSettings, setFamilyPlannerSettings] = useState({
     target_scope: 'overall',
@@ -841,9 +911,16 @@ export default function SubjectsPlanBuilder({
           if (!nextBySubject[subjectId]) nextBySubject[subjectId] = [];
           nextBySubject[subjectId].push({
             id: row?.id ? String(row.id) : `ev-${subjectId}-${tsMs}-${nextBySubject[subjectId].length}`,
+            subject_id: subjectId,
             title: String(row?.title || row?.lesson_name || row?.event_type || 'Event').trim(),
             startTs: row?.start_ts || row?.due_ts || null,
+            start_ts: row?.start_ts || row?.due_ts || null,
+            due_ts: row?.due_ts || row?.start_ts || null,
+            end_ts: row?.end_ts || null,
             startMs: tsMs,
+            status: String(row?.status || '').trim().toLowerCase(),
+            instructional_status: String(row?.instructional_status || '').trim().toUpperCase(),
+            is_backlog: row?.is_backlog === true,
             durationHours: Number.isFinite(Number(row?.duration_minutes)) && Number(row.duration_minutes) > 0
               ? Number(row.duration_minutes) / 60
               : (
@@ -1120,6 +1197,15 @@ export default function SubjectsPlanBuilder({
         Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
       );
       const weekdaysByScope = {};
+      const cadenceDayNums = [
+        ...new Set(
+          (blocksForSubject || []).flatMap((block) =>
+            Array.isArray(block?.weekdays)
+              ? block.weekdays.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+              : []
+          )
+        ),
+      ].sort((a, b) => a - b);
       blocksForSubject.forEach((block) => {
         const scopeId = normalizeSubjectTerm(block?.scopeId || subjectTermId || 'full_year');
         if (!weekdaysByScope[scopeId]) weekdaysByScope[scopeId] = new Set();
@@ -1276,12 +1362,16 @@ export default function SubjectsPlanBuilder({
         }
       }
       const schoolTermId = subjectTermId;
+      const subjectRange = scopeRangeById[schoolTermId] || yearRange;
       const schoolTermLabel = schoolTermId === 'full_year' ? '' : formatScheduleScopeLabel(schoolTermId);
       return {
         id: subjectId,
         name: subject?.name || 'Subject',
         schoolTermId,
         schoolTermLabel,
+        rangeStartYmd: subjectRange?.start_date || yearRange?.start_date || null,
+        rangeEndYmd: subjectRange?.end_date || yearRange?.end_date || null,
+        cadenceDayNums,
         hasPlan: (subjectId ? plannedSet.has(subjectId) : false) || (normalizedName ? plannedNameSet.has(normalizedName) : false),
         cadenceText: formatSubjectCadence(blocksForSubject),
         cadenceCompactLabel: formatSubjectCadenceCompact(blocksForSubject),
@@ -1322,67 +1412,211 @@ export default function SubjectsPlanBuilder({
     }];
   }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject, activeScheduleCore, familyPlannerSettings, subjectTargetSettingsById]);
 
+  const trackingMode = useMemo(() => {
+    const scope = String(familyPlannerSettings?.target_scope || 'overall').trim().toLowerCase();
+    return scope === 'per_subject' ? 'per_subject' : 'overall';
+  }, [familyPlannerSettings?.target_scope]);
+
   const yearTargetSummary = useMemo(() => {
     const perSubjectRows = (termSections || [])
       .flatMap((section) => section?.subjectPlans || [])
       .filter((row) => row?.targetUnit === 'days' && Number.isFinite(Number(row?.targetValue)) && Number(row?.targetValue) > 0)
       .map((row) => {
         const targetDays = Number(row.targetValue);
-        const actualDays = Number(row.actualDays || 0);
-        const plannedDays = Number(row.plannedCapacityDays || row.projectedDays || 0);
+        const completedDays = Math.max(0, Number(row.actualDays || 0));
         const upcomingDays = Math.max(0, Number(row.plannedEventsCount || 0));
-        const attendedDays = Math.max(0, actualDays);
-        const unattendedDays = Math.max(0, plannedDays - attendedDays - upcomingDays);
-        const projectedDays = upcomingDays + attendedDays + unattendedDays;
-        const balanceDays = projectedDays - targetDays;
+        const projectedDays = completedDays + upcomingDays;
+        const gapDays = projectedDays - targetDays;
         const requiredPace = Number(row.requiredPaceDaysPerWeek || 0);
         const currentPace = Number(row.currentPaceDaysPerWeek || 0);
         return {
           ...row,
           targetDays,
-          plannedDays,
+          completedDays,
           upcomingDays,
-          attendedDays,
-          unattendedDays,
           projectedDays,
-          balanceDays,
+          gapDays,
+          shortDays: Math.max(0, targetDays - projectedDays),
           requiredPace,
           currentPace,
-          progressPct: Math.max(0, Math.min(100, Math.round((attendedDays / targetDays) * 100))),
+          progressPct: Math.max(0, Math.min(100, Math.round((completedDays / targetDays) * 100))),
         };
       });
 
     if (perSubjectRows.length === 0) return null;
     const first = perSubjectRows[0] || {};
+    const overallTargetFromSettings = parsePositiveInt(familyPlannerSettings?.default_target_days);
     const totalTargetDays = perSubjectRows.reduce((sum, row) => sum + Number(row.targetDays || 0), 0);
-    const totalActualDays = perSubjectRows.reduce((sum, row) => sum + Number(row.attendedDays || 0), 0);
-    const totalPlannedDays = perSubjectRows.reduce((sum, row) => sum + Number(row.projectedDays || 0), 0);
+    const totalCompletedDays = perSubjectRows.reduce((sum, row) => sum + Number(row.completedDays || 0), 0);
     const totalUpcomingDays = perSubjectRows.reduce((sum, row) => sum + Number(row.upcomingDays || 0), 0);
-    const totalAttendedDays = perSubjectRows.reduce((sum, row) => sum + Number(row.attendedDays || 0), 0);
-    const totalUnattendedDays = perSubjectRows.reduce((sum, row) => sum + Number(row.unattendedDays || 0), 0);
     const totalProjectedDays = perSubjectRows.reduce((sum, row) => sum + Number(row.projectedDays || 0), 0);
-    const totalBalanceDays = totalProjectedDays - totalTargetDays;
+    const totalGapDays = totalProjectedDays - totalTargetDays;
     const elapsedWeeks = Math.max(0.1, Number(first.elapsedWeeksInYear || 0.1));
+    const planningWeeks = Math.max(
+      1,
+      ...perSubjectRows.map((row) => Math.max(1, Number(row.totalWeeksInYear || 0)))
+    );
     const remainingWeeks = Math.max(0, Number(first.remainingWeeksInYear || 0));
-    const currentPaceDaysPerWeek = toOneDecimal(totalActualDays / elapsedWeeks);
-    const projectedFinishDays = Math.round(totalActualDays + (currentPaceDaysPerWeek * remainingWeeks));
+    const currentPaceDaysPerWeek = toOneDecimal(totalCompletedDays / elapsedWeeks);
+    const projectedFinishDays = Math.round(totalCompletedDays + (currentPaceDaysPerWeek * remainingWeeks));
     const totalShortfall = Math.max(0, totalTargetDays - projectedFinishDays);
+    const gapShortfallDays = Math.max(0, totalTargetDays - totalProjectedDays);
+    const additionalDaysPerWeekRaw = gapShortfallDays / planningWeeks;
+    const catchUpDaysPerWeek = additionalDaysPerWeekRaw > 0 ? Math.min(7, Math.max(1, Math.floor(additionalDaysPerWeekRaw))) : 0;
+    const catchUpDaysPerWeekHigh = additionalDaysPerWeekRaw > 0 ? Math.min(7, Math.max(catchUpDaysPerWeek, Math.ceil(additionalDaysPerWeekRaw))) : 0;
+    const extendWeeks = additionalDaysPerWeekRaw > 0 ? Math.min(52, Math.max(1, Math.ceil(gapShortfallDays / Math.max(1, currentPaceDaysPerWeek || 1)))) : 0;
+    const projectedCompletionPct = totalTargetDays > 0 ? Math.round((totalProjectedDays / totalTargetDays) * 100) : 0;
+    const approxProjectedCompletionPct = Math.max(0, Math.round(projectedCompletionPct / 5) * 5);
+    const nowMs = Date.now();
+    const completedDaySet = new Set();
+    const upcomingDaySet = new Set();
+    const projectedDaySet = new Set();
+    perSubjectRows.forEach((row) => {
+      (Array.isArray(row?.eventItems) ? row.eventItems : []).forEach((eventItem) => {
+        const eventMs = Number(eventItem?.startMs || new Date(eventItem?.startTs || '').getTime());
+        if (!Number.isFinite(eventMs)) return;
+        const dayKey = new Date(eventMs).toISOString().slice(0, 10);
+        projectedDaySet.add(dayKey);
+        if (eventMs < nowMs) completedDaySet.add(dayKey);
+        else upcomingDaySet.add(dayKey);
+      });
+    });
+    const overallCompletedDays = completedDaySet.size;
+    const overallUpcomingDays = upcomingDaySet.size;
+    const overallProjectedDays = projectedDaySet.size;
+    const overallTargetDays = overallTargetFromSettings != null ? overallTargetFromSettings : totalTargetDays;
+    const overallGapDays = overallProjectedDays - overallTargetDays;
+    const overallShortfallDays = Math.max(0, -overallGapDays);
+    const overallAdditionalDaysPerWeekRaw = overallShortfallDays / planningWeeks;
+    const overallCatchUpDaysPerWeek = overallAdditionalDaysPerWeekRaw > 0 ? Math.min(7, Math.max(1, Math.floor(overallAdditionalDaysPerWeekRaw))) : 0;
+    const overallCatchUpDaysPerWeekHigh = overallAdditionalDaysPerWeekRaw > 0 ? Math.min(7, Math.max(overallCatchUpDaysPerWeek, Math.ceil(overallAdditionalDaysPerWeekRaw))) : 0;
+    const overallExtendWeeks = overallAdditionalDaysPerWeekRaw > 0 ? Math.min(52, Math.max(1, Math.ceil(overallShortfallDays / Math.max(1, currentPaceDaysPerWeek || 1)))) : 0;
+    const overallCompletionPct = overallTargetDays > 0 ? Math.round((overallProjectedDays / overallTargetDays) * 100) : 0;
+    const overallApproxCompletionPct = Math.max(0, Math.round(overallCompletionPct / 5) * 5);
+    const perSubjectCatchUp = perSubjectRows
+      .map((row) => {
+        const shortDays = Math.max(0, Number(row.shortDays || 0));
+        const perSubjectWeeks = Math.max(1, planningWeeks);
+        const raw = shortDays / perSubjectWeeks;
+        const low = raw > 0 ? Math.min(7, Math.max(1, Math.floor(raw))) : 0;
+        const high = raw > 0 ? Math.min(7, Math.max(low, Math.ceil(raw))) : 0;
+        const otherSubjects = perSubjectRows.filter((otherRow) => String(otherRow?.id || '') !== String(row?.id || ''));
+        const weekdayConflictCounts = [1, 2, 3, 4, 5].reduce((acc, weekday) => ({ ...acc, [weekday]: 0 }), {});
+        otherSubjects.forEach((otherRow) => {
+          (Array.isArray(otherRow?.cadenceDayNums) ? otherRow.cadenceDayNums : []).forEach((day) => {
+            const asInt = Number(day);
+            if (Number.isInteger(asInt) && asInt >= 1 && asInt <= 5) {
+              weekdayConflictCounts[asInt] = Number(weekdayConflictCounts[asInt] || 0) + 3;
+            }
+          });
+          (Array.isArray(otherRow?.eventItems) ? otherRow.eventItems : []).forEach((eventItem) => {
+            const eventMs = Number(eventItem?.startMs || new Date(eventItem?.startTs || '').getTime());
+            if (!Number.isFinite(eventMs)) return;
+            const weekday = new Date(eventMs).getDay();
+            if (weekday >= 1 && weekday <= 5) {
+              weekdayConflictCounts[weekday] = Number(weekdayConflictCounts[weekday] || 0) + 1;
+            }
+          });
+        });
+        const existingDayNums = [...new Set(
+          (Array.isArray(row?.cadenceDayNums) ? row.cadenceDayNums : [])
+            .map((day) => Number(day))
+            .filter((day) => Number.isInteger(day) && day >= 1 && day <= 5)
+        )].sort((a, b) => a - b);
+        const missingWeekdays = [1, 2, 3, 4, 5]
+          .filter((day) => !existingDayNums.includes(day))
+          .sort((a, b) => {
+            const conflictDelta = Number(weekdayConflictCounts[a] || 0) - Number(weekdayConflictCounts[b] || 0);
+            if (conflictDelta !== 0) return conflictDelta;
+            return a - b;
+          });
+        const suggestedAddedDayCount = raw > 0 ? Math.min(missingWeekdays.length, Math.max(1, high)) : 0;
+        const suggestedAddedDayNums = suggestedAddedDayCount > 0 ? missingWeekdays.slice(0, suggestedAddedDayCount) : [];
+        const suggestedAddedDaysLabel = suggestedAddedDayNums.length > 0 ? formatWeekdaySummary(suggestedAddedDayNums) : '';
+        const baselineSessionsPerWeek = Number(row.projectedDays || 0) > 0
+          ? (Number(row.projectedDays || 0) / Math.max(1, Number(row.totalWeeksInYear || planningWeeks)))
+          : 0;
+        const extendWeeksForSubject = raw > 0
+          ? (
+            baselineSessionsPerWeek > 0
+              ? Math.min(52, Math.max(1, Math.ceil(shortDays / baselineSessionsPerWeek)))
+              : Math.min(52, Math.max(1, Math.ceil(shortDays / Math.max(1, Number(row.currentPaceDaysPerWeek || 1)))))
+          )
+          : 0;
+        const suggestedEndYmd = extendWeeksForSubject > 0 && row.rangeEndYmd
+          ? addDaysToYmd(row.rangeEndYmd, extendWeeksForSubject * 7)
+          : null;
+        const extensionStartYmd = suggestedEndYmd ? addDaysToYmd(row.rangeEndYmd, 1) : null;
+        const extensionAddedDates = extensionStartYmd && suggestedEndYmd
+          ? listDatesForWeekdaysInRange(extensionStartYmd, suggestedEndYmd, row.cadenceDayNums || [])
+          : [];
+        const extensionAddedDatesLabel = (() => {
+          if (!Array.isArray(extensionAddedDates) || extensionAddedDates.length === 0) return '';
+          const shown = extensionAddedDates.slice(0, 8).map((ymd) => formatDateDisplayYmd(ymd)).filter(Boolean);
+          if (shown.length === 0) return '';
+          const remaining = extensionAddedDates.length - shown.length;
+          return remaining > 0 ? `${shown.join(', ')} (+${remaining} more)` : shown.join(', ');
+        })();
+        const planStartLabel = formatDateDisplayYmd(row.rangeStartYmd);
+        const planEndLabel = formatDateDisplayYmd(row.rangeEndYmd);
+        const hasAnyCadenceDays = existingDayNums.length > 0;
+        const hasPlan = row?.hasPlan === true;
+        const suggestionSummaryText = (!hasPlan && !hasAnyCadenceDays && suggestedAddedDaysLabel)
+          ? `Create plan from ${planStartLabel || 'start of year'} to ${planEndLabel || 'end of year'} on ${suggestedAddedDaysLabel}.`
+          : (suggestedEndYmd && suggestedAddedDaysLabel
+            ? 'Extend term length and add multiple class days a week.'
+            : (suggestedEndYmd
+              ? 'Extend term length or add class days per week.'
+              : (suggestedAddedDaysLabel
+                ? 'Add class days per week.'
+                : '')));
+        return {
+          id: row.id,
+          name: row.name,
+          schoolTermId: row.schoolTermId || 'full_year',
+          shortDays,
+          lowSessionsPerWeek: low,
+          highSessionsPerWeek: high,
+          baselineSessionsPerWeek: toOneDecimal(baselineSessionsPerWeek),
+          extendWeeks: extendWeeksForSubject,
+          suggestedEndYmd,
+          extensionAddedDatesLabel,
+          suggestedAddedDaysLabel,
+          suggestionSummaryText,
+        };
+      })
+      .filter((row) => row.shortDays > 0);
     return {
+      trackingMode,
       perSubjectRows,
       totalTargetDays,
-      totalActualDays,
-      totalPlannedDays,
+      totalCompletedDays,
       totalUpcomingDays,
-      totalAttendedDays,
-      totalUnattendedDays,
       totalProjectedDays,
-      totalBalanceDays,
+      totalGapDays,
       projectedFinishDays,
       totalShortfall,
+      gapShortfallDays,
+      catchUpDaysPerWeek,
+      catchUpDaysPerWeekHigh,
+      extendWeeks,
+      approxProjectedCompletionPct,
+      remainingWeeks,
       currentPaceDaysPerWeek,
-      progressPct: totalTargetDays > 0 ? Math.max(0, Math.min(100, Math.round((totalActualDays / totalTargetDays) * 100))) : 0,
+      overallCompletedDays,
+      overallUpcomingDays,
+      overallProjectedDays,
+      overallTargetDays,
+      overallGapDays,
+      overallShortfallDays,
+      overallCatchUpDaysPerWeek,
+      overallCatchUpDaysPerWeekHigh,
+      overallExtendWeeks,
+      overallApproxCompletionPct,
+      perSubjectCatchUp,
+      progressPct: totalTargetDays > 0 ? Math.max(0, Math.min(100, Math.round((totalCompletedDays / totalTargetDays) * 100))) : 0,
     };
-  }, [termSections]);
+  }, [termSections, familyPlannerSettings?.default_target_days, trackingMode]);
 
   const subjectPlans = useMemo(() => {
     const selectedStartYear = Number(displaySchoolYear?.start_year);
@@ -1564,6 +1798,119 @@ export default function SubjectsPlanBuilder({
       setSaving(false);
     }
   };
+
+  const applySuggestedTermExtension = useCallback(async (suggestionRow) => {
+    const subjectId = String(suggestionRow?.id || '');
+    const subjectName = suggestionRow?.name || 'Subject';
+    const suggestedEndYmd = String(suggestionRow?.suggestedEndYmd || '').slice(0, 10);
+    if (!subjectId || !suggestedEndYmd) return;
+    if (!familyId) {
+      toast?.push?.('Missing family context.', 'error');
+      return;
+    }
+    const selectedStartYear = Number(displaySchoolYear?.start_year);
+    const preferredScope = normalizeSubjectTerm(suggestionRow?.schoolTermId || 'full_year');
+    const eligibleCores = (planCores || []).filter((core) => (
+      Number(core?.startYear) === selectedStartYear
+      && [preferredScope, 'full_year', 'fall_term', 'spring_term'].includes(String(core?.scopeId || '').trim())
+    ));
+    const matchedCore = eligibleCores.find((core) => (
+      Array.isArray(core?.subjectIds) && core.subjectIds.map(String).includes(subjectId)
+    )) || eligibleCores[0] || activeScheduleCore || null;
+    const academicYearId = String(matchedCore?.row?.id || activeScheduleCore?.row?.id || '').trim();
+    if (!academicYearId) {
+      toast?.push?.('No saved plan found. Create a plan first.', 'info');
+      return;
+    }
+
+    setApplyingSuggestionSubjectId(subjectId);
+    try {
+      const { data: yearDetail, error: yearError } = await getAcademicYear(academicYearId);
+      if (yearError) throw yearError;
+      const plan = yearDetail?.plan || {};
+      const startDate = String(plan?.start_date || yearDetail?.start_date || '').slice(0, 10);
+      const currentEndDate = String(plan?.end_date || yearDetail?.end_date || '').slice(0, 10);
+      if (!startDate) throw new Error('Plan start date is missing.');
+      const nextEndDate = suggestedEndYmd > currentEndDate ? suggestedEndYmd : currentEndDate;
+      if (!nextEndDate) throw new Error('Suggested end date is missing.');
+
+      const holidaySettings = yearDetail?.holiday_settings || {};
+      const holidayRegion = holidaySettings.holiday_region
+        || (holidaySettings.holiday_country_code
+          ? `${holidaySettings.holiday_country_code}${holidaySettings.holiday_region ? `:${holidaySettings.holiday_region}` : ''}`
+          : 'US');
+      const customHolidays = Array.isArray(yearDetail?.holidays)
+        ? yearDetail.holidays
+            .filter((h) => (h?.type || 'CUSTOM_HOLIDAY') === 'CUSTOM_HOLIDAY')
+            .map((h) => ({
+              date: typeof h?.date === 'string' ? h.date.slice(0, 10) : String(h?.date || '').slice(0, 10),
+              name: h?.name || '',
+              type: h?.type || 'CUSTOM_HOLIDAY',
+            }))
+        : [];
+      const { data: exclusions } = await getAcademicYearExclusions(academicYearId);
+      const customBreaks = Array.isArray(exclusions)
+        ? exclusions
+            .filter((entry) => entry?.exclusion_type === 'break')
+            .map((entry) => ({
+              start: typeof entry?.start_date === 'string' ? entry.start_date.slice(0, 10) : String(entry?.start_date || '').slice(0, 10),
+              end: typeof entry?.end_date === 'string' ? entry.end_date.slice(0, 10) : String(entry?.end_date || '').slice(0, 10),
+              name: entry?.label || 'Break',
+            }))
+        : [];
+      const blocks = Array.isArray(plan?.blocks)
+        ? plan.blocks.map((block) => ({
+            block_id: block?.block_id || undefined,
+            subject_id: block?.subject_id ?? null,
+            placeholder_label: block?.placeholder_label || undefined,
+            child_ids: Array.isArray(block?.child_ids) ? block.child_ids : [],
+            weekdays: Array.isArray(block?.weekdays) ? block.weekdays : [],
+            start_time: block?.start_time || '09:00',
+            end_time: block?.end_time || '10:00',
+            all_day: !!block?.all_day,
+          }))
+        : [];
+      const payload = {
+        academic_year_id: academicYearId,
+        family_id: familyId,
+        start_date: startDate,
+        end_date: nextEndDate,
+        follow_public_holidays: holidaySettings.follow_global_holidays !== false,
+        holiday_region: holidayRegion,
+        excluded_holiday_dates: holidaySettings.excluded_holiday_dates || [],
+        custom_holidays: customHolidays,
+        custom_breaks: customBreaks,
+        target_instructional_days: (plan?.constraint_mode === 'days' ? plan?.target_days : null) ?? 180,
+        subjects: [...new Set(blocks.map((b) => b?.subject_id).filter(Boolean))],
+        constraint_mode: plan?.constraint_mode || 'none',
+        target_days: plan?.target_days ?? null,
+        target_hours: plan?.target_hours ?? null,
+        replace_placeholders: true,
+        blocks,
+        year_name: yearDetail?.year_name || undefined,
+        timezone: getClientTimezone(),
+      };
+      const { data, error } = await applyToCalendar(payload);
+      if (error) throw error;
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
+      }
+      setEventsRefreshKey((prev) => prev + 1);
+      setOverviewReloadKey((prev) => prev + 1);
+      toast?.push?.(
+        `Applied suggestion for ${subjectName}: extended term to ${formatDateDisplayYmd(nextEndDate)} (${data?.created ?? 0} events).`,
+        'success'
+      );
+    } catch (err) {
+      toast?.push?.(err?.message || 'Failed to apply suggestion.', 'error');
+    } finally {
+      setApplyingSuggestionSubjectId(null);
+    }
+  }, [familyId, displaySchoolYear?.start_year, planCores, activeScheduleCore, toast]);
 
   const openPlannerView = () => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -1774,6 +2121,183 @@ export default function SubjectsPlanBuilder({
     setShowSubjectEventsModal(true);
   }, []);
 
+  const openEventDetails = useCallback((eventId, initialEvent = null) => {
+    const safeEventId = String(eventId || '').trim();
+    if (!safeEventId || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    window.dispatchEvent(
+      new CustomEvent('openEventModal', {
+        detail: {
+          eventId: safeEventId,
+          ...(initialEvent ? { initialEvent } : {}),
+        },
+      })
+    );
+  }, []);
+
+  const openAttendanceBulkActionsModal = useCallback((row) => {
+    const subjectId = String(row?.id || '').trim();
+    const isAggregate = row?.isAggregate === true;
+    const normalizedEvents = (Array.isArray(row?.eventItems) ? row.eventItems : []).map((eventItem) => ({
+      id: eventItem?.id ? String(eventItem.id) : null,
+      subject_id: eventItem?.subject_id ? String(eventItem.subject_id) : (subjectId || null),
+      title: eventItem?.title || 'Event',
+      start_ts: eventItem?.start_ts || eventItem?.startTs || null,
+      due_ts: eventItem?.due_ts || eventItem?.start_ts || eventItem?.startTs || null,
+      end_ts: eventItem?.end_ts || null,
+      status: eventItem?.status || null,
+      is_backlog: eventItem?.is_backlog === true,
+    })).filter((eventItem) => Boolean(eventItem?.id));
+    setAttendanceModalData({
+      subjectId: isAggregate ? null : subjectId,
+      subjectName: row?.name || (isAggregate ? 'All subjects' : 'Subject'),
+      events: normalizedEvents,
+    });
+    setShowPastEventsAttendanceModal(true);
+  }, []);
+
+  const openUpcomingEventsListModal = useCallback((row, termSectionTitle = '') => {
+    const subjectId = String(row?.id || '').trim();
+    const isAggregate = row?.isAggregate === true;
+    if (!isAggregate && !subjectId) return;
+    const allEvents = (Array.isArray(row?.eventItems) ? row.eventItems : [])
+      .sort((a, b) => Number(a?.startMs || 0) - Number(b?.startMs || 0));
+    setUpcomingEventsModalData({
+      subjectId: isAggregate ? null : subjectId,
+      subjectName: row?.name || (isAggregate ? 'All subjects' : 'Subject'),
+      termTitle: termSectionTitle || '',
+      events: allEvents,
+      hasPlan: !isAggregate && row?.hasPlan === true,
+      schoolTermId: row?.schoolTermId || 'full_year',
+    });
+    setShowUpcomingEventsModal(true);
+  }, []);
+
+  const markEventAsAttendedFromAllEventsModal = useCallback(async (eventItem) => {
+    const eventId = String(eventItem?.id || '').trim();
+    if (!eventId) return;
+    setMarkingAttendanceEventId(eventId);
+    try {
+      const { error } = await completeEvent(eventId, null, { requirePersist: true });
+      if (error) throw error;
+      setUpcomingEventsModalData((prev) => ({
+        ...prev,
+        events: (prev?.events || []).map((entry) => (
+          String(entry?.id || '') === eventId
+            ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS' }
+            : entry
+        )),
+      }));
+      setEventsRefreshKey((prev) => prev + 1);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+      }
+      toast?.push?.('Marked as attended.', 'success');
+    } catch (err) {
+      toast?.push?.(err?.message || 'Could not mark attended.', 'error');
+    } finally {
+      setMarkingAttendanceEventId(null);
+    }
+  }, [toast]);
+
+  const markEventAsUnattendedFromAllEventsModal = useCallback(async (eventItem) => {
+    const eventId = String(eventItem?.id || '').trim();
+    if (!eventId) return;
+    setMarkingAttendanceEventId(eventId);
+    try {
+      const { error } = await updateEventStatus(eventId, 'scheduled');
+      if (error) throw error;
+      setUpcomingEventsModalData((prev) => ({
+        ...prev,
+        events: (prev?.events || []).map((entry) => (
+          String(entry?.id || '') === eventId
+            ? { ...entry, status: 'scheduled', instructional_status: null }
+            : entry
+        )),
+      }));
+      setEventsRefreshKey((prev) => prev + 1);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+      }
+      toast?.push?.('Marked as unattended.', 'success');
+    } catch (err) {
+      toast?.push?.(err?.message || 'Could not mark unattended.', 'error');
+    } finally {
+      setMarkingAttendanceEventId(null);
+    }
+  }, [toast]);
+
+  const markAllPastEventsAsAttendedFromAllEventsModal = useCallback(async () => {
+    const nowMs = Date.now();
+    const events = Array.isArray(upcomingEventsModalData?.events) ? upcomingEventsModalData.events : [];
+    const targetEvents = events.filter((eventItem) => {
+      const eventId = String(eventItem?.id || '').trim();
+      const startMs = Number(eventItem?.startMs || 0);
+      const isPastEvent = startMs > 0 && startMs < nowMs;
+      const isAttended = String(eventItem?.status || '').toLowerCase() === 'done'
+        || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
+      return Boolean(eventId) && isPastEvent && !isAttended;
+    });
+    if (!targetEvents.length) return;
+    setMarkingAttendanceEventId('__bulk_mark_all_past_attended__');
+    const succeededIds = [];
+    let failedCount = 0;
+    try {
+      for (const eventItem of targetEvents) {
+        const eventId = String(eventItem?.id || '').trim();
+        if (!eventId) continue;
+        try {
+          const { error } = await completeEvent(eventId, null, { requirePersist: true });
+          if (error) throw error;
+          succeededIds.push(eventId);
+        } catch (err) {
+          failedCount += 1;
+        }
+      }
+      if (succeededIds.length > 0) {
+        setUpcomingEventsModalData((prev) => ({
+          ...prev,
+          events: (prev?.events || []).map((entry) => (
+            succeededIds.includes(String(entry?.id || ''))
+              ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS' }
+              : entry
+          )),
+        }));
+        setEventsRefreshKey((prev) => prev + 1);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        }
+      }
+      if (succeededIds.length > 0 && failedCount === 0) {
+        toast?.push?.(`Marked ${succeededIds.length} past event${succeededIds.length === 1 ? '' : 's'} as attended.`, 'success');
+      } else if (succeededIds.length > 0) {
+        toast?.push?.(`Marked ${succeededIds.length} past event${succeededIds.length === 1 ? '' : 's'} as attended. ${failedCount} failed.`, 'success');
+      } else {
+        toast?.push?.('Could not mark past events as attended.', 'error');
+      }
+    } finally {
+      setMarkingAttendanceEventId(null);
+    }
+  }, [toast, upcomingEventsModalData]);
+
+  const yearTargetTotalsInteractionRow = useMemo(() => {
+    if (!yearTargetSummary) return null;
+    const mergedEvents = (yearTargetSummary.perSubjectRows || [])
+      .flatMap((row) => (Array.isArray(row?.eventItems) ? row.eventItems : []))
+      .filter((eventItem) => eventItem?.id)
+      .sort((a, b) => Number(a?.startMs || 0) - Number(b?.startMs || 0));
+    return {
+      id: null,
+      isAggregate: true,
+      name: 'All subjects',
+      eventItems: mergedEvents,
+      schoolTermId: 'full_year',
+      hasPlan: false,
+    };
+  }, [yearTargetSummary]);
+
   if (surfaceMode === 'home') {
     return (
       <View style={styles.wrap}>
@@ -1785,6 +2309,7 @@ export default function SubjectsPlanBuilder({
                   key={termSection.id}
                   style={[
                     styles.termCard,
+                    index === 0 && styles.termCardFirstSpaced,
                     index > 0 && styles.termCardSpaced,
                   ]}
                 >
@@ -1795,6 +2320,15 @@ export default function SubjectsPlanBuilder({
 
                     <>
                       <View style={styles.subjectSection}>
+                        <View style={styles.cadenceStatusTable}>
+                          <View style={styles.cadenceStatusHeaderRow}>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusSubjectCol]}>Subject</Text>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusStudentsCol]}>Students</Text>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusSavedCol]}>Cadence</Text>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusProgressCol]}>Progress vs. Target</Text>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusActionsCol, styles.cadenceStatusActionsHeaderText]}>Actions</Text>
+                          </View>
+                        </View>
                         <View style={styles.subjectRows}>
                           {termSection.subjectPlans.length === 0 ? (
                             <View style={[styles.subjectRow, styles.subjectRowLast]}>
@@ -1804,6 +2338,34 @@ export default function SubjectsPlanBuilder({
                             </View>
                           ) : (
                             termSection.subjectPlans.map((row, index) => {
+                              const hasCadence = Boolean(String(row?.cadenceText || '').trim());
+                              const cadenceTime = extractCadenceTimeLabel(row?.cadenceText || '');
+                              const cadenceSummary = hasCadence
+                                ? [row.schoolTermLabel || null, row.cadenceCompactLabel || null, cadenceTime || null].filter(Boolean).join(' · ')
+                                : 'No saved weekly cadence yet.';
+                              const targetDays = row.targetUnit === 'days' && Number.isFinite(Number(row.targetValue))
+                                ? Number(row.targetValue)
+                                : null;
+                              const completedDays = Math.max(0, Number(row.actualDays || 0));
+                              const progressSummary = targetDays != null
+                                ? `${completedDays} completed / ${targetDays} target`
+                                : `${completedDays} completed / ${Math.max(completedDays, Number(row.projectedDays || 0))} planned`;
+                              const deltaDays = targetDays != null ? (completedDays - targetDays) : null;
+                              const statusLabel = !hasCadence
+                                ? 'No cadence'
+                                : (deltaDays == null
+                                  ? 'On track'
+                                  : (deltaDays < 0 ? 'Behind target' : (deltaDays > 0 ? 'Ahead target' : 'On target')));
+                              const statusTone = !hasCadence
+                                ? 'no_cadence'
+                                : (deltaDays == null
+                                  ? 'on_track'
+                                  : (deltaDays < 0 ? 'behind' : (deltaDays > 0 ? 'ahead' : 'on_track')));
+                              const statusDetail = !hasCadence
+                                ? 'Completed events can still count toward the yearly target.'
+                                : (deltaDays == null
+                                  ? 'Target not set yet.'
+                                  : (deltaDays < 0 ? `Behind by ${Math.abs(deltaDays)}` : (deltaDays > 0 ? `Ahead by ${deltaDays}` : 'On target')));
                               return (
                                 <View
                                   key={`plan-${termSection.id}-${row.id}`}
@@ -1812,15 +2374,18 @@ export default function SubjectsPlanBuilder({
                                     index === termSection.subjectPlans.length - 1 && styles.subjectRowLast,
                                   ]}
                                 >
-                                  <View style={styles.subjectMain}>
+                                  <View style={[styles.subjectMain, styles.cadenceStatusSubjectCol]}>
                                     <Text style={styles.subjectName}>{row.name}</Text>
+                                  </View>
+
+                                  <View style={[styles.subjectStudentsCol, styles.cadenceStatusStudentsCol]}>
                                     {Array.isArray(row.attachedStudentIds) && row.attachedStudentIds.length > 0 ? (
                                       <View style={styles.subjectMetaRow}>
                                         <ChildAvatarCluster
                                           childIds={row.attachedStudentIds}
                                           familyChildren={children}
-                                          size={28}
-                                          overlap={-8}
+                                          size={30}
+                                          overlap={-9}
                                         />
                                         <Text style={styles.subjectMeta}>
                                           {row.attachedStudentsLabel || 'Whole family'}
@@ -1831,60 +2396,75 @@ export default function SubjectsPlanBuilder({
                                     )}
                                   </View>
 
-                                  <View style={styles.subjectCadence}>
-                                    <Text style={styles.subjectCadenceText}>
-                                      {row.schoolTermLabel
-                                        ? `${row.schoolTermLabel}, ${row.cadenceText || 'No schedule yet.'}`
-                                        : (row.cadenceText || 'No schedule yet.')}
-                                    </Text>
+                                  <View style={[styles.subjectCadence, styles.cadenceStatusSavedCol]}>
+                                    <View style={styles.subjectCadencePill}>
+                                      <Text style={styles.subjectCadenceText}>{cadenceSummary}</Text>
+                                    </View>
                                   </View>
 
-                                  <View style={styles.subjectRowActions}>
-                                    {!row.hasPlan ? (
-                                      <View style={styles.needsPlanChip}>
-                                        <Text style={styles.needsPlanChipText}>NEEDS PLAN</Text>
+                                  <View style={[styles.subjectProgressCol, styles.cadenceStatusProgressCol]}>
+                                    <Text style={styles.subjectProgressMetric}>{progressSummary}</Text>
+                                    <View style={styles.subjectProgressMetaRow}>
+                                      <View
+                                        style={[
+                                          styles.subjectProgressChip,
+                                          statusTone === 'behind' && styles.subjectProgressChipBehind,
+                                          statusTone === 'ahead' && styles.subjectProgressChipAhead,
+                                          statusTone === 'on_track' && styles.subjectProgressChipOnTrack,
+                                          statusTone === 'no_cadence' && styles.subjectProgressChipNoCadence,
+                                        ]}
+                                      >
+                                        <Text
+                                          style={[
+                                            styles.subjectProgressChipText,
+                                            statusTone === 'behind' && styles.subjectProgressChipTextBehind,
+                                            statusTone === 'ahead' && styles.subjectProgressChipTextAhead,
+                                            statusTone === 'on_track' && styles.subjectProgressChipTextOnTrack,
+                                            statusTone === 'no_cadence' && styles.subjectProgressChipTextNoCadence,
+                                          ]}
+                                        >
+                                          {statusLabel}
+                                        </Text>
                                       </View>
-                                    ) : row.targetProgressStatus === 'ahead' ? (
-                                      <View style={[styles.progressStatusChip, styles.progressStatusChipAhead]}>
-                                        <Text style={[styles.progressStatusChipText, styles.progressStatusChipTextAhead]}>AHEAD</Text>
-                                      </View>
-                                    ) : row.targetProgressStatus === 'behind' ? (
-                                      <View style={[styles.progressStatusChip, styles.progressStatusChipBehind]}>
-                                        <Text style={[styles.progressStatusChipText, styles.progressStatusChipTextBehind]}>BEHIND</Text>
-                                      </View>
-                                    ) : row.targetProgressStatus === 'on_track' ? (
-                                      <View style={[styles.progressStatusChip, styles.progressStatusChipOnTrack]}>
-                                        <Text style={[styles.progressStatusChipText, styles.progressStatusChipTextOnTrack]}>ON TRACK</Text>
-                                      </View>
-                                    ) : null}
-                                    <Pressable
-                                      style={styles.subjectRowActionButton}
-                                      onPress={() => openSubjectEditModal(row.id)}
-                                      accessibilityLabel={`Edit ${row.name || 'subject'}`}
-                                      onHoverIn={Platform.OS === 'web' ? () => setHoverHintKey(`edit-${row.id}`) : undefined}
-                                      onHoverOut={Platform.OS === 'web' ? () => setHoverHintKey(null) : undefined}
+                                    </View>
+                                  </View>
+
+                                  <View style={[styles.subjectRowActions, styles.cadenceStatusActionsCol]}>
+                                    <TouchableOpacity
+                                      style={styles.subjectRowActionLink}
+                                      onPress={() => openUpcomingEventsListModal(row, termSection.title)}
+                                      activeOpacity={0.8}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                     >
-                                      {Platform.OS === 'web' && hoverHintKey === `edit-${row.id}` ? (
-                                        <View style={[styles.actionHoverHint, styles.actionHoverHintCentered]}>
-                                          <Text style={styles.actionHoverHintText}>Edit subject</Text>
-                                        </View>
-                                      ) : null}
-                                      <Pencil size={16} color="#374151" />
-                                    </Pressable>
-                                    <Pressable
-                                      style={styles.subjectRowActionButton}
+                                      <Text style={styles.subjectRowActionLinkText}>View schedule</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={styles.subjectRowActionLink}
                                       onPress={() => openBuilderForSubject(row.id, row.hasPlan ? 'edit' : 'add', row.schoolTermId || 'full_year')}
                                       accessibilityLabel={row.hasPlan ? `Edit plan for ${row.name || 'subject'}` : `Create plan for ${row.name || 'subject'}`}
-                                      onHoverIn={Platform.OS === 'web' ? () => setHoverHintKey(`plan-${row.id}`) : undefined}
-                                      onHoverOut={Platform.OS === 'web' ? () => setHoverHintKey(null) : undefined}
+                                      activeOpacity={0.8}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                     >
-                                      {Platform.OS === 'web' && hoverHintKey === `plan-${row.id}` ? (
-                                        <View style={[styles.actionHoverHint, styles.actionHoverHintPlan]}>
-                                          <Text style={styles.actionHoverHintText}>{row.hasPlan ? 'Edit plan' : 'Create plan'}</Text>
-                                        </View>
-                                      ) : null}
-                                      <CalendarPlus size={16} color="#0d9488" />
-                                    </Pressable>
+                                      <Text style={styles.subjectRowActionLinkText}>{row.hasPlan ? 'Edit plan' : 'Add plan'}</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={styles.subjectRowActionLink}
+                                      onPress={() => openSubjectEditModal(row.id)}
+                                      accessibilityLabel={`Edit ${row.name || 'subject'}`}
+                                      activeOpacity={0.8}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                    >
+                                      <Text style={styles.subjectRowActionLinkText}>Edit subject</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={styles.subjectRowActionLink}
+                                      onPress={openPlanningPreferences}
+                                      accessibilityLabel={`Change target for ${row.name || 'subject'}`}
+                                      activeOpacity={0.8}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                    >
+                                      <Text style={styles.subjectRowActionLinkText}>Change target</Text>
+                                    </TouchableOpacity>
                                   </View>
 
                                 </View>
@@ -1904,142 +2484,144 @@ export default function SubjectsPlanBuilder({
                 </View>
                 <View style={styles.termHeaderDivider} />
                 <View style={styles.yearTargetsCard}>
-                  <View style={styles.yearProgressSummaryCard}>
-                    <View style={styles.yearProgressSummaryTopRow}>
-                      <Text style={styles.yearProgressSummaryMetric}>
-                        {`${yearTargetSummary.totalActualDays} / ${yearTargetSummary.totalTargetDays} days`}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.yearProgressSummaryBalance,
-                          yearTargetSummary.totalBalanceDays < 0 && styles.yearProgressSummaryBalanceNegative,
-                        ]}
-                      >
-                        {`Balance: ${yearTargetSummary.totalBalanceDays > 0 ? `+${yearTargetSummary.totalBalanceDays}` : yearTargetSummary.totalBalanceDays}`}
-                      </Text>
-                    </View>
-                    <Text style={styles.yearProgressSummaryProjected}>
-                      {`Projected: ${yearTargetSummary.totalProjectedDays} / ${yearTargetSummary.totalTargetDays}`}
-                    </Text>
-                    <Text style={styles.yearProgressSummaryProjectedNote}>Includes all upcoming events</Text>
-                    <View style={styles.yearProgressSummaryTrack}>
-                      <View style={[styles.yearProgressSummaryFill, { width: `${yearTargetSummary.progressPct}%` }]} />
-                    </View>
-                  </View>
                   <View style={styles.yearTargetsSubjectCardsWrap}>
                     <View style={styles.yearTargetsTable}>
                       <View style={[styles.yearTargetsTableRow, styles.yearTargetsTableHeaderRow]}>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsSubjectCol]}>Subject</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol, styles.yearTargetsHeaderCellRight]}>Target</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol, styles.yearTargetsHeaderCellRight]}>Upcoming</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol, styles.yearTargetsHeaderCellRight]}>Attended</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol, styles.yearTargetsHeaderCellRight]}>Unattended</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsProjectedCol, styles.yearTargetsHeaderCellRight]}>Projected</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsBalanceCol, styles.yearTargetsHeaderCellRight]}>Balance</Text>
+                        <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsSubjectCol]}>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Subject</Text>
+                        </View>
+                        <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsTargetCol]}>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Target</Text>
+                        </View>
+                        <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsDoneCol]}>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Done</Text>
+                        </View>
+                        <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsUpcomingCol]}>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Upcoming</Text>
+                        </View>
+                        <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsProjectedCol]}>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Projected (Done + Upcoming)</Text>
+                        </View>
+                        <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsBalanceCol, styles.yearTargetsHeaderGapCellWrap]}>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Gap</Text>
+                        </View>
                       </View>
                       {(yearTargetSummary.perSubjectRows || []).map((row) => (
-                        <View key={`year-target-row-${row.id}`} style={styles.yearTargetsTableRow}>
+                        <View key={`year-target-row-${row.id}`} style={[styles.yearTargetsTableRow, styles.yearTargetsTableBodyRow]}>
                           <View style={[styles.yearTargetsSubjectCol, styles.yearTargetsSubjectCell]}>
                             <Text style={styles.yearTargetsSubjectCellName}>{row.name}</Text>
-                            {row.cadenceCompactLabel ? (
-                              <Text style={styles.yearTargetsSubjectCadenceHint}>{`(${row.cadenceCompactLabel})`}</Text>
-                            ) : null}
+                            <View style={styles.yearTargetsSubjectCadenceSlot}>
+                              {row.cadenceCompactLabel ? (
+                                <View style={styles.yearTargetsSubjectCadenceBadge}>
+                                  <Text style={styles.yearTargetsSubjectCadenceHint}>{row.cadenceCompactLabel}</Text>
+                                </View>
+                              ) : (
+                                <View style={styles.yearTargetsSubjectCadenceSpacer} />
+                              )}
+                            </View>
                           </View>
-                          <TouchableOpacity
-                            onPress={openPlanningPreferences}
-                            style={styles.yearTargetsTargetCellButton}
-                            activeOpacity={0.8}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                          >
-                            <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTargetCellText, styles.yearTargetsCellRight]}>{row.targetDays}</Text>
-                          </TouchableOpacity>
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsCellRight]}>{row.upcomingDays}</Text>
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsCellRight]}>{row.attendedDays}</Text>
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsCellRight]}>{row.unattendedDays}</Text>
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsProjectedCol, styles.yearTargetsCellRight]}>
-                            {row.projectedDays}
-                          </Text>
-                          <View style={[styles.yearTargetsBalanceCol, styles.yearTargetsBalanceCell]}>
+                          <View style={[styles.yearTargetsCellWrap, styles.yearTargetsTargetCol]}>
+                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsTargetCellText, styles.yearTargetsCellRight]}>{row.targetDays}</Text>
+                          </View>
+                          <View style={[styles.yearTargetsCellWrap, styles.yearTargetsDoneCol]}>
+                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsMetricCellEmphasisText, styles.yearTargetsCellRight]}>{row.completedDays}</Text>
+                          </View>
+                          {row.upcomingDays > 0 ? (
+                            <View style={[styles.yearTargetsCellWrap, styles.yearTargetsUpcomingCol]}>
+                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellRight]}>{row.upcomingDays}</Text>
+                            </View>
+                          ) : (
+                            <View style={[styles.yearTargetsCellWrap, styles.yearTargetsUpcomingCol]}>
+                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsMetricCellMutedText, styles.yearTargetsCellRight]}>
+                                -
+                              </Text>
+                            </View>
+                          )}
+                          <View style={[styles.yearTargetsCellWrap, styles.yearTargetsProjectedCol]}>
+                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellRight]}>
+                              {row.projectedDays}
+                            </Text>
+                          </View>
+                          <View style={[styles.yearTargetsCellWrap, styles.yearTargetsBalanceCol, styles.yearTargetsGapCellWrap]}>
                             <Text
                               style={[
                                 styles.yearTargetsBalancePill,
-                                row.balanceDays < 0 && styles.yearTargetsNegativeBalancePill,
-                                row.balanceDays < 0 && styles.yearTargetsNegativeBalanceText,
+                                styles.yearTargetsGapPill,
+                                row.gapDays < 0 && styles.yearTargetsNegativeBalancePill,
+                                row.gapDays > 0 && styles.yearTargetsPositiveGapPill,
+                                row.gapDays < 0 && styles.yearTargetsNegativeBalanceText,
+                                row.gapDays > 0 && styles.yearTargetsPositiveGapText,
                               ]}
                             >
-                              {row.balanceDays > 0 ? `+${row.balanceDays}` : row.balanceDays}
+                              {`${row.gapDays > 0 ? `+${row.gapDays}` : row.gapDays} days`}
                             </Text>
                           </View>
                         </View>
                       ))}
-                      <View style={[styles.yearTargetsTableRow, styles.yearTargetsTableTotalRow]}>
-                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsSubjectCol, styles.yearTargetsTableTotalText]}>Total</Text>
-                        <TouchableOpacity
-                          onPress={openPlanningPreferences}
-                          style={styles.yearTargetsTargetCellButton}
-                          activeOpacity={0.8}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText, styles.yearTargetsTargetCellText, styles.yearTargetsCellRight]}>
-                            {yearTargetSummary.totalTargetDays}
-                          </Text>
-                        </TouchableOpacity>
-                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText, styles.yearTargetsCellRight]}>{yearTargetSummary.totalUpcomingDays}</Text>
-                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText, styles.yearTargetsCellRight]}>{yearTargetSummary.totalAttendedDays}</Text>
-                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText, styles.yearTargetsCellRight]}>{yearTargetSummary.totalUnattendedDays}</Text>
-                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsProjectedCol, styles.yearTargetsTableTotalText, styles.yearTargetsCellRight]}>
-                          {yearTargetSummary.totalProjectedDays}
-                        </Text>
-                        <View style={[styles.yearTargetsBalanceCol, styles.yearTargetsBalanceCell]}>
-                          <Text
-                            style={[
-                              styles.yearTargetsBalancePill,
-                              styles.yearTargetsTableTotalText,
-                              yearTargetSummary.totalBalanceDays < 0 && styles.yearTargetsNegativeBalancePill,
-                              yearTargetSummary.totalBalanceDays < 0 && styles.yearTargetsNegativeBalanceText,
-                            ]}
-                          >
-                            {yearTargetSummary.totalBalanceDays > 0 ? `+${yearTargetSummary.totalBalanceDays}` : yearTargetSummary.totalBalanceDays}
-                          </Text>
-                        </View>
-                      </View>
                     </View>
                   </View>
                   <View style={styles.yearTargetsPredictiveCard}>
-                    <Text style={styles.yearTargetsPredictiveTitle}>What to adjust</Text>
-                    <Text style={styles.yearTargetsPredictivePrimaryLine}>
-                      {`Need +${Math.max(0, -Number(yearTargetSummary.totalBalanceDays || 0))} days to meet target.`}
-                    </Text>
-                    {(() => {
-                      const breakdown = (yearTargetSummary.perSubjectRows || [])
-                        .map((row) => ({ name: row.name || 'Subject', shortDays: Math.max(0, -Number(row.balanceDays || 0)) }))
-                        .filter((row) => row.shortDays > 0)
-                        .map((row) => `${row.name} +${row.shortDays}`)
-                        .join('   ·   ');
-                      return breakdown ? (
-                        <Text style={styles.yearTargetsPredictiveBreakdownLine}>{breakdown}</Text>
-                      ) : null;
-                    })()}
-                    <Text style={styles.yearTargetsPredictiveAdjustLabel}>
-                      Adjust:
-                    </Text>
-                    <Text style={styles.yearTargetsPredictiveLine}>
-                      Upcoming schedule · Past attendance · Target
-                    </Text>
-                    <TouchableOpacity
-                      onPress={openPlanningPreferences}
-                      activeOpacity={0.8}
-                      style={styles.yearTargetsPredictiveLinkButton}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Text style={styles.yearTargetsPredictiveLinkText}>Open planner</Text>
-                    </TouchableOpacity>
-                    {(yearTargetSummary.perSubjectRows || [])
-                      .map((row) => ({ name: row.name || 'Subject', shortDays: Math.max(0, -Number(row.balanceDays || 0)) }))
-                      .filter((row) => row.shortDays > 0)
-                      .length === 0 ? (
-                        <Text style={styles.yearTargetsPredictiveLine}>No gap right now.</Text>
-                      ) : null}
+                    {(yearTargetSummary.perSubjectCatchUp || [])
+                      .slice(0, 3)
+                      .map((row, index) => {
+                        const suggestionSummary = String(row?.suggestionSummaryText || '').trim();
+                        const suggestedDaysText = row.extensionAddedDatesLabel || row.suggestedAddedDaysLabel || '';
+                        return (
+                        <View
+                          key={`adjust-row-${row.id}`}
+                          style={[
+                            styles.yearTargetsPredictiveItemBlock,
+                            index > 0 && styles.yearTargetsPredictiveItemBlockSpaced,
+                          ]}
+                        >
+                          <View style={styles.yearTargetsPredictiveItemRow}>
+                            <Text style={styles.yearTargetsPredictiveItemSubject}>{row.name}</Text>
+                            <Text style={styles.yearTargetsPredictiveItemGap}>{`${row.shortDays} days short`}</Text>
+                            <View style={styles.yearTargetsPredictiveItemPaceWrap}>
+                              <Text style={styles.yearTargetsPredictiveItemArrow}>→</Text>
+                              <Text style={styles.yearTargetsPredictiveItemPace}>
+                                {`+${row.lowSessionsPerWeek}${row.highSessionsPerWeek > row.lowSessionsPerWeek ? `-${row.highSessionsPerWeek}` : ''}/week`}
+                              </Text>
+                            </View>
+                          </View>
+                          {suggestionSummary ? (
+                            <View style={styles.yearTargetsPredictiveSuggestionRow}>
+                              <Text style={styles.yearTargetsPredictiveSuggestionLine}>
+                                {`Suggestion: ${suggestionSummary}`}
+                              </Text>
+                            </View>
+                          ) : null}
+                          {suggestedDaysText ? (
+                            <View style={styles.yearTargetsPredictiveSuggestionRow}>
+                              <Text style={styles.yearTargetsPredictiveSuggestionLine}>
+                                {`Suggested days: ${suggestedDaysText}.`}
+                              </Text>
+                              {row.suggestedEndYmd ? (
+                              <TouchableOpacity
+                                onPress={() => applySuggestedTermExtension(row)}
+                                activeOpacity={0.85}
+                                disabled={applyingSuggestionSubjectId === row.id}
+                                style={[
+                                  styles.yearTargetsPredictiveSuggestionButton,
+                                  applyingSuggestionSubjectId === row.id && styles.yearTargetsPredictiveSuggestionButtonDisabled,
+                                ]}
+                                {...(Platform.OS === 'web' && { cursor: applyingSuggestionSubjectId === row.id ? 'default' : 'pointer' })}
+                              >
+                                <Text
+                                  style={[
+                                    styles.yearTargetsPredictiveSuggestionButtonText,
+                                    applyingSuggestionSubjectId === row.id && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
+                                  ]}
+                                >
+                                  {applyingSuggestionSubjectId === row.id ? 'Applying...' : 'Apply'}
+                                </Text>
+                              </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          ) : null}
+                        </View>
+                        );
+                      })}
                   </View>
                 </View>
               </View>
@@ -2185,6 +2767,177 @@ export default function SubjectsPlanBuilder({
                   ))
                 )}
               </ScrollView>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+        <SubjectPastEventsAttendanceModal
+          visible={showPastEventsAttendanceModal}
+          onClose={() => setShowPastEventsAttendanceModal(false)}
+          familyId={familyId}
+          subjectId={attendanceModalData.subjectId}
+          events={attendanceModalData.events}
+          onCompleted={() => setEventsRefreshKey((prev) => prev + 1)}
+          getChildName={(childId) => childNameById[String(childId)] || 'Student'}
+          onOpenEvent={(eventId, initialEvent) => {
+            setShowPastEventsAttendanceModal(false);
+            openEventDetails(eventId, initialEvent);
+          }}
+        />
+        <Modal
+          visible={showUpcomingEventsModal}
+          transparent
+          animationType="none"
+          onRequestClose={() => setShowUpcomingEventsModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.subjectEventsOverlay}
+            activeOpacity={1}
+            onPress={() => setShowUpcomingEventsModal(false)}
+          >
+            <TouchableOpacity style={styles.subjectEventsModal} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
+              <View style={styles.subjectEventsHeader}>
+                <View style={styles.subjectEventsHeaderTextWrap}>
+                  <Text style={styles.subjectEventsTitle}>
+                    {upcomingEventsModalData.subjectName || 'Subject'} events
+                  </Text>
+                </View>
+                <View style={styles.subjectEventsHeaderActions}>
+                  <TouchableOpacity onPress={() => setShowUpcomingEventsModal(false)} style={styles.subjectEventsCloseButton}>
+                    <X size={18} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <ScrollView style={styles.subjectEventsList} contentContainerStyle={styles.subjectEventsListContent}>
+                {(upcomingEventsModalData.events || []).length === 0 ? (
+                  <Text style={styles.subjectEventsEmptyText}>No instructional events are scheduled yet.</Text>
+                ) : (
+                  (upcomingEventsModalData.events || []).map((eventItem) => (
+                    <View key={eventItem.id} style={styles.subjectEventRow}>
+                      {(() => {
+                        const isPastEvent = Number(eventItem?.startMs || 0) > 0 && Number(eventItem.startMs) < Date.now();
+                        const isAttended = String(eventItem?.status || '').toLowerCase() === 'done'
+                          || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
+                        return (
+                          <>
+                      <View style={styles.subjectEventRowTop}>
+                        <Text style={styles.subjectEventRowTitle}>{eventItem.title || 'Event'}</Text>
+                        <View style={styles.subjectEventRowMetaRight}>
+                          <Text style={styles.subjectEventRowSource}>
+                            {eventItem.fromPlan ? 'From plan' : 'Manual instructional'}
+                          </Text>
+                          {Number(eventItem?.startMs || 0) > 0 ? (
+                            <View style={[styles.subjectEventRowStatusChips, styles.subjectEventRowStatusChipsRight]}>
+                              <Text
+                                style={[
+                                  styles.subjectEventRowStatusChip,
+                                  isPastEvent ? styles.subjectEventRowStatusChipPast : styles.subjectEventRowStatusChipUpcoming,
+                                ]}
+                              >
+                                {isPastEvent ? 'Past' : 'Upcoming'}
+                              </Text>
+                              {isPastEvent ? (
+                                <Text
+                                  style={[
+                                    styles.subjectEventRowStatusChip,
+                                    isAttended ? styles.subjectEventRowStatusChipAttended : styles.subjectEventRowStatusChipUnattended,
+                                  ]}
+                                >
+                                  {isAttended ? 'Attended' : 'Unattended'}
+                                </Text>
+                              ) : null}
+                            </View>
+                          ) : null}
+                        </View>
+                      </View>
+                      <Text style={styles.subjectEventRowDate}>{formatEventDateTime(eventItem.startTs)}</Text>
+                      {eventItem.unitName ? (
+                        <Text style={styles.subjectEventRowUnit}>Unit: {eventItem.unitName}</Text>
+                      ) : null}
+                      <View style={styles.subjectEventRowActions}>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setShowUpcomingEventsModal(false);
+                            openEventDetails(eventItem.id, eventItem);
+                          }}
+                          activeOpacity={0.8}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.subjectEventRowLinkText}>Open event details</Text>
+                        </TouchableOpacity>
+                        {isPastEvent && !isAttended ? (
+                            <TouchableOpacity
+                              onPress={() => markEventAsAttendedFromAllEventsModal(eventItem)}
+                              activeOpacity={0.8}
+                              disabled={markingAttendanceEventId === eventItem.id}
+                              {...(Platform.OS === 'web' && { cursor: markingAttendanceEventId === eventItem.id ? 'default' : 'pointer' })}
+                            >
+                              <Text style={styles.subjectEventRowLinkText}>
+                                {markingAttendanceEventId === eventItem.id ? 'Marking...' : 'Mark attended'}
+                              </Text>
+                            </TouchableOpacity>
+                          ) : null}
+                        {isPastEvent && isAttended ? (
+                            <TouchableOpacity
+                              onPress={() => markEventAsUnattendedFromAllEventsModal(eventItem)}
+                              activeOpacity={0.8}
+                              disabled={markingAttendanceEventId === eventItem.id}
+                              {...(Platform.OS === 'web' && { cursor: markingAttendanceEventId === eventItem.id ? 'default' : 'pointer' })}
+                            >
+                              <Text style={styles.subjectEventRowLinkText}>
+                                {markingAttendanceEventId === eventItem.id ? 'Marking...' : 'Mark unattended'}
+                              </Text>
+                            </TouchableOpacity>
+                          ) : null}
+                      </View>
+                          </>
+                        );
+                      })()}
+                    </View>
+                  ))
+                )}
+              </ScrollView>
+              {(() => {
+                const hasPendingPastEvents = (upcomingEventsModalData.events || []).some((eventItem) => {
+                  const startMs = Number(eventItem?.startMs || 0);
+                  const isPastEvent = startMs > 0 && startMs < Date.now();
+                  const isAttended = String(eventItem?.status || '').toLowerCase() === 'done'
+                    || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
+                  return isPastEvent && !isAttended;
+                });
+                const isBulkMarking = markingAttendanceEventId === '__bulk_mark_all_past_attended__';
+                return (
+                  <View style={styles.subjectEventsFooter}>
+                    <View style={styles.subjectEventsFooterButtonsRow}>
+                      <TouchableOpacity
+                        onPress={() => setShowUpcomingEventsModal(false)}
+                        style={styles.subjectEventsFooterCancelButton}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.subjectEventsFooterCancelButtonText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={markAllPastEventsAsAttendedFromAllEventsModal}
+                        style={[
+                          styles.subjectEventsFooterActionButton,
+                          (!hasPendingPastEvents || isBulkMarking) && styles.subjectEventsFooterActionButtonDisabled,
+                        ]}
+                        activeOpacity={0.85}
+                        disabled={!hasPendingPastEvents || isBulkMarking}
+                      >
+                        <CheckCircle2 size={18} color={!hasPendingPastEvents || isBulkMarking ? '#94A3B8' : '#FFFFFF'} strokeWidth={2} />
+                        <Text
+                          style={[
+                            styles.subjectEventsFooterActionButtonText,
+                            (!hasPendingPastEvents || isBulkMarking) && styles.subjectEventsFooterActionButtonTextDisabled,
+                          ]}
+                        >
+                          {isBulkMarking ? 'Marking...' : 'Mark all as attended'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })()}
             </TouchableOpacity>
           </TouchableOpacity>
         </Modal>
@@ -2649,9 +3402,59 @@ const styles = StyleSheet.create({
     borderColor: '#D7E5F5',
     backgroundColor: '#F8FBFF',
     borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 3,
+  },
+  yearProgressTrackingHintCompact: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressTrackingRow: {
+    marginBottom: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  yearProgressTrackingChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1D4ED8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressTrackingHint: {
+    fontSize: 11,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressSummaryShortfall: {
+    fontSize: 19,
+    lineHeight: 22,
+    fontWeight: '800',
+    color: '#B91C1C',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressSummaryCompletionNote: {
+    fontSize: 12,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   yearProgressSummaryTopRow: {
     flexDirection: 'row',
@@ -2675,11 +3478,11 @@ const styles = StyleSheet.create({
     }),
   },
   yearProgressSummaryMetric: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearProgressSummaryBalance: {
@@ -2687,7 +3490,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#334155',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearProgressSummaryBalanceNegative: {
@@ -2719,110 +3522,236 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     overflow: 'hidden',
   },
-  yearTargetsTableRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  yearTargetsHintRow: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
-  },
-  yearTargetsTableHeaderRow: {
     backgroundColor: '#F8FAFC',
   },
-  yearTargetsTableTotalRow: {
-    backgroundColor: '#EFF5FF',
-    borderBottomWidth: 0,
-  },
-  yearTargetsTableHeaderCell: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#334155',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  yearTargetsTableCell: {
-    fontSize: 14,
-    color: '#1F2937',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  yearTargetsTargetCellButton: {
-    flex: 0.85,
-  },
-  yearTargetsHeaderCellRight: {
-    textAlign: 'right',
-  },
-  yearTargetsCellRight: {
-    textAlign: 'right',
-  },
-  yearTargetsTargetCellText: {
-    color: '#1D4ED8',
-    textDecorationLine: 'underline',
-  },
-  yearTargetsTableTotalText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0F172A',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  yearTargetsSubjectCol: {
-    flex: 1.4,
-  },
-  yearTargetsSubjectCell: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  yearTargetsSubjectCellName: {
-    fontSize: 14,
-    color: '#1F2937',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  yearTargetsSubjectCadenceHint: {
-    marginTop: 2,
+  yearTargetsHintText: {
     fontSize: 11,
     color: '#64748B',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  yearTargetsNumberCol: {
+  yearTargetsTableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  yearTargetsTableBodyRow: {
+    minHeight: 72,
+  },
+  yearTargetsTableHeaderRow: {
+    backgroundColor: '#F8FAFC',
+    minHeight: 48,
+  },
+  yearTargetsTableTotalRow: {
+    backgroundColor: '#EFF5FF',
+    borderBottomWidth: 0,
+  },
+  yearTargetsTableTotalDivider: {
+    borderTopWidth: 1,
+    borderTopColor: '#CBD5E1',
+  },
+  yearTargetsTableHeaderCell: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsTableCell: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1F2937',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsHeaderCellWrap: {
+    justifyContent: 'center',
+    paddingVertical: 6,
+  },
+  yearTargetsCellWrap: {
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    paddingVertical: 6,
+  },
+  yearTargetsTargetCellButton: {
     flex: 0.85,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+  },
+  yearTargetsMetricCellButton: {
+    flex: 0.85,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+  },
+  yearTargetsMetricCellLinkText: {
+    fontSize: 14,
+    color: '#253044',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsMetricCellEmphasisText: {
+    color: '#253044',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsMetricCellMutedText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  yearTargetsHeaderCellLeft: {
+    textAlign: 'left',
+  },
+  yearTargetsHeaderCellRight: {
+    textAlign: 'right',
+  },
+  yearTargetsHeaderGapCellWrap: {
+    alignItems: 'flex-end',
+  },
+  yearTargetsCellLeft: {
+    textAlign: 'left',
+  },
+  yearTargetsCellRight: {
+    textAlign: 'right',
+  },
+  yearTargetsTargetCellText: {
+    color: '#334155',
+    textDecorationLine: 'none',
+  },
+  yearTargetsEditableCell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  yearTargetsTableTotalText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsTableTotalMutedText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsSubjectCol: {
+    flex: 2.2,
+  },
+  yearTargetsSubjectCell: {
+    paddingHorizontal: 0,
+    paddingVertical: 8,
+  },
+  yearTargetsSubjectCellName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsSubjectCadenceHint: {
+    fontSize: 11,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsSubjectCadenceBadge: {
+    marginTop: 2,
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  yearTargetsSubjectCadenceSlot: {
+    minHeight: 22,
+    justifyContent: 'center',
+  },
+  yearTargetsSubjectCadenceSpacer: {
+    minHeight: 20,
+  },
+  yearTargetsNumberCol: {
+    flex: 1,
+  },
+  yearTargetsTargetCol: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  yearTargetsDoneCol: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  yearTargetsUpcomingCol: {
+    flex: 1.2,
+    alignItems: 'flex-end',
   },
   yearTargetsProjectedCol: {
-    flex: 1.8,
+    flex: 2,
+    alignItems: 'flex-end',
   },
   yearTargetsBalanceCol: {
-    flex: 0.85,
+    flex: 1.2,
+    alignItems: 'flex-end',
   },
   yearTargetsBalanceCell: {
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 6,
+    alignItems: 'flex-start',
+  },
+  yearTargetsGapCellWrap: {
     alignItems: 'flex-end',
   },
   yearTargetsBalancePill: {
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 2,
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '600',
     color: '#1F2937',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  yearTargetsGapPill: {
+    backgroundColor: '#F8FAFC',
   },
   yearTargetsNegativeBalancePill: {
     backgroundColor: 'rgba(239, 68, 68, 0.12)',
   },
   yearTargetsNegativeBalanceText: {
     color: '#B91C1C',
+  },
+  yearTargetsPositiveGapPill: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+  },
+  yearTargetsPositiveGapText: {
+    color: '#047857',
   },
   yearTargetsSubjectCard: {
     borderWidth: 1,
@@ -2845,7 +3774,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0F172A',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearTargetsInlineTargetButton: {
@@ -2872,7 +3801,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1E293B',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearTargetsMetricsRow: {
@@ -2892,7 +3821,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0F172A',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearTargetsStatusLine: {
@@ -2925,7 +3854,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1D4ED8',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearTargetsPredictiveCard: {
@@ -2933,17 +3862,127 @@ const styles = StyleSheet.create({
     borderColor: '#DBEAFE',
     borderRadius: 12,
     backgroundColor: '#F8FAFF',
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 10,
-    gap: 3,
+    gap: 8,
+  },
+  yearTargetsPredictiveHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    flexWrap: 'wrap',
   },
   yearTargetsPredictiveTitle: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: '#1E3A8A',
     ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  yearTargetsPredictiveItemBlock: {
+    gap: 4,
+  },
+  yearTargetsPredictiveItemBlockSpaced: {
+    marginTop: 4,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  yearTargetsPredictiveItemSubject: {
+    width: 74,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F2937',
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  yearTargetsPredictiveItemGap: {
+    minWidth: 110,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#B91C1C',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveItemPaceWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  yearTargetsPredictiveItemArrow: {
+    fontSize: 13,
+    color: '#475569',
+    fontWeight: '400',
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveItemPace: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: '#475569',
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveSuggestionLine: {
+    fontSize: 13,
+    color: '#475569',
+    fontWeight: '400',
+    lineHeight: 18,
+    flexShrink: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveSuggestionRow: {
+    marginLeft: 80,
+    marginTop: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  yearTargetsPredictiveSuggestionButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearTargetsPredictiveSuggestionButtonDisabled: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  yearTargetsPredictiveSuggestionButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#3730A3',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveSuggestionButtonTextDisabled: {
+    color: '#94A3B8',
   },
   yearTargetsPredictiveLine: {
     fontSize: 12,
@@ -2953,20 +3992,21 @@ const styles = StyleSheet.create({
     }),
   },
   yearTargetsPredictivePrimaryLine: {
-    fontSize: 18,
-    lineHeight: 22,
-    fontWeight: '800',
-    color: '#0F172A',
+    marginTop: 2,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '700',
+    color: '#1E293B',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearTargetsPredictiveBreakdownLine: {
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '600',
     color: '#1E293B',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearTargetsPredictiveAdjustLabel: {
@@ -2975,8 +4015,44 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#334155',
     ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  yearTargetsPredictiveCtaButton: {
+    minHeight: 32,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearTargetsPredictiveCtaButtonPrimary: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  yearTargetsPredictiveCtaText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  yearTargetsPredictiveCtaTextPrimary: {
+    color: '#334155',
   },
   yearTargetsPredictiveLinkButton: {
     alignSelf: 'flex-start',
@@ -3069,8 +4145,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderRadius: 0,
     borderWidth: 0,
-    borderBottomWidth: 0,
-    paddingVertical: 16,
+    borderColor: 'transparent',
+    paddingVertical: 0,
     paddingHorizontal: 0,
     gap: 0,
     maxWidth: 1400,
@@ -3080,19 +4156,22 @@ const styles = StyleSheet.create({
   termCardSpaced: {
     marginTop: 32,
   },
+  termCardFirstSpaced: {
+    marginTop: 12,
+  },
   termSectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 4,
     marginTop: 0,
     gap: 8,
-    paddingHorizontal: 2,
+    paddingHorizontal: 0,
   },
   termHeaderDivider: {
     height: 1,
     backgroundColor: '#e5e7eb',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   termHeaderCompactTitle: {
     fontSize: 18,
@@ -3245,56 +4324,210 @@ const styles = StyleSheet.create({
     color: '#9AA3B2',
   },
   subjectSection: {
-    gap: 12,
+    paddingTop: 0,
+    gap: 0,
   },
-  subjectRows: {
-    borderTopWidth: 0,
-    borderRadius: 0,
-    borderWidth: 0,
-    overflow: 'visible',
+  cadenceSectionSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  subjectRow: {
-    minHeight: 68,
-    paddingHorizontal: 2,
-    paddingVertical: 12,
-    backgroundColor: 'transparent',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F2F7',
+  cadenceStatusTable: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderBottomWidth: 0,
+    borderRadius: 10,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  },
+  cadenceStatusHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    minHeight: 32,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 10,
+    backgroundColor: '#F8FAFC',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  cadenceStatusHeaderText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  cadenceStatusActionsHeaderText: {
+    textAlign: 'right',
+  },
+  cadenceStatusSubjectCol: {
+    flex: 1.1,
+    minWidth: 140,
+  },
+  cadenceStatusStudentsCol: {
+    flex: 1.2,
+    minWidth: 170,
+  },
+  cadenceStatusSavedCol: {
+    flex: 2.1,
+    minWidth: 250,
+  },
+  cadenceStatusProgressCol: {
+    flex: 1.7,
+    minWidth: 220,
+  },
+  cadenceStatusActionsCol: {
+    flex: 1.3,
+    minWidth: 200,
+  },
+  subjectRows: {
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  },
+  subjectRow: {
+    minHeight: 82,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
   },
   subjectRowLast: {
     borderBottomWidth: 0,
   },
   subjectMain: {
-    width: 150,
+    width: 'auto',
   },
   subjectName: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#172033',
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectStudentsCol: {
+    paddingTop: 2,
   },
   subjectMeta: {
-    marginTop: 3,
+    marginTop: 2,
     fontSize: 12,
-    fontWeight: '700',
-    color: '#9AA3B2',
+    fontWeight: '600',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   subjectMetaRow: {
+    marginTop: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minWidth: 0,
+  },
+  subjectCadence: {
+    flex: 0,
+  },
+  subjectCadencePill: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    maxWidth: '100%',
+  },
+  subjectCadenceText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectProgressCol: {
+    paddingTop: 1,
+  },
+  subjectProgressMetric: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectProgressMetaRow: {
     marginTop: 6,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    minWidth: 0,
+    flexWrap: 'wrap',
   },
-  subjectCadence: {
-    flex: 1,
+  subjectProgressChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
-  subjectCadenceText: {
-    fontSize: 13,
+  subjectProgressChipOnTrack: {
+    borderColor: '#93C5FD',
+    backgroundColor: '#EFF6FF',
+  },
+  subjectProgressChipAhead: {
+    borderColor: '#6EE7B7',
+    backgroundColor: '#ECFDF5',
+  },
+  subjectProgressChipBehind: {
+    borderColor: '#FDBA74',
+    backgroundColor: '#FFF7ED',
+  },
+  subjectProgressChipNoCadence: {
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
+  },
+  subjectProgressChipText: {
+    fontSize: 11,
     fontWeight: '700',
-    color: '#667085',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectProgressChipTextOnTrack: {
+    color: '#1D4ED8',
+  },
+  subjectProgressChipTextAhead: {
+    color: '#047857',
+  },
+  subjectProgressChipTextBehind: {
+    color: '#C2410C',
+  },
+  subjectProgressChipTextNoCadence: {
+    color: '#B45309',
+  },
+  subjectProgressDetail: {
+    fontSize: 12,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   subjectEventCountLink: {
     alignSelf: 'flex-start',
@@ -3308,10 +4541,64 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
   },
   subjectRowActions: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
+    flexDirection: 'column',
+    gap: 4,
+    alignItems: 'flex-end',
     justifyContent: 'flex-end',
+  },
+  subjectRowActionLink: {
+    paddingVertical: 1,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  subjectRowActionLinkText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectActionSoftButton: {
+    minHeight: 32,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  subjectActionSoftButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectActionGhostLink: {
+    minHeight: 32,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  subjectActionGhostLinkText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   needsPlanChip: {
     height: 24,
@@ -4067,15 +5354,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 8,
+    backgroundColor: '#FFFFFF',
   },
   subjectEventsHeaderTextWrap: {
     flex: 1,
     minWidth: 0,
+  },
+  subjectEventsHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   subjectEventsTitle: {
     fontSize: 22,
@@ -4104,11 +5395,71 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
+  subjectEventsFooter: {
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 16,
+    backgroundColor: '#FFFFFF',
+  },
+  subjectEventsFooterButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
+  },
+  subjectEventsFooterCancelButton: {
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  subjectEventsFooterCancelButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectEventsFooterActionButton: {
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#9ECFFB',
+    backgroundColor: '#9ECFFB',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  subjectEventsFooterActionButtonDisabled: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F1F5F9',
+    opacity: 0.58,
+  },
+  subjectEventsFooterActionButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectEventsFooterActionButtonTextDisabled: {
+    color: '#94A3B8',
+  },
   subjectEventsList: {
     flex: 1,
   },
   subjectEventsListContent: {
-    padding: 14,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 8,
     gap: 10,
   },
   subjectEventsEmptyText: {
@@ -4131,6 +5482,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
+  },
+  subjectEventRowMetaRight: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 4,
   },
   subjectEventRowTitle: {
     flex: 1,
@@ -4158,12 +5514,78 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  subjectEventRowMeta: {
+    marginTop: 3,
+    fontSize: 12,
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectEventRowStatusChips: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  subjectEventRowStatusChipsRight: {
+    marginTop: 0,
+    justifyContent: 'flex-end',
+  },
+  subjectEventRowStatusChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    fontSize: 11,
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectEventRowStatusChipPast: {
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    color: '#475569',
+  },
+  subjectEventRowStatusChipUpcoming: {
+    borderColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+    color: '#1D4ED8',
+  },
+  subjectEventRowStatusChipAttended: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#ECFDF5',
+    color: '#047857',
+  },
+  subjectEventRowStatusChipUnattended: {
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
+    color: '#B45309',
+  },
   subjectEventRowUnit: {
     marginTop: 4,
     fontSize: 12,
     color: '#334155',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectEventRowActions: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    flexWrap: 'wrap',
+  },
+  subjectEventRowLinkText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1D4ED8',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   attendancePlaceholderBody: {
