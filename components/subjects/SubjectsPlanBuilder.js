@@ -36,7 +36,7 @@ const TERM_OPTIONS = [
   { id: 'fall_term', label: 'Fall term' },
   { id: 'spring_term', label: 'Spring term' },
 ];
-const OVERVIEW_CACHE_TTL_MS = 2 * 60 * 1000;
+const OVERVIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const overviewCacheByFamily = new Map();
 const overviewInflightByFamily = new Map();
 let schoolYearTemplateCache = null;
@@ -383,6 +383,10 @@ function getCachedOverview(familyId, { allowStale = true } = {}) {
   return cached;
 }
 
+export function getSubjectsPlanOverviewFromCache(familyId, { allowStale = true } = {}) {
+  return getCachedOverview(familyId, { allowStale });
+}
+
 async function fetchAndCacheOverview(familyId, { force = false } = {}) {
   const key = normalizeFamilyKey(familyId);
   if (!key || !isUuidLike(key)) {
@@ -622,6 +626,15 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
   });
   overviewInflightByFamily.set(key, request);
   return request;
+}
+
+export async function preloadSubjectsPlanOverview(familyId, { force = false } = {}) {
+  try {
+    await fetchAndCacheOverview(familyId, { force });
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 export default function SubjectsPlanBuilder({
@@ -2352,7 +2365,7 @@ export default function SubjectsPlanBuilder({
                                 : `${completedDays} completed / ${Math.max(completedDays, Number(row.projectedDays || 0))} planned`;
                               const deltaDays = targetDays != null ? (completedDays - targetDays) : null;
                               const statusLabel = !hasCadence
-                                ? 'No cadence'
+                                ? 'No plan'
                                 : (deltaDays == null
                                   ? 'On track'
                                   : (deltaDays < 0 ? 'Behind target' : (deltaDays > 0 ? 'Ahead target' : 'On target')));
@@ -2491,16 +2504,16 @@ export default function SubjectsPlanBuilder({
                           <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Subject</Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsTargetCol]}>
-                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Target</Text>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Target</Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsDoneCol]}>
-                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Done</Text>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Done</Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsUpcomingCol]}>
-                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Upcoming</Text>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Upcoming</Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsProjectedCol]}>
-                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Projected (Done + Upcoming)</Text>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Projected (Done + Upcoming)</Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsBalanceCol, styles.yearTargetsHeaderGapCellWrap]}>
                           <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Gap</Text>
@@ -2521,24 +2534,24 @@ export default function SubjectsPlanBuilder({
                             </View>
                           </View>
                           <View style={[styles.yearTargetsCellWrap, styles.yearTargetsTargetCol]}>
-                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsTargetCellText, styles.yearTargetsCellRight]}>{row.targetDays}</Text>
+                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsTargetCellText, styles.yearTargetsCellLeft]}>{row.targetDays}</Text>
                           </View>
                           <View style={[styles.yearTargetsCellWrap, styles.yearTargetsDoneCol]}>
-                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsMetricCellEmphasisText, styles.yearTargetsCellRight]}>{row.completedDays}</Text>
+                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsMetricCellEmphasisText, styles.yearTargetsCellLeft]}>{row.completedDays}</Text>
                           </View>
                           {row.upcomingDays > 0 ? (
                             <View style={[styles.yearTargetsCellWrap, styles.yearTargetsUpcomingCol]}>
-                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellRight]}>{row.upcomingDays}</Text>
+                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellLeft]}>{row.upcomingDays}</Text>
                             </View>
                           ) : (
                             <View style={[styles.yearTargetsCellWrap, styles.yearTargetsUpcomingCol]}>
-                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsMetricCellMutedText, styles.yearTargetsCellRight]}>
+                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsMetricCellMutedText, styles.yearTargetsCellLeft]}>
                                 -
                               </Text>
                             </View>
                           )}
                           <View style={[styles.yearTargetsCellWrap, styles.yearTargetsProjectedCol]}>
-                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellRight]}>
+                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellLeft]}>
                               {row.projectedDays}
                             </Text>
                           </View>
@@ -3545,6 +3558,9 @@ const styles = StyleSheet.create({
   },
   yearTargetsTableBodyRow: {
     minHeight: 72,
+    alignItems: 'flex-start',
+    paddingTop: 8,
+    paddingBottom: 8,
   },
   yearTargetsTableHeaderRow: {
     backgroundColor: '#F8FAFC',
@@ -3563,7 +3579,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#334155',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearTargetsTableCell: {
@@ -3581,7 +3597,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   yearTargetsCellWrap: {
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
     alignItems: 'flex-start',
     paddingVertical: 6,
   },
@@ -3598,16 +3614,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   yearTargetsMetricCellLinkText: {
-    fontSize: 14,
-    color: '#253044',
-    fontWeight: '700',
+    fontSize: 12,
+    color: '#1F2937',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearTargetsMetricCellEmphasisText: {
-    color: '#253044',
-    fontWeight: '700',
+    color: '#1F2937',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -3633,7 +3649,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   yearTargetsTargetCellText: {
-    color: '#334155',
+    color: '#1F2937',
     textDecorationLine: 'none',
   },
   yearTargetsEditableCell: {
@@ -3673,8 +3689,9 @@ const styles = StyleSheet.create({
     }),
   },
   yearTargetsSubjectCadenceHint: {
-    fontSize: 11,
-    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -3690,6 +3707,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   yearTargetsSubjectCadenceSlot: {
+    marginTop: 4,
     minHeight: 22,
     justifyContent: 'center',
   },
@@ -3701,23 +3719,23 @@ const styles = StyleSheet.create({
   },
   yearTargetsTargetCol: {
     flex: 1,
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
   },
   yearTargetsDoneCol: {
     flex: 1,
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
   },
   yearTargetsUpcomingCol: {
     flex: 1.2,
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
   },
   yearTargetsProjectedCol: {
     flex: 2,
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
   },
   yearTargetsBalanceCol: {
     flex: 1.2,
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
   },
   yearTargetsBalanceCell: {
     paddingHorizontal: 10,
@@ -4349,8 +4367,8 @@ const styles = StyleSheet.create({
   cadenceStatusHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 32,
-    paddingHorizontal: 10,
+    minHeight: 48,
+    paddingHorizontal: 20,
     paddingVertical: 6,
     gap: 10,
     backgroundColor: '#F8FAFC',
@@ -4358,11 +4376,11 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E2E8F0',
   },
   cadenceStatusHeaderText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
     color: '#334155',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   cadenceStatusActionsHeaderText: {
@@ -4400,7 +4418,7 @@ const styles = StyleSheet.create({
   },
   subjectRow: {
     minHeight: 82,
-    paddingHorizontal: 10,
+    paddingHorizontal: 20,
     paddingVertical: 10,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
@@ -4430,7 +4448,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 12,
     fontWeight: '600',
-    color: '#64748B',
+    color: '#475569',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -4467,7 +4485,7 @@ const styles = StyleSheet.create({
     paddingTop: 1,
   },
   subjectProgressMetric: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#1F2937',
     ...(Platform.OS === 'web' && {

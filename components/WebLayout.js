@@ -62,6 +62,7 @@ import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import OnboardingModal from './onboarding/OnboardingModal';
 import ExplorerTourOverlay from './onboarding/ExplorerTourOverlay';
 import LearnerQuickStartModal from './onboarding/LearnerQuickStartModal';
+import { preloadSubjectsPlanOverview } from './subjects/SubjectsPlanBuilder';
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
 import AppLoader from './AppLoader';
 import RebalanceModal from './year/RebalanceModal';
@@ -242,6 +243,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       if (!cancelled && !error && data?.plan_exists) setPreloadedPlanHealth(data);
     });
     return () => { cancelled = true; };
+  }, [familyId]);
+
+  // Warm subjects schedule/year-target overview once on app load for this family.
+  // Subjects page then hydrates immediately from cache when opened.
+  useEffect(() => {
+    if (!familyId) return;
+    preloadSubjectsPlanOverview(familyId).catch(() => {});
   }, [familyId]);
 
   // Onboarding: resolve status before first paint so we never flash landing without modal
