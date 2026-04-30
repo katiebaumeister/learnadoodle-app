@@ -172,6 +172,20 @@ function formatSubjectCadence(blocks = []) {
   return `${dayPhrase} (mixed times)`;
 }
 
+function formatSubjectCadenceCompact(blocks = []) {
+  const dayNums = [
+    ...new Set(
+      (blocks || []).flatMap((block) =>
+        Array.isArray(block?.weekdays)
+          ? block.weekdays.map((d) => Number(d)).filter((d) => Number.isInteger(d))
+          : []
+      )
+    ),
+  ].sort((a, b) => a - b);
+  if (dayNums.length === 0) return '';
+  return formatWeekdaySummary(dayNums);
+}
+
 function isInstructionalEvent(eventRow) {
   if (!eventRow || typeof eventRow !== 'object') return false;
   const status = eventRow.instructional_status;
@@ -1270,6 +1284,7 @@ export default function SubjectsPlanBuilder({
         schoolTermLabel,
         hasPlan: (subjectId ? plannedSet.has(subjectId) : false) || (normalizedName ? plannedNameSet.has(normalizedName) : false),
         cadenceText: formatSubjectCadence(blocksForSubject),
+        cadenceCompactLabel: formatSubjectCadenceCompact(blocksForSubject),
         pastEventsCount,
         plannedEventsCount,
         eventItems: yearEventItems,
@@ -1384,6 +1399,7 @@ export default function SubjectsPlanBuilder({
         Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
       );
       const cadenceText = formatSubjectCadence(blocksForSubject);
+      const cadenceCompactLabel = formatSubjectCadenceCompact(blocksForSubject);
       const attachedIds = Array.isArray(subject?.assignedChildren)
         ? subject.assignedChildren.map((id) => String(id)).filter(Boolean)
         : [];
@@ -1398,6 +1414,7 @@ export default function SubjectsPlanBuilder({
         name: subject?.name || 'Subject',
         hasPlan: (subjectId ? plannedSet.has(subjectId) : false) || (normalizedName ? plannedNameSet.has(normalizedName) : false),
         cadenceText,
+        cadenceCompactLabel,
         attachedStudentIds: effectiveAttachedIds,
         attachedStudentsLabel: attachedStudentNames.join(', '),
       };
@@ -1777,48 +1794,6 @@ export default function SubjectsPlanBuilder({
                   <View style={styles.termHeaderDivider} />
 
                     <>
-
-                      <View style={styles.weekGrid}>
-                        {termSection.dayRows.map((row) => {
-                          const lessons = (row.dayEntries || []).map((entry, idx) => ({
-                            key: `${row.key}-${entry.subjectName}-${entry.startTime}-${idx}`,
-                            title: entry.subjectName,
-                            time: toAmPm(entry.startTime),
-                            termLabel: entry.termLabel || '',
-                          }));
-                          return (
-                            <View key={row.key} style={styles.dayColumn}>
-                              <Text style={styles.dayLabel}>{row.dayLabel}</Text>
-
-                              <View style={styles.dayBody}>
-                                {lessons.length > 0 ? (
-                                  lessons.map((lesson) => (
-                                    <TouchableOpacity key={lesson.key} style={styles.lessonChip} activeOpacity={0.8}>
-                                      <Text style={styles.lessonTitle}>{lesson.title}</Text>
-                                      <Text style={styles.lessonTime}>{lesson.time}</Text>
-                                      {lesson.termLabel ? (
-                                        <Text style={styles.lessonTerm}>{lesson.termLabel}</Text>
-                                      ) : null}
-                                    </TouchableOpacity>
-                                  ))
-                                ) : (
-                                  <TouchableOpacity
-                                    style={styles.addSlotButton}
-                                    onPress={() => {
-                                      setSelectedTerm('full_year');
-                                      openSubjectPicker('add');
-                                    }}
-                                    activeOpacity={0.8}
-                                  >
-                                    <Text style={styles.addSlotText}>+</Text>
-                                  </TouchableOpacity>
-                                )}
-                              </View>
-                            </View>
-                          );
-                        })}
-                      </View>
-
                       <View style={styles.subjectSection}>
                         <View style={styles.subjectRows}>
                           {termSection.subjectPlans.length === 0 ? (
@@ -1858,7 +1833,9 @@ export default function SubjectsPlanBuilder({
 
                                   <View style={styles.subjectCadence}>
                                     <Text style={styles.subjectCadenceText}>
-                                      {row.cadenceText || 'No schedule yet.'}
+                                      {row.schoolTermLabel
+                                        ? `${row.schoolTermLabel}, ${row.cadenceText || 'No schedule yet.'}`
+                                        : (row.cadenceText || 'No schedule yet.')}
                                     </Text>
                                   </View>
 
@@ -1928,44 +1905,71 @@ export default function SubjectsPlanBuilder({
                 <View style={styles.termHeaderDivider} />
                 <View style={styles.yearTargetsCard}>
                   <View style={styles.yearProgressSummaryCard}>
+                    <View style={styles.yearProgressSummaryTopRow}>
+                      <Text style={styles.yearProgressSummaryMetric}>
+                        {`${yearTargetSummary.totalActualDays} / ${yearTargetSummary.totalTargetDays} days`}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.yearProgressSummaryBalance,
+                          yearTargetSummary.totalBalanceDays < 0 && styles.yearProgressSummaryBalanceNegative,
+                        ]}
+                      >
+                        {`Balance: ${yearTargetSummary.totalBalanceDays > 0 ? `+${yearTargetSummary.totalBalanceDays}` : yearTargetSummary.totalBalanceDays}`}
+                      </Text>
+                    </View>
+                    <Text style={styles.yearProgressSummaryProjected}>
+                      {`Projected: ${yearTargetSummary.totalProjectedDays} / ${yearTargetSummary.totalTargetDays}`}
+                    </Text>
+                    <Text style={styles.yearProgressSummaryProjectedNote}>Includes all upcoming events</Text>
                     <View style={styles.yearProgressSummaryTrack}>
                       <View style={[styles.yearProgressSummaryFill, { width: `${yearTargetSummary.progressPct}%` }]} />
                     </View>
-                    <Text style={styles.yearProgressSummaryMetric}>
-                      {`${yearTargetSummary.totalActualDays} / ${yearTargetSummary.totalTargetDays} days`}
-                    </Text>
                   </View>
                   <View style={styles.yearTargetsSubjectCardsWrap}>
                     <View style={styles.yearTargetsTable}>
                       <View style={[styles.yearTargetsTableRow, styles.yearTargetsTableHeaderRow]}>
                         <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsSubjectCol]}>Subject</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol]}>Target</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol]}>Upcoming</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol]}>Attended</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol]}>Unattended</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsProjectedCol]}>Projected</Text>
-                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsBalanceCol]}>Balance</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol, styles.yearTargetsHeaderCellRight]}>Target</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol, styles.yearTargetsHeaderCellRight]}>Upcoming</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol, styles.yearTargetsHeaderCellRight]}>Attended</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol, styles.yearTargetsHeaderCellRight]}>Unattended</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsProjectedCol, styles.yearTargetsHeaderCellRight]}>Projected</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsBalanceCol, styles.yearTargetsHeaderCellRight]}>Balance</Text>
                       </View>
                       {(yearTargetSummary.perSubjectRows || []).map((row) => (
                         <View key={`year-target-row-${row.id}`} style={styles.yearTargetsTableRow}>
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsSubjectCol]}>{row.name}</Text>
+                          <View style={[styles.yearTargetsSubjectCol, styles.yearTargetsSubjectCell]}>
+                            <Text style={styles.yearTargetsSubjectCellName}>{row.name}</Text>
+                            {row.cadenceCompactLabel ? (
+                              <Text style={styles.yearTargetsSubjectCadenceHint}>{`(${row.cadenceCompactLabel})`}</Text>
+                            ) : null}
+                          </View>
                           <TouchableOpacity
                             onPress={openPlanningPreferences}
                             style={styles.yearTargetsTargetCellButton}
                             activeOpacity={0.8}
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                           >
-                            <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTargetCellText]}>{row.targetDays}</Text>
+                            <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTargetCellText, styles.yearTargetsCellRight]}>{row.targetDays}</Text>
                           </TouchableOpacity>
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol]}>{row.upcomingDays}</Text>
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol]}>{row.attendedDays}</Text>
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol]}>{row.unattendedDays}</Text>
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsProjectedCol]}>
-                            {`${row.upcomingDays}+${row.attendedDays}+${row.unattendedDays} = ${row.projectedDays}`}
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsCellRight]}>{row.upcomingDays}</Text>
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsCellRight]}>{row.attendedDays}</Text>
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsCellRight]}>{row.unattendedDays}</Text>
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsProjectedCol, styles.yearTargetsCellRight]}>
+                            {row.projectedDays}
                           </Text>
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsBalanceCol]}>
-                            {row.balanceDays > 0 ? `+${row.balanceDays}` : row.balanceDays}
-                          </Text>
+                          <View style={[styles.yearTargetsBalanceCol, styles.yearTargetsBalanceCell]}>
+                            <Text
+                              style={[
+                                styles.yearTargetsBalancePill,
+                                row.balanceDays < 0 && styles.yearTargetsNegativeBalancePill,
+                                row.balanceDays < 0 && styles.yearTargetsNegativeBalanceText,
+                              ]}
+                            >
+                              {row.balanceDays > 0 ? `+${row.balanceDays}` : row.balanceDays}
+                            </Text>
+                          </View>
                         </View>
                       ))}
                       <View style={[styles.yearTargetsTableRow, styles.yearTargetsTableTotalRow]}>
@@ -1976,41 +1980,66 @@ export default function SubjectsPlanBuilder({
                           activeOpacity={0.8}
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
-                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText, styles.yearTargetsTargetCellText]}>
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText, styles.yearTargetsTargetCellText, styles.yearTargetsCellRight]}>
                             {yearTargetSummary.totalTargetDays}
                           </Text>
                         </TouchableOpacity>
-                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText]}>{yearTargetSummary.totalUpcomingDays}</Text>
-                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText]}>{yearTargetSummary.totalAttendedDays}</Text>
-                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText]}>{yearTargetSummary.totalUnattendedDays}</Text>
-                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsProjectedCol, styles.yearTargetsTableTotalText]}>
-                          {`${yearTargetSummary.totalUpcomingDays}+${yearTargetSummary.totalAttendedDays}+${yearTargetSummary.totalUnattendedDays} = ${yearTargetSummary.totalProjectedDays}`}
+                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText, styles.yearTargetsCellRight]}>{yearTargetSummary.totalUpcomingDays}</Text>
+                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText, styles.yearTargetsCellRight]}>{yearTargetSummary.totalAttendedDays}</Text>
+                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText, styles.yearTargetsCellRight]}>{yearTargetSummary.totalUnattendedDays}</Text>
+                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsProjectedCol, styles.yearTargetsTableTotalText, styles.yearTargetsCellRight]}>
+                          {yearTargetSummary.totalProjectedDays}
                         </Text>
-                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsBalanceCol, styles.yearTargetsTableTotalText]}>
-                          {yearTargetSummary.totalBalanceDays > 0 ? `+${yearTargetSummary.totalBalanceDays}` : yearTargetSummary.totalBalanceDays}
-                        </Text>
+                        <View style={[styles.yearTargetsBalanceCol, styles.yearTargetsBalanceCell]}>
+                          <Text
+                            style={[
+                              styles.yearTargetsBalancePill,
+                              styles.yearTargetsTableTotalText,
+                              yearTargetSummary.totalBalanceDays < 0 && styles.yearTargetsNegativeBalancePill,
+                              yearTargetSummary.totalBalanceDays < 0 && styles.yearTargetsNegativeBalanceText,
+                            ]}
+                          >
+                            {yearTargetSummary.totalBalanceDays > 0 ? `+${yearTargetSummary.totalBalanceDays}` : yearTargetSummary.totalBalanceDays}
+                          </Text>
+                        </View>
                       </View>
                     </View>
                   </View>
                   <View style={styles.yearTargetsPredictiveCard}>
                     <Text style={styles.yearTargetsPredictiveTitle}>What to adjust</Text>
-                    <Text style={styles.yearTargetsPredictiveLine}>
+                    <Text style={styles.yearTargetsPredictivePrimaryLine}>
                       {`Need +${Math.max(0, -Number(yearTargetSummary.totalBalanceDays || 0))} days to meet target.`}
                     </Text>
-                    {(yearTargetSummary.perSubjectRows || [])
-                      .map((row) => ({ name: row.name || 'Subject', shortDays: Math.max(0, -Number(row.balanceDays || 0)) }))
-                      .filter((row) => row.shortDays > 0)
-                      .map((row) => (
-                        <Text key={`adjust-${row.name}`} style={styles.yearTargetsPredictiveLine}>
-                          {`${row.name}: +${row.shortDays}`}
-                        </Text>
-                      ))}
-                    <Text style={styles.yearTargetsPredictiveLine}>
-                      Ways to close the gap:
+                    {(() => {
+                      const breakdown = (yearTargetSummary.perSubjectRows || [])
+                        .map((row) => ({ name: row.name || 'Subject', shortDays: Math.max(0, -Number(row.balanceDays || 0)) }))
+                        .filter((row) => row.shortDays > 0)
+                        .map((row) => `${row.name} +${row.shortDays}`)
+                        .join('   ·   ');
+                      return breakdown ? (
+                        <Text style={styles.yearTargetsPredictiveBreakdownLine}>{breakdown}</Text>
+                      ) : null;
+                    })()}
+                    <Text style={styles.yearTargetsPredictiveAdjustLabel}>
+                      Adjust:
                     </Text>
                     <Text style={styles.yearTargetsPredictiveLine}>
                       Upcoming schedule · Past attendance · Target
                     </Text>
+                    <TouchableOpacity
+                      onPress={openPlanningPreferences}
+                      activeOpacity={0.8}
+                      style={styles.yearTargetsPredictiveLinkButton}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={styles.yearTargetsPredictiveLinkText}>Open planner</Text>
+                    </TouchableOpacity>
+                    {(yearTargetSummary.perSubjectRows || [])
+                      .map((row) => ({ name: row.name || 'Subject', shortDays: Math.max(0, -Number(row.balanceDays || 0)) }))
+                      .filter((row) => row.shortDays > 0)
+                      .length === 0 ? (
+                        <Text style={styles.yearTargetsPredictiveLine}>No gap right now.</Text>
+                      ) : null}
                   </View>
                 </View>
               </View>
@@ -2622,7 +2651,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    gap: 6,
+    gap: 4,
+  },
+  yearProgressSummaryTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
   },
   yearProgressSummaryTrack: {
     width: '100%',
@@ -2647,6 +2682,32 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  yearProgressSummaryBalance: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressSummaryBalanceNegative: {
+    color: '#B91C1C',
+  },
+  yearProgressSummaryProjected: {
+    fontSize: 12,
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearProgressSummaryProjectedNote: {
+    marginTop: -1,
+    fontSize: 11,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   yearTargetsSubjectCardsWrap: {
     gap: 10,
   },
@@ -2668,7 +2729,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
   },
   yearTargetsTableTotalRow: {
-    backgroundColor: '#F8FAFF',
+    backgroundColor: '#EFF5FF',
     borderBottomWidth: 0,
   },
   yearTargetsTableHeaderCell: {
@@ -2693,6 +2754,12 @@ const styles = StyleSheet.create({
   yearTargetsTargetCellButton: {
     flex: 0.85,
   },
+  yearTargetsHeaderCellRight: {
+    textAlign: 'right',
+  },
+  yearTargetsCellRight: {
+    textAlign: 'right',
+  },
   yearTargetsTargetCellText: {
     color: '#1D4ED8',
     textDecorationLine: 'underline',
@@ -2708,6 +2775,25 @@ const styles = StyleSheet.create({
   yearTargetsSubjectCol: {
     flex: 1.4,
   },
+  yearTargetsSubjectCell: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  yearTargetsSubjectCellName: {
+    fontSize: 14,
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsSubjectCadenceHint: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   yearTargetsNumberCol: {
     flex: 0.85,
   },
@@ -2716,6 +2802,27 @@ const styles = StyleSheet.create({
   },
   yearTargetsBalanceCol: {
     flex: 0.85,
+  },
+  yearTargetsBalanceCell: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    alignItems: 'flex-end',
+  },
+  yearTargetsBalancePill: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    fontSize: 14,
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsNegativeBalancePill: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+  },
+  yearTargetsNegativeBalanceText: {
+    color: '#B91C1C',
   },
   yearTargetsSubjectCard: {
     borderWidth: 1,
@@ -2843,6 +2950,46 @@ const styles = StyleSheet.create({
     color: '#475569',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictivePrimaryLine: {
+    fontSize: 18,
+    lineHeight: 22,
+    fontWeight: '800',
+    color: '#0F172A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveBreakdownLine: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveAdjustLabel: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveLinkButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 2,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearTargetsPredictiveLinkText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1D4ED8',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearTargetsTopRow: {
