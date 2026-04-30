@@ -22,6 +22,8 @@ import {
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
+import { getSubjectProgressCache } from '../lib/subjectProgressPlanCache';
+import { findAcademicYearPlanForSubject } from '../lib/subjectPlanSlotLines';
 
 const BG = '#ffffff';
 const FG = '#111827';
@@ -247,6 +249,7 @@ export default function TaskCreateModal({
   const [selectedAcademicYearId, setSelectedAcademicYearId] = useState(null);
   const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState('');
   const [loadingAcademicYears, setLoadingAcademicYears] = useState(false);
+  const [planBuilderInlineError, setPlanBuilderInlineError] = useState('');
   
   // Handle standards selection from modal
   const handleStandardsSelect = useCallback((selectedStandards) => {
@@ -257,20 +260,59 @@ export default function TaskCreateModal({
   const [percentValidationError, setPercentValidationError] = useState(null);
   const [percentValidationData, setPercentValidationData] = useState(null);
   const [checkingPercent, setCheckingPercent] = useState(false);
-  const selectedSubjectName = useMemo(
-    () => (subjects.find((s) => String(s?.id || '') === String(subjectId || ''))?.name || 'subject'),
+  const selectedSubject = useMemo(
+    () => subjects.find((s) => String(s?.id || '') === String(subjectId || '')) || null,
     [subjects, subjectId]
   );
-  const openSubjectDetailsForPlanning = useCallback(() => {
-    if (!subjectId || Platform.OS !== 'web' || typeof window === 'undefined') return;
-    onClose?.();
-    window.history.pushState({}, '', `/subjects/${subjectId}`);
-    try {
-      window.dispatchEvent(new PopStateEvent('popstate'));
-    } catch (_) {
-      window.dispatchEvent(new Event('popstate'));
+  const openSubjectDetailsForPlanning = useCallback(async (options = {}) => {
+    const { forceCreateNew = false } = options || {};
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (!subjectId) {
+      setPlanBuilderInlineError('Add or select a subject first to use Create plan.');
+      return;
     }
-  }, [subjectId, onClose]);
+    setPlanBuilderInlineError('');
+
+    let resolvedAcademicYearId = null;
+    if (!forceCreateNew) {
+      const cached = getSubjectProgressCache(familyId, subjectId);
+      resolvedAcademicYearId = cached?.academicYearId || null;
+      if (!resolvedAcademicYearId && familyId) {
+        const found = await findAcademicYearPlanForSubject(familyId, subjectId);
+        resolvedAcademicYearId = found?.academicYearId || null;
+      }
+    }
+
+    const fallbackChildIds = Array.isArray(familyMembers)
+      ? familyMembers.map((m) => m?.id).filter(Boolean)
+      : [];
+    const effectiveChildIds = assigneeIds.length > 0 ? assigneeIds : fallbackChildIds;
+
+    onClose?.();
+    window.dispatchEvent(
+      new CustomEvent('openPlanYearModal', {
+        detail: {
+          from: 'task_create',
+          subjectId,
+          subjectName: selectedSubject?.name || null,
+          schoolYear: selectedSubject?.school_year || null,
+          schoolTerm: selectedSubject?.school_term || null,
+          childIds: effectiveChildIds,
+          academicYearId: forceCreateNew ? null : resolvedAcademicYearId,
+          openAsModal: true,
+          openToEditList: false,
+          skipPlanSummary: true,
+          openDirectlyToScope: true,
+        },
+      })
+    );
+  }, [subjectId, selectedSubject, familyId, familyMembers, assigneeIds, onClose]);
+
+  useEffect(() => {
+    if (subjectId && planBuilderInlineError) {
+      setPlanBuilderInlineError('');
+    }
+  }, [subjectId, planBuilderInlineError]);
 
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes
   useEffect(() => {
@@ -907,6 +949,7 @@ export default function TaskCreateModal({
       setShouldAutoAdjust(false);
       setSuggestedChange(null);
       setChangeAccepted(false);
+      setPlanBuilderInlineError('');
     }
     wasVisibleRef.current = visible;
   }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId]);
@@ -925,7 +968,7 @@ export default function TaskCreateModal({
       // First, fetch all subjects to see what we have
       const { data: allSubjects, error: allError } = await supabase
         .from('subject')
-        .select('id, name, child_id')
+        .select('id, name, child_id, school_year, school_term')
         .eq('family_id', familyId);
       
       if (allError) {
@@ -2563,21 +2606,19 @@ export default function TaskCreateModal({
                 {isRecurring && (
                   <View style={styles.recurringRecommendationCard}>
                     <Text style={styles.recurringRecommendationText}>
-                      If you are trying to build out recurring class days by subject, we recommend you do so from the subject's page and use Create plan.
+                      If you are trying to build out recurring class days by subject, we recommend you do so by selecting a subject and using{' '}
+                      <Text style={styles.recurringRecommendationLinkText} onPress={() => openSubjectDetailsForPlanning()}>
+                        Create plan
+                      </Text>
+                      .
                     </Text>
-                    {subjectId ? (
-                      <TouchableOpacity
-                        onPress={openSubjectDetailsForPlanning}
-                        style={styles.recurringRecommendationLinkBtn}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={styles.recurringRecommendationLinkText}>
-                          Go to {selectedSubjectName} details
-                        </Text>
-                      </TouchableOpacity>
-                    ) : null}
                   </View>
                 )}
+                {!!planBuilderInlineError ? (
+                  <View style={styles.planBuilderInlineErrorBanner}>
+                    <Text style={styles.planBuilderInlineErrorText}>{planBuilderInlineError}</Text>
+                  </View>
+                ) : null}
                 {!allDay && (
                   <View style={styles.timeInputsRow}>
                     <View style={styles.timeField}>
@@ -3442,18 +3483,14 @@ export default function TaskCreateModal({
                         <>
                           <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Add to plan? (optional)</Text>
                           {academicYears.length === 0 ? (
-                            <Text
-                              style={{
-                                fontSize: 12,
-                                color: MUTED,
-                                marginTop: 4,
-                                marginBottom: 8,
-                                lineHeight: 17,
-                                ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
-                              }}
-                            >
-                              You don&apos;t have any family class plans yet. Build a structured class plan to see options here.
-                            </Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 }}>
+                              <TouchableOpacity
+                                onPress={() => openSubjectDetailsForPlanning({ forceCreateNew: true })}
+                                style={styles.chipOption}
+                              >
+                                <Text style={styles.chipOptionText}>Create new plan</Text>
+                              </TouchableOpacity>
+                            </View>
                           ) : (
                             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                               <TouchableOpacity
@@ -3466,6 +3503,12 @@ export default function TaskCreateModal({
                                 <Text style={[styles.chipOptionText, selectedAcademicYearId === null && styles.chipOptionTextActive]}>
                                   No plan
                                 </Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                onPress={() => openSubjectDetailsForPlanning({ forceCreateNew: true })}
+                                style={styles.chipOption}
+                              >
+                                <Text style={styles.chipOptionText}>Create new plan</Text>
                               </TouchableOpacity>
                               {(() => {
                                 const baseLabels = academicYears.map((ay) => {
@@ -5014,6 +5057,24 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  planBuilderInlineErrorBanner: {
+    marginTop: 2,
+    marginBottom: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fff1f2',
+  },
+  planBuilderInlineErrorText: {
+    color: '#b91c1c',
+    fontSize: 12,
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   recurringRecommendationLinkBtn: {
     marginTop: 6,
     alignSelf: 'flex-start',
@@ -5025,6 +5086,7 @@ const styles = StyleSheet.create({
     textDecorationLine: 'underline',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      cursor: 'pointer',
     }),
   },
   timeInputsRow: {

@@ -362,7 +362,7 @@ export default function SubjectPastEventsAttendanceModal({
         />
         <View style={styles.card}>
           <View style={styles.header}>
-            <Text style={styles.title}>Mark past lessons</Text>
+            <Text style={styles.title}>Mark past attendance</Text>
             <TouchableOpacity
               onPress={handleCancel}
               style={styles.closeCircle}
@@ -378,7 +378,7 @@ export default function SubjectPastEventsAttendanceModal({
           {!hasPastEvents ? (
             <>
               <Text style={styles.empty}>
-                {scopedSubjectId ? 'No past events loaded for this subject yet.' : 'No past events loaded yet.'}
+                {scopedSubjectId ? 'No events added for this subject yet.' : 'No events added yet.'}
               </Text>
               <View style={styles.emptyActions}>
                 <TouchableOpacity
@@ -402,7 +402,7 @@ export default function SubjectPastEventsAttendanceModal({
                   accessibilityLabel="Create a plan"
                   {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
                 >
-                  <Plus size={14} color="#ffffff" strokeWidth={2.3} />
+                  <Plus size={14} color="#ffffff" strokeWidth={2.5} />
                   <Text style={styles.emptyCreatePlanButtonText}>Create a plan</Text>
                 </TouchableOpacity>
               </View>

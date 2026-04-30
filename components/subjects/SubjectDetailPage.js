@@ -3050,6 +3050,7 @@ export default function SubjectDetailPage({
         eventOutcomes={eventOutcomes}
         getChildName={getChildName}
         onOpenEvent={handleOpenEventDetails}
+        onCreatePlan={handleOpenPlanBuilder}
         onCompleted={() => loadSubjectDetail({ silent: true })}
       />
       <SubjectAssignedToStudentModal

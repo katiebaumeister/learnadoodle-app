@@ -185,6 +185,7 @@ export default function AddSubjectModal({
   const hasSetChildIdsRef = useRef(false);
   const lastSubjectIdRef = useRef(null);
   const hasPrefilledFromFamilyRef = useRef(false);
+  const cleanupDraftInFlightRef = useRef(false);
   
   // Event management state
   const [subjectEvents, setSubjectEvents] = useState([]);
@@ -216,8 +217,13 @@ export default function AddSubjectModal({
   /** Add-mode draft subject persisted early so unit structure can be saved before final subject save. */
   const [draftSubjectId, setDraftSubjectId] = useState(null);
   const effectiveSubjectId = subject?.id ?? draftSubjectId ?? null;
+  const draftSubjectIdRef = useRef(null);
   const [openingAddUnits, setOpeningAddUnits] = useState(false);
   const finalizedSubjectSaveRef = useRef(false);
+
+  useEffect(() => {
+    draftSubjectIdRef.current = draftSubjectId || null;
+  }, [draftSubjectId]);
 
   // Update children when prop changes
   useEffect(() => {
@@ -506,66 +512,77 @@ export default function AddSubjectModal({
     defaultTargetHours,
   ]);
 
-  const ensureDraftSubjectExists = useCallback(async () => {
-    if (subject?.id) return subject.id;
-    if (draftSubjectId) return draftSubjectId;
-    if (!familyId) throw new Error('Family ID not found. Please refresh and try again.');
-    if (!subjectName.trim()) throw new Error('Please enter a subject name before adding units.');
-    if (selectedChildIds.length === 0) throw new Error('Please select at least one student before adding units.');
-
-    const payload = {
-      ...buildSubjectPayload(),
-      family_id: familyId,
-    };
-    const { data, error } = await supabase.from('subject').insert([payload]).select().single();
-    if (error) throw error;
-    const newId = data?.id || null;
-    if (!newId) throw new Error('Failed to create draft subject.');
-    setDraftSubjectId(newId);
-    return newId;
-  }, [
-    subject?.id,
-    draftSubjectId,
-    familyId,
-    subjectName,
-    selectedChildIds,
-    buildSubjectPayload,
-  ]);
-
-  const handleCloseWithDraftCleanup = useCallback(async () => {
-    if (!onClose) return;
-    if (subject?.id || !draftSubjectId || finalizedSubjectSaveRef.current) {
-      onClose();
-      return;
-    }
+  const cleanupDraftSubject = useCallback(async (candidateDraftId) => {
+    const draftId = candidateDraftId || null;
+    if (!draftId || !familyId) return;
     try {
       await deleteSubjectCascade(
         supabase,
         familyId,
-        draftSubjectId,
+        draftId,
         subjectName.trim() || 'Subject'
       );
     } catch (cleanupError) {
       console.warn('Failed to clean up draft subject on close:', cleanupError);
+      // Best-effort hard delete fallback for draft rows when cascade helper fails.
+      try {
+        await supabase
+          .from('subject')
+          .delete()
+          .eq('id', draftId)
+          .eq('family_id', familyId);
+      } catch (fallbackError) {
+        console.warn('Fallback draft subject delete failed:', fallbackError);
+      }
     } finally {
-      onClose();
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
     }
-  }, [onClose, subject?.id, draftSubjectId, familyId, subjectName]);
+  }, [familyId, subjectName]);
+
+  const handleCloseWithDraftCleanup = useCallback(async () => {
+    if (!onClose) return;
+    const currentDraftId = draftSubjectIdRef.current;
+    if (subject?.id || !currentDraftId || finalizedSubjectSaveRef.current) {
+      onClose();
+      return;
+    }
+    if (cleanupDraftInFlightRef.current) return;
+    cleanupDraftInFlightRef.current = true;
+    try {
+      await cleanupDraftSubject(currentDraftId);
+      draftSubjectIdRef.current = null;
+      setDraftSubjectId(null);
+      onClose();
+    } finally {
+      cleanupDraftInFlightRef.current = false;
+    }
+  }, [onClose, subject?.id, cleanupDraftSubject]);
+
+  useEffect(() => {
+    // Fallback cleanup path for external close/hide flows that bypass the modal close handler.
+    if (visible) return;
+    if (subject?.id || finalizedSubjectSaveRef.current) return;
+    const currentDraftId = draftSubjectIdRef.current;
+    if (!currentDraftId || cleanupDraftInFlightRef.current) return;
+    cleanupDraftInFlightRef.current = true;
+    cleanupDraftSubject(currentDraftId)
+      .finally(() => {
+        draftSubjectIdRef.current = null;
+        setDraftSubjectId(null);
+        cleanupDraftInFlightRef.current = false;
+      });
+  }, [visible, subject?.id, cleanupDraftSubject]);
 
   /** Open Add units flows directly from Add/Edit Subject (no Plan Builder modal hop). */
   const openAddUnitsCurriculumAction = useCallback(
     async (kind) => {
       if (openingAddUnits) return;
-      if (!(subject?.id ?? draftSubjectId ?? null)) {
-        try {
-          setOpeningAddUnits(true);
-          await ensureDraftSubjectExists();
-        } catch (e) {
-          setError(e?.message || 'Unable to prepare subject for Add units.');
-          return;
-        } finally {
-          setOpeningAddUnits(false);
-        }
+      const existingSubjectId = subject?.id ?? draftSubjectId ?? null;
+      if (!existingSubjectId) {
+        setError('Save this subject first before adding units.');
+        return;
       }
       const requestedKind = String(kind || '').trim().toLowerCase();
       if (requestedKind === 'manual') {
@@ -590,7 +607,6 @@ export default function AddSubjectModal({
       subject?.id,
       draftSubjectId,
       openingAddUnits,
-      ensureDraftSubjectExists,
     ]
   );
 
