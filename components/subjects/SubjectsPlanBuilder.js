@@ -770,12 +770,14 @@ async function fetchAndCacheScheduleSupplement({
       }
       const nextBySubject = {};
       const attendedSetsBySubject = {};
+      const attendedEventIds = new Set();
       attendanceRows.forEach((row) => {
         const eventId = String(row?.event_id || '').trim();
         const meta = eventMetaById[eventId];
         if (!meta?.subjectId) return;
         const status = String(row?.status || '').trim().toLowerCase();
         if (!(status === 'present' || status === 'partial')) return;
+        attendedEventIds.add(eventId);
         const dayKey = String(row?.day_date || meta.startDay || '').slice(0, 10);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
         if (!attendedSetsBySubject[meta.subjectId]) attendedSetsBySubject[meta.subjectId] = new Set();
@@ -805,6 +807,7 @@ async function fetchAndCacheScheduleSupplement({
           startMs: tsMs,
           status: String(row?.status || '').trim().toLowerCase(),
           instructional_status: String(row?.instructional_status || '').trim().toUpperCase(),
+          hasAttendancePresent: attendedEventIds.has(String(row?.id || '')),
           is_backlog: row?.is_backlog === true,
           sourceBlockId: String(row?.source_block_id || '').trim() || null,
           durationHours: Number.isFinite(Number(row?.duration_minutes)) && Number(row.duration_minutes) > 0
@@ -2430,7 +2433,7 @@ export default function SubjectsPlanBuilder({
         ...prev,
         events: (prev?.events || []).map((entry) => (
           String(entry?.id || '') === eventId
-            ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS' }
+            ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS', hasAttendancePresent: true }
             : entry
         )),
       }));
@@ -2458,7 +2461,7 @@ export default function SubjectsPlanBuilder({
         ...prev,
         events: (prev?.events || []).map((entry) => (
           String(entry?.id || '') === eventId
-            ? { ...entry, status: 'scheduled', instructional_status: null }
+            ? { ...entry, status: 'scheduled', instructional_status: null, hasAttendancePresent: false }
             : entry
         )),
       }));
@@ -2482,7 +2485,8 @@ export default function SubjectsPlanBuilder({
       const eventId = String(eventItem?.id || '').trim();
       const startMs = Number(eventItem?.startMs || 0);
       const isPastEvent = startMs > 0 && startMs < nowMs;
-      const isAttended = String(eventItem?.status || '').toLowerCase() === 'done'
+      const isAttended = eventItem?.hasAttendancePresent === true
+        || String(eventItem?.status || '').toLowerCase() === 'done'
         || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
       return Boolean(eventId) && isPastEvent && !isAttended;
     });
@@ -2507,7 +2511,7 @@ export default function SubjectsPlanBuilder({
           ...prev,
           events: (prev?.events || []).map((entry) => (
             succeededIds.includes(String(entry?.id || ''))
-              ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS' }
+              ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS', hasAttendancePresent: true }
               : entry
           )),
         }));
@@ -2674,6 +2678,7 @@ export default function SubjectsPlanBuilder({
                                 (statusTone === 'behind' || statusTone === 'ahead')
                                 && Boolean(yearTargetCatchUpById[String(row?.id || '').trim()])
                               );
+                              const canCreatePlanFromStatusChip = statusTone === 'no_cadence' && Boolean(String(row?.id || '').trim());
                               const statusDetail = !hasCadence
                                 ? 'Completed events can still count toward the yearly target.'
                                 : (deltaDays == null
@@ -2727,14 +2732,24 @@ export default function SubjectsPlanBuilder({
                                           statusTone === 'no_cadence' && styles.subjectProgressChipNoCadence,
                                         ]}
                                         onPress={() => {
-                                          if (!canToggleYearTargetSuggestion) return;
                                           const subjectId = String(row?.id || '').trim();
                                           if (!subjectId) return;
-                                          toggleYearTargetSuggestion(subjectId);
+                                          if (canToggleYearTargetSuggestion) {
+                                            toggleYearTargetSuggestion(subjectId);
+                                            return;
+                                          }
+                                          if (canCreatePlanFromStatusChip) {
+                                            openBuilderForSubject(subjectId, 'add', row.schoolTermId || 'full_year');
+                                          }
                                         }}
-                                        activeOpacity={canToggleYearTargetSuggestion ? 0.8 : 1}
-                                        disabled={!canToggleYearTargetSuggestion}
-                                        {...(Platform.OS === 'web' && canToggleYearTargetSuggestion && { cursor: 'pointer' })}
+                                        activeOpacity={(canToggleYearTargetSuggestion || canCreatePlanFromStatusChip) ? 0.8 : 1}
+                                        disabled={!(canToggleYearTargetSuggestion || canCreatePlanFromStatusChip)}
+                                        accessibilityLabel={
+                                          canCreatePlanFromStatusChip
+                                            ? `Create plan for ${row.name || 'subject'}`
+                                            : undefined
+                                        }
+                                        {...(Platform.OS === 'web' && (canToggleYearTargetSuggestion || canCreatePlanFromStatusChip) && { cursor: 'pointer' })}
                                       >
                                         <Text
                                           style={[
@@ -3185,12 +3200,29 @@ export default function SubjectsPlanBuilder({
                 ) : (
                   (subjectEventsModalData.events || []).map((eventItem) => (
                     <View key={eventItem.id} style={styles.subjectEventRow}>
-                      <View style={styles.subjectEventRowTop}>
-                        <Text style={styles.subjectEventRowTitle}>{eventItem.title || 'Event'}</Text>
-                        <Text style={styles.subjectEventRowSource}>
-                          {eventItem.fromPlan ? 'From plan' : 'Manual instructional'}
-                        </Text>
-                      </View>
+                      {(() => {
+                        const isPastEvent = Number(eventItem?.startMs || 0) > 0 && Number(eventItem.startMs) < Date.now();
+                        const isAttended = eventItem?.hasAttendancePresent === true
+                          || String(eventItem?.status || '').toLowerCase() === 'done'
+                          || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
+                        const statusLabel = isPastEvent ? (isAttended ? 'Attended' : 'Unattended') : 'Upcoming';
+                        return (
+                          <View style={styles.subjectEventRowTop}>
+                            <Text style={styles.subjectEventRowTitle}>{eventItem.title || 'Event'}</Text>
+                            <View style={styles.subjectEventRowStatusChip}>
+                              <View
+                                style={[
+                                  styles.subjectEventRowStatusChipDot,
+                                  statusLabel === 'Attended' && styles.subjectEventRowStatusChipDotAttended,
+                                  statusLabel === 'Unattended' && styles.subjectEventRowStatusChipDotUnattended,
+                                  statusLabel === 'Upcoming' && styles.subjectEventRowStatusChipDotUpcoming,
+                                ]}
+                              />
+                              <Text style={styles.subjectEventRowStatusChipText}>{statusLabel}</Text>
+                            </View>
+                          </View>
+                        );
+                      })()}
                       <Text style={styles.subjectEventRowDate}>{formatEventDateTime(eventItem.startTs)}</Text>
                       {eventItem.unitName ? (
                         <Text style={styles.subjectEventRowUnit}>Unit: {eventItem.unitName}</Text>
@@ -3247,36 +3279,42 @@ export default function SubjectsPlanBuilder({
                     <View key={eventItem.id} style={styles.subjectEventRow}>
                       {(() => {
                         const isPastEvent = Number(eventItem?.startMs || 0) > 0 && Number(eventItem.startMs) < Date.now();
-                        const isAttended = String(eventItem?.status || '').toLowerCase() === 'done'
+                        const isAttended = eventItem?.hasAttendancePresent === true
+                          || String(eventItem?.status || '').toLowerCase() === 'done'
                           || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
                         return (
                           <>
                       <View style={styles.subjectEventRowTop}>
                         <Text style={styles.subjectEventRowTitle}>{eventItem.title || 'Event'}</Text>
                         <View style={styles.subjectEventRowMetaRight}>
-                          <Text style={styles.subjectEventRowSource}>
-                            {eventItem.fromPlan ? 'From plan' : 'Manual instructional'}
-                          </Text>
                           {Number(eventItem?.startMs || 0) > 0 ? (
                             <View style={[styles.subjectEventRowStatusChips, styles.subjectEventRowStatusChipsRight]}>
-                              <Text
+                              <View
                                 style={[
                                   styles.subjectEventRowStatusChip,
-                                  isPastEvent ? styles.subjectEventRowStatusChipPast : styles.subjectEventRowStatusChipUpcoming,
+                                  (isPastEvent && isAttended) && styles.subjectEventRowStatusChipAttended,
+                                  (isPastEvent && !isAttended) && styles.subjectEventRowStatusChipUnattended,
+                                  !isPastEvent && styles.subjectEventRowStatusChipUpcoming,
                                 ]}
                               >
-                                {isPastEvent ? 'Past' : 'Upcoming'}
-                              </Text>
-                              {isPastEvent ? (
+                                <View
+                                  style={[
+                                    styles.subjectEventRowStatusChipDot,
+                                    (isPastEvent && isAttended) && styles.subjectEventRowStatusChipDotAttended,
+                                    (isPastEvent && !isAttended) && styles.subjectEventRowStatusChipDotUnattended,
+                                    !isPastEvent && styles.subjectEventRowStatusChipDotUpcoming,
+                                  ]}
+                                />
                                 <Text
                                   style={[
-                                    styles.subjectEventRowStatusChip,
-                                    isAttended ? styles.subjectEventRowStatusChipAttended : styles.subjectEventRowStatusChipUnattended,
+                                    styles.subjectEventRowStatusChipText,
+                                    isAttended ? styles.subjectEventRowStatusChipTextAttended : null,
+                                    !isPastEvent ? styles.subjectEventRowStatusChipTextUpcoming : null,
                                   ]}
                                 >
-                                  {isAttended ? 'Attended' : 'Unattended'}
+                                  {isPastEvent ? (isAttended ? 'Attended' : 'Unattended') : 'Upcoming'}
                                 </Text>
-                              ) : null}
+                              </View>
                             </View>
                           ) : null}
                         </View>
@@ -3332,7 +3370,8 @@ export default function SubjectsPlanBuilder({
                 const hasPendingPastEvents = (upcomingEventsModalData.events || []).some((eventItem) => {
                   const startMs = Number(eventItem?.startMs || 0);
                   const isPastEvent = startMs > 0 && startMs < Date.now();
-                  const isAttended = String(eventItem?.status || '').toLowerCase() === 'done'
+                  const isAttended = eventItem?.hasAttendancePresent === true
+                    || String(eventItem?.status || '').toLowerCase() === 'done'
                     || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
                   return isPastEvent && !isAttended;
                 });
@@ -6106,6 +6145,43 @@ const styles = StyleSheet.create({
   },
   subjectEventRowStatusChip: {
     borderRadius: 999,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  subjectEventRowStatusChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectEventRowStatusChipTextAttended: {
+    color: '#475569',
+  },
+  subjectEventRowStatusChipTextUpcoming: {
+    color: '#64748B',
+  },
+  subjectEventRowStatusChipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+  },
+  subjectEventRowStatusChipDotAttended: {
+    backgroundColor: '#6BB3E8',
+  },
+  subjectEventRowStatusChipDotUnattended: {
+    backgroundColor: '#F2A0A3',
+  },
+  subjectEventRowStatusChipDotUpcoming: {
+    backgroundColor: '#CFE2FA',
+  },
+  subjectEventRowStatusChipLegacyText: {
+    borderRadius: 999,
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 2,
@@ -6115,25 +6191,14 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  subjectEventRowStatusChipPast: {
-    borderColor: '#CBD5E1',
-    backgroundColor: '#F8FAFC',
-    color: '#475569',
-  },
   subjectEventRowStatusChipUpcoming: {
-    borderColor: '#BFDBFE',
-    backgroundColor: '#EFF6FF',
-    color: '#1D4ED8',
+    backgroundColor: '#F8FAFC',
   },
   subjectEventRowStatusChipAttended: {
-    borderColor: '#A7F3D0',
-    backgroundColor: '#ECFDF5',
-    color: '#047857',
+    backgroundColor: '#F8FAFC',
   },
   subjectEventRowStatusChipUnattended: {
-    borderColor: '#FDE68A',
-    backgroundColor: '#FFFBEB',
-    color: '#B45309',
+    backgroundColor: '#F8FAFC',
   },
   subjectEventRowUnit: {
     marginTop: 4,
