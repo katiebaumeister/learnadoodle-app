@@ -2355,7 +2355,7 @@ export default function SubjectsPlanBuilder({
                               const cadenceTime = extractCadenceTimeLabel(row?.cadenceText || '');
                               const cadenceSummary = hasCadence
                                 ? [row.schoolTermLabel || null, row.cadenceCompactLabel || null, cadenceTime || null].filter(Boolean).join(' · ')
-                                : 'No saved weekly cadence yet.';
+                                : 'No saved weekly cadence yet';
                               const targetDays = row.targetUnit === 'days' && Number.isFinite(Number(row.targetValue))
                                 ? Number(row.targetValue)
                                 : null;
@@ -3880,7 +3880,7 @@ const styles = StyleSheet.create({
     borderColor: '#DBEAFE',
     borderRadius: 12,
     backgroundColor: '#F8FAFF',
-    paddingHorizontal: 14,
+    paddingHorizontal: 20,
     paddingVertical: 10,
     gap: 8,
   },
@@ -3916,7 +3916,7 @@ const styles = StyleSheet.create({
   yearTargetsPredictiveItemSubject: {
     width: 74,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#1F2937',
     lineHeight: 20,
     ...(Platform.OS === 'web' && {
@@ -3943,7 +3943,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   yearTargetsPredictiveItemArrow: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#475569',
     fontWeight: '400',
     lineHeight: 18,
@@ -3952,7 +3952,7 @@ const styles = StyleSheet.create({
     }),
   },
   yearTargetsPredictiveItemPace: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '400',
     color: '#475569',
     lineHeight: 18,
@@ -3961,7 +3961,7 @@ const styles = StyleSheet.create({
     }),
   },
   yearTargetsPredictiveSuggestionLine: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#475569',
     fontWeight: '400',
     lineHeight: 18,
