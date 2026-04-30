@@ -7,7 +7,6 @@ import {
   ScrollView,
   TextInput,
   Platform,
-  ActivityIndicator,
   Modal,
   Alert,
 } from 'react-native';
@@ -189,7 +188,6 @@ export default function SubjectsPage({
   );
   
   const [subjects, setSubjects] = useState(preloadedSubjects || []);
-  const [loading, setLoading] = useState(!preloadedSubjects);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   // Auto-set child filter for child/student role
@@ -302,7 +300,6 @@ export default function SubjectsPage({
     if (!familyId || loadingRef.current) return;
 
     loadingRef.current = true;
-    setLoading(true);
     setError(null);
 
     try {
@@ -360,7 +357,6 @@ export default function SubjectsPage({
       console.error('[SubjectsPage] Error loading subjects:', err);
       setError(err.message || 'Failed to load subjects');
     } finally {
-      setLoading(false);
       loadingRef.current = false;
     }
   }, [familyId, selectedChildFilter, onSubjectsUpdate]);
@@ -401,7 +397,6 @@ export default function SubjectsPage({
   useEffect(() => {
     if (Array.isArray(preloadedSubjects)) {
       setSubjects(preloadedSubjects);
-      setLoading(false);
     }
   }, [preloadedSubjects]);
 
@@ -1918,11 +1913,6 @@ export default function SubjectsPage({
             }}
           />
         </View>
-      ) : loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#60a5fa" />
-          <Text style={styles.loadingText}>Loading subjects...</Text>
-        </View>
       ) : error ? (
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{error}</Text>
@@ -2973,20 +2963,6 @@ const styles = StyleSheet.create({
     height: 6,
     borderRadius: 3,
     flexShrink: 0,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#6B7280',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   errorContainer: {
     flex: 1,

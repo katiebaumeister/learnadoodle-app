@@ -739,6 +739,29 @@ export default function MaterialsLibrary({
     // This could extract key information, create summaries, generate lesson plans, etc.
   };
 
+  const handleCreateAssignmentFromMaterial = (item) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const material = item?.data || null;
+    if (!material?.id) {
+      toast.push('Unable to use this material for assignment creation.', 'error');
+      return;
+    }
+    const materialChildren = Array.isArray(material?.material_children) ? material.material_children : [];
+    const childIds = materialChildren
+      .map((entry) => String(entry?.child_id || '').trim())
+      .filter(Boolean);
+    window.dispatchEvent(
+      new CustomEvent('openTaskModal', {
+        detail: {
+          date: new Date(),
+          eventType: 'Assignment',
+          materialId: material.id,
+          childIds,
+        },
+      })
+    );
+  };
+
   const showContextMenu = (item, clientX, clientY) => {
     if (typeof window === 'undefined') return;
     
@@ -751,6 +774,7 @@ export default function MaterialsLibrary({
      const menuItems = [
        { text: 'Attachment details', action: () => handleEditDetails(item), icon: FileText },
        { text: 'Edit attachment details', action: () => handleEditAttachment(item), icon: Edit2 },
+       { text: 'Create assignment from material', action: () => handleCreateAssignmentFromMaterial(item), icon: FileText },
        { text: 'Open in new tab', action: () => handleOpenInNewTab(item), icon: ExternalLink },
        { text: 'Delete', action: () => handleDeleteItem(item), isDelete: true, icon: Trash2 }
      ];

@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Pressable } from 'react-native';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ATTENDANCE_COLORS, TOKENS } from '../planner/attendance/constants';
 import MonthlyCalendarView from '../planner/attendance/MonthlyCalendarView';
@@ -175,7 +175,7 @@ function YearHeatmap({ title, dateKeys = [], colorForKey }) {
   );
 }
 
-function AttendanceYearHeatmapFull({ attendanceRecords = [], subjectEvents = [], onMarkEntireRange = null, onDayPress = null }) {
+function AttendanceYearHeatmapFull({ attendanceRecords = [], subjectEvents = [], onDayPress = null, isDayMarkable = null }) {
   const scrollRef = useRef(null);
   const recordStatusByKey = useMemo(() => {
     const map = new Map();
@@ -209,8 +209,10 @@ function AttendanceYearHeatmapFull({ attendanceRecords = [], subjectEvents = [],
   const latestKey = dataKeys[dataKeys.length - 1] || null;
   const earliestYear = earliestKey ? parseInt(earliestKey.slice(0, 4), 10) : null;
   const latestYear = latestKey ? parseInt(latestKey.slice(0, 4), 10) : null;
-  const yearStartKey = earliestYear ? `${earliestYear}-01-01` : null;
-  const yearEndKey = latestYear ? `${latestYear}-12-31` : null;
+  const defaultYearStartKey = earliestYear ? `${earliestYear}-01-01` : null;
+  const defaultYearEndKey = latestYear ? `${latestYear}-12-31` : null;
+  const [yearStartKey, setYearStartKey] = useState(defaultYearStartKey);
+  const [yearEndKey, setYearEndKey] = useState(defaultYearEndKey);
   const cellSize = Math.max(16, Math.round(TOKENS.hmCell * 0.65));
   const gap = Math.max(3, Math.round(TOKENS.hmGap * 0.66));
   const cellRadius = Math.max(4, Math.round(TOKENS.hmRadius * 0.7));
@@ -223,6 +225,32 @@ function AttendanceYearHeatmapFull({ attendanceRecords = [], subjectEvents = [],
     () => (yearStartKey && yearEndKey ? buildMonthBlocks(yearStartKey, yearEndKey, cellSize, gap, monthGap) : []),
     [yearStartKey, yearEndKey, cellSize, gap, monthGap],
   );
+
+  useEffect(() => {
+    setYearStartKey(defaultYearStartKey);
+    setYearEndKey(defaultYearEndKey);
+  }, [defaultYearStartKey, defaultYearEndKey]);
+
+  const shiftDateKeyByMonths = useCallback((key, delta) => {
+    const parts = parseDateParts(key);
+    if (!parts) return key;
+    const next = new Date(parts.year, parts.month + delta, parts.day);
+    return getDayKey(next.getFullYear(), next.getMonth(), next.getDate());
+  }, []);
+
+  const handleShiftStart = useCallback((delta) => {
+    if (!yearStartKey || !yearEndKey) return;
+    const nextStart = shiftDateKeyByMonths(yearStartKey, delta);
+    if (nextStart > yearEndKey) return;
+    setYearStartKey(nextStart);
+  }, [yearStartKey, yearEndKey, shiftDateKeyByMonths]);
+
+  const handleShiftEnd = useCallback((delta) => {
+    if (!yearStartKey || !yearEndKey) return;
+    const nextEnd = shiftDateKeyByMonths(yearEndKey, delta);
+    if (nextEnd < yearStartKey) return;
+    setYearEndKey(nextEnd);
+  }, [yearStartKey, yearEndKey, shiftDateKeyByMonths]);
 
   if (!dataKeys.length) {
     return (
@@ -256,9 +284,9 @@ function AttendanceYearHeatmapFull({ attendanceRecords = [], subjectEvents = [],
 
   return (
     <View style={styles.subjectHeatmapWrap}>
-      <Text style={styles.panelTitle}>Year at a glance</Text>
+      <Text style={[styles.attendanceDrilldownTitle, styles.yearAtGlanceTitle]}>Year at a glance</Text>
       <Text style={styles.subjectHeatmapHelpText}>
-        Each row is one child; each cell is one day. Click a cell to mark that day as attended or unattended for that child. You can mark a day even when no lessons are scheduled (attendance-only). For lessons shared with multiple children, marking attended marks all of them; unmarking affects only that child. Scroll left and right for other months. Click a child’s name to export their report.
+        Click a cell to mark that day as attended or unattended. For courses shared with multiple children, marking attended marks attendance for all of them. Scroll left and right for other months.
       </Text>
       <ScrollView
         ref={scrollRef}
@@ -279,84 +307,118 @@ function AttendanceYearHeatmapFull({ attendanceRecords = [], subjectEvents = [],
             {dayKeys.map((key) => {
               const explicitStatus = recordStatusByKey.get(key);
               const hasEvent = eventKeys.has(key);
-              const status = explicitStatus || (hasEvent ? (key > todayKey ? 'upcoming' : 'absent') : 'noEvents');
+              const isMarkableDay = typeof isDayMarkable === 'function' ? !!isDayMarkable(key) : hasEvent;
+              const hasSchedule = hasEvent || isMarkableDay;
+              const status = explicitStatus || (hasSchedule ? (key > todayKey ? 'upcoming' : 'absent') : 'noEvents');
+              const canPressDay = typeof onDayPress === 'function' && isMarkableDay;
+              const handleDayPress = () => {
+                if (typeof onDayPress === 'function') onDayPress(key);
+              };
               return (
-                <TouchableOpacity
+                <Pressable
                   key={key}
-                  style={[
+                  style={({ pressed }) => ([
                     styles.subjectHeatmapCell,
                     { width: cellSize, height: cellSize, borderRadius: cellRadius, marginRight: gap },
                     status === 'present' && styles.heatmapPresent,
                     status === 'absent' && styles.heatmapAbsent,
                     status === 'upcoming' && styles.heatmapUpcoming,
                     status === 'noEvents' && styles.heatmapNoEvents,
-                  ]}
+                    pressed && canPressDay ? styles.subjectHeatmapCellPressed : null,
+                  ])}
                   title={key}
-                  onPress={() => onDayPress && onDayPress(key)}
-                  activeOpacity={0.85}
-                  {...(Platform.OS === 'web' && { cursor: onDayPress ? 'pointer' : 'default' })}
+                  onPress={canPressDay ? handleDayPress : undefined}
+                  {...(Platform.OS === 'web' && {
+                    role: canPressDay ? 'button' : undefined,
+                    cursor: canPressDay ? 'pointer' : 'default',
+                    onClick: canPressDay ? (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleDayPress();
+                    } : undefined,
+                    onMouseDown: canPressDay ? (e) => {
+                      e.preventDefault();
+                    } : undefined,
+                  })}
                 >
                   <Text style={styles.subjectHeatmapCellDayText}>{parseInt(key.slice(8, 10), 10)}</Text>
-                </TouchableOpacity>
+                </Pressable>
               );
             })}
           </View>
         </View>
       </ScrollView>
-      <View style={styles.subjectHeatmapLegend}>
-        <View style={styles.subjectHeatmapLegendPill}>
-          <View style={[styles.subjectHeatmapLegendDot, styles.heatmapPresent]} />
-          <Text style={styles.subjectHeatmapLegendText}>Attended</Text>
-        </View>
-        <View style={styles.subjectHeatmapLegendPill}>
-          <View style={[styles.subjectHeatmapLegendDot, styles.heatmapAbsent]} />
-          <Text style={styles.subjectHeatmapLegendText}>Unattended</Text>
-        </View>
-        <View style={styles.subjectHeatmapLegendPill}>
-          <View style={[styles.subjectHeatmapLegendDot, styles.heatmapUpcoming]} />
-          <Text style={styles.subjectHeatmapLegendText}>Upcoming</Text>
-        </View>
-        <View style={styles.subjectHeatmapLegendPill}>
-          <View style={[styles.subjectHeatmapLegendDot, styles.heatmapNoEvents]} />
-          <Text style={styles.subjectHeatmapLegendText}>No events</Text>
-        </View>
-      </View>
-      <View style={styles.subjectRangeActionsWrap}>
-        <View style={styles.subjectRangeRowWrap}>
-          <Text style={styles.subjectRangeRowLabel}>Attendance range</Text>
-          <View style={styles.subjectRangeDateWrap}>
-            <ChevronLeft size={14} color={TOKENS.textMuted} />
-            <Text style={styles.subjectRangeDate}>{formatDateDisplay(yearStartKey)}</Text>
-            <ChevronRight size={14} color={TOKENS.textMuted} />
+      <View style={styles.subjectHeatmapLegendAndRangeRow}>
+        <View style={styles.subjectHeatmapLegend}>
+          <View style={styles.subjectHeatmapLegendPill}>
+            <View style={[styles.subjectHeatmapLegendDot, styles.heatmapPresent]} />
+            <Text style={styles.subjectHeatmapLegendText}>Attended</Text>
           </View>
-          <Text style={styles.subjectRangeArrow}>→</Text>
-          <View style={styles.subjectRangeDateWrap}>
-            <ChevronLeft size={14} color={TOKENS.textMuted} />
-            <Text style={styles.subjectRangeDate}>{formatDateDisplay(yearEndKey)}</Text>
-            <ChevronRight size={14} color={TOKENS.textMuted} />
+          <View style={styles.subjectHeatmapLegendPill}>
+            <View style={[styles.subjectHeatmapLegendDot, styles.heatmapAbsent]} />
+            <Text style={styles.subjectHeatmapLegendText}>Unattended</Text>
+          </View>
+          <View style={styles.subjectHeatmapLegendPill}>
+            <View style={[styles.subjectHeatmapLegendDot, styles.heatmapUpcoming]} />
+            <Text style={styles.subjectHeatmapLegendText}>Upcoming</Text>
+          </View>
+          <View style={styles.subjectHeatmapLegendPill}>
+            <View style={[styles.subjectHeatmapLegendDot, styles.heatmapNoEvents]} />
+            <Text style={styles.subjectHeatmapLegendText}>No events</Text>
           </View>
         </View>
-        <TouchableOpacity
-          style={styles.subjectRangeBulkChip}
-          onPress={() => onMarkEntireRange && onMarkEntireRange({ startKey: yearStartKey, endKey: yearEndKey })}
-          activeOpacity={0.85}
-          disabled={!onMarkEntireRange}
-          {...(Platform.OS === 'web' && { cursor: onMarkEntireRange ? 'pointer' : 'default' })}
-        >
-          <Text style={styles.subjectRangeBulkChipText}>Mark entire range attended</Text>
-        </TouchableOpacity>
+        <View style={styles.subjectRangeActionsWrap}>
+          <View style={styles.subjectRangeRowWrap}>
+            <Text style={styles.subjectRangeRowLabel}>Attendance range</Text>
+            <View style={styles.subjectRangeDateWrap}>
+              <TouchableOpacity
+                onPress={() => handleShiftStart(-1)}
+                disabled={!yearStartKey || !yearEndKey}
+                {...(Platform.OS === 'web' && { cursor: yearStartKey && yearEndKey ? 'pointer' : 'default' })}
+              >
+                <ChevronLeft size={14} color={TOKENS.textMuted} />
+              </TouchableOpacity>
+              <Text style={styles.subjectRangeDate}>{formatDateDisplay(yearStartKey)}</Text>
+              <TouchableOpacity
+                onPress={() => handleShiftStart(1)}
+                disabled={!yearStartKey || !yearEndKey}
+                {...(Platform.OS === 'web' && { cursor: yearStartKey && yearEndKey ? 'pointer' : 'default' })}
+              >
+                <ChevronRight size={14} color={TOKENS.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.subjectRangeArrow}>→</Text>
+            <View style={styles.subjectRangeDateWrap}>
+              <TouchableOpacity
+                onPress={() => handleShiftEnd(-1)}
+                disabled={!yearStartKey || !yearEndKey}
+                {...(Platform.OS === 'web' && { cursor: yearStartKey && yearEndKey ? 'pointer' : 'default' })}
+              >
+                <ChevronLeft size={14} color={TOKENS.textMuted} />
+              </TouchableOpacity>
+              <Text style={styles.subjectRangeDate}>{formatDateDisplay(yearEndKey)}</Text>
+              <TouchableOpacity
+                onPress={() => handleShiftEnd(1)}
+                disabled={!yearStartKey || !yearEndKey}
+                {...(Platform.OS === 'web' && { cursor: yearStartKey && yearEndKey ? 'pointer' : 'default' })}
+              >
+                <ChevronRight size={14} color={TOKENS.textMuted} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </View>
     </View>
   );
 }
 
-export function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEvents = [], onMarkEntireRange = null, onDayPress = null }) {
+export function SubjectAttendanceYearHeatmap({ attendanceRecords = [], subjectEvents = [], onDayPress = null, isDayMarkable = null }) {
   return (
     <AttendanceYearHeatmapFull
       attendanceRecords={attendanceRecords}
       subjectEvents={subjectEvents}
-      onMarkEntireRange={onMarkEntireRange}
       onDayPress={onDayPress}
+      isDayMarkable={isDayMarkable}
     />
   );
 }
@@ -436,7 +498,7 @@ export function SubjectAttendanceMonthDrilldown({
     <View style={styles.attendanceDrilldownSection}>
       <Text style={styles.attendanceDrilldownTitle}>Month drill-down</Text>
       <Text style={styles.attendanceDrilldownHelp}>
-        Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended. Please note that only events marked as instructional time (e.g. lessons from your plan) count. Use the year heatmap above to mark a day attended even when nothing is scheduled. Same rules as the heatmap: shared events are marked for all children when you mark attended; unmarking affects only the selected context.
+        Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended.
       </Text>
       <View style={styles.attendanceDrilldownGrid}>
         <View style={styles.attendanceCalendarWithDivider}>
@@ -474,6 +536,24 @@ export function SubjectAttendanceMonthDrilldown({
               return 0;
             }}
           />
+        </View>
+      </View>
+      <View style={[styles.subjectHeatmapLegend, styles.monthHeatmapLegend]}>
+        <View style={styles.subjectHeatmapLegendPill}>
+          <View style={[styles.subjectHeatmapLegendDot, styles.heatmapPresent]} />
+          <Text style={styles.subjectHeatmapLegendText}>Attended</Text>
+        </View>
+        <View style={styles.subjectHeatmapLegendPill}>
+          <View style={[styles.subjectHeatmapLegendDot, styles.heatmapAbsent]} />
+          <Text style={styles.subjectHeatmapLegendText}>Unattended</Text>
+        </View>
+        <View style={styles.subjectHeatmapLegendPill}>
+          <View style={[styles.subjectHeatmapLegendDot, styles.heatmapUpcoming]} />
+          <Text style={styles.subjectHeatmapLegendText}>Upcoming</Text>
+        </View>
+        <View style={styles.subjectHeatmapLegendPill}>
+          <View style={[styles.subjectHeatmapLegendDot, styles.heatmapNoEvents]} />
+          <Text style={styles.subjectHeatmapLegendText}>No events</Text>
         </View>
       </View>
     </View>
@@ -542,8 +622,9 @@ const styles = StyleSheet.create({
   heatmapCell: { width: 16, height: 16, borderRadius: 4, borderWidth: 1, borderColor: 'rgba(148,163,184,0.25)' },
   heatmapPresent: { backgroundColor: ATTENDANCE_COLORS.present },
   heatmapAbsent: { backgroundColor: ATTENDANCE_COLORS.absent },
-  heatmapUpcoming: { backgroundColor: ATTENDANCE_COLORS.unmarked },
-  heatmapNoEvents: { backgroundColor: ATTENDANCE_COLORS.noEvents },
+  // Keep Upcoming visibly darker than No events for quick scanning.
+  heatmapUpcoming: { backgroundColor: '#dbeafe' },
+  heatmapNoEvents: { backgroundColor: '#f8fafc' },
   heatmapGraded: { backgroundColor: '#bfdbfe' },
   panelTitle: {
     fontSize: 13,
@@ -581,32 +662,46 @@ const styles = StyleSheet.create({
   subjectHeatmapHelpText: {
     fontSize: TOKENS.fontSizeCaption,
     color: TOKENS.textMuted,
-    marginBottom: 6,
+    marginBottom: 10,
     lineHeight: 17,
   },
   subjectHeatmapScroll: { width: '100%' },
   subjectHeatmapScrollContent: { paddingBottom: 4, paddingRight: 12 },
   subjectHeatmapInner: { minWidth: '100%' },
-  subjectHeatmapMonthRow: { flexDirection: 'row', marginBottom: 8 },
+  subjectHeatmapMonthRow: { flexDirection: 'row', marginBottom: 12 },
   subjectHeatmapMonthLabelWrap: { alignItems: 'center' },
   subjectHeatmapMonthLabel: { fontSize: 14, fontWeight: '600', color: TOKENS.text },
-  subjectHeatmapCellsRow: { flexDirection: 'row' },
+  subjectHeatmapCellsRow: { flexDirection: 'row', marginBottom: 6 },
   subjectHeatmapCell: {
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.06)',
     justifyContent: 'center',
     alignItems: 'center',
   },
+  subjectHeatmapCellPressed: {
+    transform: [{ scale: 0.96 }],
+    opacity: 0.9,
+  },
   subjectHeatmapCellDayText: {
     fontSize: 9,
     fontWeight: '600',
     color: 'rgba(15, 23, 42, 0.75)',
   },
+  subjectHeatmapLegendAndRangeRow: {
+    marginTop: TOKENS.s3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
   subjectHeatmapLegend: {
-    marginTop: TOKENS.s1,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: TOKENS.s3,
+  },
+  monthHeatmapLegend: {
+    marginTop: TOKENS.s3,
   },
   subjectHeatmapLegendPill: {
     flexDirection: 'row',
@@ -629,9 +724,11 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
   subjectRangeActionsWrap: {
-    marginTop: TOKENS.s4,
-    alignItems: 'flex-start',
-    gap: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginLeft: 'auto',
   },
   subjectRangeRowWrap: {
     flexDirection: 'row',
@@ -664,24 +761,24 @@ const styles = StyleSheet.create({
   },
   subjectRangeBulkChip: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 16,
-    paddingVertical: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 999,
-    borderWidth: 2,
-    borderColor: '#111827',
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.08)',
+    backgroundColor: TOKENS.bgSubtle,
   },
   subjectRangeBulkChipText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
+    fontSize: TOKENS.fontSizeCaption,
+    fontWeight: '500',
+    color: TOKENS.textMuted,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   attendanceDrilldownSection: {
-    marginTop: TOKENS.s3,
-    paddingTop: 8,
+    marginTop: TOKENS.s1,
+    paddingTop: 2,
   },
   attendanceDrilldownTitle: {
     fontSize: 20,
@@ -693,10 +790,13 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  yearAtGlanceTitle: {
+    marginBottom: 6,
+  },
   attendanceDrilldownHelp: {
     fontSize: TOKENS.fontSizeCaption,
     color: TOKENS.textMuted,
-    marginBottom: 20,
+    marginBottom: 6,
   },
   attendanceDrilldownGrid: {
     flexDirection: 'row',

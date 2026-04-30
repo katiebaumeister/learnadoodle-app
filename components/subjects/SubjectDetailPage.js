@@ -29,6 +29,7 @@ import {
   ChevronRight,
   BarChart3,
   List,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
@@ -64,6 +65,7 @@ import { archiveMaterial } from '../../lib/services/materialsClient';
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_PROGRESS = false;
 const WEEKDAY_PLURALS = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const LEARNING_GOALS_METHOD_LABELS = {
   manual: 'Manual input',
   plain_text_parsed: 'Paste plain text',
@@ -91,19 +93,50 @@ function formatScheduleTime(startTime) {
   return `${hour}:${minute} ${period}`;
 }
 
-function buildClassScheduleSummary(planData, subjectId) {
-  if (!planData?.plan || !subjectId) return null;
+function getSubjectPlanBlocksForSubject(planData, subjectId) {
+  if (!planData?.plan || !subjectId) return [];
   const sid = String(subjectId);
   const blocks = Array.isArray(planData.plan.blocks) ? planData.plan.blocks : [];
-  const match = blocks.find((b) => {
+  return blocks.filter((b) => {
     if (String(b?.subject_id ?? '') === sid) return true;
     const ids = Array.isArray(b?.subject_ids) ? b.subject_ids.map(String) : [];
     return ids.includes(sid);
   });
-  if (!match || !Array.isArray(match.weekdays) || match.weekdays.length === 0) return null;
-  const weekdays = match.weekdays
+}
+
+function parseWeekdaysFromPlanBlock(block) {
+  if (!Array.isArray(block?.weekdays)) return [];
+  return block.weekdays
     .map((day) => parseInt(day, 10))
     .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+}
+
+function getBlockRangeBoundaryKey(block, kind) {
+  const startKeys = ['start_date', 'startDate', 'starts_on', 'start_on', 'date_start', 'from_date', 'from'];
+  const endKeys = ['end_date', 'endDate', 'ends_on', 'end_on', 'date_end', 'to_date', 'to'];
+  const keys = kind === 'start' ? startKeys : endKeys;
+  for (const key of keys) {
+    const value = String(block?.[key] || '').slice(0, 10);
+    if (DATE_KEY_RE.test(value)) return value;
+  }
+  return null;
+}
+
+function isDateWithinPlanBlockRange(dateKey, block) {
+  const key = String(dateKey || '').slice(0, 10);
+  if (!DATE_KEY_RE.test(key)) return false;
+  const startKey = getBlockRangeBoundaryKey(block, 'start');
+  const endKey = getBlockRangeBoundaryKey(block, 'end');
+  if (startKey && key < startKey) return false;
+  if (endKey && key > endKey) return false;
+  return true;
+}
+
+function buildClassScheduleSummary(planData, subjectId) {
+  const blocks = getSubjectPlanBlocksForSubject(planData, subjectId);
+  const match = blocks[0];
+  if (!match || !Array.isArray(match.weekdays) || match.weekdays.length === 0) return null;
+  const weekdays = parseWeekdaysFromPlanBlock(match);
   if (weekdays.length === 0) return null;
   const dayLabel = formatWeekdayList(weekdays);
   if (!dayLabel) return null;
@@ -211,6 +244,16 @@ function firstLinkedEventId(raw) {
     }
   }
   return null;
+}
+
+function parsePositiveInt(value) {
+  const parsed = parseInt(String(value ?? '').trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parsePositiveFloat(value) {
+  const parsed = parseFloat(String(value ?? '').trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 export default function SubjectDetailPage({
@@ -503,12 +546,29 @@ export default function SubjectDetailPage({
     if (subject.child_id) {
       return parseChildIds(subject.child_id);
     }
-    return [...new Set((subjectData?.events || []).map(e => e.child_id).filter(Boolean))];
+    const ids = [];
+    (subjectData?.events || []).forEach((event) => {
+      if (event?.child_id) ids.push(event.child_id);
+      if (Array.isArray(event?.child_ids) && event.child_ids.length > 0) {
+        ids.push(...event.child_ids);
+      }
+    });
+    return [...new Set(ids.filter(Boolean).map((id) => String(id)))];
   }, [subject, subjectData?.events]);
 
   const childrenNames = assignedChildren.map(getChildName).filter(Boolean);
+  const attendanceChildrenLabel = useMemo(() => {
+    if (childrenNames.length === 0) return 'Your students';
+    if (childrenNames.length === 1) return childrenNames[0];
+    if (childrenNames.length === 2) return `${childrenNames[0]} and ${childrenNames[1]}`;
+    return `${childrenNames.slice(0, -1).join(', ')}, and ${childrenNames[childrenNames.length - 1]}`;
+  }, [childrenNames]);
   const classScheduleSummary = useMemo(
     () => buildClassScheduleSummary(subjectPlanData, subject?.id),
+    [subjectPlanData, subject?.id]
+  );
+  const subjectPlanBlocks = useMemo(
+    () => getSubjectPlanBlocksForSubject(subjectPlanData, subject?.id),
     [subjectPlanData, subject?.id]
   );
   const headerMetaLine = useMemo(() => buildHeaderMetaLine(subject), [subject]);
@@ -652,6 +712,21 @@ export default function SubjectDetailPage({
     }
   }, [toast]);
 
+  const handleCreateAssignmentFromMaterial = useCallback((material) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !material?.id) return;
+    window.dispatchEvent(
+      new CustomEvent('openTaskModal', {
+        detail: {
+          date: new Date(),
+          eventType: 'Assignment',
+          subjectId: subject?.id || null,
+          materialId: material.id,
+          childIds: assignedChildren,
+        },
+      })
+    );
+  }, [subject?.id, assignedChildren]);
+
   const showMaterialContextMenu = useCallback((material, clientX, clientY) => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
     const existingMenu = document.getElementById(materialContextMenuIdRef.current);
@@ -659,6 +734,7 @@ export default function SubjectDetailPage({
     const menuItems = [
       { text: 'Attachment details', action: () => setViewingMaterial(material), icon: FileText },
       { text: 'Edit attachment details', action: () => setEditingMaterial(material), icon: Edit2 },
+      { text: 'Create assignment from material', action: () => handleCreateAssignmentFromMaterial(material), icon: FileText },
       { text: 'Open in new tab', action: () => handleOpenInNewTab(material), icon: ExternalLink },
       { text: 'Delete', action: () => handleDeleteMaterial(material), icon: Trash2, isDelete: true },
     ];
@@ -671,16 +747,30 @@ export default function SubjectDetailPage({
     };
     const menu = document.createElement('div');
     menu.id = materialContextMenuIdRef.current;
+    const estimatedMenuHeight = menuItems.length * 48 + 16;
+    const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 0;
+    let menuTop = clientY;
+    if (windowHeight && clientY + estimatedMenuHeight > windowHeight) {
+      menuTop = clientY - estimatedMenuHeight;
+      if (menuTop < 0) menuTop = 8;
+    }
+    const estimatedMenuWidth = 200;
+    const windowWidth = typeof window !== 'undefined' ? window.innerWidth : 0;
+    let menuLeft = clientX;
+    if (windowWidth && clientX + estimatedMenuWidth > windowWidth) {
+      menuLeft = clientX - estimatedMenuWidth;
+      if (menuLeft < 0) menuLeft = 8;
+    }
     menu.style.cssText = `
       position: fixed;
-      top: ${Math.max(8, clientY)}px;
-      left: ${Math.max(8, clientX)}px;
+      top: ${menuTop}px;
+      left: ${menuLeft}px;
       background-color: #ffffff;
       border-radius: 12px;
       border: 1px solid #e5e7eb;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
       z-index: 999999;
-      min-width: 240px;
+      min-width: 200px;
       padding: 8px 0;
       font-family: "League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     `;
@@ -746,7 +836,7 @@ export default function SubjectDetailPage({
     document.addEventListener('click', closeMenu);
     document.addEventListener('mousedown', closeMenu, true);
     document.addEventListener('contextmenu', closeMenu, true);
-  }, [handleDeleteMaterial, handleOpenInNewTab]);
+  }, [handleDeleteMaterial, handleOpenInNewTab, handleCreateAssignmentFromMaterial]);
 
   useEffect(() => {
     if (!familyId || !subject?.id) {
@@ -888,11 +978,29 @@ export default function SubjectDetailPage({
     });
   }, [attendanceRecords, subjectEvents]);
 
-  // Process attendance for last 30 days
+  // Process attendance at day-level so attendance chips align with day-based targets.
   const attendance30Days = useMemo(() => {
-    const present = attendanceRecordsForUI.filter(ar => ar.status === 'present').length;
-    const absent = attendanceRecordsForUI.filter(ar => ar.status === 'absent').length;
-    return { present, absent, total: attendanceRecordsForUI.length };
+    const byDay = new Map();
+    attendanceRecordsForUI.forEach((record) => {
+      const dayKey = String(record?.day_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
+      const status = String(record?.status || '').toLowerCase();
+      if (!byDay.has(dayKey)) {
+        byDay.set(dayKey, { hasPresent: false, hasAbsent: false });
+      }
+      const bucket = byDay.get(dayKey);
+      if (status === 'present') bucket.hasPresent = true;
+      if (status === 'absent') bucket.hasAbsent = true;
+    });
+
+    let present = 0;
+    let absent = 0;
+    byDay.forEach((bucket) => {
+      // A day with any "present" counts as present for day-level progress.
+      if (bucket.hasPresent) present += 1;
+      else if (bucket.hasAbsent) absent += 1;
+    });
+    return { present, absent, total: byDay.size };
   }, [attendanceRecordsForUI]);
   const attendanceRate30Display = useMemo(() => {
     if (attendanceRate30 !== null && attendanceRate30 !== undefined && !isNaN(attendanceRate30)) {
@@ -903,6 +1011,138 @@ export default function SubjectDetailPage({
     }
     return null;
   }, [attendanceRate30, attendance30Days]);
+
+  // List view should show one row per event/date (ignore child-level duplicate records).
+  const attendanceRecordsListUI = useMemo(() => {
+    const seen = new Set();
+    const rows = [];
+    for (const record of attendanceRecordsForUI) {
+      const eventId = String(record?.event_id || '').trim();
+      const dayKey = String(record?.day_date || '').slice(0, 10);
+      const dedupeKey = eventId ? `ev:${eventId}|${dayKey}` : `row:${String(record?.id || '')}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      rows.push(record);
+    }
+    return rows;
+  }, [attendanceRecordsForUI]);
+
+  const attendanceTargetProgress = useMemo(() => {
+    const sid = String(subject?.id || '').trim();
+    if (!sid) return null;
+    const plan = subjectPlanData?.plan || {};
+    const subjectTargetsRaw =
+      plan?.subject_targets && typeof plan.subject_targets === 'object' && !Array.isArray(plan.subject_targets)
+        ? plan.subject_targets
+        : plan?.subject_targets_override && typeof plan.subject_targets_override === 'object' && !Array.isArray(plan.subject_targets_override)
+          ? plan.subject_targets_override
+          : null;
+    const subjectTargetEntry =
+      subjectTargetsRaw && typeof subjectTargetsRaw[sid] === 'object' ? subjectTargetsRaw[sid] : null;
+    const subjectMode = String(subject?.default_constraint_mode || '').trim().toLowerCase();
+    const subjectDays = parsePositiveInt(subject?.default_target_days);
+    const subjectHours = parsePositiveFloat(subject?.default_target_hours);
+    const settingsMode = String(subjectPlanData?.settings?.default_constraint_mode || '').trim().toLowerCase();
+    const settingsDays = parsePositiveInt(subjectPlanData?.settings?.default_target_days);
+    const settingsHours = parsePositiveFloat(subjectPlanData?.settings?.default_target_hours);
+    const planMode = String(plan?.constraint_mode || '').trim().toLowerCase();
+    const planDays = parsePositiveInt(plan?.target_days);
+    const planHours = parsePositiveFloat(plan?.target_hours);
+
+    let target = null;
+    if (subjectTargetEntry) {
+      const days = parsePositiveInt(subjectTargetEntry?.target_days);
+      const hours = parsePositiveFloat(subjectTargetEntry?.target_hours);
+      if (days != null || hours != null) {
+        target = {
+          mode: days != null ? 'days' : 'hours',
+          value: days != null ? days : hours,
+          source: 'subject_plan_target',
+        };
+      }
+    }
+    if (!target) {
+      if (subjectMode === 'days' && subjectDays != null) target = { mode: 'days', value: subjectDays, source: 'subject_defaults' };
+      else if (subjectMode === 'hours' && subjectHours != null) target = { mode: 'hours', value: subjectHours, source: 'subject_defaults' };
+      else if (subjectDays != null && subjectHours == null) target = { mode: 'days', value: subjectDays, source: 'subject_defaults' };
+      else if (subjectHours != null && subjectDays == null) target = { mode: 'hours', value: subjectHours, source: 'subject_defaults' };
+    }
+    if (!target) {
+      if (settingsMode === 'days' && settingsDays != null) target = { mode: 'days', value: settingsDays, source: 'plan_settings' };
+      else if (settingsMode === 'hours' && settingsHours != null) target = { mode: 'hours', value: settingsHours, source: 'plan_settings' };
+      else if (settingsDays != null && settingsHours == null) target = { mode: 'days', value: settingsDays, source: 'plan_settings' };
+      else if (settingsHours != null && settingsDays == null) target = { mode: 'hours', value: settingsHours, source: 'plan_settings' };
+    }
+    if (!target) {
+      if (planMode === 'days' && planDays != null) target = { mode: 'days', value: planDays, source: 'plan_level' };
+      else if (planMode === 'hours' && planHours != null) target = { mode: 'hours', value: planHours, source: 'plan_level' };
+      else if (planDays != null && planHours == null) target = { mode: 'days', value: planDays, source: 'plan_level' };
+      else if (planHours != null && planDays == null) target = { mode: 'hours', value: planHours, source: 'plan_level' };
+    }
+    if (!target || !Number.isFinite(Number(target.value)) || Number(target.value) <= 0) return null;
+
+    const presentRecords = attendanceRecordsForUI.filter((record) => String(record?.status || '').toLowerCase() === 'present');
+    const presentDaySet = new Set(
+      presentRecords
+        .map((record) => String(record?.day_date || '').slice(0, 10))
+        .filter((ymd) => /^\d{4}-\d{2}-\d{2}$/.test(ymd))
+    );
+    const minutesByEventDay = new Map();
+    presentRecords.forEach((record) => {
+      const dayKey = String(record?.day_date || '').slice(0, 10);
+      if (!dayKey) return;
+      const eventKey = record?.event_id != null && String(record.event_id).trim()
+        ? `ev:${String(record.event_id)}|${dayKey}`
+        : `day:${dayKey}`;
+      const mins = Number(record?.minutes);
+      const nextMins = Number.isFinite(mins) && mins > 0 ? mins : 0;
+      const prev = minutesByEventDay.get(eventKey) || 0;
+      minutesByEventDay.set(eventKey, Math.max(prev, nextMins));
+    });
+    const actualDays = presentDaySet.size;
+    const actualHours = Number(
+      ([...minutesByEventDay.values()].reduce((sum, mins) => sum + mins, 0) / 60).toFixed(1)
+    );
+    const scheduledDaySet = new Set(
+      (subjectEvents || [])
+        .map((event) => {
+          const raw = event?.start_ts || event?.start || event?.start_local || event?.due_ts;
+          return raw ? String(raw).slice(0, 10) : null;
+        })
+        .filter((ymd) => /^\d{4}-\d{2}-\d{2}$/.test(String(ymd || '')))
+    );
+    const scheduledDays = scheduledDaySet.size;
+    let unattendedScheduledDays = 0;
+    scheduledDaySet.forEach((dayKey) => {
+      if (!presentDaySet.has(dayKey)) unattendedScheduledDays += 1;
+    });
+
+    const actual = target.mode === 'days' ? actualDays : actualHours;
+    const delta = Number((actual - target.value).toFixed(1));
+    const remaining = Math.max(0, Number((target.value - actual).toFixed(1)));
+    const percent = Math.min(999, Math.round((actual / target.value) * 100));
+    const met = actual >= target.value;
+    const sourceLabel = target.source === 'subject_plan_target'
+      ? 'subject plan target'
+      : target.source === 'subject_defaults'
+        ? 'subject planning preferences'
+        : target.source === 'plan_settings'
+          ? 'plan preferences'
+          : 'plan target';
+    return {
+      mode: target.mode,
+      target: target.value,
+      actual,
+      delta,
+      remaining,
+      percent,
+      met,
+      sourceLabel,
+      attendedDays: actualDays,
+      scheduledDays,
+      unattendedScheduledDays,
+    };
+  }, [subject, subjectPlanData, attendanceRecordsForUI, subjectEvents]);
 
   // Process graded items
   const gradedItems = useMemo(() => {
@@ -993,6 +1233,51 @@ export default function SubjectDetailPage({
   const isParentViewer =
     session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
 
+  const attendanceTargetGuidance = useMemo(() => {
+    if (!attendanceTargetProgress || attendanceTargetProgress.mode !== 'days') return null;
+    const remainingDays = Math.max(0, Number(attendanceTargetProgress.remaining) || 0);
+    const unattended = Math.max(0, attendanceTargetProgress.unattendedScheduledDays || 0);
+    const markPrevious = Math.min(remainingDays, unattended);
+    const addDays = Math.max(0, remainingDays - markPrevious);
+    return { markPrevious, addDays };
+  }, [attendanceTargetProgress]);
+
+  const attendanceTargetCard = attendanceTargetProgress ? (
+    <View style={styles.attendanceTargetCard}>
+      <Text style={styles.attendanceTargetTitle}>
+        {subject?.name || 'This subject'}
+        {' '}
+        target is saved as {attendanceTargetProgress.target}
+        {attendanceTargetProgress.mode === 'days' ? ' class day(s).' : ' hour(s).'}
+      </Text>
+      <Text style={styles.attendanceTargetValue}>
+        {attendanceChildrenLabel}
+        {' '}
+        have attended {attendanceTargetProgress.mode === 'days' ? attendanceTargetProgress.attendedDays : attendanceTargetProgress.actual}
+        {' '}
+        {attendanceTargetProgress.mode === 'days' ? 'class day(s).' : 'hour(s).'}
+      </Text>
+      <Text style={styles.attendanceTargetHelper}>
+        You have {attendanceTargetProgress.remaining}
+        {attendanceTargetProgress.mode === 'days' ? ' day(s)' : ' hour(s)'} remaining to meet target.
+        {attendanceTargetProgress.mode === 'days'
+          ? ` ${attendanceTargetProgress.scheduledDays} day(s) are scheduled. ${attendanceTargetProgress.unattendedScheduledDays} day(s) are unattended.`
+          : ''}
+      </Text>
+      {attendanceTargetGuidance ? (
+        <Text style={styles.attendanceTargetHelper}>
+          Either mark {attendanceTargetGuidance.markPrevious} previous class day(s) attended, or add {attendanceTargetGuidance.addDays} class day(s) to meet target.
+        </Text>
+      ) : (
+        <Text style={styles.attendanceTargetHelper}>
+          {attendanceTargetProgress.met
+            ? `Met target by ${Math.abs(attendanceTargetProgress.delta)}${attendanceTargetProgress.mode === 'days' ? ' day(s)' : ' hour(s)'}.`
+            : ''}
+        </Text>
+      )}
+    </View>
+  ) : null;
+
   const openAssignedWorkItem = useCallback((a) => {
     if (!a) return;
     const eid = firstLinkedEventId(a.linked_event_ids);
@@ -1052,6 +1337,47 @@ export default function SubjectDetailPage({
     return String(raw).slice(0, 10);
   }, []);
 
+  const subjectEventDateKeys = useMemo(() => {
+    const keys = new Set();
+    (subjectEvents || []).forEach((event) => {
+      const key = getEventDateKey(event);
+      if (DATE_KEY_RE.test(String(key || ''))) keys.add(String(key));
+    });
+    return keys;
+  }, [subjectEvents, getEventDateKey]);
+
+  const attendanceRecordDateKeys = useMemo(() => {
+    const keys = new Set();
+    (attendanceRecordsForUI || []).forEach((record) => {
+      const key = String(record?.day_date || '').slice(0, 10);
+      if (DATE_KEY_RE.test(key)) keys.add(key);
+    });
+    return keys;
+  }, [attendanceRecordsForUI]);
+
+  const isPlanScheduledDateKey = useCallback((dateKey) => {
+    const key = String(dateKey || '').slice(0, 10);
+    if (!DATE_KEY_RE.test(key)) return false;
+    if (!subjectPlanBlocks.length) return false;
+    const d = new Date(`${key}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return false;
+    const weekday = d.getDay();
+    return subjectPlanBlocks.some((block) => {
+      const weekdays = parseWeekdaysFromPlanBlock(block);
+      if (!weekdays.includes(weekday)) return false;
+      return isDateWithinPlanBlockRange(key, block);
+    });
+  }, [subjectPlanBlocks]);
+
+  const canMarkAttendanceForDateKey = useCallback((dateKey) => {
+    const key = String(dateKey || '').slice(0, 10);
+    if (!DATE_KEY_RE.test(key)) return false;
+    if (subjectEventDateKeys.has(key)) return true;
+    if (isPlanScheduledDateKey(key)) return true;
+    // Keep anomalous historical rows editable so users can clear legacy mismatches.
+    return attendanceRecordDateKeys.has(key);
+  }, [subjectEventDateKeys, isPlanScheduledDateKey, attendanceRecordDateKeys]);
+
   const getEventMinutes = useCallback((event) => {
     if (event?.duration_minutes != null) return Number(event.duration_minutes) || 0;
     const start = event?.start_ts || event?.start || event?.start_local;
@@ -1082,6 +1408,26 @@ export default function SubjectDetailPage({
     });
   }, [getEventDateKey]);
 
+  const resolveChildIdsForAttendanceEvent = useCallback((event) => {
+    const ids = getChildIdsForEvent(event);
+    if (ids.length > 0) return ids;
+    return [...new Set((assignedChildren || []).map((id) => String(id)).filter(Boolean))];
+  }, [getChildIdsForEvent, assignedChildren]);
+
+  const runAttendanceMutation = useCallback(async (operation, label) => {
+    const result = await operation;
+    if (result?.error) {
+      throw (result.error instanceof Error ? result.error : new Error(result.error?.message || `${label} failed`));
+    }
+    return result?.data ?? null;
+  }, []);
+
+  const runEventStatusBestEffort = useCallback(async (eventId, status) => {
+    // Disabled intentionally for attendance toggles: backend status endpoints are currently unstable
+    // and should not block or add noise to attendance interactions.
+    return null;
+  }, []);
+
   const handleToggleEventAttendanceForDate = useCallback(async (dateKey, eventId) => {
     if (!familyId || !dateKey || !eventId) return;
     const normKey = String(dateKey).slice(0, 10);
@@ -1091,33 +1437,44 @@ export default function SubjectDetailPage({
     const dayRecordsForEvent = attendanceRecords.filter(
       (r) => String(r?.event_id || '') === String(eventId) && String(r?.day_date || '').slice(0, 10) === normKey
     );
-    const isMarkedPresent = dayRecordsForEvent.some((r) => String(r?.status || '').toLowerCase() === 'present');
+    const uiDayRecordsForEvent = attendanceRecordsForUI.filter(
+      (r) => String(r?.event_id || '') === String(eventId) && String(r?.day_date || '').slice(0, 10) === normKey
+    );
+    const isMarkedPresent = uiDayRecordsForEvent.some((r) => String(r?.status || '').toLowerCase() === 'present');
 
     try {
       if (isMarkedPresent) {
-        const assignedIds = getChildIdsForEvent(event);
+        const assignedIds = resolveChildIdsForAttendanceEvent(event);
         const isShared = assignedIds.length > 1;
         const minutes = getEventMinutes(event);
         if (isShared && dayRecordsForEvent.length > 0) {
-          await Promise.all(dayRecordsForEvent.map((record) => updateAttendanceLog(record.id, { status: 'absent', minutes })));
+          await Promise.all(dayRecordsForEvent.map((record) => runAttendanceMutation(
+            updateAttendanceLog(record.id, { status: 'absent', minutes }),
+            'update attendance'
+          )));
         } else if (dayRecordsForEvent.length > 0) {
-          await Promise.all(dayRecordsForEvent.map((record) => deleteAttendanceLog(record.id)));
-          const res = await updateEventStatus(event.id, 'scheduled');
-          if (res?.error) console.warn('[SubjectDetailPage] Could not unmark event status:', res.error);
+          await Promise.all(dayRecordsForEvent.map((record) => runAttendanceMutation(
+            deleteAttendanceLog(record.id),
+            'delete attendance'
+          )));
+          await runEventStatusBestEffort(event.id, 'scheduled');
         } else if (assignedIds.length > 0) {
-          await Promise.all(assignedIds.map((childId) => createAttendanceLog({
-            family_id: familyId,
-            child_id: String(childId),
-            event_id: event.id,
-            day_date: normKey,
-            status: 'absent',
-            minutes,
-          })));
+          await Promise.all(assignedIds.map((childId) => runAttendanceMutation(
+            createAttendanceLog({
+              family_id: familyId,
+              child_id: String(childId),
+              event_id: event.id,
+              day_date: normKey,
+              status: 'absent',
+              minutes,
+            }),
+            'create attendance'
+          )));
         }
       } else {
         const siblings = getSiblingEventsOnDay(normKey, event, subjectEvents || []);
         for (const sibling of siblings) {
-          const childIds = getChildIdsForEvent(sibling);
+          const childIds = resolveChildIdsForAttendanceEvent(sibling);
           if (!childIds.length) continue;
           const minutes = getEventMinutes(sibling);
           const upserts = childIds.map((childId) => {
@@ -1127,19 +1484,26 @@ export default function SubjectDetailPage({
                 && String(r?.child_id || '') === String(childId)
                 && String(r?.day_date || '').slice(0, 10) === normKey
             );
-            if (existing) return updateAttendanceLog(existing.id, { status: 'present', minutes });
-            return createAttendanceLog({
-              family_id: familyId,
-              child_id: String(childId),
-              event_id: sibling.id,
-              day_date: normKey,
-              status: 'present',
-              minutes,
-            });
+            if (existing) {
+              return runAttendanceMutation(
+                updateAttendanceLog(existing.id, { status: 'present', minutes }),
+                'update attendance'
+              );
+            }
+            return runAttendanceMutation(
+              createAttendanceLog({
+                family_id: familyId,
+                child_id: String(childId),
+                event_id: sibling.id,
+                day_date: normKey,
+                status: 'present',
+                minutes,
+              }),
+              'create attendance'
+            );
           });
           await Promise.all(upserts);
-          const res = await updateEventStatus(sibling.id, 'done');
-          if (res?.error) console.warn('[SubjectDetailPage] Could not mark event complete:', res.error);
+          await runEventStatusBestEffort(sibling.id, 'done');
         }
       }
       await loadSubjectDetail({ silent: true });
@@ -1148,16 +1512,19 @@ export default function SubjectDetailPage({
       }
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed toggling event attendance:', err);
-      toast.push('Could not update attendance.', 'error');
+      toast.push(err?.message || 'Could not update attendance.', 'error');
       await loadSubjectDetail({ silent: true });
     }
   }, [
     familyId,
     subjectEvents,
     attendanceRecords,
-    getChildIdsForEvent,
+    attendanceRecordsForUI,
+    resolveChildIdsForAttendanceEvent,
     getEventMinutes,
     getSiblingEventsOnDay,
+    runAttendanceMutation,
+    runEventStatusBestEffort,
     loadSubjectDetail,
     toast,
   ]);
@@ -1169,7 +1536,7 @@ export default function SubjectDetailPage({
     if (!dayEvents.length) return;
     try {
       for (const event of dayEvents) {
-        const childIds = getChildIdsForEvent(event);
+        const childIds = resolveChildIdsForAttendanceEvent(event);
         if (!childIds.length) continue;
         const minutes = getEventMinutes(event);
         const upserts = childIds.map((childId) => {
@@ -1179,19 +1546,26 @@ export default function SubjectDetailPage({
               && String(r?.child_id || '') === String(childId)
               && String(r?.day_date || '').slice(0, 10) === normKey
           );
-          if (existing) return updateAttendanceLog(existing.id, { status: 'present', minutes });
-          return createAttendanceLog({
-            family_id: familyId,
-            child_id: String(childId),
-            event_id: event.id,
-            day_date: normKey,
-            status: 'present',
-            minutes,
-          });
+          if (existing) {
+            return runAttendanceMutation(
+              updateAttendanceLog(existing.id, { status: 'present', minutes }),
+              'update attendance'
+            );
+          }
+          return runAttendanceMutation(
+            createAttendanceLog({
+              family_id: familyId,
+              child_id: String(childId),
+              event_id: event.id,
+              day_date: normKey,
+              status: 'present',
+              minutes,
+            }),
+            'create attendance'
+          );
         });
         await Promise.all(upserts);
-        const res = await updateEventStatus(event.id, 'done');
-        if (res?.error) console.warn('[SubjectDetailPage] Could not mark event complete:', res.error);
+        await runEventStatusBestEffort(event.id, 'done');
       }
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1199,39 +1573,97 @@ export default function SubjectDetailPage({
       }
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed marking day attended:', err);
-      toast.push('Could not mark day attended.', 'error');
+      toast.push(err?.message || 'Could not mark day attended.', 'error');
       await loadSubjectDetail({ silent: true });
     }
-  }, [familyId, subjectEvents, getEventDateKey, getChildIdsForEvent, getEventMinutes, attendanceRecords, loadSubjectDetail, toast]);
+  }, [familyId, subjectEvents, getEventDateKey, resolveChildIdsForAttendanceEvent, getEventMinutes, attendanceRecords, runAttendanceMutation, runEventStatusBestEffort, loadSubjectDetail, toast]);
 
   const handleYearHeatmapDayPress = useCallback(async (dateKey) => {
     if (!familyId || !dateKey) return;
     const normKey = String(dateKey).slice(0, 10);
-    const dayEvents = (subjectEvents || []).filter((event) => getEventDateKey(event) === normKey);
+    if (!canMarkAttendanceForDateKey(normKey)) {
+      toast.push('Attendance can only be marked on scheduled subject days.', 'error');
+      return;
+    }
     const dayRecords = attendanceRecords.filter((record) => String(record?.day_date || '').slice(0, 10) === normKey);
-    const hasPresent = dayRecords.some((record) => String(record?.status || '').toLowerCase() === 'present');
-    const fallbackChildIds = [...new Set((assignedChildren || []).map((id) => String(id)).filter(Boolean))];
+    const uiDayRecords = attendanceRecordsForUI.filter((record) => String(record?.day_date || '').slice(0, 10) === normKey);
+    const dayEventsByDate = (subjectEvents || []).filter((event) => getEventDateKey(event) === normKey);
+    const uiEventIds = new Set(
+      uiDayRecords
+        .map((record) => String(record?.event_id || '').trim())
+        .filter(Boolean)
+    );
+    const dayEventsFromUI = (subjectEvents || []).filter((event) => uiEventIds.has(String(event?.id || '').trim()));
+    const seenDayEventIds = new Set();
+    const dayEvents = [...dayEventsByDate, ...dayEventsFromUI].filter((event) => {
+      const id = String(event?.id || '').trim();
+      if (!id || seenDayEventIds.has(id)) return false;
+      seenDayEventIds.add(id);
+      return true;
+    });
+    const hasPresent = uiDayRecords.some((record) => String(record?.status || '').toLowerCase() === 'present');
+    const fallbackChildIds = [
+      ...new Set([
+        ...(assignedChildren || []).map((id) => String(id)),
+        ...uiDayRecords.map((record) => String(record?.child_id || '').trim()),
+        ...(children || []).map((child) => String(child?.id || '').trim()),
+      ].filter(Boolean)),
+    ];
 
     try {
       if (hasPresent) {
         if (dayEvents.length > 0) {
           for (const event of dayEvents) {
-            const assignedIds = getChildIdsForEvent(event);
+            const assignedIds = resolveChildIdsForAttendanceEvent(event);
             const eventRecords = dayRecords.filter((record) => String(record?.event_id || '') === String(event?.id));
             const isShared = assignedIds.length > 1;
             const minutes = getEventMinutes(event);
-            if (isShared && eventRecords.length > 0) {
-              await Promise.all(eventRecords.map((record) => updateAttendanceLog(record.id, { status: 'absent', minutes })));
+            if (eventRecords.length === 0 && assignedIds.length > 0) {
+              await Promise.all(assignedIds.map((childId) => runAttendanceMutation(
+                createAttendanceLog({
+                  family_id: familyId,
+                  child_id: String(childId),
+                  event_id: event.id,
+                  day_date: normKey,
+                  status: 'absent',
+                  minutes,
+                }),
+                'create attendance'
+              )));
+            } else if (isShared && eventRecords.length > 0) {
+              await Promise.all(eventRecords.map((record) => runAttendanceMutation(
+                updateAttendanceLog(record.id, { status: 'absent', minutes }),
+                'update attendance'
+              )));
             } else {
-              await Promise.all(eventRecords.map((record) => deleteAttendanceLog(record.id)));
-              const res = await updateEventStatus(event.id, 'scheduled');
-              if (res?.error) console.warn('[SubjectDetailPage] Could not unmark event status:', res.error);
+              await Promise.all(eventRecords.map((record) => runAttendanceMutation(
+                deleteAttendanceLog(record.id),
+                'delete attendance'
+              )));
+              await runEventStatusBestEffort(event.id, 'scheduled');
             }
           }
         }
         const standalone = dayRecords.filter((record) => record?.event_id == null);
         if (standalone.length > 0) {
-          await Promise.all(standalone.map((record) => deleteAttendanceLog(record.id)));
+          await Promise.all(standalone.map((record) => runAttendanceMutation(
+            deleteAttendanceLog(record.id),
+            'delete attendance'
+          )));
+        } else if (fallbackChildIds.length > 0) {
+          await Promise.all(
+            fallbackChildIds.map((childId) => runAttendanceMutation(
+              createAttendanceLog({
+                family_id: familyId,
+                child_id: String(childId),
+                event_id: null,
+                day_date: normKey,
+                status: 'absent',
+                minutes: 60,
+              }),
+              'create attendance'
+            ))
+          );
         }
       } else {
         if (dayEvents.length > 0) {
@@ -1246,7 +1678,7 @@ export default function SubjectDetailPage({
             });
           });
           for (const event of expandedEvents) {
-            const assignedIds = getChildIdsForEvent(event);
+            const assignedIds = resolveChildIdsForAttendanceEvent(event);
             if (!assignedIds.length) continue;
             const minutes = getEventMinutes(event);
             const upserts = assignedIds.map((childId) => {
@@ -1256,19 +1688,26 @@ export default function SubjectDetailPage({
                   && String(r?.child_id || '') === String(childId)
                   && String(r?.day_date || '').slice(0, 10) === normKey
               );
-              if (existing) return updateAttendanceLog(existing.id, { status: 'present', minutes });
-              return createAttendanceLog({
-                family_id: familyId,
-                child_id: String(childId),
-                event_id: event.id,
-                day_date: normKey,
-                status: 'present',
-                minutes,
-              });
+              if (existing) {
+                return runAttendanceMutation(
+                  updateAttendanceLog(existing.id, { status: 'present', minutes }),
+                  'update attendance'
+                );
+              }
+              return runAttendanceMutation(
+                createAttendanceLog({
+                  family_id: familyId,
+                  child_id: String(childId),
+                  event_id: event.id,
+                  day_date: normKey,
+                  status: 'present',
+                  minutes,
+                }),
+                'create attendance'
+              );
             });
             await Promise.all(upserts);
-            const res = await updateEventStatus(event.id, 'done');
-            if (res?.error) console.warn('[SubjectDetailPage] Could not mark event complete:', res.error);
+            await runEventStatusBestEffort(event.id, 'done');
           }
         } else if (fallbackChildIds.length > 0) {
           const standaloneByChild = new Map(
@@ -1279,15 +1718,23 @@ export default function SubjectDetailPage({
           await Promise.all(
             fallbackChildIds.map((childId) => {
               const existing = standaloneByChild.get(childId);
-              if (existing) return updateAttendanceLog(existing.id, { status: 'present', minutes: 60 });
-              return createAttendanceLog({
-                family_id: familyId,
-                child_id: childId,
-                event_id: null,
-                day_date: normKey,
-                status: 'present',
-                minutes: 60,
-              });
+              if (existing) {
+                return runAttendanceMutation(
+                  updateAttendanceLog(existing.id, { status: 'present', minutes: 60 }),
+                  'update attendance'
+                );
+              }
+              return runAttendanceMutation(
+                createAttendanceLog({
+                  family_id: familyId,
+                  child_id: childId,
+                  event_id: null,
+                  day_date: normKey,
+                  status: 'present',
+                  minutes: 60,
+                }),
+                'create attendance'
+              );
             })
           );
         }
@@ -1298,18 +1745,23 @@ export default function SubjectDetailPage({
       }
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed toggling day attendance:', err);
-      toast.push('Could not update attendance for that day.', 'error');
+      toast.push(err?.message || 'Could not update attendance for that day.', 'error');
       await loadSubjectDetail({ silent: true });
     }
   }, [
     familyId,
     subjectEvents,
     attendanceRecords,
+    attendanceRecordsForUI,
     assignedChildren,
+    children,
     getEventDateKey,
-    getChildIdsForEvent,
+    canMarkAttendanceForDateKey,
+    resolveChildIdsForAttendanceEvent,
     getEventMinutes,
     getSiblingEventsOnDay,
+    runAttendanceMutation,
+    runEventStatusBestEffort,
     loadSubjectDetail,
     toast,
   ]);
@@ -1320,7 +1772,7 @@ export default function SubjectDetailPage({
         <SubjectAttendanceYearHeatmap
           attendanceRecords={attendanceRecordsForUI}
           subjectEvents={subjectData?.events || []}
-          onMarkEntireRange={() => setShowPastEventsAttendanceModal(true)}
+          isDayMarkable={canMarkAttendanceForDateKey}
           onDayPress={handleYearHeatmapDayPress}
         />
       ) : attendanceViewMode === 'month' ? (
@@ -1600,7 +2052,7 @@ export default function SubjectDetailPage({
                   const roleTag = roleLabel(deriveRoleFromTags(material?.tags));
                   const createdDate = formatDate(material.created_at || material.updated_at);
                   return (
-                    <TouchableOpacity
+                    <View
                       key={material.id}
                       style={[
                         styles.materialListItem,
@@ -1608,8 +2060,8 @@ export default function SubjectDetailPage({
                         String(material.id) === String(highlightedMaterialId)
                           ? styles.materialListItemHighlighted
                           : null,
+                        Platform.OS === 'web' ? { cursor: 'pointer' } : null,
                       ]}
-                      onPress={() => handleMaterialChipPress(material)}
                       {...(Platform.OS === 'web' && {
                         onMouseDown: (e) => {
                           const button = e?.button ?? e?.nativeEvent?.button;
@@ -1628,34 +2080,38 @@ export default function SubjectDetailPage({
                           showMaterialContextMenu(material, x, y);
                         },
                       })}
-                      activeOpacity={0.7}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <View style={styles.materialListItemLeft}>
-                        <View style={styles.materialListItemTextWrap}>
-                          <View style={styles.materialListItemTitleRow}>
-                            <Text style={styles.materialListItemTitle} numberOfLines={1}>
-                              {baseName}
-                            </Text>
-                            {(roleTag || typeLabel) ? (
-                              <View style={styles.materialListItemTagsRow}>
-                                {roleTag ? (
-                                  <View style={styles.materialListItemTag}>
-                                    <Text style={styles.materialListItemTagText}>{roleTag}</Text>
-                                  </View>
-                                ) : null}
-                                {typeLabel ? (
-                                  <View style={styles.materialListItemTag}>
-                                    <Text style={styles.materialListItemTagText}>{typeLabel}</Text>
-                                  </View>
-                                ) : null}
-                              </View>
-                            ) : null}
+                      <TouchableOpacity
+                        style={styles.materialListItemTapTarget}
+                        onPress={() => handleMaterialChipPress(material)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.materialListItemLeft}>
+                          <View style={styles.materialListItemTextWrap}>
+                            <View style={styles.materialListItemTitleRow}>
+                              <Text style={styles.materialListItemTitle} numberOfLines={1}>
+                                {baseName}
+                              </Text>
+                              {(roleTag || typeLabel) ? (
+                                <View style={styles.materialListItemTagsRow}>
+                                  {roleTag ? (
+                                    <View style={styles.materialListItemTag}>
+                                      <Text style={styles.materialListItemTagText}>{roleTag}</Text>
+                                    </View>
+                                  ) : null}
+                                  {typeLabel ? (
+                                    <View style={styles.materialListItemTag}>
+                                      <Text style={styles.materialListItemTagText}>{typeLabel}</Text>
+                                    </View>
+                                  ) : null}
+                                </View>
+                              ) : null}
+                            </View>
                           </View>
                         </View>
-                      </View>
-                      <Text style={styles.materialListItemDate}>{createdDate || '—'}</Text>
-                    </TouchableOpacity>
+                        <Text style={styles.materialListItemDate}>{createdDate || '—'}</Text>
+                      </TouchableOpacity>
+                    </View>
                   );
                 })}
               </View>
@@ -1786,6 +2242,17 @@ export default function SubjectDetailPage({
                     </View>
                   </TouchableOpacity>
                 </View>
+                <TouchableOpacity
+                  style={[styles.emptyStateButton, styles.attendanceTopRowPastLessonsButton]}
+                  onPress={() => setShowPastEventsAttendanceModal(true)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open attendance bulk actions"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <SlidersHorizontal size={14} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>Bulk actions</Text>
+                </TouchableOpacity>
               </View>
               {attendanceViewMode === 'list' ? (
                 <>
@@ -1804,7 +2271,7 @@ export default function SubjectDetailPage({
                     </View>
                   </View>
                   <View style={styles.attendanceList}>
-                    {(showAttendanceExpanded ? attendanceRecordsForUI : attendanceRecordsForUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
+                    {(showAttendanceExpanded ? attendanceRecordsListUI : attendanceRecordsListUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
                       const event = (subjectData?.events || []).find(e => e.id === record.event_id);
                       return (
                         <TouchableOpacity
@@ -1824,7 +2291,7 @@ export default function SubjectDetailPage({
                       );
                     })}
                   </View>
-                  {attendanceRecordsForUI.length > ATTENDANCE_LIST_LIMIT && (
+                  {attendanceRecordsListUI.length > ATTENDANCE_LIST_LIMIT && (
                     <TouchableOpacity
                       style={styles.attendanceShowMoreBtn}
                       onPress={() => setShowAttendanceExpanded((v) => !v)}
@@ -1833,7 +2300,7 @@ export default function SubjectDetailPage({
                       <Text style={styles.attendanceShowMoreText}>
                         {showAttendanceExpanded
                           ? 'Show less'
-                          : `Show more (${attendanceRecordsForUI.length - ATTENDANCE_LIST_LIMIT} more)`}
+                          : `Show more (${attendanceRecordsListUI.length - ATTENDANCE_LIST_LIMIT} more)`}
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -1841,6 +2308,7 @@ export default function SubjectDetailPage({
               ) : (
                 attendanceInsightsPanel
               )}
+              {attendanceTargetCard}
             </View>
           ) : (
             <View style={styles.emptyStateBox}>
@@ -1889,8 +2357,20 @@ export default function SubjectDetailPage({
                     </View>
                   </TouchableOpacity>
                 </View>
+                <TouchableOpacity
+                  style={[styles.emptyStateButton, styles.attendanceTopRowPastLessonsButton]}
+                  onPress={() => setShowPastEventsAttendanceModal(true)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open attendance bulk actions"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <SlidersHorizontal size={14} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>Bulk actions</Text>
+                </TouchableOpacity>
               </View>
               {attendanceViewMode === 'list' ? null : attendanceInsightsPanel}
+              {attendanceTargetCard}
             </View>
           )}
         </View>
@@ -2022,11 +2502,11 @@ export default function SubjectDetailPage({
                   onPress={() => setShowPastEventsGradesModal(true)}
                   activeOpacity={0.7}
                   accessibilityRole="button"
-                  accessibilityLabel="View past events and bulk update grades"
+                  accessibilityLabel="Open grades bulk actions"
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Calendar size={18} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Past events & bulk actions</Text>
+                  <SlidersHorizontal size={18} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>Bulk actions</Text>
                 </TouchableOpacity>
               ) : null}
               {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
@@ -2054,11 +2534,11 @@ export default function SubjectDetailPage({
                   onPress={() => setShowPastEventsGradesModal(true)}
                   activeOpacity={0.7}
                   accessibilityRole="button"
-                  accessibilityLabel="View past events and bulk update grades"
+                  accessibilityLabel="Open grades bulk actions"
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Calendar size={18} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Past events & bulk actions</Text>
+                  <SlidersHorizontal size={18} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>Bulk actions</Text>
                 </TouchableOpacity>
               ) : null}
               {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
@@ -2772,6 +3252,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(133, 196, 242, 0.14)',
     borderBottomColor: 'rgba(107, 179, 232, 0.45)',
   },
+  materialListItemTapTarget: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    flex: 1,
+  },
   materialListItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2877,6 +3364,8 @@ const styles = StyleSheet.create({
   },
   attendanceTopRowPastLessonsButton: {
     marginTop: 0,
+    borderRadius: 999,
+    gap: 6,
   },
   attendanceInsightsPanelWrap: {
     marginTop: 12,
@@ -3332,6 +3821,41 @@ const styles = StyleSheet.create({
     color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceTargetCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(107, 179, 232, 0.35)',
+    borderRadius: 10,
+    backgroundColor: 'rgba(133, 196, 242, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 12,
+    marginBottom: 10,
+  },
+  attendanceTargetTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceTargetValue: {
+    marginTop: 4,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceTargetHelper: {
+    marginTop: 3,
+    fontSize: 12,
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   attendanceList: {

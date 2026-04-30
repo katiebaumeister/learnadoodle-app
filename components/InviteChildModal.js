@@ -45,6 +45,7 @@ export default function InviteChildModal({
   familyId,
   familyChildren = [],
   onInvited,
+  onOpenUserControls,
   prefillChildId = null,
   onPrefillConsumed,
   /** From GET /api/family/members — fills linked status when Supabase RLS hides rows */
@@ -224,6 +225,13 @@ export default function InviteChildModal({
     }
   }, []);
 
+  const handleOpenUserControls = useCallback(() => {
+    if (typeof onOpenUserControls === 'function') {
+      onOpenUserControls();
+    }
+    resetAndClose();
+  }, [onOpenUserControls, resetAndClose]);
+
   if (!visible) return null;
 
   return (
@@ -265,6 +273,15 @@ export default function InviteChildModal({
                     </Text>
                   </View>
                   <Text style={styles.successLead}>They’ll get an email to join.</Text>
+                  {typeof onOpenUserControls === 'function' ? (
+                    <TouchableOpacity
+                      style={styles.successInlineLinkButton}
+                      onPress={handleOpenUserControls}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={styles.successInlineLinkText}>Go to User Controls</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               ) : null}
 
@@ -514,6 +531,19 @@ const styles = StyleSheet.create({
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  successInlineLinkButton: {
+    marginTop: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  successInlineLinkText: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   selectorSection: {
     marginBottom: 14,
   },
@@ -658,6 +688,7 @@ const styles = StyleSheet.create({
     gap: 12,
     justifyContent: 'flex-end',
     marginTop: 20,
+    flexWrap: 'wrap',
   },
   btnSecondary: {
     paddingVertical: 12,

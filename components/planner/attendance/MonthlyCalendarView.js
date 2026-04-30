@@ -112,8 +112,8 @@ export default function MonthlyCalendarView({
                   style={[
                     styles.cell,
                     !day && styles.cellEmpty,
-                    day && !isSelected && (hasAttendance ? { backgroundColor: color, borderColor: color } : styles.cellDefault),
-                    day && isSelected && styles.cellSelected,
+                    day && (hasAttendance ? { backgroundColor: color, borderColor: color } : styles.cellDefault),
+                    day && isSelected && styles.cellSelectedOutline,
                     Platform.OS === 'web' && day && styles.cellWeb,
                     isHovered && styles.cellHover,
                   ]}
@@ -125,7 +125,7 @@ export default function MonthlyCalendarView({
                   })}
                 >
                   {day ? (
-                    <Text style={[styles.cellDay, isSelected && styles.cellDaySelected]}>{day}</Text>
+                    <Text style={styles.cellDay}>{day}</Text>
                   ) : null}
                   {day && hasAttendance && !isSelected && (
                     <View style={[styles.indicator, { backgroundColor: color }]} />
@@ -200,7 +200,10 @@ const styles = StyleSheet.create({
     backgroundColor: TOKENS.bgSurface,
     borderColor: 'rgba(15,23,42,0.08)',
   },
-  cellSelected: { backgroundColor: '#7CC4FA', borderColor: '#7CC4FA' },
+  cellSelectedOutline: {
+    borderColor: 'rgba(17,24,39,0.45)',
+    borderWidth: 1,
+  },
   cellWeb: {
     cursor: 'pointer',
     ...(Platform.OS === 'web' && { transition: 'background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease' }),
@@ -211,7 +214,6 @@ const styles = StyleSheet.create({
     ...TOKENS.shadow1,
   } : {},
   cellDay: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted, fontWeight: '500' },
-  cellDaySelected: { color: '#FFFFFF' },
   indicator: {
     position: 'absolute',
     bottom: 2,

@@ -4785,6 +4785,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setShowChildInviteModal(false);
           setInviteModalPrefillChildId(null);
         }}
+        onOpenUserControls={() => {
+          setActiveSection('user-controls');
+        }}
         familyId={family?.id || familyId}
         familyChildren={children}
         familyMembersFromApi={family?.members ?? null}

@@ -978,7 +978,7 @@ export default function AttendanceView({
         {...(Platform.OS === 'web' && { cursor: markingRangeAttended ? 'default' : 'pointer' })}
       >
         <Text style={styles.rangeBulkChipText}>
-          {markingRangeAttended ? 'Marking range…' : 'Mark entire range attended'}
+          {markingRangeAttended ? 'Marking range…' : 'Bulk actions'}
         </Text>
       </TouchableOpacity>
     </View>

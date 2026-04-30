@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Platform, Animated, Easing, ScrollView, StyleSheet, Modal, Switch } from 'react-native';
 import { X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -142,6 +142,7 @@ export default function TaskCreateModal({
   defaultEventType = null, // Default event type to set when opening modal (e.g., 'Lesson')
   defaultStartTime = null, // Default start time (e.g. '9:00 AM') when opening from plan slot
   defaultTitle = null, // Default title when opening from Doodle (e.g. 'Doctors' for appointment)
+  defaultMaterialId = null, // Default material ID to pre-attach
 }) {
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState(defaultDate ?? new Date());
@@ -233,6 +234,7 @@ export default function TaskCreateModal({
   const materialButtonRef = useRef(null);
   const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
   const [materialDropdownPositionReady, setMaterialDropdownPositionReady] = useState(false);
+  const wasVisibleRef = useRef(false);
   
   // Standards state
   const [attachedStandards, setAttachedStandards] = useState([]);
@@ -255,6 +257,20 @@ export default function TaskCreateModal({
   const [percentValidationError, setPercentValidationError] = useState(null);
   const [percentValidationData, setPercentValidationData] = useState(null);
   const [checkingPercent, setCheckingPercent] = useState(false);
+  const selectedSubjectName = useMemo(
+    () => (subjects.find((s) => String(s?.id || '') === String(subjectId || ''))?.name || 'subject'),
+    [subjects, subjectId]
+  );
+  const openSubjectDetailsForPlanning = useCallback(() => {
+    if (!subjectId || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    onClose?.();
+    window.history.pushState({}, '', `/subjects/${subjectId}`);
+    try {
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    } catch (_) {
+      window.dispatchEvent(new Event('popstate'));
+    }
+  }, [subjectId, onClose]);
 
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes
   useEffect(() => {
@@ -650,8 +666,18 @@ export default function TaskCreateModal({
             width: Math.max(rect.width, 200),
             maxHeight: maxHeight,
           };
-          setMaterialDropdownPosition(newPosition);
-          setMaterialDropdownPositionReady(true);
+          setMaterialDropdownPosition((prev) => {
+            if (
+              prev?.top === newPosition.top &&
+              prev?.left === newPosition.left &&
+              prev?.width === newPosition.width &&
+              prev?.maxHeight === newPosition.maxHeight
+            ) {
+              return prev;
+            }
+            return newPosition;
+          });
+          setMaterialDropdownPositionReady((prev) => (prev ? prev : true));
         }
       };
       
@@ -689,7 +715,16 @@ export default function TaskCreateModal({
               left: rect.left,
               width: Math.max(rect.width, 200),
             };
-            setSubjectDropdownPosition(newPosition);
+            setSubjectDropdownPosition((prev) => {
+              if (
+                prev?.top === newPosition.top &&
+                prev?.left === newPosition.left &&
+                prev?.width === newPosition.width
+              ) {
+                return prev;
+              }
+              return newPosition;
+            });
           }
         }
       };
@@ -783,17 +818,23 @@ export default function TaskCreateModal({
     }
   }, [familyId, session, toast]);
 
-  // Fetch subjects and subject goals when modal opens (intentionally omit fetchSubjects/loadMaterials from deps to avoid infinite loop)
+  // Fetch subject-dependent data while modal is open.
   useEffect(() => {
     if (visible && familyId) {
       fetchSubjects();
-      loadMaterials();
       if (assigneeIds.length > 0) {
         fetchSubjectGoals(assigneeIds[0]); // Fetch goals for first selected child
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, familyId, assigneeIds]);
+
+  // Load materials once when modal opens.
+  useEffect(() => {
+    if (visible && familyId) {
+      loadMaterials();
+    }
+  }, [visible, familyId, loadMaterials]);
 
   // New library items (e.g. syllabus from Edit Subject) should appear in attachment picker while modal is open
   useEffect(() => {
@@ -808,7 +849,7 @@ export default function TaskCreateModal({
   }, [familyId, visible, loadMaterials]);
 
   useEffect(() => {
-    if (visible) {
+    if (visible && !wasVisibleRef.current) {
       setTitle(defaultTitle && String(defaultTitle).trim() ? defaultTitle : '');
       setDueDate(defaultDate ?? new Date());
       setEventEndDate(null);
@@ -830,8 +871,9 @@ export default function TaskCreateModal({
       setShowRequiresSubmissionHome(
         defaultRequiresSubmissionHomeForEventType(initialEventType === 'Scheduled Class Day' ? 'Lesson' : initialEventType)
       );
-      setSelectedMaterialId(null);
-      setAttachedMaterialIds([]);
+      const initialMaterialId = defaultMaterialId ? String(defaultMaterialId) : null;
+      setSelectedMaterialId(initialMaterialId);
+      setAttachedMaterialIds(initialMaterialId ? [initialMaterialId] : []);
       setAttachedStandards([]);
       setShowStandardsModal(false);
       setSubjectId(defaultSubjectId || null);
@@ -848,7 +890,6 @@ export default function TaskCreateModal({
       setInstructor('');
       setGoalLink(null);
       setShowMaterialDropdown(false);
-      setSelectedMaterialId(null);
       setShowSubjectDropdown(false);
       setShowGoalDropdown(false);
       // Reset recurring fields
@@ -867,7 +908,8 @@ export default function TaskCreateModal({
       setSuggestedChange(null);
       setChangeAccepted(false);
     }
-  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle]);
+    wasVisibleRef.current = visible;
+  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId]);
 
   const fetchSubjects = async () => {
     if (!familyId) return;
@@ -2518,6 +2560,24 @@ export default function TaskCreateModal({
                     </View>
                   </View>
                 </View>
+                {isRecurring && (
+                  <View style={styles.recurringRecommendationCard}>
+                    <Text style={styles.recurringRecommendationText}>
+                      If you are trying to build out recurring class days by subject, we recommend you do so from the subject's page and use Create plan.
+                    </Text>
+                    {subjectId ? (
+                      <TouchableOpacity
+                        onPress={openSubjectDetailsForPlanning}
+                        style={styles.recurringRecommendationLinkBtn}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={styles.recurringRecommendationLinkText}>
+                          Go to {selectedSubjectName} details
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                )}
                 {!allDay && (
                   <View style={styles.timeInputsRow}>
                     <View style={styles.timeField}>
@@ -3252,11 +3312,19 @@ export default function TaskCreateModal({
                         onChangeText={setLocation}
                         style={styles.input}
                       />
+                      <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Instructor / Host (optional)</Text>
+                      <TextInput
+                        placeholder="e.g. Elisa"
+                        placeholderTextColor={MUTED}
+                        value={instructor}
+                        onChangeText={setInstructor}
+                        style={styles.input}
+                      />
                     </View>
                     <View style={styles.field}>
                       <Text style={styles.fieldLabel}>Mode (optional)</Text>
                       <SafeView style={styles.dropdownContainer}>
-                        <ChipRow style={styles.dropdownRow}>{MODE_OPTIONS.map((m) => (
+                        <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>{MODE_OPTIONS.map((m) => (
                             <TouchableOpacity
                               key={m}
                               onPress={() => setMode(mode === m ? '' : m)}
@@ -3278,7 +3346,7 @@ export default function TaskCreateModal({
                       </SafeView>
                       <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add to connected calendar</Text>
                       <SafeView style={styles.dropdownContainer}>
-                        <ChipRow style={styles.dropdownRow}>
+                        <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
                           {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
                             const isSelected = connectedCalendarTargets.includes(provider.value);
                             return (
@@ -3315,18 +3383,6 @@ export default function TaskCreateModal({
                           })}
                         </ChipRow>
                       </SafeView>
-                    </View>
-                  </SafeFieldRow>
-                  <SafeFieldRow style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Instructor / Host (optional)</Text>
-                      <TextInput
-                        placeholder="e.g. Elisa"
-                        placeholderTextColor={MUTED}
-                        value={instructor}
-                        onChangeText={setInstructor}
-                        style={styles.input}
-                      />
                     </View>
                   </SafeFieldRow>
                 </SafeView>
@@ -4936,6 +4992,37 @@ const styles = StyleSheet.create({
   allDayLabel: {
     color: SUB,
     fontSize: 13,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  recurringRecommendationCard: {
+    marginTop: 8,
+    marginBottom: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: '#eff6ff',
+  },
+  recurringRecommendationText: {
+    color: '#475569',
+    fontSize: 12,
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  recurringRecommendationLinkBtn: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  recurringRecommendationLinkText: {
+    color: '#334155',
+    fontSize: 12,
+    textDecorationLine: 'underline',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

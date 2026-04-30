@@ -1203,11 +1203,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [chipConflictMessage, setChipConflictMessage] = useState(null);
   const [chipConflictSuggestion, setChipConflictSuggestion] = useState(null);
   const [chipConflictLoading, setChipConflictLoading] = useState(false);
+  const onEditingChangeRef = useRef(onEditingChange);
+  const lastHydratedEventSignatureRef = useRef(null);
 
   const editConflictEnterOp = useRef(new Animated.Value(0)).current;
   const editConflictEnterY = useRef(new Animated.Value(5)).current;
   const chipConflictEnterOp = useRef(new Animated.Value(0)).current;
   const chipConflictEnterY = useRef(new Animated.Value(5)).current;
+
+  useEffect(() => {
+    onEditingChangeRef.current = onEditingChange;
+  }, [onEditingChange]);
 
   useEffect(() => {
     setChipConflictBannerDismissed(false);
@@ -1667,9 +1673,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setPlacement('calendar');
       }
       // Also notify parent that we're in editing mode
-      onEditingChange?.(true);
+      onEditingChangeRef.current?.(true);
     }
-  }, [readOnly, initialSchedulingMode, event?._openInEditMode, onEditingChange]);
+  }, [readOnly, initialSchedulingMode, event?._openInEditMode]);
 
   // Avoid probing lesson_standards on every modal open.
   // The table is not available in all environments, and eager loading
@@ -1849,8 +1855,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       console.log('[EventDetails] Notifying parent of editing state:', editing);
     }
-    onEditingChange?.(editing);
-  }, [editing, onEditingChange]);
+    onEditingChangeRef.current?.(editing);
+  }, [editing]);
 
   // Update material dropdown position on scroll/resize when visible
   useEffect(() => {
@@ -1928,6 +1934,32 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   useEffect(() => {
     if (!event) return;
+
+    const recurrenceSignature =
+      event.recurrence_rule == null
+        ? ''
+        : (typeof event.recurrence_rule === 'string'
+          ? event.recurrence_rule
+          : JSON.stringify(event.recurrence_rule));
+    const eventSignature = [
+      String(event.id || ''),
+      String(event.updated_at || ''),
+      String(event.start_ts || event.start || event.start_local || ''),
+      String(event.end_ts || event.end || event.end_local || ''),
+      String(event.status || ''),
+      String(event.event_type || ''),
+      String(event.subject_id || ''),
+      String(event.child_id || ''),
+      Array.isArray(event.child_ids) ? event.child_ids.map(String).join(',') : '',
+      String(event.material_id || ''),
+      recurrenceSignature,
+      String(event.is_backlog === true || event.data?.is_backlog === true),
+      String(initialSchedulingMode === true),
+    ].join('|');
+    if (lastHydratedEventSignatureRef.current === eventSignature) {
+      return;
+    }
+    lastHydratedEventSignatureRef.current = eventSignature;
 
     const startTs = getTimestamp(event, ['start_ts', 'start', 'start_local']);
     const endTs = getTimestamp(event, ['end_ts', 'end', 'end_local']);
@@ -2029,21 +2061,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     event.child?.id || 
                     null;
     
-    console.log('[EventDetails] Loading assignees from event:', {
-      child_id: event.child_id,
-      child_ids: event.child_ids,
-      child: event.child,
-      computed_childId: childId
-    });
-    
     setDraftChildId(childId);
     // Use child_ids array if available, otherwise use child_id if it exists
     const assigneeIdsArray = event.child_ids && event.child_ids.length > 0 
       ? event.child_ids 
       : (childId ? [childId] : []);
     setAssigneeIds(assigneeIdsArray);
-    
-    console.log('[EventDetails] Set assigneeIds:', assigneeIdsArray);
     
     // Notes
     const notesStr = event.description || event.notes || '';
@@ -2201,7 +2224,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         preloadedSubjects.length > 0 &&
         assigneeIds.length > 0;
       if (hasPreloaded) {
-        setSubjects(filterSubjectsForAssignees(preloadedSubjects, assigneeIds));
+        const nextSubjects = filterSubjectsForAssignees(preloadedSubjects, assigneeIds);
+        setSubjects((prev) => {
+          const prevIds = (prev || []).map((s) => String(s?.id || '')).join('|');
+          const nextIds = (nextSubjects || []).map((s) => String(s?.id || '')).join('|');
+          return prevIds === nextIds ? prev : nextSubjects;
+        });
       }
       fetchSubjects({ background: hasPreloaded });
       if (assigneeIds.length > 0) {
@@ -6540,11 +6568,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
 
   const selectedMaterial = materials.find(m => m.id === draftMaterialId);
-
-  // Debug: Log editing state
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    console.log('[EventDetails] editing state:', editing);
-  }
 
   const editFormConflictRich = useMemo(() => {
     if (!conflictWarning) return null;

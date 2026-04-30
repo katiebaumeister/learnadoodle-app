@@ -208,6 +208,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [taskModalDefaultPlacement, setTaskModalDefaultPlacement] = useState('calendar');
   const [taskModalDefaultStartTime, setTaskModalDefaultStartTime] = useState(null);
   const [taskModalDefaultTitle, setTaskModalDefaultTitle] = useState(null);
+  const [taskModalDefaultMaterialId, setTaskModalDefaultMaterialId] = useState(null);
   const [newMenuPosition, setNewMenuPosition] = useState({ x: 320, y: 88 });
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -2046,6 +2047,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setTaskModalDefaultPlacement(detail.placement || 'calendar');
       setTaskModalDefaultStartTime(detail.startTime || null);
       setTaskModalDefaultTitle(detail.title ?? null);
+      setTaskModalDefaultMaterialId(detail.materialId || null);
       setShowTaskModal(true);
     };
     
@@ -4514,6 +4516,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setTaskModalDefaultPlacement('calendar'); // Reset to default for next time
             setTaskModalDefaultStartTime(null);
             setTaskModalDefaultTitle(null);
+            setTaskModalDefaultMaterialId(null);
           }}
           defaultDate={taskModalDate}
           defaultChildId={taskModalChildId}
@@ -4523,6 +4526,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           defaultPlacement={taskModalDefaultPlacement}
           defaultStartTime={taskModalDefaultStartTime}
           defaultTitle={taskModalDefaultTitle}
+          defaultMaterialId={taskModalDefaultMaterialId}
           familyId={familyId}
           familyMembers={children.map(child => ({
             id: child.id,
@@ -4730,6 +4734,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         onClose={() => {
           setShowInviteChildModal(false);
           setInviteChildModalPrefillId(null);
+        }}
+        onOpenUserControls={() => {
+          handleTabChange('settings', 'user-controls');
         }}
         familyId={familyId}
         familyChildren={children}
