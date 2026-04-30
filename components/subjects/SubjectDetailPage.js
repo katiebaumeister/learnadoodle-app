@@ -38,9 +38,6 @@ import MaterialDocViewerModal, {
   resolveMaterialDocViewerUrl,
   getMaterialFileTypeLabel,
 } from '../materials/MaterialDocViewerModal';
-import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
-import ParsePlainTextModal from '../ParsePlainTextModal';
-import BuildCurriculumModal from '../planner/modals/BuildCurriculumModal';
 import { useToast } from '../Toast';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
@@ -420,10 +417,6 @@ export default function SubjectDetailPage({
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
   const [applyingAttendanceSuggestion, setApplyingAttendanceSuggestion] = useState(false);
   const [showLearningGoalsMethodModal, setShowLearningGoalsMethodModal] = useState(false);
-  const [showManualUnitsModal, setShowManualUnitsModal] = useState(false);
-  const [showParseUnitsModal, setShowParseUnitsModal] = useState(false);
-  const [showGenerateUnitsModal, setShowGenerateUnitsModal] = useState(false);
-  const [buildUnitsInputMode, setBuildUnitsInputMode] = useState('topic');
   const [learningGoalsUnits, setLearningGoalsUnits] = useState([]);
   const [learningGoalsSource, setLearningGoalsSource] = useState(null);
   const [learningGoalsLoading, setLearningGoalsLoading] = useState(false);
@@ -729,26 +722,29 @@ export default function SubjectDetailPage({
     (method) => {
       const requestedMethod = String(method || '').trim().toLowerCase();
       const mappedMethod = requestedMethod === 'paste' ? 'paste_plain' : requestedMethod;
-      if (!subjectData?.subject?.id) return;
-      if (mappedMethod === 'manual') {
-        setShowManualUnitsModal(true);
+      const safeMethod = ['manual', 'paste_plain', 'upload', 'generate'].includes(mappedMethod)
+        ? mappedMethod
+        : null;
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && subjectData?.subject?.id) {
+        window.dispatchEvent(
+          new CustomEvent('openPlanYearModal', {
+            detail: {
+              from: 'subject_detail',
+              subjectId: subjectData.subject.id,
+              subjectName: subjectData.subject.name || null,
+              childIds: assignedChildren,
+              openAsModal: true,
+              skipPlanSummary: true,
+              openDirectlyToScope: true,
+              initialUnitStructureMethod: safeMethod,
+            },
+          })
+        );
         return;
       }
-      if (mappedMethod === 'generate') {
-        setBuildUnitsInputMode('topic');
-        setShowGenerateUnitsModal(true);
-        return;
-      }
-      if (mappedMethod === 'upload') {
-        setBuildUnitsInputMode('material');
-        setShowGenerateUnitsModal(true);
-        return;
-      }
-      if (mappedMethod === 'paste_plain') {
-        setShowParseUnitsModal(true);
-      }
+      if (onEditSubject && subjectData?.subject) onEditSubject(subjectData.subject);
     },
-    [subjectData]
+    [subjectData, assignedChildren, onEditSubject]
   );
   const openSubjectUnitsEditor = useCallback(() => {
     const sourceToMethod = {
@@ -3100,44 +3096,6 @@ export default function SubjectDetailPage({
         onOpenEvent={handleOpenEventDetails}
         onCreatePlan={handleOpenPlanBuilder}
         onCompleted={() => loadSubjectDetail({ silent: true })}
-      />
-      <ManualCurriculumBuilderModal
-        visible={showManualUnitsModal}
-        onClose={() => setShowManualUnitsModal(false)}
-        subjectId={subject?.id || null}
-        subjectName={(subject?.name || '').trim() || 'Subject'}
-        familyId={familyId}
-        onSaved={() => {
-          setShowManualUnitsModal(false);
-          loadSubjectDetail({ silent: true });
-        }}
-      />
-      <ParsePlainTextModal
-        visible={showParseUnitsModal}
-        onClose={() => setShowParseUnitsModal(false)}
-        subjectId={subject?.id || null}
-        subjectName={(subject?.name || '').trim() || 'Subject'}
-        familyId={familyId}
-        childIds={assignedChildren}
-        onSaved={() => {
-          setShowParseUnitsModal(false);
-          loadSubjectDetail({ silent: true });
-        }}
-      />
-      <BuildCurriculumModal
-        visible={showGenerateUnitsModal}
-        onClose={() => setShowGenerateUnitsModal(false)}
-        familyId={familyId}
-        children={children}
-        selectedChildIds={assignedChildren}
-        initialSubjectId={subject?.id || null}
-        initialSubjectName={(subject?.name || '').trim() || 'Subject'}
-        initialInputMode={buildUnitsInputMode}
-        initialMaterialId={null}
-        onComplete={() => {
-          setShowGenerateUnitsModal(false);
-          loadSubjectDetail({ silent: true });
-        }}
       />
       <SubjectAssignedToStudentModal
         visible={showAssignedToStudentModal}

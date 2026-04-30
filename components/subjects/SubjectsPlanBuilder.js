@@ -41,6 +41,9 @@ const TERM_OPTIONS = [
 const OVERVIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const overviewCacheByFamily = new Map();
 const overviewInflightByFamily = new Map();
+const SCHEDULE_SUPPLEMENT_TTL_MS = 10 * 60 * 1000;
+const scheduleSupplementCacheByKey = new Map();
+const scheduleSupplementInflightByKey = new Map();
 let schoolYearTemplateCache = null;
 
 function getPresentAcademicScope(now = new Date()) {
@@ -251,6 +254,23 @@ function isInstructionalEvent(eventRow) {
 
 function normalizeFamilyKey(familyId) {
   return String(familyId || '').trim();
+}
+
+function buildScheduleSupplementKey(familyId, schoolYearLabel) {
+  const familyKey = normalizeFamilyKey(familyId);
+  const yearKey = String(schoolYearLabel || '').trim();
+  if (!familyKey || !yearKey) return '';
+  return `${familyKey}|${yearKey}`;
+}
+
+function getCachedScheduleSupplement(familyId, schoolYearLabel, { allowStale = true } = {}) {
+  const key = buildScheduleSupplementKey(familyId, schoolYearLabel);
+  if (!key) return null;
+  const cached = scheduleSupplementCacheByKey.get(key);
+  if (!cached) return null;
+  if (allowStale) return cached;
+  if (Date.now() - Number(cached.updatedAt || 0) > SCHEDULE_SUPPLEMENT_TTL_MS) return null;
+  return cached;
 }
 
 function isUuidLike(value) {
@@ -639,6 +659,227 @@ export async function preloadSubjectsPlanOverview(familyId, { force = false } = 
   }
 }
 
+async function fetchAndCacheScheduleSupplement({
+  familyId,
+  schoolYearLabel,
+  startYear,
+  endYear,
+  subjectIds = [],
+  force = false,
+} = {}) {
+  const key = buildScheduleSupplementKey(familyId, schoolYearLabel);
+  if (!key || !isUuidLike(normalizeFamilyKey(familyId))) {
+    return {
+      familyPlannerSettings: {
+        target_scope: 'overall',
+        default_constraint_mode: 'none',
+        default_target_days: null,
+        default_target_hours: null,
+      },
+      subjectTargetSettingsById: {},
+      instructionalEventsBySubject: {},
+      attendedDayKeysBySubject: {},
+      updatedAt: Date.now(),
+    };
+  }
+  const normalizedSubjectIds = [...new Set((subjectIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  const subjectIdsSignature = normalizedSubjectIds.slice().sort().join(',');
+  if (!force) {
+    const fresh = getCachedScheduleSupplement(familyId, schoolYearLabel, { allowStale: false });
+    if (fresh && String(fresh.subjectIdsSignature || '') === subjectIdsSignature) return fresh;
+  }
+  const inflight = scheduleSupplementInflightByKey.get(key);
+  if (inflight && !force) return inflight;
+
+  const request = (async () => {
+    const familySettingsPromise = getFamilyPlannerSettings(familyId, schoolYearLabel || null)
+      .then(({ data }) => ({
+        target_scope: String(data?.target_scope || 'overall').trim().toLowerCase(),
+        default_constraint_mode: String(data?.default_constraint_mode || 'none').trim().toLowerCase(),
+        default_target_days: parsePositiveInt(data?.default_target_days),
+        default_target_hours: parsePositiveFloat(data?.default_target_hours),
+      }))
+      .catch(() => ({
+        target_scope: 'overall',
+        default_constraint_mode: 'none',
+        default_target_days: null,
+        default_target_hours: null,
+      }));
+
+    const subjectTargetsPromise = (!schoolYearLabel
+      ? Promise.resolve({})
+      : supabase
+          .from('subject')
+          .select('id, default_constraint_mode, default_target_days, default_target_hours')
+          .eq('family_id', familyId)
+          .eq('school_year', schoolYearLabel)
+          .then(({ data, error }) => {
+            if (error) throw error;
+            const next = {};
+            (data || []).forEach((row) => {
+              const id = String(row?.id || '').trim();
+              if (!id) return;
+              next[id] = {
+                default_constraint_mode: String(row?.default_constraint_mode || '').trim().toLowerCase(),
+                default_target_days: parsePositiveInt(row?.default_target_days),
+                default_target_hours: parsePositiveFloat(row?.default_target_hours),
+              };
+            });
+            return next;
+          })
+          .catch(() => ({})));
+
+    const instructionalPromise = (async () => {
+      if (normalizedSubjectIds.length === 0 || !Number.isFinite(Number(startYear)) || !Number.isFinite(Number(endYear))) {
+        return { instructionalEventsBySubject: {}, attendedDayKeysBySubject: {} };
+      }
+      const schoolYearRange = formatYmdFromTemplateYear(startYear, endYear, 'full_year');
+      if (!schoolYearRange?.start_date || !schoolYearRange?.end_date) {
+        return { instructionalEventsBySubject: {}, attendedDayKeysBySubject: {} };
+      }
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .eq('family_id', familyId)
+        .in('subject_id', normalizedSubjectIds)
+        .gte('start_ts', `${schoolYearRange.start_date}T00:00:00`)
+        .lte('start_ts', `${schoolYearRange.end_date}T23:59:59`)
+        .is('deleted_at', null)
+        .neq('is_backlog', true)
+        .neq('status', 'canceled');
+      if (error) throw error;
+      const eventMetaById = {};
+      (data || []).forEach((row) => {
+        if (!isInstructionalEvent(row)) return;
+        const eventId = row?.id ? String(row.id) : '';
+        const subjectId = String(row?.subject_id || '').trim();
+        if (!eventId || !subjectId) return;
+        eventMetaById[eventId] = {
+          subjectId,
+          startDay: String(row?.start_ts || row?.due_ts || '').slice(0, 10),
+        };
+      });
+      let attendanceRows = [];
+      const attendanceEventIds = Object.keys(eventMetaById);
+      if (attendanceEventIds.length > 0) {
+        const { data: rawAttendanceRows } = await supabase
+          .from('attendance_records')
+          .select('event_id, day_date, status')
+          .in('event_id', attendanceEventIds);
+        attendanceRows = Array.isArray(rawAttendanceRows) ? rawAttendanceRows : [];
+      }
+      const nextBySubject = {};
+      const attendedSetsBySubject = {};
+      attendanceRows.forEach((row) => {
+        const eventId = String(row?.event_id || '').trim();
+        const meta = eventMetaById[eventId];
+        if (!meta?.subjectId) return;
+        const status = String(row?.status || '').trim().toLowerCase();
+        if (!(status === 'present' || status === 'partial')) return;
+        const dayKey = String(row?.day_date || meta.startDay || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
+        if (!attendedSetsBySubject[meta.subjectId]) attendedSetsBySubject[meta.subjectId] = new Set();
+        attendedSetsBySubject[meta.subjectId].add(dayKey);
+      });
+      (data || []).forEach((row) => {
+        if (!isInstructionalEvent(row)) return;
+        const subjectId = String(row?.subject_id || '').trim();
+        if (!subjectId) return;
+        const tsMs = new Date(row?.start_ts || '').getTime();
+        if (!Number.isFinite(tsMs)) return;
+        const unitName = String(
+          row?.unit || row?.curriculum_unit_title || row?.unit_name || row?.unit_topic || ''
+        ).trim();
+        const fromPlan = row?.generated_by === 'plan_year'
+          || row?.instructional_status === 'PLAN_PLACEHOLDER'
+          || Boolean(row?.source_block_id);
+        if (!nextBySubject[subjectId]) nextBySubject[subjectId] = [];
+        nextBySubject[subjectId].push({
+          id: row?.id ? String(row.id) : `ev-${subjectId}-${tsMs}-${nextBySubject[subjectId].length}`,
+          subject_id: subjectId,
+          title: String(row?.title || row?.lesson_name || row?.event_type || 'Event').trim(),
+          startTs: row?.start_ts || row?.due_ts || null,
+          start_ts: row?.start_ts || row?.due_ts || null,
+          due_ts: row?.due_ts || row?.start_ts || null,
+          end_ts: row?.end_ts || null,
+          startMs: tsMs,
+          status: String(row?.status || '').trim().toLowerCase(),
+          instructional_status: String(row?.instructional_status || '').trim().toUpperCase(),
+          is_backlog: row?.is_backlog === true,
+          sourceBlockId: String(row?.source_block_id || '').trim() || null,
+          durationHours: Number.isFinite(Number(row?.duration_minutes)) && Number(row.duration_minutes) > 0
+            ? Number(row.duration_minutes) / 60
+            : (
+              row?.start_ts && row?.end_ts
+                ? Math.max(0, (new Date(row.end_ts).getTime() - new Date(row.start_ts).getTime()) / 3600000)
+                : 0
+            ),
+          fromPlan,
+          unitName: unitName || null,
+        });
+      });
+      Object.keys(nextBySubject).forEach((subjectId) => {
+        nextBySubject[subjectId].sort((a, b) => Number(a?.startMs || 0) - Number(b?.startMs || 0));
+      });
+      const nextAttendedBySubject = {};
+      Object.keys(attendedSetsBySubject).forEach((subjectId) => {
+        nextAttendedBySubject[subjectId] = [...attendedSetsBySubject[subjectId]].sort();
+      });
+      return {
+        instructionalEventsBySubject: nextBySubject,
+        attendedDayKeysBySubject: nextAttendedBySubject,
+      };
+    })().catch(() => ({ instructionalEventsBySubject: {}, attendedDayKeysBySubject: {} }));
+
+    const [familyPlannerSettings, subjectTargetSettingsById, instructional] = await Promise.all([
+      familySettingsPromise,
+      subjectTargetsPromise,
+      instructionalPromise,
+    ]);
+
+    const payload = {
+      familyPlannerSettings,
+      subjectTargetSettingsById,
+      instructionalEventsBySubject: instructional.instructionalEventsBySubject || {},
+      attendedDayKeysBySubject: instructional.attendedDayKeysBySubject || {},
+      subjectIdsSignature,
+      updatedAt: Date.now(),
+    };
+    scheduleSupplementCacheByKey.set(key, payload);
+    return payload;
+  })().finally(() => {
+    scheduleSupplementInflightByKey.delete(key);
+  });
+
+  scheduleSupplementInflightByKey.set(key, request);
+  return request;
+}
+
+export async function preloadSubjectsScheduleData(
+  familyId,
+  {
+    schoolYearLabel,
+    startYear,
+    endYear,
+    subjectIds = [],
+    force = false,
+  } = {}
+) {
+  try {
+    await fetchAndCacheScheduleSupplement({
+      familyId,
+      schoolYearLabel,
+      startYear,
+      endYear,
+      subjectIds,
+      force,
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 export default function SubjectsPlanBuilder({
   familyId,
   planningMode = null,
@@ -833,183 +1074,84 @@ export default function SubjectsPlanBuilder({
 
   useEffect(() => {
     let cancelled = false;
-    const loadFamilyPlannerSettings = async () => {
-      if (!hasValidFamilyId) return;
-      const { data } = await getFamilyPlannerSettings(familyId, displaySchoolYear?.label || null);
-      if (cancelled || !data) return;
-      setFamilyPlannerSettings({
-        target_scope: String(data?.target_scope || 'overall').trim().toLowerCase(),
-        default_constraint_mode: String(data?.default_constraint_mode || 'none').trim().toLowerCase(),
-        default_target_days: parsePositiveInt(data?.default_target_days),
-        default_target_hours: parsePositiveFloat(data?.default_target_hours),
+    const schoolYearLabel = String(displaySchoolYear?.label || '').trim();
+    const subjectIds = (baseSubjects || []).map((s) => String(s?.id || '').trim()).filter(Boolean);
+    const subjectIdsSignature = [...new Set(subjectIds)].sort().join(',');
+
+    const hydrateFromCache = () => {
+      const cached = getCachedScheduleSupplement(familyId, schoolYearLabel);
+      if (!cached) return false;
+      setFamilyPlannerSettings(cached.familyPlannerSettings || {
+        target_scope: 'overall',
+        default_constraint_mode: 'none',
+        default_target_days: null,
+        default_target_hours: null,
       });
+      setSubjectTargetSettingsById(cached.subjectTargetSettingsById || {});
+      setInstructionalEventsBySubject(cached.instructionalEventsBySubject || {});
+      setAttendedDayKeysBySubject(cached.attendedDayKeysBySubject || {});
+      return String(cached.subjectIdsSignature || '') === subjectIdsSignature;
     };
-    loadFamilyPlannerSettings();
-    return () => { cancelled = true; };
-  }, [familyId, hasValidFamilyId, overviewReloadKey, displaySchoolYear?.label]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadSubjectTargetSettings = async () => {
-      if (!hasValidFamilyId || !displaySchoolYear?.label) {
+    const sync = async ({ force = false } = {}) => {
+      if (!hasValidFamilyId || !schoolYearLabel) return;
+      const payload = await fetchAndCacheScheduleSupplement({
+        familyId,
+        schoolYearLabel,
+        startYear: displaySchoolYear?.start_year,
+        endYear: displaySchoolYear?.end_year,
+        subjectIds,
+        force,
+      });
+      if (cancelled) return;
+      setFamilyPlannerSettings(payload.familyPlannerSettings || {
+        target_scope: 'overall',
+        default_constraint_mode: 'none',
+        default_target_days: null,
+        default_target_hours: null,
+      });
+      setSubjectTargetSettingsById(payload.subjectTargetSettingsById || {});
+      setInstructionalEventsBySubject(payload.instructionalEventsBySubject || {});
+      setAttendedDayKeysBySubject(payload.attendedDayKeysBySubject || {});
+    };
+
+    (async () => {
+      if (!hasValidFamilyId || !schoolYearLabel) {
+        setFamilyPlannerSettings({
+          target_scope: 'overall',
+          default_constraint_mode: 'none',
+          default_target_days: null,
+          default_target_hours: null,
+        });
         setSubjectTargetSettingsById({});
+        setInstructionalEventsBySubject({});
+        setAttendedDayKeysBySubject({});
         return;
       }
+      const cacheMatchesSubjects = hydrateFromCache();
+      const mustForce = overviewReloadKey > 0 || eventsRefreshKey > 0 || !cacheMatchesSubjects;
       try {
-        const { data, error } = await supabase
-          .from('subject')
-          .select('id, default_constraint_mode, default_target_days, default_target_hours')
-          .eq('family_id', familyId)
-          .eq('school_year', displaySchoolYear.label);
-        if (cancelled) return;
-        if (error) throw error;
-        const next = {};
-        (data || []).forEach((row) => {
-          const id = String(row?.id || '').trim();
-          if (!id) return;
-          next[id] = {
-            default_constraint_mode: String(row?.default_constraint_mode || '').trim().toLowerCase(),
-            default_target_days: parsePositiveInt(row?.default_target_days),
-            default_target_hours: parsePositiveFloat(row?.default_target_hours),
-          };
-        });
-        setSubjectTargetSettingsById(next);
+        await sync({ force: mustForce });
       } catch (_) {
-        if (!cancelled) setSubjectTargetSettingsById({});
-      }
-    };
-    loadSubjectTargetSettings();
-    return () => { cancelled = true; };
-  }, [familyId, hasValidFamilyId, displaySchoolYear?.label, overviewReloadKey]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadInstructionalEvents = async () => {
-      if (!hasValidFamilyId || !displaySchoolYear) {
-        setInstructionalEventsBySubject({});
-        setAttendedDayKeysBySubject({});
-        return;
-      }
-      const subjectIds = (baseSubjects || []).map((s) => String(s?.id || '').trim()).filter(Boolean);
-      if (subjectIds.length === 0) {
-        setInstructionalEventsBySubject({});
-        setAttendedDayKeysBySubject({});
-        return;
-      }
-      const schoolYearRange = formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year');
-      if (!schoolYearRange?.start_date || !schoolYearRange?.end_date) {
-        setInstructionalEventsBySubject({});
-        setAttendedDayKeysBySubject({});
-        return;
-      }
-      try {
-        const { data, error } = await supabase
-          .from('events')
-          .select('*')
-          .eq('family_id', familyId)
-          .in('subject_id', subjectIds)
-          .gte('start_ts', `${schoolYearRange.start_date}T00:00:00`)
-          .lte('start_ts', `${schoolYearRange.end_date}T23:59:59`)
-          .is('deleted_at', null)
-          .neq('is_backlog', true)
-          .neq('status', 'canceled');
-        if (cancelled) return;
-        if (error) throw error;
-        const eventMetaById = {};
-        (data || []).forEach((row) => {
-          if (!isInstructionalEvent(row)) return;
-          const eventId = row?.id ? String(row.id) : '';
-          const subjectId = String(row?.subject_id || '').trim();
-          if (!eventId || !subjectId) return;
-          const startDay = String(row?.start_ts || row?.due_ts || '').slice(0, 10);
-          eventMetaById[eventId] = {
-            subjectId,
-            startDay,
-          };
-        });
-        let attendanceRows = [];
-        const attendanceEventIds = Object.keys(eventMetaById);
-        if (attendanceEventIds.length > 0) {
-          const { data: rawAttendanceRows } = await supabase
-            .from('attendance_records')
-            .select('event_id, day_date, status')
-            .in('event_id', attendanceEventIds);
-          attendanceRows = Array.isArray(rawAttendanceRows) ? rawAttendanceRows : [];
-        }
-        const nextBySubject = {};
-        const attendedSetsBySubject = {};
-        attendanceRows.forEach((row) => {
-          const eventId = String(row?.event_id || '').trim();
-          if (!eventId) return;
-          const meta = eventMetaById[eventId];
-          if (!meta?.subjectId) return;
-          const status = String(row?.status || '').trim().toLowerCase();
-          if (!(status === 'present' || status === 'partial')) return;
-          const dayKey = String(row?.day_date || meta.startDay || '').slice(0, 10);
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
-          if (!attendedSetsBySubject[meta.subjectId]) attendedSetsBySubject[meta.subjectId] = new Set();
-          attendedSetsBySubject[meta.subjectId].add(dayKey);
-        });
-        (data || []).forEach((row) => {
-          if (!isInstructionalEvent(row)) return;
-          const subjectId = String(row?.subject_id || '').trim();
-          if (!subjectId) return;
-          const tsMs = new Date(row?.start_ts || '').getTime();
-          if (!Number.isFinite(tsMs)) return;
-          const unitName = String(
-            row?.unit
-              || row?.curriculum_unit_title
-              || row?.unit_name
-              || row?.unit_topic
-              || ''
-          ).trim();
-          const fromPlan = row?.generated_by === 'plan_year'
-            || row?.instructional_status === 'PLAN_PLACEHOLDER'
-            || Boolean(row?.source_block_id);
-          if (!nextBySubject[subjectId]) nextBySubject[subjectId] = [];
-          nextBySubject[subjectId].push({
-            id: row?.id ? String(row.id) : `ev-${subjectId}-${tsMs}-${nextBySubject[subjectId].length}`,
-            subject_id: subjectId,
-            title: String(row?.title || row?.lesson_name || row?.event_type || 'Event').trim(),
-            startTs: row?.start_ts || row?.due_ts || null,
-            start_ts: row?.start_ts || row?.due_ts || null,
-            due_ts: row?.due_ts || row?.start_ts || null,
-            end_ts: row?.end_ts || null,
-            startMs: tsMs,
-            status: String(row?.status || '').trim().toLowerCase(),
-            instructional_status: String(row?.instructional_status || '').trim().toUpperCase(),
-            is_backlog: row?.is_backlog === true,
-            sourceBlockId: String(row?.source_block_id || '').trim() || null,
-            durationHours: Number.isFinite(Number(row?.duration_minutes)) && Number(row.duration_minutes) > 0
-              ? Number(row.duration_minutes) / 60
-              : (
-                row?.start_ts && row?.end_ts
-                  ? Math.max(0, (new Date(row.end_ts).getTime() - new Date(row.start_ts).getTime()) / 3600000)
-                  : 0
-              ),
-            fromPlan,
-            unitName: unitName || null,
-          });
-        });
-        Object.keys(nextBySubject).forEach((subjectId) => {
-          nextBySubject[subjectId].sort((a, b) => Number(a?.startMs || 0) - Number(b?.startMs || 0));
-        });
-        const nextAttendedBySubject = {};
-        Object.keys(attendedSetsBySubject).forEach((subjectId) => {
-          nextAttendedBySubject[subjectId] = [...attendedSetsBySubject[subjectId]].sort();
-        });
-        setInstructionalEventsBySubject(nextBySubject);
-        setAttendedDayKeysBySubject(nextAttendedBySubject);
-      } catch (_) {
-        if (!cancelled) {
+        if (!cancelled && !cacheMatchesSubjects) {
+          setSubjectTargetSettingsById({});
           setInstructionalEventsBySubject({});
           setAttendedDayKeysBySubject({});
         }
       }
-    };
-    loadInstructionalEvents();
+    })();
+
     return () => { cancelled = true; };
-  }, [familyId, hasValidFamilyId, displaySchoolYear, baseSubjects, eventsRefreshKey]);
+  }, [
+    familyId,
+    hasValidFamilyId,
+    displaySchoolYear?.label,
+    displaySchoolYear?.start_year,
+    displaySchoolYear?.end_year,
+    baseSubjects,
+    overviewReloadKey,
+    eventsRefreshKey,
+  ]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;

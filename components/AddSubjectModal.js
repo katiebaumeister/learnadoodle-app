@@ -6,14 +6,11 @@ import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 import { getMaterials } from '../lib/services/materialsClient';
 import { useSession } from '../contexts/SessionContext';
-import ReactDOM from 'react-dom';
 import AddMaterialModal from './materials/AddMaterialModal';
-import ManualCurriculumBuilderModal from './ManualCurriculumBuilderModal';
-import ParsePlainTextModal from './ParsePlainTextModal';
-import BuildCurriculumModal from './planner/modals/BuildCurriculumModal';
 import { parseChildIds } from '../lib/services/subjectsClient';
 import { getFamilyPlannerSettings, saveFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
 import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
+import { getSubjectProgressCache, mergeSubjectProgressCache } from '../lib/subjectProgressPlanCache';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import ConfirmDialog from './ConfirmDialog';
 import { PLANNING_PREFERENCES_UI } from './planner/planningPreferencesUiCopy';
@@ -192,14 +189,10 @@ export default function AddSubjectModal({
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [curriculumUnits, setCurriculumUnits] = useState([]);
   const [loadingCurriculum, setLoadingCurriculum] = useState(false);
+  const [hasLoadedCurriculumOnce, setHasLoadedCurriculumOnce] = useState(false);
   const [deletingEvents, setDeletingEvents] = useState(false);
   const [deleteEventsConfirm, setDeleteEventsConfirm] = useState({ visible: false });
   const [markingAttended, setMarkingAttended] = useState(false);
-  const [showCurrentUnitsModal, setShowCurrentUnitsModal] = useState(false);
-  const [showManualUnitsModal, setShowManualUnitsModal] = useState(false);
-  const [showParseUnitsModal, setShowParseUnitsModal] = useState(false);
-  const [showGenerateUnitsModal, setShowGenerateUnitsModal] = useState(false);
-  const [buildUnitsInputMode, setBuildUnitsInputMode] = useState('topic');
 
   // Accordion state (all collapsed by default)
   const [showMaterialsAccordion, setShowMaterialsAccordion] = useState(false);
@@ -324,10 +317,9 @@ export default function AddSubjectModal({
       setLoadingEvents(false);
       setDeletingEvents(false);
       setMarkingAttended(false);
-      setShowCurrentUnitsModal(false);
       setCurriculumUnits([]);
       setLoadingCurriculum(false);
-      setBuildUnitsInputMode('topic');
+      setHasLoadedCurriculumOnce(false);
       setShowMaterialsAccordion(false);
       setShowPlanningAccordion(false);
       setShowLogisticsAccordion(false);
@@ -368,6 +360,8 @@ export default function AddSubjectModal({
     const needsSubjectName = /subject name/i.test(error);
     const needsStudent = /student/i.test(error);
     const needsFamily = /family id/i.test(error);
+    const isKnownValidationError = needsSubjectName || needsStudent || needsFamily;
+    if (!isKnownValidationError) return;
     if (needsSubjectName && !subjectName.trim()) return;
     if (needsStudent && selectedChildIds.length === 0) return;
     if (needsFamily && !familyId) return;
@@ -579,9 +573,18 @@ export default function AddSubjectModal({
   const openAddUnitsCurriculumAction = useCallback(
     async (kind) => {
       if (openingAddUnits) return;
-      const existingSubjectId = subject?.id ?? draftSubjectId ?? null;
+      const trimmedName = String(subjectName || '').trim();
+      if (!subject?.id && !trimmedName) {
+        setError('Please enter a subject name before adding units.');
+        return;
+      }
+      if (!subject?.id && selectedChildIds.length === 0) {
+        setError('Please select at least one student before adding units.');
+        return;
+      }
+      const existingSubjectId = subject?.id ?? null;
       if (!existingSubjectId) {
-        setError('Save this subject first before adding units.');
+        setError('Save this subject first, then add units.');
         return;
       }
       const requestedKind = String(kind || '').trim().toLowerCase();
@@ -589,6 +592,7 @@ export default function AddSubjectModal({
       const safeMethod = ['manual', 'generate', 'upload', 'paste_plain'].includes(routedMethod)
         ? routedMethod
         : 'manual';
+      const yearIdForUnits = (subjectEvents || []).find((ev) => ev?.academic_year_id)?.academic_year_id || null;
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         setOpeningAddUnits(true);
         window.dispatchEvent(
@@ -596,9 +600,11 @@ export default function AddSubjectModal({
             detail: {
               from: 'subject_detail',
               subjectId: existingSubjectId,
+              academicYearId: yearIdForUnits,
               subjectName: subjectName?.trim() || subject?.name || null,
               childIds: selectedChildIds,
               openAsModal: true,
+              openToEditList: false,
               skipPlanSummary: true,
               openDirectlyToScope: true,
               initialUnitStructureMethod: safeMethod,
@@ -608,21 +614,14 @@ export default function AddSubjectModal({
         setTimeout(() => setOpeningAddUnits(false), 300);
         return;
       }
-      if (safeMethod === 'manual') setShowManualUnitsModal(true);
-      else if (safeMethod === 'generate') {
-        setBuildUnitsInputMode('topic');
-        setShowGenerateUnitsModal(true);
-      } else if (safeMethod === 'upload') {
-        setBuildUnitsInputMode('material');
-        setShowGenerateUnitsModal(true);
-      } else if (safeMethod === 'paste_plain') setShowParseUnitsModal(true);
+      setError('Add units is available in web planning flow only.');
     },
     [
       subject?.id,
       subject?.name,
       subjectName,
       selectedChildIds,
-      draftSubjectId,
+      subjectEvents,
       openingAddUnits,
     ]
   );
@@ -714,6 +713,12 @@ export default function AddSubjectModal({
 
   const loadSubjectCurriculum = useCallback(async (subjectId, academicYearIds = []) => {
     if (!subjectId || !familyId) return;
+    const cachedEntry = getSubjectProgressCache(familyId, subjectId);
+    const cachedUnits = Array.isArray(cachedEntry?.curriculumUnits) ? cachedEntry.curriculumUnits : null;
+    if (cachedUnits) {
+      setCurriculumUnits(cachedUnits);
+      setHasLoadedCurriculumOnce(true);
+    }
     setLoadingCurriculum(true);
     try {
       const yearCandidates = [null, ...academicYearIds]
@@ -746,11 +751,14 @@ export default function AddSubjectModal({
         lessons,
       }));
       setCurriculumUnits(mergedUnits);
+      mergeSubjectProgressCache(familyId, subjectId, { curriculumUnits: mergedUnits });
     } catch (error) {
       console.error('Error loading subject curriculum:', error);
       setCurriculumUnits([]);
+      mergeSubjectProgressCache(familyId, subjectId, { curriculumUnits: [] });
     } finally {
       setLoadingCurriculum(false);
+      setHasLoadedCurriculumOnce(true);
     }
   }, [familyId]);
 
@@ -758,20 +766,6 @@ export default function AddSubjectModal({
     () => [...new Set(subjectEvents.map((e) => e?.academic_year_id).filter(Boolean))],
     [subjectEvents]
   );
-
-  const refreshAfterUnitsSaved = useCallback((savedSubjectId = null) => {
-    const sid = savedSubjectId || effectiveSubjectId;
-    if (!sid || !familyId) return;
-    loadSubjectEvents(sid);
-    loadSubjectCurriculum(sid, curriculumAcademicYearIds);
-    setShowEventMgmtAccordion(true);
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('refreshSubjects'));
-      window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-      window.dispatchEvent(new CustomEvent('refreshEvents'));
-      window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: sid } }));
-    }
-  }, [effectiveSubjectId, familyId, loadSubjectCurriculum, curriculumAcademicYearIds, loadSubjectEvents]);
 
   const unscheduledLessons = useMemo(() => {
     const out = [];
@@ -793,12 +787,7 @@ export default function AddSubjectModal({
     return out;
   }, [curriculumUnits]);
 
-  const unitsForCurrentUnitsModal = useMemo(
-    () => (curriculumUnits || []).filter((u) => (u?.lessons || []).length > 0),
-    [curriculumUnits]
-  );
-  const hasCurrentUnitsModalContent = unitsForCurrentUnitsModal.length > 0;
-  const hasUnitsOrLessonsContent = hasCurrentUnitsModalContent || unscheduledLessons.length > 0;
+  const hasUnitsOrLessonsContent = (curriculumUnits || []).some((u) => (u?.lessons || []).length > 0) || unscheduledLessons.length > 0;
 
   // Keep event management synced for both persisted subjects and add-mode draft subjects.
   useEffect(() => {
@@ -808,6 +797,11 @@ export default function AddSubjectModal({
 
   useEffect(() => {
     if (!visible || !effectiveSubjectId || !familyId) return;
+    const cachedEntry = getSubjectProgressCache(familyId, effectiveSubjectId);
+    if (Array.isArray(cachedEntry?.curriculumUnits)) {
+      setCurriculumUnits(cachedEntry.curriculumUnits);
+      setHasLoadedCurriculumOnce(true);
+    }
     loadSubjectCurriculum(effectiveSubjectId, curriculumAcademicYearIds);
   }, [visible, effectiveSubjectId, familyId, curriculumAcademicYearIds, loadSubjectCurriculum]);
 
@@ -1619,41 +1613,50 @@ export default function AddSubjectModal({
 
               const addUnitsLinkWeb = Platform.OS === 'web' ? { cursor: 'pointer' } : {};
 
+              const canOpenUnitsFlows = Boolean(subject?.id);
+              const canRenderUnitsActionRow = !canOpenUnitsFlows ? false : (hasLoadedCurriculumOnce || hasUnitsOrLessonsContent);
+              const hasExistingUnits = canOpenUnitsFlows && hasUnitsOrLessonsContent;
               return (
                 <>
-                  {hasUnitsOrLessonsContent && hasCurrentUnitsModalContent ? (
-                    <View style={styles.addUnitsRow}>
-                      <TouchableOpacity onPress={() => setShowCurrentUnitsModal(true)} activeOpacity={0.7} {...addUnitsLinkWeb}>
-                        <Text style={styles.addUnitsLink}>View current units</Text>
-                      </TouchableOpacity>
+                  {canOpenUnitsFlows && canRenderUnitsActionRow ? (
+                    <View style={styles.addUnitsPillsRow}>
+                      {hasExistingUnits ? (
+                        <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                          <View style={styles.secondaryActionInner}>
+                            <Pencil size={14} color="#5E6C84" />
+                            <Text style={styles.secondaryActionText}>Edit current units</Text>
+                          </View>
+                        </TouchableOpacity>
+                      ) : (
+                        <>
+                          <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                            <View style={styles.secondaryActionInner}>
+                              <Plus size={14} color="#5E6C84" />
+                              <Text style={styles.secondaryActionText}>Manually add units</Text>
+                            </View>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                            <View style={styles.secondaryActionInner}>
+                              <Sparkles size={14} color="#5E6C84" />
+                              <Text style={styles.secondaryActionText}>Generate curriculum</Text>
+                            </View>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                            <View style={styles.secondaryActionInner}>
+                              <Upload size={14} color="#5E6C84" />
+                              <Text style={styles.secondaryActionText}>Upload material</Text>
+                            </View>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.8} {...addUnitsLinkWeb}>
+                            <View style={styles.secondaryActionInner}>
+                              <Pencil size={14} color="#5E6C84" />
+                              <Text style={styles.secondaryActionText}>Paste plain text</Text>
+                            </View>
+                          </TouchableOpacity>
+                        </>
+                      )}
                     </View>
                   ) : null}
-                  <View style={styles.addUnitsPillsRow}>
-                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                      <View style={styles.secondaryActionInner}>
-                        <Plus size={14} color="#5E6C84" />
-                        <Text style={styles.secondaryActionText}>Add units</Text>
-                      </View>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                      <View style={styles.secondaryActionInner}>
-                        <Sparkles size={14} color="#5E6C84" />
-                        <Text style={styles.secondaryActionText}>Generate curriculum</Text>
-                      </View>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                      <View style={styles.secondaryActionInner}>
-                        <Upload size={14} color="#5E6C84" />
-                        <Text style={styles.secondaryActionText}>Upload material</Text>
-                      </View>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                      <View style={styles.secondaryActionInner}>
-                        <Pencil size={14} color="#5E6C84" />
-                        <Text style={styles.secondaryActionText}>Paste plain text</Text>
-                      </View>
-                    </TouchableOpacity>
-                  </View>
                 <View
                   style={[
                     styles.materialsAccordionWrap,
@@ -2133,74 +2136,6 @@ export default function AddSubjectModal({
         onCancel={() => setDeleteEventsConfirm({ visible: false })}
       />
 
-      {Platform.OS === 'web'
-        ? (
-          showCurrentUnitsModal && typeof document !== 'undefined'
-            ? ReactDOM.createPortal(
-              <View style={styles.currentUnitsModalWebLayer}>
-                <View style={styles.currentUnitsModalBackdrop}>
-                  <View style={styles.currentUnitsModalCard}>
-                    <View style={styles.currentUnitsModalHeader}>
-                      <Text style={styles.currentUnitsModalTitle}>Current units</Text>
-                      <TouchableOpacity onPress={() => setShowCurrentUnitsModal(false)} activeOpacity={0.7} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                        <Text style={styles.currentUnitsModalClose}>Close</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <ScrollView style={styles.currentUnitsModalScroll} contentContainerStyle={styles.currentUnitsModalScrollContent}>
-                      {unitsForCurrentUnitsModal.map((unit, index) => (
-                        <View key={`${unit.title || 'unit'}-${index}`} style={styles.currentUnitCard}>
-                          <Text style={styles.currentUnitTitle}>{unit.title || `Unit ${index + 1}`}</Text>
-                          {(unit.lessons || []).map((lesson, lessonIndex) => (
-                            <Text
-                              key={`${lesson.id || lesson.title || 'lesson'}-${lessonIndex}`}
-                              style={styles.currentLessonRow}
-                            >
-                              {lessonIndex + 1}. {lesson.title || 'Lesson'}
-                            </Text>
-                          ))}
-                        </View>
-                      ))}
-                    </ScrollView>
-                  </View>
-                </View>
-              </View>,
-              document.body
-            )
-            : null
-        ) : (
-          <RNModal
-            visible={showCurrentUnitsModal}
-            transparent
-            animationType="fade"
-            onRequestClose={() => setShowCurrentUnitsModal(false)}
-          >
-            <View style={styles.currentUnitsModalBackdrop}>
-              <View style={styles.currentUnitsModalCard}>
-                <View style={styles.currentUnitsModalHeader}>
-                  <Text style={styles.currentUnitsModalTitle}>Current units</Text>
-                  <TouchableOpacity onPress={() => setShowCurrentUnitsModal(false)} activeOpacity={0.7}>
-                    <Text style={styles.currentUnitsModalClose}>Close</Text>
-                  </TouchableOpacity>
-                </View>
-                <ScrollView style={styles.currentUnitsModalScroll} contentContainerStyle={styles.currentUnitsModalScrollContent}>
-                  {unitsForCurrentUnitsModal.map((unit, index) => (
-                    <View key={`${unit.title || 'unit'}-${index}`} style={styles.currentUnitCard}>
-                      <Text style={styles.currentUnitTitle}>{unit.title || `Unit ${index + 1}`}</Text>
-                      {(unit.lessons || []).map((lesson, lessonIndex) => (
-                        <Text
-                          key={`${lesson.id || lesson.title || 'lesson'}-${lessonIndex}`}
-                          style={styles.currentLessonRow}
-                        >
-                          {lessonIndex + 1}. {lesson.title || 'Lesson'}
-                        </Text>
-                      ))}
-                    </View>
-                  ))}
-                </ScrollView>
-              </View>
-            </View>
-          </RNModal>
-        )}
     </RNModal>
 
     <AddMaterialModal
@@ -2234,44 +2169,6 @@ export default function AddSubjectModal({
           ? { name: subjectName.trim(), childIds: selectedChildIds.length > 0 ? [...selectedChildIds] : [] }
           : null
       }
-    />
-    <ManualCurriculumBuilderModal
-      visible={showManualUnitsModal}
-      onClose={() => setShowManualUnitsModal(false)}
-      subjectId={subject?.id ?? draftSubjectId ?? null}
-      subjectName={(subjectName || '').trim() || subject?.name || 'Subject'}
-      familyId={familyId}
-      onSaved={() => {
-        setShowManualUnitsModal(false);
-        refreshAfterUnitsSaved(subject?.id ?? draftSubjectId ?? null);
-      }}
-    />
-    <ParsePlainTextModal
-      visible={showParseUnitsModal}
-      onClose={() => setShowParseUnitsModal(false)}
-      subjectId={subject?.id ?? draftSubjectId ?? null}
-      subjectName={(subjectName || '').trim() || subject?.name || 'Subject'}
-      familyId={familyId}
-      childIds={selectedChildIds}
-      onSaved={() => {
-        setShowParseUnitsModal(false);
-        refreshAfterUnitsSaved(subject?.id ?? draftSubjectId ?? null);
-      }}
-    />
-    <BuildCurriculumModal
-      visible={showGenerateUnitsModal}
-      onClose={() => setShowGenerateUnitsModal(false)}
-      familyId={familyId}
-      children={children}
-      selectedChildIds={selectedChildIds}
-      initialSubjectId={subject?.id ?? draftSubjectId ?? null}
-      initialSubjectName={(subjectName || '').trim() || subject?.name || 'Subject'}
-      initialInputMode={buildUnitsInputMode}
-      initialMaterialId={selectedLessonPlanMaterialId || selectedSyllabusMaterialId || null}
-      onComplete={() => {
-        setShowGenerateUnitsModal(false);
-        refreshAfterUnitsSaved(subject?.id ?? draftSubjectId ?? null);
-      }}
     />
     </>
   );

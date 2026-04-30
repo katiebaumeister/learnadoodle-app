@@ -62,7 +62,8 @@ import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import OnboardingModal from './onboarding/OnboardingModal';
 import ExplorerTourOverlay from './onboarding/ExplorerTourOverlay';
 import LearnerQuickStartModal from './onboarding/LearnerQuickStartModal';
-import { preloadSubjectsPlanOverview } from './subjects/SubjectsPlanBuilder';
+import { preloadSubjectsPlanOverview, preloadSubjectsScheduleData } from './subjects/SubjectsPlanBuilder';
+import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressPlan';
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
 import AppLoader from './AppLoader';
 import RebalanceModal from './year/RebalanceModal';
@@ -251,6 +252,48 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (!familyId) return;
     preloadSubjectsPlanOverview(familyId).catch(() => {});
   }, [familyId]);
+
+  // Warm schedule supplemental data (settings + target defaults + attendance/projection events)
+  // across all known subject years so year/term switching in Subjects > Schedule stays instant.
+  useEffect(() => {
+    if (!familyId || !Array.isArray(subjects) || subjects.length === 0) return;
+    const groupedByYear = {};
+    (subjects || []).forEach((subject) => {
+      const label = String(subject?.school_year || '').trim();
+      const subjectId = String(subject?.id || '').trim();
+      if (!label || !subjectId) return;
+      if (!groupedByYear[label]) groupedByYear[label] = new Set();
+      groupedByYear[label].add(subjectId);
+    });
+
+    const parseSchoolYear = (label) => {
+      const match = String(label || '').trim().match(/^(\d{4})\/(\d{2,4})$/);
+      if (!match) return null;
+      const startYear = Number(match[1]);
+      if (!Number.isFinite(startYear)) return null;
+      const rawEnd = String(match[2] || '').trim();
+      const endYear = rawEnd.length === 2 ? Number(`${String(startYear).slice(0, 2)}${rawEnd}`) : Number(rawEnd);
+      if (!Number.isFinite(endYear)) return null;
+      return { startYear, endYear };
+    };
+
+    Object.entries(groupedByYear).forEach(([schoolYearLabel, subjectIdSet]) => {
+      const parsed = parseSchoolYear(schoolYearLabel);
+      if (!parsed) return;
+      preloadSubjectsScheduleData(familyId, {
+        schoolYearLabel,
+        startYear: parsed.startYear,
+        endYear: parsed.endYear,
+        subjectIds: [...subjectIdSet],
+      }).catch(() => {});
+    });
+  }, [familyId, subjects]);
+
+  // Warm subject progress/unit-structure cache once subjects are known, so Edit Subject can render stable units actions immediately.
+  useEffect(() => {
+    if (!familyId || !Array.isArray(subjects) || subjects.length === 0) return;
+    prefetchAllSubjectProgressPlans(familyId, subjects, { concurrency: 3 }).catch(() => {});
+  }, [familyId, subjects]);
 
   // Onboarding: resolve status before first paint so we never flash landing without modal
   const [onboardingCheckDone, setOnboardingCheckDone] = useState(false);
@@ -1938,13 +1981,24 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         if (view) {
           setCurrentView(view);
         }
-      } else if (pathname === '/materials') {
+      } else if (pathname === '/materials' || pathname === '/library') {
+        if (pathname === '/materials') {
+          window.history.replaceState({}, '', '/library');
+        }
         if (isFamilyShellTab(activeTabRef.current)) {
           return;
         }
         if (activeTab !== 'materials') {
           setActiveTab('materials');
           setActiveTopNav('materials');
+        }
+      } else if (pathname === '/family' || pathname === '/profile') {
+        if (pathname === '/profile') {
+          window.history.replaceState({}, '', '/family');
+        }
+        if (activeTab !== 'profile') {
+          setActiveTab('profile');
+          setActiveTopNav('profile');
         }
       } else if (pathname === '/students') {
         if (activeTab !== 'tutor-students') {
@@ -2607,14 +2661,25 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         //   handleTabChange('explore');
         //   break;
         case 'planner':
-          updateUrlParams({ view: null });
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            const url = new URL(window.location.href);
+            url.pathname = '/planner';
+            url.searchParams.delete('view');
+            window.history.pushState({}, '', url.toString());
+          }
           handleTabChange('planner');
           break;
         case 'new':
           handleTabChange('settings', 'profile');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/family');
+          }
           break;
         case 'materials':
           handleTabChange('materials');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/library');
+          }
           break;
         case 'subjects':
           handleTabChange('subjects');
@@ -2639,6 +2704,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           break;
         case 'profile':
           handleTabChange('profile');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/family');
+          }
           break;
         case 'tutor-students':
           handleTabChange('tutor-students');

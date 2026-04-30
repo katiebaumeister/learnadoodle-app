@@ -11045,9 +11045,9 @@ export default function PlanYearModal({
     Boolean(returnToSubjectModalAfterUnitSave) && planStep === 'unit_structure';
   const addUnitsModalTitle = 'Add units';
 
-  const renderFooterPrimaryLabel = useCallback((label) => (
+  const renderFooterPrimaryLabel = useCallback((label, showSparkle = false) => (
     <View style={styles.footerPrimaryInner}>
-      <Sparkles size={16} color="#FFFFFF" />
+      {showSparkle ? <Sparkles size={16} color="#FFFFFF" /> : null}
       <Text style={styles.footerPrimaryText}>{label}</Text>
     </View>
   ), []);
@@ -15031,7 +15031,6 @@ export default function PlanYearModal({
                       </>
                     ) : isSubjectDetailAddUnitsMode ? (
                       <View style={styles.footerPrimaryActionInner}>
-                        <Sparkles size={16} color="#FFFFFF" strokeWidth={2.2} />
                         <Text style={styles.footerPrimaryActionText}>Save</Text>
                       </View>
                     ) : renderFooterPrimaryLabel(
@@ -15233,7 +15232,7 @@ export default function PlanYearModal({
             >
               {saving ? (
                 <ActivityIndicator size="small" color={BG} />
-              ) : renderFooterPrimaryLabel('Save')}
+              ) : renderFooterPrimaryLabel('Save', true)}
             </TouchableOpacity>
             )}
               </>
