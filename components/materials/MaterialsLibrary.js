@@ -2579,8 +2579,8 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   filterChipActive: {
-    borderColor: 'rgba(139, 92, 246, 0.5)',
-    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
   },
   filterChipText: {
     fontSize: 14,
@@ -2590,7 +2590,7 @@ const styles = StyleSheet.create({
     }),
   },
   filterChipTextActive: {
-    color: '#6366F1',
+    color: '#6BB3E8',
     fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2952,8 +2952,8 @@ const styles = StyleSheet.create({
     }),
   },
   childrenFilterChipActive: {
-    borderColor: 'rgba(139, 92, 246, 0.5)',
-    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
   },
   childrenFilterChipText: {
     fontSize: 14,
@@ -2963,7 +2963,7 @@ const styles = StyleSheet.create({
     }),
   },
   childrenFilterChipTextActive: {
-    color: '#6366F1',
+    color: '#6BB3E8',
     fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

@@ -28,7 +28,7 @@ import { colors } from '../../theme/colors';
 import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
 import { getAttendanceLogs } from '../../lib/services/recordsClient';
 import { generateAttendanceReport } from '../../lib/services/attendanceClient';
-import { exportReportCard } from '../../lib/services/exportClient';
+import { exportCurriculumPlan, exportReportCard } from '../../lib/services/exportClient';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { useSession } from '../../contexts/SessionContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
@@ -231,7 +231,7 @@ export default function SubjectsPage({
       setSubjectsExportFormat('excel');
       return;
     }
-    if ((subjectsExportType === 'attendance' || subjectsExportType === 'report_card') && subjectsExportFormat === 'excel') {
+    if ((subjectsExportType === 'attendance' || subjectsExportType === 'report_card' || subjectsExportType === 'units_lessons') && subjectsExportFormat === 'excel') {
       setSubjectsExportFormat('pdf');
     }
   }, [subjectsExportType, subjectsExportFormat]);
@@ -709,10 +709,13 @@ export default function SubjectsPage({
       : getSubjectTermLabel(selectedTermFilter);
     return `${selectedCoursesYear} / ${termLabel}`;
   }, [selectedCoursesYear, selectedTermFilter]);
-  const openSubjectsExportModal = useCallback(() => {
+  const openSubjectsExportModal = useCallback((preferredType = 'schedule') => {
+    const type = ['schedule', 'attendance', 'report_card', 'units_lessons'].includes(String(preferredType))
+      ? String(preferredType)
+      : 'schedule';
     const range = parseSchoolYearRange(selectedCoursesYear || getCurrentSchoolYear());
-    setSubjectsExportType('schedule');
-    setSubjectsExportFormat('excel');
+    setSubjectsExportType(type);
+    setSubjectsExportFormat(type === 'schedule' ? 'excel' : 'pdf');
     setSubjectsExportStartDate(range.startDate);
     setSubjectsExportEndDate(range.endDate);
     setSubjectsExportChildIds(prefilledSubjectChildIds);
@@ -941,6 +944,18 @@ export default function SubjectsPage({
           const result = await exportReportCard(childId, termLabel, gradesPayload, '', format);
           if (!result?.success) {
             throw new Error(result?.error || 'Report card export failed.');
+          }
+        }
+      } else if (subjectsExportType === 'units_lessons') {
+        for (const childId of selectedChildIds) {
+          const result = await exportCurriculumPlan(
+            childId,
+            null,
+            start,
+            end
+          );
+          if (!result?.success) {
+            throw new Error(result?.error || 'Units/Lessons export failed.');
           }
         }
       }
@@ -1441,31 +1456,186 @@ export default function SubjectsPage({
     setSelectedModeFilter(nextMode === 'plan' ? 'plan' : 'view');
   }, []);
 
+  const renderSubjectsExportModal = () => (
+    <Modal
+      visible={showSubjectsExportModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => !subjectsExportBusy && setShowSubjectsExportModal(false)}
+    >
+      <TouchableOpacity
+        style={styles.exportModalBackdrop}
+        activeOpacity={1}
+        onPress={() => {
+          if (!subjectsExportBusy) setShowSubjectsExportModal(false);
+        }}
+      >
+        <TouchableOpacity style={styles.exportModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.exportModalHeaderRow}>
+            <Text style={styles.exportModalTitle}>Export subject data</Text>
+            <TouchableOpacity
+              style={styles.exportModalCloseButton}
+              onPress={() => {
+                if (!subjectsExportBusy) setShowSubjectsExportModal(false);
+              }}
+              disabled={subjectsExportBusy}
+              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              {...(Platform.OS === 'web' && { cursor: subjectsExportBusy ? 'default' : 'pointer' })}
+            >
+              <X size={18} color="#64748B" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.exportModalLabel}>Data type</Text>
+          <View style={styles.exportTypeRow}>
+            {[
+              { id: 'schedule', label: 'Schedule' },
+              { id: 'attendance', label: 'Attendance' },
+              { id: 'report_card', label: 'Report card' },
+              { id: 'units_lessons', label: 'Units/Lessons' },
+            ].map((option) => {
+              const active = subjectsExportType === option.id;
+              return (
+                <TouchableOpacity
+                  key={option.id}
+                  style={[styles.exportTypeChip, active && styles.exportTypeChipActive]}
+                  onPress={() => {
+                    setSubjectsExportType(option.id);
+                    if (option.id === 'schedule') setSubjectsExportFormat('excel');
+                    if (option.id === 'attendance') setSubjectsExportFormat('pdf');
+                    if (option.id === 'report_card') setSubjectsExportFormat('pdf');
+                    if (option.id === 'units_lessons') setSubjectsExportFormat('pdf');
+                  }}
+                >
+                  <Text style={[styles.exportTypeChipText, active && styles.exportTypeChipTextActive]}>{option.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={styles.exportModalLabel}>Format</Text>
+          <View style={styles.exportTypeRow}>
+            {(subjectsExportType === 'schedule'
+              ? [{ id: 'excel', label: 'Excel (CSV)' }, { id: 'pdf', label: 'PDF' }]
+              : subjectsExportType === 'attendance'
+                ? [{ id: 'pdf', label: 'PDF' }, { id: 'csv', label: 'CSV' }]
+                : subjectsExportType === 'report_card'
+                  ? [{ id: 'pdf', label: 'PDF' }, { id: 'docx', label: 'Word' }]
+                  : [{ id: 'pdf', label: 'PDF' }]
+            ).map((option) => {
+              const active = subjectsExportFormat === option.id;
+              return (
+                <TouchableOpacity
+                  key={option.id}
+                  style={[styles.exportTypeChip, active && styles.exportTypeChipActive]}
+                  onPress={() => setSubjectsExportFormat(option.id)}
+                >
+                  <Text style={[styles.exportTypeChipText, active && styles.exportTypeChipTextActive]}>{option.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={styles.exportDateRow}>
+            <View style={styles.exportDateCol}>
+              <Text style={styles.exportModalLabel}>Start date</Text>
+              <PlannerPreferenceDateField
+                style={styles.exportDatePickerField}
+                value={subjectsExportStartDate}
+                onChange={setSubjectsExportStartDate}
+                placeholder="Start date"
+                borderColor="#E2E8F0"
+                textColor="#1F2937"
+                mutedColor="#94A3B8"
+                maxDate={subjectsExportEndDate || null}
+              />
+            </View>
+            <View style={styles.exportDateCol}>
+              <Text style={styles.exportModalLabel}>End date</Text>
+              <PlannerPreferenceDateField
+                style={styles.exportDatePickerField}
+                value={subjectsExportEndDate}
+                onChange={setSubjectsExportEndDate}
+                placeholder="End date"
+                borderColor="#E2E8F0"
+                textColor="#1F2937"
+                mutedColor="#94A3B8"
+                minDate={subjectsExportStartDate || null}
+              />
+            </View>
+          </View>
+
+          <Text style={styles.exportModalLabel}>Students</Text>
+          <View style={styles.exportStudentsWrap}>
+            {safeChildren.map((child) => {
+              const childId = String(child?.id || '');
+              const selected = subjectsExportChildIds.includes(childId);
+              return (
+                <TouchableOpacity
+                  key={childId}
+                  style={[styles.exportStudentChip, selected && styles.exportStudentChipActive]}
+                  onPress={() => toggleSubjectsExportChild(childId)}
+                >
+                  <Text style={[styles.exportStudentChipText, selected && styles.exportStudentChipTextActive]}>
+                    {child?.name || child?.first_name || 'Student'}
+                  </Text>
+                  {selected ? <Check size={14} color="#6BB3E8" /> : null}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={styles.exportModalActions}>
+            <TouchableOpacity
+              style={styles.exportCancelButton}
+              onPress={() => setShowSubjectsExportModal(false)}
+              disabled={subjectsExportBusy}
+            >
+              <Text style={styles.exportCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.exportSubmitButton, subjectsExportBusy && styles.exportSubmitButtonDisabled]}
+              onPress={runSubjectsExport}
+              disabled={subjectsExportBusy}
+            >
+              <Download size={14} color="#FFFFFF" />
+              <Text style={styles.exportSubmitText}>{subjectsExportBusy ? 'Exporting…' : 'Export'}</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+
   // If a subject is selected, show detail view
   if (selectedSubjectId) {
     return (
-      <SubjectDetailPage
-        subjectId={selectedSubjectId}
-        familyId={familyId}
-        children={safeChildren}
-        preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
-        initialScrollToSectionId={pendingScrollToSectionId}
-        initialOpenMaterialId={pendingOpenMaterialId}
-        onSubjectDataUpdate={(data) => {
-          const updatedCache = {
-            ...subjectDetailCache,
-            [selectedSubjectId]: data,
-          };
-          setSubjectDetailCache(updatedCache);
-          
-          // Update parent cache if callback provided
-          if (onSubjectDetailUpdate) {
-            onSubjectDetailUpdate(selectedSubjectId, data);
-          }
-        }}
-        onBack={handleBack}
-        onEditSubject={onEditSubject}
-      />
+      <>
+        <SubjectDetailPage
+          subjectId={selectedSubjectId}
+          familyId={familyId}
+          children={safeChildren}
+          preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
+          initialScrollToSectionId={pendingScrollToSectionId}
+          initialOpenMaterialId={pendingOpenMaterialId}
+          onSubjectDataUpdate={(data) => {
+            const updatedCache = {
+              ...subjectDetailCache,
+              [selectedSubjectId]: data,
+            };
+            setSubjectDetailCache(updatedCache);
+            
+            // Update parent cache if callback provided
+            if (onSubjectDetailUpdate) {
+              onSubjectDetailUpdate(selectedSubjectId, data);
+            }
+          }}
+          onBack={handleBack}
+          onEditSubject={onEditSubject}
+          onOpenExportModalForSection={(sectionType) => openSubjectsExportModal(sectionType)}
+        />
+        {renderSubjectsExportModal()}
+      </>
     );
   }
 
@@ -1719,150 +1889,7 @@ export default function SubjectsPage({
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
-      <Modal
-        visible={showSubjectsExportModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => !subjectsExportBusy && setShowSubjectsExportModal(false)}
-      >
-        <TouchableOpacity
-          style={styles.exportModalBackdrop}
-          activeOpacity={1}
-          onPress={() => {
-            if (!subjectsExportBusy) setShowSubjectsExportModal(false);
-          }}
-        >
-          <TouchableOpacity style={styles.exportModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
-            <View style={styles.exportModalHeaderRow}>
-              <Text style={styles.exportModalTitle}>Export subject data</Text>
-              <TouchableOpacity
-                style={styles.exportModalCloseButton}
-                onPress={() => {
-                  if (!subjectsExportBusy) setShowSubjectsExportModal(false);
-                }}
-                disabled={subjectsExportBusy}
-                hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                {...(Platform.OS === 'web' && { cursor: subjectsExportBusy ? 'default' : 'pointer' })}
-              >
-                <X size={18} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.exportModalLabel}>Data type</Text>
-            <View style={styles.exportTypeRow}>
-              {[
-                { id: 'schedule', label: 'Schedule' },
-                { id: 'attendance', label: 'Attendance' },
-                { id: 'report_card', label: 'Report card' },
-              ].map((option) => {
-                const active = subjectsExportType === option.id;
-                return (
-                  <TouchableOpacity
-                    key={option.id}
-                    style={[styles.exportTypeChip, active && styles.exportTypeChipActive]}
-                    onPress={() => {
-                      setSubjectsExportType(option.id);
-                      if (option.id === 'schedule') setSubjectsExportFormat('excel');
-                      if (option.id === 'attendance') setSubjectsExportFormat('pdf');
-                      if (option.id === 'report_card') setSubjectsExportFormat('pdf');
-                    }}
-                  >
-                    <Text style={[styles.exportTypeChipText, active && styles.exportTypeChipTextActive]}>{option.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <Text style={styles.exportModalLabel}>Format</Text>
-            <View style={styles.exportTypeRow}>
-              {(subjectsExportType === 'schedule'
-                ? [{ id: 'excel', label: 'Excel (CSV)' }, { id: 'pdf', label: 'PDF' }]
-                : subjectsExportType === 'attendance'
-                  ? [{ id: 'pdf', label: 'PDF' }, { id: 'csv', label: 'CSV' }]
-                  : [{ id: 'pdf', label: 'PDF' }, { id: 'docx', label: 'Word' }]
-              ).map((option) => {
-                const active = subjectsExportFormat === option.id;
-                return (
-                  <TouchableOpacity
-                    key={option.id}
-                    style={[styles.exportTypeChip, active && styles.exportTypeChipActive]}
-                    onPress={() => setSubjectsExportFormat(option.id)}
-                  >
-                    <Text style={[styles.exportTypeChipText, active && styles.exportTypeChipTextActive]}>{option.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <View style={styles.exportDateRow}>
-              <View style={styles.exportDateCol}>
-                <Text style={styles.exportModalLabel}>Start date</Text>
-                <PlannerPreferenceDateField
-                  style={styles.exportDatePickerField}
-                  value={subjectsExportStartDate}
-                  onChange={setSubjectsExportStartDate}
-                  placeholder="Start date"
-                  borderColor="#E2E8F0"
-                  textColor="#1F2937"
-                  mutedColor="#94A3B8"
-                  maxDate={subjectsExportEndDate || null}
-                />
-              </View>
-              <View style={styles.exportDateCol}>
-                <Text style={styles.exportModalLabel}>End date</Text>
-                <PlannerPreferenceDateField
-                  style={styles.exportDatePickerField}
-                  value={subjectsExportEndDate}
-                  onChange={setSubjectsExportEndDate}
-                  placeholder="End date"
-                  borderColor="#E2E8F0"
-                  textColor="#1F2937"
-                  mutedColor="#94A3B8"
-                  minDate={subjectsExportStartDate || null}
-                />
-              </View>
-            </View>
-
-            <Text style={styles.exportModalLabel}>Students</Text>
-            <View style={styles.exportStudentsWrap}>
-              {safeChildren.map((child) => {
-                const childId = String(child?.id || '');
-                const selected = subjectsExportChildIds.includes(childId);
-                return (
-                  <TouchableOpacity
-                    key={childId}
-                    style={[styles.exportStudentChip, selected && styles.exportStudentChipActive]}
-                    onPress={() => toggleSubjectsExportChild(childId)}
-                  >
-                    <Text style={[styles.exportStudentChipText, selected && styles.exportStudentChipTextActive]}>
-                      {child?.name || child?.first_name || 'Student'}
-                    </Text>
-                    {selected ? <Check size={14} color="#6BB3E8" /> : null}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <View style={styles.exportModalActions}>
-              <TouchableOpacity
-                style={styles.exportCancelButton}
-                onPress={() => setShowSubjectsExportModal(false)}
-                disabled={subjectsExportBusy}
-              >
-                <Text style={styles.exportCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.exportSubmitButton, subjectsExportBusy && styles.exportSubmitButtonDisabled]}
-                onPress={runSubjectsExport}
-                disabled={subjectsExportBusy}
-              >
-                <Download size={14} color="#FFFFFF" />
-                <Text style={styles.exportSubmitText}>{subjectsExportBusy ? 'Exporting…' : 'Export'}</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+      {renderSubjectsExportModal()}
 
       {/* Content */}
       {selectedModeFilter === 'plan' ? (
@@ -2834,8 +2861,8 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   filterOptionChipActive: {
-    borderColor: '#8B5CF6',
-    backgroundColor: 'rgba(139,92,246,0.14)',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(107,179,232,0.12)',
   },
   filterOptionChipText: {
     fontSize: 14,
@@ -2843,7 +2870,7 @@ const styles = StyleSheet.create({
     fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
   filterOptionChipTextActive: {
-    color: '#6366F1',
+    color: '#6BB3E8',
     fontWeight: '600',
   },
   filterOptionChipDot: {

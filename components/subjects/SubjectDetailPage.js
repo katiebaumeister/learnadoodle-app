@@ -28,6 +28,7 @@ import {
   HelpCircle,
   ChevronRight,
   BarChart3,
+  List,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
@@ -48,6 +49,8 @@ import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
 import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
+import { createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../lib/services/recordsClient';
+import { updateEventStatus } from '../../lib/services/attendanceClient';
 import {
   SubjectAttendanceYearHeatmap,
   SubjectAttendanceMonthDrilldown,
@@ -216,6 +219,7 @@ export default function SubjectDetailPage({
   children = [],
   onBack,
   onEditSubject,
+  onOpenExportModalForSection = null,
   preloadedSubjectData = null,
   onSubjectDataUpdate = null,
   initialScrollToSectionId = null,
@@ -245,7 +249,7 @@ export default function SubjectDetailPage({
   const [highlightedMaterialId, setHighlightedMaterialId] = useState(null);
   const [subjectPlanYearId, setSubjectPlanYearId] = useState(null);
   const [subjectPlanData, setSubjectPlanData] = useState(null);
-  const [attendanceInsightsMode, setAttendanceInsightsMode] = useState(null);
+  const [attendanceViewMode, setAttendanceViewMode] = useState('list');
   const [learningGoalsUnits, setLearningGoalsUnits] = useState([]);
   const [learningGoalsSource, setLearningGoalsSource] = useState(null);
   const [learningGoalsLoading, setLearningGoalsLoading] = useState(false);
@@ -254,16 +258,6 @@ export default function SubjectDetailPage({
   const autoOpenedMaterialKeyRef = useRef(null);
   const materialHighlightTimeoutRef = useRef(null);
   const materialContextMenuIdRef = useRef(`subject-detail-material-context-menu-${Math.random().toString(36).slice(2)}`);
-  const openSubjectUnitsEditor = useCallback(() => {
-    if (!onEditSubject || !subjectData?.subject) return;
-    onEditSubject(subjectData.subject);
-  }, [onEditSubject, subjectData]);
-  const openSubjectUnitsEditorForMethod = useCallback(
-    (_method) => {
-      openSubjectUnitsEditor();
-    },
-    [openSubjectUnitsEditor]
-  );
   const loadLearningGoalsStructure = useCallback(async () => {
     const sid = subjectData?.subject?.id;
     if (!familyId || !sid) {
@@ -532,6 +526,50 @@ export default function SubjectDetailPage({
     const key = String(learningGoalsSource || '').trim().toLowerCase();
     return LEARNING_GOALS_METHOD_LABELS[key] || (key ? key.replace(/_/g, ' ') : null);
   }, [learningGoalsSource]);
+  const openSubjectUnitsEditorForMethod = useCallback(
+    (method) => {
+      const requestedMethod = String(method || '').trim().toLowerCase();
+      const mappedMethod = requestedMethod === 'paste' ? 'paste_plain' : requestedMethod;
+      const safeMethod = ['manual', 'paste_plain', 'upload', 'generate'].includes(mappedMethod)
+        ? mappedMethod
+        : null;
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && subjectData?.subject?.id) {
+        const resolvedPlanYearId = subjectPlanYearId || subjectPlanYearIdFromEvents || null;
+        window.dispatchEvent(
+          new CustomEvent('openPlanYearModal', {
+            detail: {
+              from: 'subject_detail',
+              subjectId: subjectData.subject.id,
+              subjectName: subjectData.subject.name || null,
+              schoolYear: subjectData.subject.school_year || null,
+              schoolTerm: subjectData.subject.school_term || null,
+              childIds: assignedChildren,
+              academicYearId: resolvedPlanYearId,
+              openAsModal: true,
+              openToEditList: false,
+              skipPlanSummary: !!resolvedPlanYearId,
+              openDirectlyToScope: true,
+              initialUnitStructureMethod: safeMethod,
+            },
+          })
+        );
+        return;
+      }
+      if (onEditSubject && subjectData?.subject) onEditSubject(subjectData.subject);
+    },
+    [subjectData, subjectPlanYearId, subjectPlanYearIdFromEvents, assignedChildren, onEditSubject]
+  );
+  const openSubjectUnitsEditor = useCallback(() => {
+    const sourceToMethod = {
+      manual: 'manual',
+      plain_text_parsed: 'paste_plain',
+      ai_generated: 'generate',
+      upload: 'upload',
+      link: 'upload',
+    };
+    const inferredMethod = sourceToMethod[String(learningGoalsSource || '').trim().toLowerCase()] || 'manual';
+    openSubjectUnitsEditorForMethod(inferredMethod);
+  }, [learningGoalsSource, openSubjectUnitsEditorForMethod]);
 
   useEffect(() => {
     if (!initialOpenMaterialId) return;
@@ -810,7 +848,7 @@ export default function SubjectDetailPage({
       openingPlanBuilderRef.current = false;
     }
   }, [subject?.id, subject?.name, assignedChildren, subjectPlanYearId, subjectPlanYearIdFromEvents, familyId]);
-  const planButtonLabel = subjectPlanYearId ? 'Edit plan' : 'Build plan';
+  const planButtonLabel = subjectPlanYearId ? 'Edit plan' : 'Create Plan';
 
   const attendanceRecordsForUI = useMemo(() => {
     const base = Array.isArray(attendanceRecords) ? attendanceRecords : [];
@@ -1008,14 +1046,290 @@ export default function SubjectDetailPage({
     }
   }, []);
 
-  const attendanceInsightsPanel = attendanceInsightsMode ? (
+  const getEventDateKey = useCallback((event) => {
+    const raw = event?.start_ts || event?.start || event?.start_local || event?.due_ts;
+    if (!raw) return null;
+    return String(raw).slice(0, 10);
+  }, []);
+
+  const getEventMinutes = useCallback((event) => {
+    if (event?.duration_minutes != null) return Number(event.duration_minutes) || 0;
+    const start = event?.start_ts || event?.start || event?.start_local;
+    const end = event?.end_ts || event?.end || event?.end_local;
+    if (start && end) {
+      const mins = Math.round((new Date(end) - new Date(start)) / 60000);
+      return Number.isFinite(mins) && mins > 0 ? mins : 0;
+    }
+    return 0;
+  }, []);
+
+  const getChildIdsForEvent = useCallback((event) => {
+    const ids = Array.isArray(event?.child_ids) && event.child_ids.length > 0
+      ? event.child_ids
+      : (event?.child_id ? [event.child_id] : []);
+    return [...new Set(ids.map((id) => String(id)).filter(Boolean))];
+  }, []);
+
+  const getSiblingEventsOnDay = useCallback((dateKey, event, eventsList) => {
+    if (!dateKey || !event) return [event].filter(Boolean);
+    const targetDate = String(dateKey).slice(0, 10);
+    const blockId = event?.source_block_id || null;
+    return (eventsList || []).filter((ev) => {
+      const evDate = getEventDateKey(ev);
+      if (evDate !== targetDate) return false;
+      if (blockId) return ev?.source_block_id === blockId;
+      return String(ev?.id) === String(event?.id);
+    });
+  }, [getEventDateKey]);
+
+  const handleToggleEventAttendanceForDate = useCallback(async (dateKey, eventId) => {
+    if (!familyId || !dateKey || !eventId) return;
+    const normKey = String(dateKey).slice(0, 10);
+    const event = (subjectEvents || []).find((e) => String(e?.id) === String(eventId));
+    if (!event) return;
+
+    const dayRecordsForEvent = attendanceRecords.filter(
+      (r) => String(r?.event_id || '') === String(eventId) && String(r?.day_date || '').slice(0, 10) === normKey
+    );
+    const isMarkedPresent = dayRecordsForEvent.some((r) => String(r?.status || '').toLowerCase() === 'present');
+
+    try {
+      if (isMarkedPresent) {
+        const assignedIds = getChildIdsForEvent(event);
+        const isShared = assignedIds.length > 1;
+        const minutes = getEventMinutes(event);
+        if (isShared && dayRecordsForEvent.length > 0) {
+          await Promise.all(dayRecordsForEvent.map((record) => updateAttendanceLog(record.id, { status: 'absent', minutes })));
+        } else if (dayRecordsForEvent.length > 0) {
+          await Promise.all(dayRecordsForEvent.map((record) => deleteAttendanceLog(record.id)));
+          const res = await updateEventStatus(event.id, 'scheduled');
+          if (res?.error) console.warn('[SubjectDetailPage] Could not unmark event status:', res.error);
+        } else if (assignedIds.length > 0) {
+          await Promise.all(assignedIds.map((childId) => createAttendanceLog({
+            family_id: familyId,
+            child_id: String(childId),
+            event_id: event.id,
+            day_date: normKey,
+            status: 'absent',
+            minutes,
+          })));
+        }
+      } else {
+        const siblings = getSiblingEventsOnDay(normKey, event, subjectEvents || []);
+        for (const sibling of siblings) {
+          const childIds = getChildIdsForEvent(sibling);
+          if (!childIds.length) continue;
+          const minutes = getEventMinutes(sibling);
+          const upserts = childIds.map((childId) => {
+            const existing = attendanceRecords.find(
+              (r) =>
+                String(r?.event_id || '') === String(sibling?.id)
+                && String(r?.child_id || '') === String(childId)
+                && String(r?.day_date || '').slice(0, 10) === normKey
+            );
+            if (existing) return updateAttendanceLog(existing.id, { status: 'present', minutes });
+            return createAttendanceLog({
+              family_id: familyId,
+              child_id: String(childId),
+              event_id: sibling.id,
+              day_date: normKey,
+              status: 'present',
+              minutes,
+            });
+          });
+          await Promise.all(upserts);
+          const res = await updateEventStatus(sibling.id, 'done');
+          if (res?.error) console.warn('[SubjectDetailPage] Could not mark event complete:', res.error);
+        }
+      }
+      await loadSubjectDetail({ silent: true });
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+    } catch (err) {
+      console.warn('[SubjectDetailPage] Failed toggling event attendance:', err);
+      toast.push('Could not update attendance.', 'error');
+      await loadSubjectDetail({ silent: true });
+    }
+  }, [
+    familyId,
+    subjectEvents,
+    attendanceRecords,
+    getChildIdsForEvent,
+    getEventMinutes,
+    getSiblingEventsOnDay,
+    loadSubjectDetail,
+    toast,
+  ]);
+
+  const handleMarkAllAttendedForDate = useCallback(async (dateKey) => {
+    if (!familyId || !dateKey) return;
+    const normKey = String(dateKey).slice(0, 10);
+    const dayEvents = (subjectEvents || []).filter((event) => getEventDateKey(event) === normKey);
+    if (!dayEvents.length) return;
+    try {
+      for (const event of dayEvents) {
+        const childIds = getChildIdsForEvent(event);
+        if (!childIds.length) continue;
+        const minutes = getEventMinutes(event);
+        const upserts = childIds.map((childId) => {
+          const existing = attendanceRecords.find(
+            (r) =>
+              String(r?.event_id || '') === String(event?.id)
+              && String(r?.child_id || '') === String(childId)
+              && String(r?.day_date || '').slice(0, 10) === normKey
+          );
+          if (existing) return updateAttendanceLog(existing.id, { status: 'present', minutes });
+          return createAttendanceLog({
+            family_id: familyId,
+            child_id: String(childId),
+            event_id: event.id,
+            day_date: normKey,
+            status: 'present',
+            minutes,
+          });
+        });
+        await Promise.all(upserts);
+        const res = await updateEventStatus(event.id, 'done');
+        if (res?.error) console.warn('[SubjectDetailPage] Could not mark event complete:', res.error);
+      }
+      await loadSubjectDetail({ silent: true });
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+    } catch (err) {
+      console.warn('[SubjectDetailPage] Failed marking day attended:', err);
+      toast.push('Could not mark day attended.', 'error');
+      await loadSubjectDetail({ silent: true });
+    }
+  }, [familyId, subjectEvents, getEventDateKey, getChildIdsForEvent, getEventMinutes, attendanceRecords, loadSubjectDetail, toast]);
+
+  const handleYearHeatmapDayPress = useCallback(async (dateKey) => {
+    if (!familyId || !dateKey) return;
+    const normKey = String(dateKey).slice(0, 10);
+    const dayEvents = (subjectEvents || []).filter((event) => getEventDateKey(event) === normKey);
+    const dayRecords = attendanceRecords.filter((record) => String(record?.day_date || '').slice(0, 10) === normKey);
+    const hasPresent = dayRecords.some((record) => String(record?.status || '').toLowerCase() === 'present');
+    const fallbackChildIds = [...new Set((assignedChildren || []).map((id) => String(id)).filter(Boolean))];
+
+    try {
+      if (hasPresent) {
+        if (dayEvents.length > 0) {
+          for (const event of dayEvents) {
+            const assignedIds = getChildIdsForEvent(event);
+            const eventRecords = dayRecords.filter((record) => String(record?.event_id || '') === String(event?.id));
+            const isShared = assignedIds.length > 1;
+            const minutes = getEventMinutes(event);
+            if (isShared && eventRecords.length > 0) {
+              await Promise.all(eventRecords.map((record) => updateAttendanceLog(record.id, { status: 'absent', minutes })));
+            } else {
+              await Promise.all(eventRecords.map((record) => deleteAttendanceLog(record.id)));
+              const res = await updateEventStatus(event.id, 'scheduled');
+              if (res?.error) console.warn('[SubjectDetailPage] Could not unmark event status:', res.error);
+            }
+          }
+        }
+        const standalone = dayRecords.filter((record) => record?.event_id == null);
+        if (standalone.length > 0) {
+          await Promise.all(standalone.map((record) => deleteAttendanceLog(record.id)));
+        }
+      } else {
+        if (dayEvents.length > 0) {
+          const seenIds = new Set();
+          const expandedEvents = [];
+          dayEvents.forEach((event) => {
+            getSiblingEventsOnDay(normKey, event, subjectEvents || []).forEach((sibling) => {
+              if (sibling?.id != null && !seenIds.has(String(sibling.id))) {
+                seenIds.add(String(sibling.id));
+                expandedEvents.push(sibling);
+              }
+            });
+          });
+          for (const event of expandedEvents) {
+            const assignedIds = getChildIdsForEvent(event);
+            if (!assignedIds.length) continue;
+            const minutes = getEventMinutes(event);
+            const upserts = assignedIds.map((childId) => {
+              const existing = attendanceRecords.find(
+                (r) =>
+                  String(r?.event_id || '') === String(event?.id)
+                  && String(r?.child_id || '') === String(childId)
+                  && String(r?.day_date || '').slice(0, 10) === normKey
+              );
+              if (existing) return updateAttendanceLog(existing.id, { status: 'present', minutes });
+              return createAttendanceLog({
+                family_id: familyId,
+                child_id: String(childId),
+                event_id: event.id,
+                day_date: normKey,
+                status: 'present',
+                minutes,
+              });
+            });
+            await Promise.all(upserts);
+            const res = await updateEventStatus(event.id, 'done');
+            if (res?.error) console.warn('[SubjectDetailPage] Could not mark event complete:', res.error);
+          }
+        } else if (fallbackChildIds.length > 0) {
+          const standaloneByChild = new Map(
+            dayRecords
+              .filter((record) => record?.event_id == null)
+              .map((record) => [String(record?.child_id || ''), record])
+          );
+          await Promise.all(
+            fallbackChildIds.map((childId) => {
+              const existing = standaloneByChild.get(childId);
+              if (existing) return updateAttendanceLog(existing.id, { status: 'present', minutes: 60 });
+              return createAttendanceLog({
+                family_id: familyId,
+                child_id: childId,
+                event_id: null,
+                day_date: normKey,
+                status: 'present',
+                minutes: 60,
+              });
+            })
+          );
+        }
+      }
+      await loadSubjectDetail({ silent: true });
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+    } catch (err) {
+      console.warn('[SubjectDetailPage] Failed toggling day attendance:', err);
+      toast.push('Could not update attendance for that day.', 'error');
+      await loadSubjectDetail({ silent: true });
+    }
+  }, [
+    familyId,
+    subjectEvents,
+    attendanceRecords,
+    assignedChildren,
+    getEventDateKey,
+    getChildIdsForEvent,
+    getEventMinutes,
+    getSiblingEventsOnDay,
+    loadSubjectDetail,
+    toast,
+  ]);
+
+  const attendanceInsightsPanel = attendanceViewMode === 'year' || attendanceViewMode === 'month' ? (
     <View style={styles.attendanceInsightsPanelWrap}>
-      {attendanceInsightsMode === 'heatmap' ? (
-        <SubjectAttendanceYearHeatmap attendanceRecords={attendanceRecordsForUI} />
-      ) : attendanceInsightsMode === 'drilldown' ? (
+      {attendanceViewMode === 'year' ? (
+        <SubjectAttendanceYearHeatmap
+          attendanceRecords={attendanceRecordsForUI}
+          subjectEvents={subjectData?.events || []}
+          onMarkEntireRange={() => setShowPastEventsAttendanceModal(true)}
+          onDayPress={handleYearHeatmapDayPress}
+        />
+      ) : attendanceViewMode === 'month' ? (
         <SubjectAttendanceMonthDrilldown
           attendanceRecords={attendanceRecordsForUI}
           subjectEvents={subjectData?.events || []}
+          onOpenEventDetails={handleOpenEventDetails}
+          onToggleEventAttendance={handleToggleEventAttendanceForDate}
+          onMarkAllAttendedDay={handleMarkAllAttendedForDate}
         />
       ) : null}
     </View>
@@ -1405,7 +1719,15 @@ export default function SubjectDetailPage({
             {Platform.OS === 'web' && (
               <TouchableOpacity
                 style={styles.exportIconButton}
-                onPress={() => typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('openExportPlannerModal', { detail: { subjectId, subjectName: subject?.name || '' } }))}
+                onPress={() => {
+                  if (typeof onOpenExportModalForSection === 'function') {
+                    onOpenExportModalForSection('attendance');
+                    return;
+                  }
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openExportPlannerModal', { detail: { subjectId, subjectName: subject?.name || '' } }));
+                  }
+                }}
                 activeOpacity={0.7}
                 accessibilityRole="button"
                 accessibilityLabel="Export attendance"
@@ -1422,156 +1744,153 @@ export default function SubjectDetailPage({
           </View>
           {attendanceRecordsForUI.length > 0 ? (
             <View style={styles.emptyStateBox}>
-              <View style={styles.attendanceChips}>
-                <View style={styles.attendanceChip}>
-                  <CheckCircle size={14} color="#10B981" />
-                  <Text style={styles.attendanceChipText}>
-                    {attendance30Days.present} Present
-                  </Text>
-                </View>
-                <View style={styles.attendanceChip}>
-                  <XCircle size={14} color="#EF4444" />
-                  <Text style={styles.attendanceChipText}>
-                    {attendance30Days.absent} Absent
-                  </Text>
-                </View>
+              <View style={styles.attendanceModePillsRow}>
                 <View style={styles.attendanceModePillsGroup}>
                   <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceInsightsMode === 'heatmap' && styles.sectionModePillActive]}
-                    onPress={() =>
-                      setAttendanceInsightsMode((current) => (current === 'heatmap' ? null : 'heatmap'))
-                    }
+                    style={[styles.sectionModePill, attendanceViewMode === 'list' && styles.sectionModePillActive]}
+                    onPress={() => setAttendanceViewMode('list')}
                     activeOpacity={0.8}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <View style={styles.sectionModePillInner}>
-                      <BarChart3 size={14} color={attendanceInsightsMode === 'heatmap' ? '#2F6FA8' : '#6B7280'} />
-                      <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'heatmap' && styles.sectionModePillTextActive]}>
-                        Heat Map
+                      <List size={14} color={attendanceViewMode === 'list' ? '#6BB3E8' : '#6B7280'} />
+                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'list' && styles.sectionModePillTextActive]}>
+                        List
                       </Text>
                     </View>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceInsightsMode === 'drilldown' && styles.sectionModePillActive]}
-                    onPress={() =>
-                      setAttendanceInsightsMode((current) => (current === 'drilldown' ? null : 'drilldown'))
-                    }
+                    style={[styles.sectionModePill, attendanceViewMode === 'year' && styles.sectionModePillActive]}
+                    onPress={() => setAttendanceViewMode('year')}
                     activeOpacity={0.8}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <View style={styles.sectionModePillInner}>
-                      <Calendar size={14} color={attendanceInsightsMode === 'drilldown' ? '#2F6FA8' : '#6B7280'} />
-                      <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'drilldown' && styles.sectionModePillTextActive]}>
-                        Drill Down
+                      <BarChart3 size={14} color={attendanceViewMode === 'year' ? '#6BB3E8' : '#6B7280'} />
+                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'year' && styles.sectionModePillTextActive]}>
+                        Year
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.sectionModePill, attendanceViewMode === 'month' && styles.sectionModePillActive]}
+                    onPress={() => setAttendanceViewMode('month')}
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.sectionModePillInner}>
+                      <Calendar size={14} color={attendanceViewMode === 'month' ? '#6BB3E8' : '#6B7280'} />
+                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'month' && styles.sectionModePillTextActive]}>
+                        Month
                       </Text>
                     </View>
                   </TouchableOpacity>
                 </View>
               </View>
-              <View style={styles.attendanceList}>
-                {(showAttendanceExpanded ? attendanceRecordsForUI : attendanceRecordsForUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
-                  const event = (subjectData?.events || []).find(e => e.id === record.event_id);
-                  return (
-                    <TouchableOpacity
-                      key={record.id}
-                      style={styles.attendanceItem}
-                      onPress={() => event && handleOpenEventDetails(event.id, event)}
-                      activeOpacity={0.7}
-                      {...(Platform.OS === 'web' && { cursor: event ? 'pointer' : 'default' })}
-                    >
-                      <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
-                      <Text style={styles.attendanceItemTitle}>
-                        {event?.title || 'Lesson'}
+              {attendanceViewMode === 'list' ? (
+                <>
+                  <View style={styles.attendanceChips}>
+                    <View style={styles.attendanceChip}>
+                      <CheckCircle size={14} color="#10B981" />
+                      <Text style={styles.attendanceChipText}>
+                        {attendance30Days.present} Present
                       </Text>
-                      <Text style={styles.attendanceItemStatus}>{record.status}</Text>
-                      <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
+                    </View>
+                    <View style={styles.attendanceChip}>
+                      <XCircle size={14} color="#EF4444" />
+                      <Text style={styles.attendanceChipText}>
+                        {attendance30Days.absent} Absent
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.attendanceList}>
+                    {(showAttendanceExpanded ? attendanceRecordsForUI : attendanceRecordsForUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
+                      const event = (subjectData?.events || []).find(e => e.id === record.event_id);
+                      return (
+                        <TouchableOpacity
+                          key={record.id}
+                          style={styles.attendanceItem}
+                          onPress={() => event && handleOpenEventDetails(event.id, event)}
+                          activeOpacity={0.7}
+                          {...(Platform.OS === 'web' && { cursor: event ? 'pointer' : 'default' })}
+                        >
+                          <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
+                          <Text style={styles.attendanceItemTitle}>
+                            {event?.title || 'Lesson'}
+                          </Text>
+                          <Text style={styles.attendanceItemStatus}>{record.status}</Text>
+                          <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {attendanceRecordsForUI.length > ATTENDANCE_LIST_LIMIT && (
+                    <TouchableOpacity
+                      style={styles.attendanceShowMoreBtn}
+                      onPress={() => setShowAttendanceExpanded((v) => !v)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.attendanceShowMoreText}>
+                        {showAttendanceExpanded
+                          ? 'Show less'
+                          : `Show more (${attendanceRecordsForUI.length - ATTENDANCE_LIST_LIMIT} more)`}
+                      </Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </View>
-              {attendanceRecordsForUI.length > ATTENDANCE_LIST_LIMIT && (
-                <TouchableOpacity
-                  style={styles.attendanceShowMoreBtn}
-                  onPress={() => setShowAttendanceExpanded((v) => !v)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.attendanceShowMoreText}>
-                    {showAttendanceExpanded
-                      ? 'Show less'
-                      : `Show more (${attendanceRecordsForUI.length - ATTENDANCE_LIST_LIMIT} more)`}
-                  </Text>
-                </TouchableOpacity>
+                  )}
+                </>
+              ) : (
+                attendanceInsightsPanel
               )}
-              <View style={styles.attendanceContainerActionsRow}>
-                {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
-                  <TouchableOpacity
-                    style={[styles.emptyStateButton, styles.attendancePastLessonsButton]}
-                    onPress={() => setShowPastEventsAttendanceModal(true)}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel="View past lessons and bulk update attendance"
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Calendar size={18} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Past lessons & bulk actions</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-              {attendanceInsightsPanel}
             </View>
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.emptyStateText}>
                 Attendance appears once you complete an event attached to this subject.
               </Text>
-              <View style={styles.attendanceContainerActionsRow}>
-                {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
-                  <TouchableOpacity
-                    style={[styles.emptyStateButton, styles.attendancePastLessonsButton]}
-                    onPress={() => setShowPastEventsAttendanceModal(true)}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel="View past lessons and bulk update attendance"
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Calendar size={18} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Past lessons & bulk actions</Text>
-                  </TouchableOpacity>
-                ) : null}
+              <View style={styles.attendanceModePillsRow}>
                 <View style={styles.attendanceModePillsGroup}>
                   <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceInsightsMode === 'heatmap' && styles.sectionModePillActive]}
-                    onPress={() =>
-                      setAttendanceInsightsMode((current) => (current === 'heatmap' ? null : 'heatmap'))
-                    }
+                    style={[styles.sectionModePill, attendanceViewMode === 'list' && styles.sectionModePillActive]}
+                    onPress={() => setAttendanceViewMode('list')}
                     activeOpacity={0.8}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <View style={styles.sectionModePillInner}>
-                      <BarChart3 size={14} color={attendanceInsightsMode === 'heatmap' ? '#2F6FA8' : '#6B7280'} />
-                      <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'heatmap' && styles.sectionModePillTextActive]}>
-                        Heat Map
+                      <List size={14} color={attendanceViewMode === 'list' ? '#6BB3E8' : '#6B7280'} />
+                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'list' && styles.sectionModePillTextActive]}>
+                        List
                       </Text>
                     </View>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceInsightsMode === 'drilldown' && styles.sectionModePillActive]}
-                    onPress={() =>
-                      setAttendanceInsightsMode((current) => (current === 'drilldown' ? null : 'drilldown'))
-                    }
+                    style={[styles.sectionModePill, attendanceViewMode === 'year' && styles.sectionModePillActive]}
+                    onPress={() => setAttendanceViewMode('year')}
                     activeOpacity={0.8}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <View style={styles.sectionModePillInner}>
-                      <Calendar size={14} color={attendanceInsightsMode === 'drilldown' ? '#2F6FA8' : '#6B7280'} />
-                      <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'drilldown' && styles.sectionModePillTextActive]}>
-                        Drill Down
+                      <BarChart3 size={14} color={attendanceViewMode === 'year' ? '#6BB3E8' : '#6B7280'} />
+                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'year' && styles.sectionModePillTextActive]}>
+                        Year
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.sectionModePill, attendanceViewMode === 'month' && styles.sectionModePillActive]}
+                    onPress={() => setAttendanceViewMode('month')}
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.sectionModePillInner}>
+                      <Calendar size={14} color={attendanceViewMode === 'month' ? '#6BB3E8' : '#6B7280'} />
+                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'month' && styles.sectionModePillTextActive]}>
+                        Month
                       </Text>
                     </View>
                   </TouchableOpacity>
                 </View>
               </View>
-              {attendanceInsightsPanel}
+              {attendanceViewMode === 'list' ? null : attendanceInsightsPanel}
             </View>
           )}
         </View>
@@ -1583,7 +1902,13 @@ export default function SubjectDetailPage({
               <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
               <TouchableOpacity
                 style={styles.exportIconButton}
-                onPress={() => setShowExportComingSoonModal(true)}
+                onPress={() => {
+                  if (typeof onOpenExportModalForSection === 'function') {
+                    onOpenExportModalForSection('report_card');
+                    return;
+                  }
+                  setShowExportComingSoonModal(true);
+                }}
                 activeOpacity={0.7}
                 accessibilityRole="button"
                 accessibilityLabel="Export grades"
@@ -1759,7 +2084,13 @@ export default function SubjectDetailPage({
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Learning Goals</Text>
             <TouchableOpacity
               style={styles.exportIconButton}
-              onPress={() => setShowExportComingSoonModal(true)}
+              onPress={() => {
+                if (typeof onOpenExportModalForSection === 'function') {
+                  onOpenExportModalForSection('units_lessons');
+                  return;
+                }
+                setShowExportComingSoonModal(true);
+              }}
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel="Export learning goals"
@@ -2536,6 +2867,17 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     marginLeft: 0,
   },
+  attendanceModePillsRow: {
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  attendanceTopRowPastLessonsButton: {
+    marginTop: 0,
+  },
   attendanceInsightsPanelWrap: {
     marginTop: 12,
   },
@@ -2554,8 +2896,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   sectionModePillActive: {
-    borderColor: 'rgba(107, 179, 232, 0.55)',
-    backgroundColor: 'rgba(133, 196, 242, 0.14)',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
   },
   sectionModePillText: {
     fontSize: 14,
@@ -2566,7 +2908,7 @@ const styles = StyleSheet.create({
     }),
   },
   sectionModePillTextActive: {
-    color: '#2F6FA8',
+    color: '#6BB3E8',
   },
   gradesSectionTitleRow: {
     flexDirection: 'row',
@@ -2927,11 +3269,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   learningGoalsActionText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#5E6C84',
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   emptyStateTitle: {

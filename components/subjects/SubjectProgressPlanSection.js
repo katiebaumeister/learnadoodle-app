@@ -518,7 +518,7 @@ export default function SubjectProgressPlanSection({
         openAsModal: true,
         openToEditList: false,
         skipPlanSummary: !!academicYearId,
-        openDirectlyToScope: !academicYearId,
+        openDirectlyToScope: true,
         initialUnitStructureMethod: kind,
       });
     },

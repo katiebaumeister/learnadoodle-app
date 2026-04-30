@@ -528,27 +528,24 @@ export default function AddSubjectModal({
         familyId,
         childIds,
       };
-      if (kind === 'upload') {
-        // Keep upload in the current stack: open the refreshed AddMaterialModal directly.
-        setMaterialDropdownSlot(null);
-        setAddMaterialDefaultRole(null);
-        setShowAddMaterialModal(true);
-        return;
-      }
-
-      if (kind === 'manual' || kind === 'paste' || kind === 'generate') {
-        if (kind === 'manual') {
-          setShowManualUnitsModal(true);
-          return;
-        }
-        if (kind === 'paste') {
-          setShowParseUnitsModal(true);
-          return;
-        }
-        if (kind === 'generate') {
-          setShowGenerateUnitsModal(true);
-        }
-      }
+      const requestedKind = String(kind || '').trim().toLowerCase();
+      const mappedMethod = requestedKind === 'paste' ? 'paste_plain' : requestedKind;
+      const safeMethod = ['manual', 'paste_plain', 'upload', 'generate'].includes(mappedMethod)
+        ? mappedMethod
+        : null;
+      window.dispatchEvent(
+        new CustomEvent('openPlanYearModal', {
+          detail: {
+            from: 'subject_detail',
+            ...base,
+            openAsModal: true,
+            openToEditList: false,
+            skipPlanSummary: true,
+            openDirectlyToScope: true,
+            initialUnitStructureMethod: safeMethod,
+          },
+        })
+      );
     },
     [
       subject?.id,
@@ -560,9 +557,6 @@ export default function AddSubjectModal({
       children,
       openingAddUnits,
       ensureDraftSubjectExists,
-      setMaterialDropdownSlot,
-      setAddMaterialDefaultRole,
-      setShowAddMaterialModal,
     ]
   );
 

@@ -38,9 +38,9 @@ const TEXT_BLACK = '#000000';
 /** Brand pastel blue (FAB, coming-soon CTAs) — borders, fills, toggles on this page */
 const ACCENT = LEARNADOODLE_LIGHT_BLUE;
 const BORDER = '#E2E8F0';
-/** Selected chips — planner violet border/text + soft lavender fill */
-const CHIP_SELECTED_BORDER = 'rgba(139, 92, 246, 0.5)';
-const CHIP_SELECTED_BG = 'rgba(139, 92, 246, 0.15)';
+/** Selected chips — light blue border/text + soft blue fill */
+const CHIP_SELECTED_BORDER = '#6BB3E8';
+const CHIP_SELECTED_BG = 'rgba(107, 179, 232, 0.12)';
 const plannerSettingsSnapshotCache = new Map();
 
 const parsePositiveIntOrNull = (value) => {

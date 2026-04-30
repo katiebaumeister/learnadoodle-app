@@ -259,6 +259,17 @@ function parsePositiveFloat(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function resolveTargetStatusFromPlanned({ actualValue, targetValue }) {
+  const actual = Number(actualValue);
+  const target = Number(targetValue);
+  if (!Number.isFinite(actual) || !Number.isFinite(target) || target <= 0) return null;
+  const tolerance = Math.max(1, target * 0.08);
+  const delta = actual - target;
+  if (delta > tolerance) return 'ahead';
+  if (delta < -tolerance) return 'behind';
+  return 'on_track';
+}
+
 function subjectMatchesYearTerm(subject, yearLabel, termId) {
   const subjectYear = String(subject?.school_year || '').trim();
   const slotYear = String(yearLabel || '').trim();
@@ -365,10 +376,62 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
           subjectIdSet.add(String(entry.subject_id));
         }
       });
-      const targets = plan?.subject_targets_override;
+      const targets = (
+        plan?.subject_targets && typeof plan.subject_targets === 'object' && !Array.isArray(plan.subject_targets)
+          ? plan.subject_targets
+          : plan?.subject_targets_override
+      );
       if (targets && typeof targets === 'object' && !Array.isArray(targets)) {
         Object.keys(targets).forEach((sid) => {
           if (sid != null && String(sid).trim()) subjectIdSet.add(String(sid));
+        });
+      }
+      const planConstraintMode = String(plan?.constraint_mode || '').trim().toLowerCase();
+      const planTargetDays = parsePositiveInt(plan?.target_days);
+      const planTargetHours = parsePositiveFloat(plan?.target_hours);
+      const settingsConstraintMode = String(detail?.settings?.default_constraint_mode || '').trim().toLowerCase();
+      const settingsTargetDays = parsePositiveInt(detail?.settings?.default_target_days);
+      const settingsTargetHours = parsePositiveFloat(detail?.settings?.default_target_hours);
+      const normalizedPlanTarget = (() => {
+        if (planConstraintMode === 'days' && planTargetDays != null) {
+          return { mode: 'days', target_days: planTargetDays, target_hours: null, source: 'plan_level' };
+        }
+        if (planConstraintMode === 'hours' && planTargetHours != null) {
+          return { mode: 'hours', target_days: null, target_hours: planTargetHours, source: 'plan_level' };
+        }
+        if (planTargetDays != null && planTargetHours == null) {
+          return { mode: 'days', target_days: planTargetDays, target_hours: null, source: 'plan_level' };
+        }
+        if (planTargetHours != null && planTargetDays == null) {
+          return { mode: 'hours', target_days: null, target_hours: planTargetHours, source: 'plan_level' };
+        }
+        if (settingsConstraintMode === 'days' && settingsTargetDays != null) {
+          return { mode: 'days', target_days: settingsTargetDays, target_hours: null, source: 'plan_settings' };
+        }
+        if (settingsConstraintMode === 'hours' && settingsTargetHours != null) {
+          return { mode: 'hours', target_days: null, target_hours: settingsTargetHours, source: 'plan_settings' };
+        }
+        if (settingsTargetDays != null && settingsTargetHours == null) {
+          return { mode: 'days', target_days: settingsTargetDays, target_hours: null, source: 'plan_settings' };
+        }
+        if (settingsTargetHours != null && settingsTargetDays == null) {
+          return { mode: 'hours', target_days: null, target_hours: settingsTargetHours, source: 'plan_settings' };
+        }
+        return null;
+      })();
+      const normalizedSubjectTargets = {};
+      if (targets && typeof targets === 'object' && !Array.isArray(targets)) {
+        Object.entries(targets).forEach(([sid, entry]) => {
+          const subjectKey = String(sid || '').trim();
+          if (!subjectKey) return;
+          const days = parsePositiveInt(entry?.target_days);
+          const hours = parsePositiveFloat(entry?.target_hours);
+          if (days == null && hours == null) return;
+          normalizedSubjectTargets[subjectKey] = {
+            mode: days != null ? 'days' : 'hours',
+            target_days: days,
+            target_hours: hours,
+          };
         });
       }
       const subjectIds = [...subjectIdSet];
@@ -377,6 +440,8 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
         startYear: resolveScheduleStartYear(row, scopeId),
         scopeId,
         subjectIds,
+        planTarget: normalizedPlanTarget,
+        subjectTargets: normalizedSubjectTargets,
         blocksLite: planBlocks.map((block) => ({
           subject_ids: extractSubjectIdsFromBlock(block),
           weekdays: Array.isArray(block?.weekdays) ? block.weekdays.map((d) => Number(d)).filter((d) => Number.isInteger(d)) : [],
@@ -448,7 +513,11 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
           subjectsWithAnyPlanSet.add(String(entry.subject_id));
         }
       });
-      const targets = plan?.subject_targets_override;
+      const targets = (
+        plan?.subject_targets && typeof plan.subject_targets === 'object' && !Array.isArray(plan.subject_targets)
+          ? plan.subject_targets
+          : plan?.subject_targets_override
+      );
       if (targets && typeof targets === 'object' && !Array.isArray(targets)) {
         Object.keys(targets).forEach((sid) => {
           if (sid != null && String(sid).trim()) subjectsWithAnyPlanSet.add(String(sid));
@@ -534,6 +603,7 @@ export default function SubjectsPlanBuilder({
     default_target_days: null,
     default_target_hours: null,
   });
+  const [subjectTargetSettingsById, setSubjectTargetSettingsById] = useState({});
 
   const baseSubjects = useMemo(() => {
     if (Array.isArray(allSubjects) && allSubjects.length > 0) return allSubjects;
@@ -662,6 +732,40 @@ export default function SubjectsPlanBuilder({
 
   useEffect(() => {
     let cancelled = false;
+    const loadSubjectTargetSettings = async () => {
+      if (!hasValidFamilyId || !displaySchoolYear?.label) {
+        setSubjectTargetSettingsById({});
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('subject')
+          .select('id, default_constraint_mode, default_target_days, default_target_hours')
+          .eq('family_id', familyId)
+          .eq('school_year', displaySchoolYear.label);
+        if (cancelled) return;
+        if (error) throw error;
+        const next = {};
+        (data || []).forEach((row) => {
+          const id = String(row?.id || '').trim();
+          if (!id) return;
+          next[id] = {
+            default_constraint_mode: String(row?.default_constraint_mode || '').trim().toLowerCase(),
+            default_target_days: parsePositiveInt(row?.default_target_days),
+            default_target_hours: parsePositiveFloat(row?.default_target_hours),
+          };
+        });
+        setSubjectTargetSettingsById(next);
+      } catch (_) {
+        if (!cancelled) setSubjectTargetSettingsById({});
+      }
+    };
+    loadSubjectTargetSettings();
+    return () => { cancelled = true; };
+  }, [familyId, hasValidFamilyId, displaySchoolYear?.label, overviewReloadKey]);
+
+  useEffect(() => {
+    let cancelled = false;
     const loadInstructionalEvents = async () => {
       if (!hasValidFamilyId || !displaySchoolYear) {
         setInstructionalEventsBySubject({});
@@ -713,6 +817,13 @@ export default function SubjectsPlanBuilder({
             title: String(row?.title || row?.lesson_name || row?.event_type || 'Event').trim(),
             startTs: row?.start_ts || row?.due_ts || null,
             startMs: tsMs,
+            durationHours: Number.isFinite(Number(row?.duration_minutes)) && Number(row.duration_minutes) > 0
+              ? Number(row.duration_minutes) / 60
+              : (
+                row?.start_ts && row?.end_ts
+                  ? Math.max(0, (new Date(row.end_ts).getTime() - new Date(row.start_ts).getTime()) / 3600000)
+                  : 0
+              ),
             fromPlan,
             unitName: unitName || null,
           });
@@ -926,6 +1037,31 @@ export default function SubjectsPlanBuilder({
       const slotKey = buildPlanSlotKey(selectedStartYear, scopeId);
       return slotKey ? (planSubjectNamesBySlot?.[slotKey] || []) : [];
     });
+    const healthSubjectTargetsRaw = activeScheduleCore?.health?.subject_targets;
+    const healthSubjectTargets = (
+      healthSubjectTargetsRaw && typeof healthSubjectTargetsRaw === 'object' && !Array.isArray(healthSubjectTargetsRaw)
+    ) ? healthSubjectTargetsRaw : {};
+    const healthConstraintMode = String(activeScheduleCore?.health?.constraint_mode || '').trim().toLowerCase();
+    const healthTargetDays = parsePositiveInt(activeScheduleCore?.health?.target_days);
+    const healthTargetHours = parsePositiveFloat(activeScheduleCore?.health?.target_hours);
+    const healthPlanTarget = healthConstraintMode === 'days'
+      ? (healthTargetDays != null ? { mode: 'days', target_days: healthTargetDays, target_hours: null } : null)
+      : (healthConstraintMode === 'hours'
+        ? (healthTargetHours != null ? { mode: 'hours', target_days: null, target_hours: healthTargetHours } : null)
+        : null);
+    const settingsScope = String(familyPlannerSettings?.target_scope || 'overall').trim().toLowerCase();
+    const settingsMode = String(familyPlannerSettings?.default_constraint_mode || '').trim().toLowerCase();
+    const settingsTargetDays = parsePositiveInt(familyPlannerSettings?.default_target_days);
+    const settingsTargetHours = parsePositiveFloat(familyPlannerSettings?.default_target_hours);
+    const familySettingsTarget = settingsScope === 'overall'
+      ? (
+        settingsMode === 'days'
+          ? (settingsTargetDays != null ? { mode: 'days', target_days: settingsTargetDays, target_hours: null } : null)
+          : (settingsMode === 'hours'
+            ? (settingsTargetHours != null ? { mode: 'hours', target_days: null, target_hours: settingsTargetHours } : null)
+            : null)
+      )
+      : null;
     const plannedSet = new Set((slotSubjectIds || []).map((id) => String(id)));
     const plannedNameSet = new Set((slotSubjectNames || []).map((name) => normalizeSubjectName(name)));
     const subjectsInYear = (baseSubjects || []).filter(
@@ -934,6 +1070,8 @@ export default function SubjectsPlanBuilder({
     const subjectPlans = subjectsInYear.map((subject) => {
       const subjectId = String(subject?.id || '');
       const normalizedName = normalizeSubjectName(subject?.name);
+      const subjectTermId = normalizeSubjectTerm(subject?.school_term);
+      const subjectSettings = subjectTargetSettingsById?.[subjectId] || null;
       const blocksForSubject = blocks.filter((block) =>
         Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
       );
@@ -957,7 +1095,91 @@ export default function SubjectsPlanBuilder({
         if (eventMs < nowMs) pastEventsCount += 1;
         else plannedEventsCount += 1;
       });
-      const schoolTermId = normalizeSubjectTerm(subject?.school_term);
+      const plannedLessonsCountForTarget = yearEventItems.length;
+      const plannedLessonsHoursForTarget = yearEventItems.reduce(
+        (sum, item) => sum + (Number(item?.durationHours) || 0),
+        0
+      );
+      const scopePriority = [...new Set([subjectTermId, 'full_year', 'fall_term', 'spring_term'])];
+      const targetFromPlan = scopePriority.reduce((found, scopeId) => {
+        if (found) return found;
+        const matchingCore = relevantCores.find((core) => String(core?.scopeId || '').trim() === scopeId);
+        if (!matchingCore || !matchingCore?.subjectTargets || typeof matchingCore.subjectTargets !== 'object') return null;
+        return matchingCore.subjectTargets[subjectId] || null;
+      }, null);
+      const planLevelTarget = scopePriority.reduce((found, scopeId) => {
+        if (found) return found;
+        const matchingCore = relevantCores.find((core) => String(core?.scopeId || '').trim() === scopeId);
+        if (!matchingCore || !matchingCore?.planTarget) return null;
+        return matchingCore.planTarget;
+      }, null);
+      const healthSubjectTargetRaw = healthSubjectTargets?.[subjectId];
+      const healthSubjectTarget = (
+        healthSubjectTargetRaw && typeof healthSubjectTargetRaw === 'object' && !Array.isArray(healthSubjectTargetRaw)
+      )
+        ? {
+          mode: healthSubjectTargetRaw?.target_days != null ? 'days' : (healthSubjectTargetRaw?.target_hours != null ? 'hours' : null),
+          target_days: parsePositiveInt(healthSubjectTargetRaw?.target_days),
+          target_hours: parsePositiveFloat(healthSubjectTargetRaw?.target_hours),
+        }
+        : null;
+      const subjectSettingsMode = String(subjectSettings?.default_constraint_mode || subject?.default_constraint_mode || '').trim().toLowerCase();
+      const subjectSettingsDays = parsePositiveInt(subjectSettings?.default_target_days ?? subject?.default_target_days);
+      const subjectSettingsHours = parsePositiveFloat(subjectSettings?.default_target_hours ?? subject?.default_target_hours);
+      const perSubjectSettingsTarget = settingsScope === 'per_subject'
+        ? (
+          subjectSettingsMode === 'days'
+            ? (subjectSettingsDays != null ? { mode: 'days', target_days: subjectSettingsDays, target_hours: null } : null)
+            : (subjectSettingsMode === 'hours'
+              ? (subjectSettingsHours != null ? { mode: 'hours', target_days: null, target_hours: subjectSettingsHours } : null)
+              : (subjectSettingsDays != null && subjectSettingsHours == null
+                ? { mode: 'days', target_days: subjectSettingsDays, target_hours: null }
+                : (subjectSettingsHours != null && subjectSettingsDays == null
+                  ? { mode: 'hours', target_days: null, target_hours: subjectSettingsHours }
+                  : null)))
+        )
+        : null;
+      const targetMode = String(
+        targetFromPlan?.mode
+        || perSubjectSettingsTarget?.mode
+        || familySettingsTarget?.mode
+        || planLevelTarget?.mode
+        || healthSubjectTarget?.mode
+        || healthPlanTarget?.mode
+        || subjectSettingsMode
+        || ''
+      ).trim().toLowerCase();
+      const targetDays = parsePositiveInt(
+        targetFromPlan?.target_days
+        ?? perSubjectSettingsTarget?.target_days
+        ?? familySettingsTarget?.target_days
+        ?? planLevelTarget?.target_days
+        ?? healthSubjectTarget?.target_days
+        ?? healthPlanTarget?.target_days
+        ?? subjectSettingsDays
+      );
+      const targetHours = parsePositiveFloat(
+        targetFromPlan?.target_hours
+        ?? perSubjectSettingsTarget?.target_hours
+        ?? familySettingsTarget?.target_hours
+        ?? planLevelTarget?.target_hours
+        ?? healthSubjectTarget?.target_hours
+        ?? healthPlanTarget?.target_hours
+        ?? subjectSettingsHours
+      );
+      const statusMode = targetMode === 'hours'
+        ? 'hours'
+        : (targetMode === 'days'
+          ? 'days'
+          : (targetDays != null && targetHours == null
+            ? 'days'
+            : (targetHours != null && targetDays == null ? 'hours' : null)));
+      const targetValue = statusMode === 'hours' ? targetHours : (statusMode === 'days' ? targetDays : null);
+      const actualValue = statusMode === 'hours'
+        ? plannedLessonsHoursForTarget
+        : (statusMode === 'days' ? plannedLessonsCountForTarget : null);
+      const targetProgressStatus = resolveTargetStatusFromPlanned({ actualValue, targetValue });
+      const schoolTermId = subjectTermId;
       const schoolTermLabel = schoolTermId === 'full_year' ? '' : formatScheduleScopeLabel(schoolTermId);
       return {
         id: subjectId,
@@ -969,6 +1191,7 @@ export default function SubjectsPlanBuilder({
         pastEventsCount,
         plannedEventsCount,
         eventItems: yearEventItems,
+        targetProgressStatus,
         attachedStudentIds: effectiveAttachedIds,
         attachedStudentsLabel: attachedStudentNames.join(', '),
       };
@@ -983,7 +1206,7 @@ export default function SubjectsPlanBuilder({
       dayRows,
       subjectPlans,
     }];
-  }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject]);
+  }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject, activeScheduleCore, familyPlannerSettings, subjectTargetSettingsById]);
 
   const yearTargetSummary = useMemo(() => {
     if (!displaySchoolYear) return null;
@@ -1017,17 +1240,61 @@ export default function SubjectsPlanBuilder({
     const subjectsForYear = (baseSubjects || []).filter(
       (subject) => String(subject?.school_year || '').trim() === String(displaySchoolYear?.label || '').trim()
     );
+    const subjectPlanById = {};
+    (termSections || []).forEach((section) => {
+      (section?.subjectPlans || []).forEach((row) => {
+        subjectPlanById[String(row?.id || '')] = row;
+      });
+    });
 
     const perSubjectDaysTarget = subjectsForYear.reduce((sum, subject) => {
-      const mode = String(subject?.default_constraint_mode || '').trim().toLowerCase();
-      const days = parsePositiveInt(subject?.default_target_days);
+      const subjectId = String(subject?.id || '').trim();
+      const subjectSettings = subjectTargetSettingsById?.[subjectId] || null;
+      const mode = String(subjectSettings?.default_constraint_mode || subject?.default_constraint_mode || '').trim().toLowerCase();
+      const days = parsePositiveInt(subjectSettings?.default_target_days ?? subject?.default_target_days);
       return mode === 'days' && days != null ? sum + days : sum;
     }, 0);
     const perSubjectHoursTarget = subjectsForYear.reduce((sum, subject) => {
-      const mode = String(subject?.default_constraint_mode || '').trim().toLowerCase();
-      const hours = parsePositiveFloat(subject?.default_target_hours);
+      const subjectId = String(subject?.id || '').trim();
+      const subjectSettings = subjectTargetSettingsById?.[subjectId] || null;
+      const mode = String(subjectSettings?.default_constraint_mode || subject?.default_constraint_mode || '').trim().toLowerCase();
+      const hours = parsePositiveFloat(subjectSettings?.default_target_hours ?? subject?.default_target_hours);
       return mode === 'hours' && hours != null ? sum + hours : sum;
     }, 0);
+    const perSubjectRows = subjectsForYear.map((subject) => {
+      const subjectId = String(subject?.id || '').trim();
+      const subjectSettings = subjectTargetSettingsById?.[subjectId] || null;
+      const mode = String(subjectSettings?.default_constraint_mode || subject?.default_constraint_mode || '').trim().toLowerCase();
+      const targetDays = parsePositiveInt(subjectSettings?.default_target_days ?? subject?.default_target_days);
+      const targetHours = parsePositiveFloat(subjectSettings?.default_target_hours ?? subject?.default_target_hours);
+      const statusMode = mode === 'hours'
+        ? 'hours'
+        : (mode === 'days'
+          ? 'days'
+          : (targetDays != null && targetHours == null
+            ? 'days'
+            : (targetHours != null && targetDays == null ? 'hours' : null)));
+      const targetValue = statusMode === 'hours' ? targetHours : (statusMode === 'days' ? targetDays : null);
+      if (targetValue == null) return null;
+      const plannedRow = subjectPlanById[subjectId] || null;
+      const plannedDaysValue = Number(plannedRow?.pastEventsCount || 0) + Number(plannedRow?.plannedEventsCount || 0);
+      const plannedHoursValue = (plannedRow?.eventItems || []).reduce(
+        (sum, item) => sum + (Number(item?.durationHours) || 0),
+        0
+      );
+      const plannedValue = statusMode === 'hours'
+        ? Math.round(plannedHoursValue * 10) / 10
+        : plannedDaysValue;
+      const progressStatus = resolveTargetStatusFromPlanned({ actualValue: plannedValue, targetValue });
+      return {
+        id: subjectId,
+        name: subject?.name || 'Subject',
+        unit: statusMode,
+        targetValue,
+        plannedValue,
+        progressStatus,
+      };
+    }).filter(Boolean);
 
     let targetUnit = null;
     let targetValue = null;
@@ -1057,7 +1324,9 @@ export default function SubjectsPlanBuilder({
     const targetLabel = targetValue == null
       ? 'No yearly target set yet'
       : `${targetValue}${targetUnit === 'hours' ? ' hours' : ' days'} target`;
-    const totalLabel = `${currentValue}${targetUnit === 'hours' ? ' hours' : ' days'} currently planned`;
+    const totalLabel = scope === 'per_subject'
+      ? null
+      : `${currentValue}${targetUnit === 'hours' ? ' hours' : ' days'} currently planned`;
     const ctaLabel = targetValue == null
       ? 'Set yearly target in Planning preferences'
       : (delta < 0
@@ -1074,13 +1343,15 @@ export default function SubjectsPlanBuilder({
           : 'Nice pacing. Your current total matches the saved target.'));
 
     return {
+      scope,
       scopeLabel,
       targetLabel,
       totalLabel,
       ctaLabel,
       helperLabel,
+      perSubjectRows,
     };
-  }, [displaySchoolYear, termSections, planCores, familyPlannerSettings, baseSubjects]);
+  }, [displaySchoolYear, termSections, planCores, familyPlannerSettings, baseSubjects, subjectTargetSettingsById]);
 
   const subjectPlans = useMemo(() => {
     const selectedStartYear = Number(displaySchoolYear?.start_year);
@@ -1592,6 +1863,18 @@ export default function SubjectsPlanBuilder({
                                       <View style={styles.needsPlanChip}>
                                         <Text style={styles.needsPlanChipText}>NEEDS PLAN</Text>
                                       </View>
+                                    ) : row.targetProgressStatus === 'ahead' ? (
+                                      <View style={[styles.progressStatusChip, styles.progressStatusChipAhead]}>
+                                        <Text style={[styles.progressStatusChipText, styles.progressStatusChipTextAhead]}>AHEAD</Text>
+                                      </View>
+                                    ) : row.targetProgressStatus === 'behind' ? (
+                                      <View style={[styles.progressStatusChip, styles.progressStatusChipBehind]}>
+                                        <Text style={[styles.progressStatusChipText, styles.progressStatusChipTextBehind]}>BEHIND</Text>
+                                      </View>
+                                    ) : row.targetProgressStatus === 'on_track' ? (
+                                      <View style={[styles.progressStatusChip, styles.progressStatusChipOnTrack]}>
+                                        <Text style={[styles.progressStatusChipText, styles.progressStatusChipTextOnTrack]}>ON TRACK</Text>
+                                      </View>
                                     ) : null}
                                     <Pressable
                                       style={styles.subjectRowActionButton}
@@ -1653,11 +1936,30 @@ export default function SubjectsPlanBuilder({
                     <View style={styles.yearTargetsHeaderCopy}>
                       <Text style={styles.yearTargetsTitle}>Year target snapshot</Text>
                       <Text style={styles.yearTargetsSubtitle}>
-                        {yearTargetSummary.scopeLabel} - {yearTargetSummary.targetLabel}
+                        {yearTargetSummary.scope === 'per_subject'
+                          ? yearTargetSummary.scopeLabel
+                          : `${yearTargetSummary.scopeLabel} - ${yearTargetSummary.targetLabel}`}
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.yearTargetsTotalText}>{yearTargetSummary.totalLabel}</Text>
+                  {yearTargetSummary.scope === 'per_subject' ? (
+                    <View style={styles.yearTargetsSubjectList}>
+                      {(yearTargetSummary.perSubjectRows || []).length === 0 ? (
+                        <Text style={styles.yearTargetsHelperText}>No per-subject targets set yet.</Text>
+                      ) : (
+                        (yearTargetSummary.perSubjectRows || []).map((row) => (
+                          <View key={`year-target-${row.id}`} style={styles.yearTargetsSubjectRow}>
+                            <Text style={styles.yearTargetsSubjectName}>{row.name}</Text>
+                            <Text style={styles.yearTargetsSubjectValue}>
+                              {`${row.plannedValue}${row.unit === 'hours' ? 'h' : 'd'} / ${row.targetValue}${row.unit === 'hours' ? 'h' : 'd'}`}
+                            </Text>
+                          </View>
+                        ))
+                      )}
+                    </View>
+                  ) : (
+                    <Text style={styles.yearTargetsTotalText}>{yearTargetSummary.totalLabel}</Text>
+                  )}
                   <Text style={styles.yearTargetsHelperText}>{yearTargetSummary.helperLabel}</Text>
                 </View>
               </View>
@@ -2298,6 +2600,32 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  yearTargetsSubjectList: {
+    marginTop: 8,
+    gap: 6,
+  },
+  yearTargetsSubjectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  yearTargetsSubjectName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#17203b',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsSubjectValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#5f6f89',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   yearTargetsHelperText: {
     marginTop: 4,
     fontSize: 13,
@@ -2447,23 +2775,23 @@ const styles = StyleSheet.create({
   },
   lessonChip: {
     borderRadius: 14,
-    backgroundColor: '#E3F0FF',
+    backgroundColor: '#FFFFFF',
     paddingVertical: 9,
     paddingHorizontal: 10,
     borderWidth: 1,
-    borderColor: '#C7E1FF',
+    borderColor: '#E1E6F0',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   lessonTitle: {
     fontSize: 13,
     fontWeight: '900',
-    color: '#4C7ED9',
+    color: '#6B7280',
   },
   lessonTime: {
     marginTop: 2,
     fontSize: 12,
     fontWeight: '700',
-    color: '#6C93D6',
+    color: '#9AA3B2',
   },
   lessonTerm: {
     marginTop: 4,
@@ -2571,6 +2899,40 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.5,
     color: '#b45309',
+  },
+  progressStatusChip: {
+    height: 24,
+    paddingHorizontal: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressStatusChipOnTrack: {
+    borderColor: '#93c5fd',
+    backgroundColor: '#eff6ff',
+  },
+  progressStatusChipAhead: {
+    borderColor: '#6ee7b7',
+    backgroundColor: '#ecfdf5',
+  },
+  progressStatusChipBehind: {
+    borderColor: '#fdba74',
+    backgroundColor: '#fff7ed',
+  },
+  progressStatusChipText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  progressStatusChipTextOnTrack: {
+    color: '#1d4ed8',
+  },
+  progressStatusChipTextAhead: {
+    color: '#047857',
+  },
+  progressStatusChipTextBehind: {
+    color: '#c2410c',
   },
   subjectRowActionButton: {
     width: 36,
