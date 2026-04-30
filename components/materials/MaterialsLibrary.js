@@ -1032,15 +1032,15 @@ export default function MaterialsLibrary({
                       setRoleFilter('all');
                     }}
                   >
-                    <View
-                      style={[
-                        styles.childDot,
-                        { backgroundColor: childColor, marginRight: 6 },
-                      ]}
-                    />
                     <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
                       {label}
                     </Text>
+                    <View
+                      style={[
+                        styles.childDot,
+                        { backgroundColor: childColor, marginLeft: 6 },
+                      ]}
+                    />
                   </TouchableOpacity>
                 );
               })}

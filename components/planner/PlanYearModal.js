@@ -3111,6 +3111,88 @@ export default function PlanYearModal({
       hoursPerDay: avgMins / 60,
     };
   }, [blocks]);
+  const step4TargetComparison = useMemo(() => {
+    if (!ENABLE_TARGET_PROGRESS_CALCULATIONS) return null;
+    if (!previewSlotLines.length) return null;
+    if ((effectiveSubjectIds || []).length !== 1) return null;
+    const subjectId = String(effectiveSubjectIds[0] || '');
+    if (!subjectId) return null;
+    const subject = (baseSubjectList || []).find((row) => String(row?.id) === subjectId) || null;
+    if (!subject) return null;
+
+    let mode = null;
+    let targetValue = null;
+    let allocatedToOtherSubjects = 0;
+    if (targetScopeFromSettings === 'overall') {
+      const overallMode = String(effectivePlanTarget?.constraint_mode || '').trim().toLowerCase();
+      if (overallMode === 'days') {
+        mode = 'days';
+        targetValue = parsePositiveIntOrNull(effectivePlanTarget?.target_days);
+      } else if (overallMode === 'hours') {
+        mode = 'hours';
+        targetValue = parsePositiveFloatOrNull(effectivePlanTarget?.target_hours);
+      }
+      if (!mode || targetValue == null) return null;
+
+      const selectedYearLabel = String(subject?.school_year || '').trim();
+      allocatedToOtherSubjects = (baseSubjectList || []).reduce((sum, row) => {
+        if (!row || String(row.id) === subjectId) return sum;
+        const rowYear = String(row.school_year || '').trim();
+        if (selectedYearLabel && rowYear && rowYear !== selectedYearLabel) return sum;
+        const saved = resolveSubjectSavedTarget(row);
+        if (saved.mode !== mode) return sum;
+        if (mode === 'days') return sum + (parsePositiveIntOrNull(saved.days) || 0);
+        return sum + (parsePositiveFloatOrNull(saved.hours) || 0);
+      }, 0);
+      targetValue = Math.max(0, Number(targetValue) - Number(allocatedToOtherSubjects || 0));
+    } else {
+      const override = planSubjectTargetsOverride?.[subjectId];
+      const resolved = resolveSubjectRowTarget(subject, override);
+      if (resolved.mode === 'days') {
+        mode = 'days';
+        targetValue = parsePositiveIntOrNull(resolved.days);
+      } else if (resolved.mode === 'hours') {
+        mode = 'hours';
+        targetValue = parsePositiveFloatOrNull(resolved.hours);
+      }
+    }
+
+    if (!mode || targetValue == null) return null;
+
+    const projectedDays = previewSlotLines.reduce(
+      (sum, line) => (String(line?.subjectId || '') === subjectId ? sum + 1 : sum),
+      0
+    );
+    const projectedHoursRaw = Number(projectedHoursBySubjectId?.[subjectId] || 0);
+    const projectedHours = Math.round(projectedHoursRaw * 10) / 10;
+    const projectedValue = mode === 'hours' ? projectedHours : projectedDays;
+    const roundedTarget = mode === 'hours'
+      ? Math.round(Number(targetValue) * 10) / 10
+      : Math.round(Number(targetValue));
+    const deltaRaw = Number(projectedValue) - Number(roundedTarget);
+    const delta = mode === 'hours' ? Math.round(deltaRaw * 10) / 10 : Math.round(deltaRaw);
+
+    return {
+      mode,
+      projectedValue,
+      targetValue: roundedTarget,
+      delta,
+      isOverallAdjusted: targetScopeFromSettings === 'overall' && allocatedToOtherSubjects > 0,
+      allocatedToOtherSubjects: mode === 'hours'
+        ? Math.round(allocatedToOtherSubjects * 10) / 10
+        : Math.round(allocatedToOtherSubjects),
+    };
+  }, [
+    targetScopeFromSettings,
+    effectivePlanTarget,
+    effectiveSubjectIds,
+    baseSubjectList,
+    resolveSubjectSavedTarget,
+    resolveSubjectRowTarget,
+    planSubjectTargetsOverride,
+    previewSlotLines,
+    projectedHoursBySubjectId,
+  ]);
   const previewAttendanceCalendar = useMemo(() => {
     if (!previewSlotLines.length || !startDate || !endDate) {
       return { months: [], uniqueLearningDayCount: 0 };
@@ -13439,6 +13521,40 @@ export default function PlanYearModal({
                                 ? `${Math.max(0, previewWeeklyCadenceSummary.hoursPerDay)} hr/day`
                                 : `${Math.max(0, previewWeeklyCadenceSummary.hoursPerDay).toFixed(1)} hr/day`}
                             </Text>
+                            {step4TargetComparison ? (
+                              <>
+                                <Text style={{ fontSize: 12, color: TEXT_SECONDARY, marginTop: 4, lineHeight: 17 }}>
+                                  {step4TargetComparison.mode === 'hours'
+                                    ? `${step4TargetComparison.projectedValue} planned hours vs ${step4TargetComparison.targetValue} target hours`
+                                    : `${step4TargetComparison.projectedValue} planned days vs ${step4TargetComparison.targetValue} target days`}
+                                </Text>
+                                {step4TargetComparison.delta !== 0 ? (
+                                  <Text
+                                    style={{
+                                      fontSize: 12,
+                                      marginTop: 2,
+                                      lineHeight: 17,
+                                      color: step4TargetComparison.delta > 0 ? ACCENT : ERROR,
+                                    }}
+                                  >
+                                    {step4TargetComparison.delta > 0
+                                      ? `${Math.abs(step4TargetComparison.delta)} over target`
+                                      : `${Math.abs(step4TargetComparison.delta)} under target`}
+                                  </Text>
+                                ) : (
+                                  <Text style={{ fontSize: 12, color: ACCENT, marginTop: 2, lineHeight: 17 }}>
+                                    On target
+                                  </Text>
+                                )}
+                                {step4TargetComparison.isOverallAdjusted ? (
+                                  <Text style={{ fontSize: 11, color: MUTED, marginTop: 2, lineHeight: 16 }}>
+                                    {step4TargetComparison.mode === 'hours'
+                                      ? `Adjusted for ${step4TargetComparison.allocatedToOtherSubjects} saved hours on other subjects in this school year.`
+                                      : `Adjusted for ${step4TargetComparison.allocatedToOtherSubjects} saved days on other subjects in this school year.`}
+                                  </Text>
+                                ) : null}
+                              </>
+                            ) : null}
                             {hasCadenceConflicts ? (
                               <View style={styles.previewSummaryConflictRow}>
                                 <Text style={styles.previewSummaryConflictText}>

@@ -71,6 +71,30 @@ const LEARNING_GOALS_METHOD_LABELS = {
   plain_text_parsed: 'Paste plain text',
   ai_generated: 'Generate curriculum',
 };
+function isAttendancePresentLike(status) {
+  const normalized = String(status || '').toLowerCase();
+  // Legacy rows can omit status; treat as attended.
+  if (!normalized) return true;
+  return normalized === 'present' || normalized === 'partial';
+}
+
+function computeProgressPercentFromEventsAndAttendance(events = [], attendanceRecords = []) {
+  const plannedEvents = (events || []).filter((event) => event?.status !== 'canceled' && !event?.is_backlog);
+  if (!plannedEvents.length) return null;
+  const plannedIds = new Set(plannedEvents.map((event) => String(event?.id || '')).filter(Boolean));
+  const completedIds = new Set(
+    plannedEvents
+      .filter((event) => event?.status === 'done')
+      .map((event) => String(event?.id || ''))
+      .filter(Boolean)
+  );
+  (attendanceRecords || []).forEach((record) => {
+    const eventId = String(record?.event_id || '');
+    if (!eventId || !plannedIds.has(eventId)) return;
+    if (isAttendancePresentLike(record?.status)) completedIds.add(eventId);
+  });
+  return Math.min(100, Math.round((completedIds.size / plannedEvents.length) * 100));
+}
 
 function formatWeekdayList(days = []) {
   const labels = [...new Set(days)]
@@ -1428,6 +1452,56 @@ export default function SubjectDetailPage({
     return null;
   }, []);
 
+  const applyOptimisticProgressByEventIds = useCallback((eventIds = [], markPresent = true) => {
+    const normalizedIds = [...new Set((eventIds || []).map((id) => String(id || '')).filter(Boolean))];
+    if (normalizedIds.length === 0) return;
+    const idSet = new Set(normalizedIds);
+    setSubjectData((prev) => {
+      if (!prev) return prev;
+      const baseAttendance = Array.isArray(prev.attendanceRecords) ? prev.attendanceRecords : [];
+      const nextAttendance = markPresent
+        ? (() => {
+            const mapped = baseAttendance.map((record) => {
+              const recordEventId = String(record?.event_id || '');
+              if (!recordEventId || !idSet.has(recordEventId)) return record;
+              if (isAttendancePresentLike(record?.status)) return record;
+              return { ...record, status: 'present' };
+            });
+            const presentEventIds = new Set(
+              mapped
+                .filter((record) => isAttendancePresentLike(record?.status))
+                .map((record) => String(record?.event_id || ''))
+                .filter(Boolean)
+            );
+            normalizedIds.forEach((eventId) => {
+              if (presentEventIds.has(eventId)) return;
+              mapped.push({
+                id: `optimistic-progress-${eventId}`,
+                event_id: eventId,
+                status: 'present',
+              });
+            });
+            return mapped;
+          })()
+        : baseAttendance.map((record) => {
+            const recordEventId = String(record?.event_id || '');
+            if (!recordEventId || !idSet.has(recordEventId)) return record;
+            if (!isAttendancePresentLike(record?.status)) return record;
+            return { ...record, status: 'absent' };
+          });
+      const nextProgress = computeProgressPercentFromEventsAndAttendance(prev.events || [], nextAttendance);
+      const nextData = {
+        ...prev,
+        attendanceRecords: nextAttendance,
+        progressPercent: nextProgress,
+      };
+      if (onSubjectDataUpdateRef.current) {
+        onSubjectDataUpdateRef.current(nextData);
+      }
+      return nextData;
+    });
+  }, []);
+
   const handleToggleEventAttendanceForDate = useCallback(async (dateKey, eventId) => {
     if (!familyId || !dateKey || !eventId) return;
     const normKey = String(dateKey).slice(0, 10);
@@ -1471,9 +1545,12 @@ export default function SubjectDetailPage({
             'create attendance'
           )));
         }
+        applyOptimisticProgressByEventIds([event.id], false);
       } else {
         const siblings = getSiblingEventsOnDay(normKey, event, subjectEvents || []);
+        const siblingIds = [];
         for (const sibling of siblings) {
+          if (sibling?.id) siblingIds.push(sibling.id);
           const childIds = resolveChildIdsForAttendanceEvent(sibling);
           if (!childIds.length) continue;
           const minutes = getEventMinutes(sibling);
@@ -1505,6 +1582,7 @@ export default function SubjectDetailPage({
           await Promise.all(upserts);
           await runEventStatusBestEffort(sibling.id, 'done');
         }
+        applyOptimisticProgressByEventIds(siblingIds, true);
       }
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1525,6 +1603,7 @@ export default function SubjectDetailPage({
     getSiblingEventsOnDay,
     runAttendanceMutation,
     runEventStatusBestEffort,
+    applyOptimisticProgressByEventIds,
     loadSubjectDetail,
     toast,
   ]);
@@ -1535,7 +1614,9 @@ export default function SubjectDetailPage({
     const dayEvents = (subjectEvents || []).filter((event) => getEventDateKey(event) === normKey);
     if (!dayEvents.length) return;
     try {
+      const dayEventIds = [];
       for (const event of dayEvents) {
+        if (event?.id) dayEventIds.push(event.id);
         const childIds = resolveChildIdsForAttendanceEvent(event);
         if (!childIds.length) continue;
         const minutes = getEventMinutes(event);
@@ -1567,6 +1648,7 @@ export default function SubjectDetailPage({
         await Promise.all(upserts);
         await runEventStatusBestEffort(event.id, 'done');
       }
+      applyOptimisticProgressByEventIds(dayEventIds, true);
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
@@ -1576,7 +1658,7 @@ export default function SubjectDetailPage({
       toast.push(err?.message || 'Could not mark day attended.', 'error');
       await loadSubjectDetail({ silent: true });
     }
-  }, [familyId, subjectEvents, getEventDateKey, resolveChildIdsForAttendanceEvent, getEventMinutes, attendanceRecords, runAttendanceMutation, runEventStatusBestEffort, loadSubjectDetail, toast]);
+  }, [familyId, subjectEvents, getEventDateKey, resolveChildIdsForAttendanceEvent, getEventMinutes, attendanceRecords, runAttendanceMutation, runEventStatusBestEffort, applyOptimisticProgressByEventIds, loadSubjectDetail, toast]);
 
   const handleYearHeatmapDayPress = useCallback(async (dateKey) => {
     if (!familyId || !dateKey) return;
@@ -1612,8 +1694,10 @@ export default function SubjectDetailPage({
 
     try {
       if (hasPresent) {
+        const toggledEventIds = [];
         if (dayEvents.length > 0) {
           for (const event of dayEvents) {
+            if (event?.id) toggledEventIds.push(event.id);
             const assignedIds = resolveChildIdsForAttendanceEvent(event);
             const eventRecords = dayRecords.filter((record) => String(record?.event_id || '') === String(event?.id));
             const isShared = assignedIds.length > 1;
@@ -1665,7 +1749,9 @@ export default function SubjectDetailPage({
             ))
           );
         }
+        applyOptimisticProgressByEventIds(toggledEventIds, false);
       } else {
+        const toggledEventIds = [];
         if (dayEvents.length > 0) {
           const seenIds = new Set();
           const expandedEvents = [];
@@ -1676,6 +1762,9 @@ export default function SubjectDetailPage({
                 expandedEvents.push(sibling);
               }
             });
+          });
+          expandedEvents.forEach((event) => {
+            if (event?.id) toggledEventIds.push(event.id);
           });
           for (const event of expandedEvents) {
             const assignedIds = resolveChildIdsForAttendanceEvent(event);
@@ -1738,6 +1827,7 @@ export default function SubjectDetailPage({
             })
           );
         }
+        applyOptimisticProgressByEventIds(toggledEventIds, true);
       }
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1762,6 +1852,7 @@ export default function SubjectDetailPage({
     getSiblingEventsOnDay,
     runAttendanceMutation,
     runEventStatusBestEffort,
+    applyOptimisticProgressByEventIds,
     loadSubjectDetail,
     toast,
   ]);

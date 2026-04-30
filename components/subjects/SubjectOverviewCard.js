@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Clock, AlertTriangle, ChevronRight, Plus, Package, ClipboardList, GraduationCap, TrendingUp, Calendar } from 'lucide-react';
+import { Clock, AlertTriangle, ChevronRight, Plus, Package, ClipboardList, GraduationCap } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { useSession } from '../../contexts/SessionContext';
@@ -89,18 +89,6 @@ export default function SubjectOverviewCard({
       timeStr = Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, tOpts);
     }
     return timeStr ? `${weekday} ${timeStr}` : weekday;
-  };
-
-  const formatDaysAgo = (dateString) => {
-    if (!dateString) return null;
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffTime = now - date;
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return '1 day ago';
-    return `${diffDays} days ago`;
   };
 
   // Get assigned children names and objects (moved up for use in handlers)
@@ -214,14 +202,6 @@ export default function SubjectOverviewCard({
     on_track: { color: '#10B981', label: 'On track', emoji: '🟢' },
   };
   const statusInfo = statusConfig[status] || statusConfig.not_started;
-
-  const progressPercent = subject.progressPercent !== null && subject.progressPercent !== undefined
-    ? subject.progressPercent
-    : null;
-  const thisWeekMinutes = subject.thisWeekMinutes || 0;
-  const lastActivity = subject.lastActivity
-    ? formatDaysAgo(subject.lastActivity)
-    : null;
 
   // Get next item or overdue count
   const nextItem = subject.nextItem;
@@ -558,41 +538,6 @@ export default function SubjectOverviewCard({
         </View>
       </View>
 
-      <View style={styles.metricsRow}>
-        <View style={styles.metricItem}>
-          <TrendingUp size={14} color={colors.muted || '#6B7280'} />
-          <Text style={styles.metricText}>
-            Progress: {progressPercent !== null ? `${progressPercent}%` : '—'}
-          </Text>
-        </View>
-        <View style={styles.metricItem}>
-          <Clock size={14} color={colors.muted || '#6B7280'} />
-          <Text style={styles.metricText}>
-            This week: {thisWeekMinutes} min
-          </Text>
-        </View>
-        <View style={styles.metricItem}>
-          <Calendar size={14} color={colors.muted || '#6B7280'} />
-          <Text style={styles.metricText}>
-            Last activity: {lastActivity || 'Not started'}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.progressBarContainer}>
-        <View style={styles.progressBarBackground}>
-          <View
-            style={[
-              styles.progressBarFill,
-              { width: `${progressPercent !== null ? progressPercent : 0}%` }
-            ]}
-          />
-        </View>
-        {progressPercent === null ? (
-          <Text style={styles.progressBarLabel}>Not started</Text>
-        ) : null}
-      </View>
-
       {/* What's next decision row */}
       <View style={styles.whatsNextSection}>
         {nextItem ? (
@@ -892,51 +837,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '400',
     color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  metricsRow: {
-    flexDirection: 'row',
-    gap: 16,
-    marginBottom: 12,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(148, 163, 184, 0.12)',
-  },
-  metricItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  metricText: {
-    fontSize: 12,
-    color: '#6B7280',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  progressBarContainer: {
-    marginBottom: 16,
-  },
-  progressBarBackground: {
-    height: 4,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: Platform.OS === 'web' ? 'transparent' : (colors.accent || '#4F46E5'),
-    borderRadius: 2,
-    ...(Platform.OS === 'web' && {
-      backgroundImage: 'linear-gradient(90deg, #f4b4f8 0%, #c4b5fd 20%, #93c5fd 40%, #a5f3fc 60%, #bbf7d0 80%, #facc15 100%)',
-    }),
-  },
-  progressBarLabel: {
-    fontSize: 11,
-    color: '#9CA3AF',
-    marginTop: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { CalendarPlus, Check, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, SlidersHorizontal, Sparkles, Upload, X } from 'lucide-react';
+import { CalendarPlus, Check, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Upload, X } from 'lucide-react';
 import { applyToCalendar, getAcademicYear, getPlanHealth } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
 import { getFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
@@ -268,6 +268,19 @@ function resolveTargetStatusFromPlanned({ actualValue, targetValue }) {
   if (delta > tolerance) return 'ahead';
   if (delta < -tolerance) return 'behind';
   return 'on_track';
+}
+
+function daysBetweenInclusive(startYmd, endYmd) {
+  const start = new Date(`${String(startYmd || '').slice(0, 10)}T12:00:00`);
+  const end = new Date(`${String(endYmd || '').slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return 0;
+  return Math.floor((end - start) / (24 * 60 * 60 * 1000)) + 1;
+}
+
+function toOneDecimal(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 10) / 10;
 }
 
 function subjectMatchesYearTerm(subject, yearLabel, termId) {
@@ -999,6 +1012,23 @@ export default function SubjectsPlanBuilder({
     const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     if (!Number.isFinite(selectedEndYear)) return [];
     const yearRange = formatYmdFromTemplateYear(selectedStartYear, selectedEndYear, 'full_year');
+    const fallRange = formatYmdFromTemplateYear(selectedStartYear, selectedEndYear, 'fall_term');
+    const springRange = formatYmdFromTemplateYear(selectedStartYear, selectedEndYear, 'spring_term');
+    const scopeRangeById = {
+      full_year: yearRange,
+      fall_term: fallRange,
+      spring_term: springRange,
+    };
+    const todayCapYmd = yearRange
+      ? (todayYmd > yearRange.end_date ? yearRange.end_date : (todayYmd < yearRange.start_date ? yearRange.start_date : todayYmd))
+      : todayYmd;
+    const totalWeeksInYear = yearRange
+      ? Math.max(1, daysBetweenInclusive(yearRange.start_date, yearRange.end_date) / 7)
+      : 1;
+    const elapsedWeeksInYear = yearRange
+      ? Math.max(0, daysBetweenInclusive(yearRange.start_date, todayCapYmd) / 7)
+      : 0;
+    const remainingWeeksInYear = Math.max(0, totalWeeksInYear - elapsedWeeksInYear);
     const relevantScopeIds = ['fall_term', 'spring_term', 'full_year'];
     const relevantCores = (planCores || []).filter((row) => (
       Number(row?.startYear) === selectedStartYear
@@ -1075,6 +1105,20 @@ export default function SubjectsPlanBuilder({
       const blocksForSubject = blocks.filter((block) =>
         Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
       );
+      const weekdaysByScope = {};
+      blocksForSubject.forEach((block) => {
+        const scopeId = normalizeSubjectTerm(block?.scopeId || subjectTermId || 'full_year');
+        if (!weekdaysByScope[scopeId]) weekdaysByScope[scopeId] = new Set();
+        (Array.isArray(block?.weekdays) ? block.weekdays : []).forEach((day) => {
+          const asInt = Number(day);
+          if (Number.isInteger(asInt) && asInt >= 0 && asInt <= 6) weekdaysByScope[scopeId].add(asInt);
+        });
+      });
+      const plannedCapacityDays = Object.entries(weekdaysByScope).reduce((sum, [scopeId, weekdays]) => {
+        const range = scopeRangeById[scopeId] || yearRange;
+        if (!range?.start_date || !range?.end_date) return sum;
+        return sum + countOccurrencesInRange(range.start_date, range.end_date, [...weekdays]);
+      }, 0);
       const attachedIds = Array.isArray(subject?.assignedChildren)
         ? subject.assignedChildren.map((id) => String(id)).filter(Boolean)
         : [];
@@ -1178,7 +1222,45 @@ export default function SubjectsPlanBuilder({
       const actualValue = statusMode === 'hours'
         ? plannedLessonsHoursForTarget
         : (statusMode === 'days' ? plannedLessonsCountForTarget : null);
-      const targetProgressStatus = resolveTargetStatusFromPlanned({ actualValue, targetValue });
+      const actualDays = pastEventsCount;
+      const projectedDays = plannedCapacityDays > 0 ? plannedCapacityDays : plannedLessonsCountForTarget;
+      const targetProgressStatus = resolveTargetStatusFromPlanned({
+        actualValue: statusMode === 'days' ? projectedDays : actualValue,
+        targetValue,
+      });
+      const targetDaysValue = statusMode === 'days' ? Number(targetValue) : null;
+      const shortfallDays = targetDaysValue != null ? Math.max(0, targetDaysValue - projectedDays) : null;
+      const actualShortfallDays = targetDaysValue != null ? Math.max(0, targetDaysValue - actualDays) : null;
+      const currentPaceDaysPerWeek = elapsedWeeksInYear > 0 ? toOneDecimal(actualDays / elapsedWeeksInYear) : 0;
+      const requiredPaceDaysPerWeek = targetDaysValue != null ? toOneDecimal(targetDaysValue / totalWeeksInYear) : 0;
+      const catchUpDaysPerWeek = targetDaysValue != null && remainingWeeksInYear > 0
+        ? Math.max(1, Math.ceil(Math.max(0, targetDaysValue - actualDays) / remainingWeeksInYear))
+        : 0;
+      const weeksBehind = targetDaysValue != null && requiredPaceDaysPerWeek > 0
+        ? Math.max(0, Math.round((Math.max(0, targetDaysValue - actualDays) / requiredPaceDaysPerWeek)))
+        : 0;
+      let actionType = 'set_target';
+      let actionLabel = 'Set target';
+      let statusLabel = 'Target needed';
+      if (targetDaysValue != null) {
+        if (!blocksForSubject.length && actualDays <= 0) {
+          actionType = 'generate_plan';
+          actionLabel = 'Generate plan';
+          statusLabel = 'Not started';
+        } else if ((shortfallDays || 0) <= 0) {
+          actionType = 'keep_plan';
+          actionLabel = 'Keep plan';
+          statusLabel = 'On track';
+        } else if (remainingWeeksInYear > 0 && (shortfallDays / remainingWeeksInYear) <= 2) {
+          actionType = 'increase_pace';
+          actionLabel = `Add ${Math.max(1, Math.ceil(shortfallDays / remainingWeeksInYear))} day/week`;
+          statusLabel = 'Behind but recoverable';
+        } else {
+          actionType = 'rebaseline';
+          actionLabel = 'Extend end date or reduce target';
+          statusLabel = 'Unrecoverable at current cadence';
+        }
+      }
       const schoolTermId = subjectTermId;
       const schoolTermLabel = schoolTermId === 'full_year' ? '' : formatScheduleScopeLabel(schoolTermId);
       return {
@@ -1192,6 +1274,23 @@ export default function SubjectsPlanBuilder({
         plannedEventsCount,
         eventItems: yearEventItems,
         targetProgressStatus,
+        targetUnit: statusMode,
+        targetValue,
+        actualDays,
+        projectedDays,
+        plannedCapacityDays: projectedDays,
+        shortfallDays,
+        actualShortfallDays,
+        currentPaceDaysPerWeek,
+        requiredPaceDaysPerWeek,
+        catchUpDaysPerWeek,
+        weeksBehind,
+        totalWeeksInYear,
+        elapsedWeeksInYear,
+        remainingWeeksInYear,
+        statusLabel,
+        actionType,
+        actionLabel,
         attachedStudentIds: effectiveAttachedIds,
         attachedStudentsLabel: attachedStudentNames.join(', '),
       };
@@ -1209,149 +1308,66 @@ export default function SubjectsPlanBuilder({
   }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject, activeScheduleCore, familyPlannerSettings, subjectTargetSettingsById]);
 
   const yearTargetSummary = useMemo(() => {
-    if (!displaySchoolYear) return null;
-    const selectedStartYear = Number(displaySchoolYear?.start_year);
-    const selectedEndYear = Number(displaySchoolYear?.end_year);
-    if (!Number.isFinite(selectedStartYear) || !Number.isFinite(selectedEndYear)) return null;
-
-    const plannedDays = (termSections || []).reduce((sum, section) => sum + Number(section?.plannedDays || 0), 0);
-
-    const relevantCores = (planCores || []).filter((core) => (
-      Number(core?.startYear) === selectedStartYear
-      && ['fall_term', 'spring_term', 'full_year'].includes(String(core?.scopeId || '').trim())
-    ));
-    let estimatedHours = 0;
-    relevantCores.forEach((core) => {
-      const range = formatYmdFromTemplateYear(selectedStartYear, selectedEndYear, core?.scopeId);
-      if (!range?.start_date || !range?.end_date) return;
-      const blocks = Array.isArray(core?.blocksLite) ? core.blocksLite : [];
-      blocks.forEach((block) => {
-        const weekdays = Array.isArray(block?.weekdays) ? block.weekdays : [];
-        if (weekdays.length === 0) return;
-        const occurrences = countOccurrencesInRange(range.start_date, range.end_date, weekdays);
-        const durationHours = timeRangeHours(block?.start_time, block?.end_time);
-        estimatedHours += occurrences * durationHours;
+    const perSubjectRows = (termSections || [])
+      .flatMap((section) => section?.subjectPlans || [])
+      .filter((row) => row?.targetUnit === 'days' && Number.isFinite(Number(row?.targetValue)) && Number(row?.targetValue) > 0)
+      .map((row) => {
+        const targetDays = Number(row.targetValue);
+        const actualDays = Number(row.actualDays || 0);
+        const plannedDays = Number(row.plannedCapacityDays || row.projectedDays || 0);
+        const upcomingDays = Math.max(0, Number(row.plannedEventsCount || 0));
+        const attendedDays = Math.max(0, actualDays);
+        const unattendedDays = Math.max(0, plannedDays - attendedDays - upcomingDays);
+        const projectedDays = upcomingDays + attendedDays + unattendedDays;
+        const balanceDays = projectedDays - targetDays;
+        const requiredPace = Number(row.requiredPaceDaysPerWeek || 0);
+        const currentPace = Number(row.currentPaceDaysPerWeek || 0);
+        return {
+          ...row,
+          targetDays,
+          plannedDays,
+          upcomingDays,
+          attendedDays,
+          unattendedDays,
+          projectedDays,
+          balanceDays,
+          requiredPace,
+          currentPace,
+          progressPct: Math.max(0, Math.min(100, Math.round((attendedDays / targetDays) * 100))),
+        };
       });
-    });
-    const estimatedHoursRounded = Math.max(0, Math.round(estimatedHours * 10) / 10);
 
-    const scope = String(familyPlannerSettings?.target_scope || 'overall').trim().toLowerCase();
-    const overallMode = String(familyPlannerSettings?.default_constraint_mode || 'none').trim().toLowerCase();
-    const subjectsForYear = (baseSubjects || []).filter(
-      (subject) => String(subject?.school_year || '').trim() === String(displaySchoolYear?.label || '').trim()
-    );
-    const subjectPlanById = {};
-    (termSections || []).forEach((section) => {
-      (section?.subjectPlans || []).forEach((row) => {
-        subjectPlanById[String(row?.id || '')] = row;
-      });
-    });
-
-    const perSubjectDaysTarget = subjectsForYear.reduce((sum, subject) => {
-      const subjectId = String(subject?.id || '').trim();
-      const subjectSettings = subjectTargetSettingsById?.[subjectId] || null;
-      const mode = String(subjectSettings?.default_constraint_mode || subject?.default_constraint_mode || '').trim().toLowerCase();
-      const days = parsePositiveInt(subjectSettings?.default_target_days ?? subject?.default_target_days);
-      return mode === 'days' && days != null ? sum + days : sum;
-    }, 0);
-    const perSubjectHoursTarget = subjectsForYear.reduce((sum, subject) => {
-      const subjectId = String(subject?.id || '').trim();
-      const subjectSettings = subjectTargetSettingsById?.[subjectId] || null;
-      const mode = String(subjectSettings?.default_constraint_mode || subject?.default_constraint_mode || '').trim().toLowerCase();
-      const hours = parsePositiveFloat(subjectSettings?.default_target_hours ?? subject?.default_target_hours);
-      return mode === 'hours' && hours != null ? sum + hours : sum;
-    }, 0);
-    const perSubjectRows = subjectsForYear.map((subject) => {
-      const subjectId = String(subject?.id || '').trim();
-      const subjectSettings = subjectTargetSettingsById?.[subjectId] || null;
-      const mode = String(subjectSettings?.default_constraint_mode || subject?.default_constraint_mode || '').trim().toLowerCase();
-      const targetDays = parsePositiveInt(subjectSettings?.default_target_days ?? subject?.default_target_days);
-      const targetHours = parsePositiveFloat(subjectSettings?.default_target_hours ?? subject?.default_target_hours);
-      const statusMode = mode === 'hours'
-        ? 'hours'
-        : (mode === 'days'
-          ? 'days'
-          : (targetDays != null && targetHours == null
-            ? 'days'
-            : (targetHours != null && targetDays == null ? 'hours' : null)));
-      const targetValue = statusMode === 'hours' ? targetHours : (statusMode === 'days' ? targetDays : null);
-      if (targetValue == null) return null;
-      const plannedRow = subjectPlanById[subjectId] || null;
-      const plannedDaysValue = Number(plannedRow?.pastEventsCount || 0) + Number(plannedRow?.plannedEventsCount || 0);
-      const plannedHoursValue = (plannedRow?.eventItems || []).reduce(
-        (sum, item) => sum + (Number(item?.durationHours) || 0),
-        0
-      );
-      const plannedValue = statusMode === 'hours'
-        ? Math.round(plannedHoursValue * 10) / 10
-        : plannedDaysValue;
-      const progressStatus = resolveTargetStatusFromPlanned({ actualValue: plannedValue, targetValue });
-      return {
-        id: subjectId,
-        name: subject?.name || 'Subject',
-        unit: statusMode,
-        targetValue,
-        plannedValue,
-        progressStatus,
-      };
-    }).filter(Boolean);
-
-    let targetUnit = null;
-    let targetValue = null;
-    if (scope === 'per_subject') {
-      if (perSubjectDaysTarget > 0 && perSubjectHoursTarget <= 0) {
-        targetUnit = 'days';
-        targetValue = perSubjectDaysTarget;
-      } else if (perSubjectHoursTarget > 0 && perSubjectDaysTarget <= 0) {
-        targetUnit = 'hours';
-        targetValue = perSubjectHoursTarget;
-      } else if (perSubjectDaysTarget > 0 && perSubjectHoursTarget > 0) {
-        targetUnit = overallMode === 'hours' ? 'hours' : 'days';
-        targetValue = targetUnit === 'hours' ? perSubjectHoursTarget : perSubjectDaysTarget;
-      }
-    } else if (overallMode === 'days' && familyPlannerSettings?.default_target_days != null) {
-      targetUnit = 'days';
-      targetValue = Number(familyPlannerSettings.default_target_days);
-    } else if (overallMode === 'hours' && familyPlannerSettings?.default_target_hours != null) {
-      targetUnit = 'hours';
-      targetValue = Number(familyPlannerSettings.default_target_hours);
-    }
-
-    const currentValue = targetUnit === 'hours' ? estimatedHoursRounded : plannedDays;
-    const delta = targetValue != null ? currentValue - targetValue : null;
-    const absDelta = delta == null ? null : Math.round(Math.abs(delta) * 10) / 10;
-    const scopeLabel = scope === 'per_subject' ? 'Per-subject targets' : 'Overall family target';
-    const targetLabel = targetValue == null
-      ? 'No yearly target set yet'
-      : `${targetValue}${targetUnit === 'hours' ? ' hours' : ' days'} target`;
-    const totalLabel = scope === 'per_subject'
-      ? null
-      : `${currentValue}${targetUnit === 'hours' ? ' hours' : ' days'} currently planned`;
-    const ctaLabel = targetValue == null
-      ? 'Set yearly target in Planning preferences'
-      : (delta < 0
-        ? `Add ${absDelta} ${targetUnit === 'hours' ? 'hours' : 'class days'} to meet target`
-        : (delta > 0
-          ? `You're ${absDelta} ${targetUnit === 'hours' ? 'hours' : 'days'} over, keep on pushing!`
-          : "You're right on target for this year"));
-    const helperLabel = targetValue == null
-      ? 'Set a days or hours target first to get suggested adjustments.'
-      : (delta > 0
-        ? `Consider removing ${absDelta} ${targetUnit === 'hours' ? 'hours' : 'class days'} if you want to stick to target.`
-        : (delta < 0
-          ? `Need ${absDelta} more ${targetUnit === 'hours' ? 'hours' : 'class days'} to hit your target.`
-          : 'Nice pacing. Your current total matches the saved target.'));
-
+    if (perSubjectRows.length === 0) return null;
+    const first = perSubjectRows[0] || {};
+    const totalTargetDays = perSubjectRows.reduce((sum, row) => sum + Number(row.targetDays || 0), 0);
+    const totalActualDays = perSubjectRows.reduce((sum, row) => sum + Number(row.attendedDays || 0), 0);
+    const totalPlannedDays = perSubjectRows.reduce((sum, row) => sum + Number(row.projectedDays || 0), 0);
+    const totalUpcomingDays = perSubjectRows.reduce((sum, row) => sum + Number(row.upcomingDays || 0), 0);
+    const totalAttendedDays = perSubjectRows.reduce((sum, row) => sum + Number(row.attendedDays || 0), 0);
+    const totalUnattendedDays = perSubjectRows.reduce((sum, row) => sum + Number(row.unattendedDays || 0), 0);
+    const totalProjectedDays = perSubjectRows.reduce((sum, row) => sum + Number(row.projectedDays || 0), 0);
+    const totalBalanceDays = totalProjectedDays - totalTargetDays;
+    const elapsedWeeks = Math.max(0.1, Number(first.elapsedWeeksInYear || 0.1));
+    const remainingWeeks = Math.max(0, Number(first.remainingWeeksInYear || 0));
+    const currentPaceDaysPerWeek = toOneDecimal(totalActualDays / elapsedWeeks);
+    const projectedFinishDays = Math.round(totalActualDays + (currentPaceDaysPerWeek * remainingWeeks));
+    const totalShortfall = Math.max(0, totalTargetDays - projectedFinishDays);
     return {
-      scope,
-      scopeLabel,
-      targetLabel,
-      totalLabel,
-      ctaLabel,
-      helperLabel,
       perSubjectRows,
+      totalTargetDays,
+      totalActualDays,
+      totalPlannedDays,
+      totalUpcomingDays,
+      totalAttendedDays,
+      totalUnattendedDays,
+      totalProjectedDays,
+      totalBalanceDays,
+      projectedFinishDays,
+      totalShortfall,
+      currentPaceDaysPerWeek,
+      progressPct: totalTargetDays > 0 ? Math.max(0, Math.min(100, Math.round((totalActualDays / totalTargetDays) * 100))) : 0,
     };
-  }, [displaySchoolYear, termSections, planCores, familyPlannerSettings, baseSubjects, subjectTargetSettingsById]);
+  }, [termSections]);
 
   const subjectPlans = useMemo(() => {
     const selectedStartYear = Number(displaySchoolYear?.start_year);
@@ -1842,20 +1858,8 @@ export default function SubjectsPlanBuilder({
 
                                   <View style={styles.subjectCadence}>
                                     <Text style={styles.subjectCadenceText}>
-                                      {row.cadenceText || 'No scheduled plan yet.'}
+                                      {row.cadenceText || 'No schedule yet.'}
                                     </Text>
-                                    {row.schoolTermLabel ? (
-                                      <Text style={styles.subjectMeta}>{row.schoolTermLabel}</Text>
-                                    ) : null}
-                                    <TouchableOpacity
-                                      style={styles.subjectEventCountLink}
-                                      onPress={() => openSubjectEventsModal(row, row.schoolTermLabel || termSection.title)}
-                                      activeOpacity={0.8}
-                                    >
-                                      <Text style={styles.subjectEventCountText}>
-                                        {`Events: ${(row.pastEventsCount || 0) + (row.plannedEventsCount || 0)} (${row.pastEventsCount || 0} past, ${row.plannedEventsCount || 0} planned)`}
-                                      </Text>
-                                    </TouchableOpacity>
                                   </View>
 
                                   <View style={styles.subjectRowActions}>
@@ -1920,47 +1924,94 @@ export default function SubjectsPlanBuilder({
               <View style={styles.yearTargetsSection}>
                 <View style={styles.yearTargetsSectionHeaderRow}>
                   <Text style={styles.termHeaderCompactTitle}>Year Targets</Text>
-                  <View style={styles.termActions}>
-                    <TouchableOpacity
-                      style={styles.secondaryButton}
-                      onPress={openPlanningPreferences}
-                    >
-                      <SlidersHorizontal size={16} color="#374151" />
-                      <Text style={styles.secondaryButtonText}>Planning preferences</Text>
-                    </TouchableOpacity>
-                  </View>
                 </View>
                 <View style={styles.termHeaderDivider} />
                 <View style={styles.yearTargetsCard}>
-                  <View style={styles.yearTargetsTopRow}>
-                    <View style={styles.yearTargetsHeaderCopy}>
-                      <Text style={styles.yearTargetsTitle}>Year target snapshot</Text>
-                      <Text style={styles.yearTargetsSubtitle}>
-                        {yearTargetSummary.scope === 'per_subject'
-                          ? yearTargetSummary.scopeLabel
-                          : `${yearTargetSummary.scopeLabel} - ${yearTargetSummary.targetLabel}`}
-                      </Text>
+                  <View style={styles.yearProgressSummaryCard}>
+                    <View style={styles.yearProgressSummaryTrack}>
+                      <View style={[styles.yearProgressSummaryFill, { width: `${yearTargetSummary.progressPct}%` }]} />
+                    </View>
+                    <Text style={styles.yearProgressSummaryMetric}>
+                      {`${yearTargetSummary.totalActualDays} / ${yearTargetSummary.totalTargetDays} days`}
+                    </Text>
+                  </View>
+                  <View style={styles.yearTargetsSubjectCardsWrap}>
+                    <View style={styles.yearTargetsTable}>
+                      <View style={[styles.yearTargetsTableRow, styles.yearTargetsTableHeaderRow]}>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsSubjectCol]}>Subject</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol]}>Target</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol]}>Upcoming</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol]}>Attended</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsNumberCol]}>Unattended</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsProjectedCol]}>Projected</Text>
+                        <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsBalanceCol]}>Balance</Text>
+                      </View>
+                      {(yearTargetSummary.perSubjectRows || []).map((row) => (
+                        <View key={`year-target-row-${row.id}`} style={styles.yearTargetsTableRow}>
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsSubjectCol]}>{row.name}</Text>
+                          <TouchableOpacity
+                            onPress={openPlanningPreferences}
+                            style={styles.yearTargetsTargetCellButton}
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTargetCellText]}>{row.targetDays}</Text>
+                          </TouchableOpacity>
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol]}>{row.upcomingDays}</Text>
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol]}>{row.attendedDays}</Text>
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol]}>{row.unattendedDays}</Text>
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsProjectedCol]}>
+                            {`${row.upcomingDays}+${row.attendedDays}+${row.unattendedDays} = ${row.projectedDays}`}
+                          </Text>
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsBalanceCol]}>
+                            {row.balanceDays > 0 ? `+${row.balanceDays}` : row.balanceDays}
+                          </Text>
+                        </View>
+                      ))}
+                      <View style={[styles.yearTargetsTableRow, styles.yearTargetsTableTotalRow]}>
+                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsSubjectCol, styles.yearTargetsTableTotalText]}>Total</Text>
+                        <TouchableOpacity
+                          onPress={openPlanningPreferences}
+                          style={styles.yearTargetsTargetCellButton}
+                          activeOpacity={0.8}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText, styles.yearTargetsTargetCellText]}>
+                            {yearTargetSummary.totalTargetDays}
+                          </Text>
+                        </TouchableOpacity>
+                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText]}>{yearTargetSummary.totalUpcomingDays}</Text>
+                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText]}>{yearTargetSummary.totalAttendedDays}</Text>
+                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsNumberCol, styles.yearTargetsTableTotalText]}>{yearTargetSummary.totalUnattendedDays}</Text>
+                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsProjectedCol, styles.yearTargetsTableTotalText]}>
+                          {`${yearTargetSummary.totalUpcomingDays}+${yearTargetSummary.totalAttendedDays}+${yearTargetSummary.totalUnattendedDays} = ${yearTargetSummary.totalProjectedDays}`}
+                        </Text>
+                        <Text style={[styles.yearTargetsTableCell, styles.yearTargetsBalanceCol, styles.yearTargetsTableTotalText]}>
+                          {yearTargetSummary.totalBalanceDays > 0 ? `+${yearTargetSummary.totalBalanceDays}` : yearTargetSummary.totalBalanceDays}
+                        </Text>
+                      </View>
                     </View>
                   </View>
-                  {yearTargetSummary.scope === 'per_subject' ? (
-                    <View style={styles.yearTargetsSubjectList}>
-                      {(yearTargetSummary.perSubjectRows || []).length === 0 ? (
-                        <Text style={styles.yearTargetsHelperText}>No per-subject targets set yet.</Text>
-                      ) : (
-                        (yearTargetSummary.perSubjectRows || []).map((row) => (
-                          <View key={`year-target-${row.id}`} style={styles.yearTargetsSubjectRow}>
-                            <Text style={styles.yearTargetsSubjectName}>{row.name}</Text>
-                            <Text style={styles.yearTargetsSubjectValue}>
-                              {`${row.plannedValue}${row.unit === 'hours' ? 'h' : 'd'} / ${row.targetValue}${row.unit === 'hours' ? 'h' : 'd'}`}
-                            </Text>
-                          </View>
-                        ))
-                      )}
-                    </View>
-                  ) : (
-                    <Text style={styles.yearTargetsTotalText}>{yearTargetSummary.totalLabel}</Text>
-                  )}
-                  <Text style={styles.yearTargetsHelperText}>{yearTargetSummary.helperLabel}</Text>
+                  <View style={styles.yearTargetsPredictiveCard}>
+                    <Text style={styles.yearTargetsPredictiveTitle}>What to adjust</Text>
+                    <Text style={styles.yearTargetsPredictiveLine}>
+                      {`Need +${Math.max(0, -Number(yearTargetSummary.totalBalanceDays || 0))} days to meet target.`}
+                    </Text>
+                    {(yearTargetSummary.perSubjectRows || [])
+                      .map((row) => ({ name: row.name || 'Subject', shortDays: Math.max(0, -Number(row.balanceDays || 0)) }))
+                      .filter((row) => row.shortDays > 0)
+                      .map((row) => (
+                        <Text key={`adjust-${row.name}`} style={styles.yearTargetsPredictiveLine}>
+                          {`${row.name}: +${row.shortDays}`}
+                        </Text>
+                      ))}
+                    <Text style={styles.yearTargetsPredictiveLine}>
+                      Ways to close the gap:
+                    </Text>
+                    <Text style={styles.yearTargetsPredictiveLine}>
+                      Upcoming schedule · Past attendance · Target
+                    </Text>
+                  </View>
                 </View>
               </View>
             ) : null}
@@ -2562,6 +2613,237 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     paddingHorizontal: 2,
     marginBottom: 0,
+    gap: 12,
+  },
+  yearProgressSummaryCard: {
+    borderWidth: 1,
+    borderColor: '#D7E5F5',
+    backgroundColor: '#F8FBFF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  yearProgressSummaryTrack: {
+    width: '100%',
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: '#E6EEF8',
+    overflow: 'hidden',
+  },
+  yearProgressSummaryFill: {
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: Platform.OS === 'web' ? 'transparent' : '#6BB3E8',
+    ...(Platform.OS === 'web' && {
+      backgroundImage: 'linear-gradient(90deg, #f4b4f8 0%, #c4b5fd 20%, #93c5fd 40%, #a5f3fc 60%, #bbf7d0 80%, #facc15 100%)',
+    }),
+  },
+  yearProgressSummaryMetric: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsSubjectCardsWrap: {
+    gap: 10,
+  },
+  yearTargetsTable: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  yearTargetsTableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  yearTargetsTableHeaderRow: {
+    backgroundColor: '#F8FAFC',
+  },
+  yearTargetsTableTotalRow: {
+    backgroundColor: '#F8FAFF',
+    borderBottomWidth: 0,
+  },
+  yearTargetsTableHeaderCell: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsTableCell: {
+    fontSize: 14,
+    color: '#1F2937',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsTargetCellButton: {
+    flex: 0.85,
+  },
+  yearTargetsTargetCellText: {
+    color: '#1D4ED8',
+    textDecorationLine: 'underline',
+  },
+  yearTargetsTableTotalText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsSubjectCol: {
+    flex: 1.4,
+  },
+  yearTargetsNumberCol: {
+    flex: 0.85,
+  },
+  yearTargetsProjectedCol: {
+    flex: 1.8,
+  },
+  yearTargetsBalanceCol: {
+    flex: 0.85,
+  },
+  yearTargetsSubjectCard: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  yearTargetsSubjectCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  yearTargetsSubjectCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0F172A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsInlineTargetButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.28)',
+    backgroundColor: '#F8FAFC',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearTargetsInlineTargetText: {
+    fontSize: 12,
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsSubjectProgressText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsMetricsRow: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 2,
+  },
+  yearTargetsMetricLine: {
+    fontSize: 12,
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsDeltaLine: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F172A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsStatusLine: {
+    fontSize: 12,
+    color: '#7C2D12',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPacingLine: {
+    fontSize: 12,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPrimaryAction: {
+    marginTop: 2,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(107,179,232,0.45)',
+    backgroundColor: 'rgba(107,179,232,0.12)',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearTargetsPrimaryActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1D4ED8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveCard: {
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+    borderRadius: 12,
+    backgroundColor: '#F8FAFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 3,
+  },
+  yearTargetsPredictiveTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E3A8A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsPredictiveLine: {
+    fontSize: 12,
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   yearTargetsTopRow: {
     flexDirection: 'row',

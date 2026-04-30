@@ -1619,6 +1619,13 @@ export default function SubjectsPage({
               [selectedSubjectId]: data,
             };
             setSubjectDetailCache(updatedCache);
+            if (data && selectedSubjectId) {
+              setSubjects((prev) => (prev || []).map((row) => (
+                String(row?.id) === String(selectedSubjectId)
+                  ? { ...row, progressPercent: data.progressPercent ?? row.progressPercent }
+                  : row
+              )));
+            }
             
             // Update parent cache if callback provided
             if (onSubjectDetailUpdate) {
