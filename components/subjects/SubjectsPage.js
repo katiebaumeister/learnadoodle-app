@@ -1760,6 +1760,48 @@ export default function SubjectsPage({
     </Modal>
   );
 
+  const renderPlanningPreferencesModal = () => (
+    <Modal
+      visible={showPlanningPreferencesModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => {
+        setShowPlanningPreferencesModal(false);
+        setPlanningPreferencesSchoolYearLabel(null);
+      }}
+    >
+      <TouchableOpacity
+        style={styles.exportModalBackdrop}
+        activeOpacity={1}
+        onPress={() => {
+          setShowPlanningPreferencesModal(false);
+          setPlanningPreferencesSchoolYearLabel(null);
+        }}
+      >
+        <TouchableOpacity style={styles.planningPreferencesModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.planningPreferencesBody}>
+            <PlannerSettingsContent
+              familyId={familyId}
+              embeddedInModal
+              lockedSchoolYearLabel={planningPreferencesSchoolYearLabel || null}
+              onRequestClose={() => {
+                setShowPlanningPreferencesModal(false);
+                setPlanningPreferencesSchoolYearLabel(null);
+              }}
+              onSave={() => {
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+                  window.dispatchEvent(new CustomEvent('refreshSubjects'));
+                }
+                loadSubjects();
+              }}
+            />
+          </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+
   // If a subject is selected, show detail view
   if (selectedSubjectId) {
     return (
@@ -1768,6 +1810,12 @@ export default function SubjectsPage({
           subjectId={selectedSubjectId}
           familyId={familyId}
           children={safeChildren}
+          onOpenPlannerSettings={(schoolYearLabel) => {
+            setPlanningPreferencesSchoolYearLabel(
+              String(schoolYearLabel || '').trim() || selectedYearFilter || getCurrentSchoolYear()
+            );
+            setShowPlanningPreferencesModal(true);
+          }}
           preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
           initialScrollToSectionId={pendingScrollToSectionId}
           initialOpenMaterialId={pendingOpenMaterialId}
@@ -1794,6 +1842,7 @@ export default function SubjectsPage({
           onEditSubject={onEditSubject}
           onOpenExportModalForSection={(sectionType) => openSubjectsExportModal(sectionType)}
         />
+        {renderPlanningPreferencesModal()}
         {renderSubjectsExportModal()}
       </>
     );
@@ -2010,45 +2059,7 @@ export default function SubjectsPage({
           descriptionText={"Courses is your family's subject overview page. Click any subject card to open the Subject Details page. Switch to Schedule for the multi-subject planning layer, or build out structured class plans directly within each Subject Details page."}
         />
       )}
-      <Modal
-        visible={showPlanningPreferencesModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {
-          setShowPlanningPreferencesModal(false);
-          setPlanningPreferencesSchoolYearLabel(null);
-        }}
-      >
-        <TouchableOpacity
-          style={styles.exportModalBackdrop}
-          activeOpacity={1}
-          onPress={() => {
-            setShowPlanningPreferencesModal(false);
-            setPlanningPreferencesSchoolYearLabel(null);
-          }}
-        >
-          <TouchableOpacity style={styles.planningPreferencesModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
-            <View style={styles.planningPreferencesBody}>
-              <PlannerSettingsContent
-                familyId={familyId}
-                embeddedInModal
-                lockedSchoolYearLabel={planningPreferencesSchoolYearLabel || null}
-                onRequestClose={() => {
-                  setShowPlanningPreferencesModal(false);
-                  setPlanningPreferencesSchoolYearLabel(null);
-                }}
-                onSave={() => {
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-                    window.dispatchEvent(new CustomEvent('refreshSubjects'));
-                  }
-                  loadSubjects();
-                }}
-              />
-            </View>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+      {renderPlanningPreferencesModal()}
       {renderSubjectsExportModal()}
 
       {/* Content */}

@@ -8677,6 +8677,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             subjectId={subjectId}
             familyId={subjectFamilyId}
             children={children || []}
+            onOpenPlannerSettings={() => {
+              if (typeof onTabChange === 'function') {
+                onTabChange('settings', 'planner-settings');
+              }
+            }}
             preloadedSubjectData={subjectDetailCache[subjectId]}
             onSubjectDataUpdate={(data) => handleSubjectDetailUpdate(subjectId, data)}
             onBack={() => {

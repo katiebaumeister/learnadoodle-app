@@ -38,6 +38,9 @@ import MaterialDocViewerModal, {
   resolveMaterialDocViewerUrl,
   getMaterialFileTypeLabel,
 } from '../materials/MaterialDocViewerModal';
+import ManualCurriculumBuilderModal from '../ManualCurriculumBuilderModal';
+import ParsePlainTextModal from '../ParsePlainTextModal';
+import BuildCurriculumModal from '../planner/modals/BuildCurriculumModal';
 import { useToast } from '../Toast';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
@@ -381,6 +384,7 @@ export default function SubjectDetailPage({
   children = [],
   onBack,
   onEditSubject,
+  onOpenPlannerSettings = null,
   onOpenExportModalForSection = null,
   preloadedSubjectData = null,
   onSubjectDataUpdate = null,
@@ -416,6 +420,10 @@ export default function SubjectDetailPage({
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
   const [applyingAttendanceSuggestion, setApplyingAttendanceSuggestion] = useState(false);
   const [showLearningGoalsMethodModal, setShowLearningGoalsMethodModal] = useState(false);
+  const [showManualUnitsModal, setShowManualUnitsModal] = useState(false);
+  const [showParseUnitsModal, setShowParseUnitsModal] = useState(false);
+  const [showGenerateUnitsModal, setShowGenerateUnitsModal] = useState(false);
+  const [buildUnitsInputMode, setBuildUnitsInputMode] = useState('topic');
   const [learningGoalsUnits, setLearningGoalsUnits] = useState([]);
   const [learningGoalsSource, setLearningGoalsSource] = useState(null);
   const [learningGoalsLoading, setLearningGoalsLoading] = useState(false);
@@ -721,29 +729,26 @@ export default function SubjectDetailPage({
     (method) => {
       const requestedMethod = String(method || '').trim().toLowerCase();
       const mappedMethod = requestedMethod === 'paste' ? 'paste_plain' : requestedMethod;
-      const safeMethod = ['manual', 'paste_plain', 'upload', 'generate'].includes(mappedMethod)
-        ? mappedMethod
-        : null;
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && subjectData?.subject?.id) {
-        window.dispatchEvent(
-          new CustomEvent('openPlanYearModal', {
-            detail: {
-              from: 'subject_detail',
-              subjectId: subjectData.subject.id,
-              subjectName: subjectData.subject.name || null,
-              childIds: assignedChildren,
-              openAsModal: true,
-              skipPlanSummary: true,
-              openDirectlyToScope: true,
-              initialUnitStructureMethod: safeMethod,
-            },
-          })
-        );
+      if (!subjectData?.subject?.id) return;
+      if (mappedMethod === 'manual') {
+        setShowManualUnitsModal(true);
         return;
       }
-      if (onEditSubject && subjectData?.subject) onEditSubject(subjectData.subject);
+      if (mappedMethod === 'generate') {
+        setBuildUnitsInputMode('topic');
+        setShowGenerateUnitsModal(true);
+        return;
+      }
+      if (mappedMethod === 'upload') {
+        setBuildUnitsInputMode('material');
+        setShowGenerateUnitsModal(true);
+        return;
+      }
+      if (mappedMethod === 'paste_plain') {
+        setShowParseUnitsModal(true);
+      }
     },
-    [subjectData, assignedChildren, onEditSubject]
+    [subjectData]
   );
   const openSubjectUnitsEditor = useCallback(() => {
     const sourceToMethod = {
@@ -1074,6 +1079,31 @@ export default function SubjectDetailPage({
       openingPlanBuilderRef.current = false;
     }
   }, [subject?.id, subject?.name, assignedChildren, subjectPlanYearId, subjectPlanYearIdFromEvents, familyId]);
+  const openAttendanceTargetPreferences = useCallback(() => {
+    if (typeof onOpenPlannerSettings === 'function') {
+      onOpenPlannerSettings(subject?.school_year || null);
+      return;
+    }
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !subject?.id) return;
+    const resolvedPlanYearId = subjectPlanYearId || subjectPlanYearIdFromEvents || null;
+    window.dispatchEvent(
+      new CustomEvent('openPlanYearModal', {
+        detail: {
+          from: 'subject_detail_attendance',
+          subjectId: subject.id,
+          subjectName: subject.name || null,
+          schoolYear: subject.school_year || null,
+          schoolTerm: subject.school_term || null,
+          childIds: assignedChildren,
+          academicYearId: resolvedPlanYearId,
+          openAsModal: true,
+          openToEditList: !resolvedPlanYearId,
+          skipPlanSummary: true,
+          openDirectlyToScope: true,
+        },
+      })
+    );
+  }, [assignedChildren, onOpenPlannerSettings, subject?.id, subject?.name, subject?.school_term, subject?.school_year, subjectPlanYearId, subjectPlanYearIdFromEvents]);
   const subjectNameForPlanLabel = String(subject?.name || 'Subject').trim() || 'Subject';
   const planButtonLabel = subjectPlanYearId
     ? `Edit ${subjectNameForPlanLabel} plan`
@@ -1644,6 +1674,21 @@ export default function SubjectDetailPage({
             </Text>
           </View>
         ) : null}
+      </View>
+      <View style={styles.attendanceTargetSourceRow}>
+        <Text style={styles.attendanceTargetSourceText}>
+          {`Gap is based on saved ${attendanceTargetProgress.sourceLabel}: ${attendanceTargetProgress.target} ${attendanceTargetProgress.mode}.`}
+        </Text>
+        <TouchableOpacity
+          onPress={openAttendanceTargetPreferences}
+          style={styles.attendanceTargetApplyButton}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Change saved target"
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Text style={styles.attendanceTargetApplyButtonText}>Change saved target</Text>
+        </TouchableOpacity>
       </View>
       <Text style={styles.attendanceTargetSuggestionLine}>
         {`Suggestion: ${attendanceCatchUpSuggestion?.suggestionSummaryText || 'Extend term length or add class days per week.'}`}
@@ -3022,9 +3067,12 @@ export default function SubjectDetailPage({
                 disabled={applyingAttendanceSuggestion}
                 {...(Platform.OS === 'web' && { cursor: applyingAttendanceSuggestion ? 'default' : 'pointer' })}
               >
-                <Text style={styles.attendanceSuggestionConfirmApplyButtonText}>
-                  {applyingAttendanceSuggestion ? 'Applying...' : 'Confirm'}
-                </Text>
+                <View style={styles.attendanceSuggestionConfirmApplyButtonInner}>
+                  {!applyingAttendanceSuggestion ? <CheckCircle size={14} color="#FFFFFF" /> : null}
+                  <Text style={styles.attendanceSuggestionConfirmApplyButtonText}>
+                    {applyingAttendanceSuggestion ? 'Applying...' : 'Confirm'}
+                  </Text>
+                </View>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
@@ -3052,6 +3100,44 @@ export default function SubjectDetailPage({
         onOpenEvent={handleOpenEventDetails}
         onCreatePlan={handleOpenPlanBuilder}
         onCompleted={() => loadSubjectDetail({ silent: true })}
+      />
+      <ManualCurriculumBuilderModal
+        visible={showManualUnitsModal}
+        onClose={() => setShowManualUnitsModal(false)}
+        subjectId={subject?.id || null}
+        subjectName={(subject?.name || '').trim() || 'Subject'}
+        familyId={familyId}
+        onSaved={() => {
+          setShowManualUnitsModal(false);
+          loadSubjectDetail({ silent: true });
+        }}
+      />
+      <ParsePlainTextModal
+        visible={showParseUnitsModal}
+        onClose={() => setShowParseUnitsModal(false)}
+        subjectId={subject?.id || null}
+        subjectName={(subject?.name || '').trim() || 'Subject'}
+        familyId={familyId}
+        childIds={assignedChildren}
+        onSaved={() => {
+          setShowParseUnitsModal(false);
+          loadSubjectDetail({ silent: true });
+        }}
+      />
+      <BuildCurriculumModal
+        visible={showGenerateUnitsModal}
+        onClose={() => setShowGenerateUnitsModal(false)}
+        familyId={familyId}
+        children={children}
+        selectedChildIds={assignedChildren}
+        initialSubjectId={subject?.id || null}
+        initialSubjectName={(subject?.name || '').trim() || 'Subject'}
+        initialInputMode={buildUnitsInputMode}
+        initialMaterialId={null}
+        onComplete={() => {
+          setShowGenerateUnitsModal(false);
+          loadSubjectDetail({ silent: true });
+        }}
       />
       <SubjectAssignedToStudentModal
         visible={showAssignedToStudentModal}
@@ -4548,6 +4634,22 @@ const styles = StyleSheet.create({
     gap: 10,
     flexWrap: 'wrap',
   },
+  attendanceTargetSourceText: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '400',
+    lineHeight: 18,
+    flexShrink: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceTargetSourceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
   attendanceTargetApplyButton: {
     borderRadius: 999,
     borderWidth: 1,
@@ -4659,6 +4761,11 @@ const styles = StyleSheet.create({
   attendanceSuggestionConfirmApplyButtonDisabled: {
     borderColor: '#E2E8F0',
     backgroundColor: '#F1F5F9',
+  },
+  attendanceSuggestionConfirmApplyButtonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   attendanceSuggestionConfirmApplyButtonText: {
     fontSize: 14,

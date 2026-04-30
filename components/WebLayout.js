@@ -1891,7 +1891,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
 
+    const isPageReload = () => {
+      try {
+        const navEntry = window.performance?.getEntriesByType?.('navigation')?.[0];
+        if (navEntry && navEntry.type === 'reload') return true;
+        // Fallback for older navigation timing API.
+        if (window.performance?.navigation?.type === 1) return true;
+      } catch (_) {}
+      return false;
+    };
+
     const checkUrlRoute = () => {
+      if (isPageReload()) {
+        window.history.replaceState({}, '', '/');
+        setActiveTab('home');
+        setActiveTopNav((prev) => (prev === 'family' ? prev : 'home'));
+        return;
+      }
       const pathnameRaw = window.location.pathname || '/';
       const pathname = pathnameRaw.replace(/\/$/, '') || '/';
       const subjectDetailMatch = pathname.match(/^\/subjects\/([^/]+)$/);

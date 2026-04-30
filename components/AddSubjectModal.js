@@ -585,26 +585,43 @@ export default function AddSubjectModal({
         return;
       }
       const requestedKind = String(kind || '').trim().toLowerCase();
-      if (requestedKind === 'manual') {
-        setShowManualUnitsModal(true);
+      const routedMethod = requestedKind === 'paste' ? 'paste_plain' : requestedKind;
+      const safeMethod = ['manual', 'generate', 'upload', 'paste_plain'].includes(routedMethod)
+        ? routedMethod
+        : 'manual';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        setOpeningAddUnits(true);
+        window.dispatchEvent(
+          new CustomEvent('openPlanYearModal', {
+            detail: {
+              from: 'subject_detail',
+              subjectId: existingSubjectId,
+              subjectName: subjectName?.trim() || subject?.name || null,
+              childIds: selectedChildIds,
+              openAsModal: true,
+              skipPlanSummary: true,
+              openDirectlyToScope: true,
+              initialUnitStructureMethod: safeMethod,
+            },
+          })
+        );
+        setTimeout(() => setOpeningAddUnits(false), 300);
         return;
       }
-      if (requestedKind === 'generate') {
+      if (safeMethod === 'manual') setShowManualUnitsModal(true);
+      else if (safeMethod === 'generate') {
         setBuildUnitsInputMode('topic');
         setShowGenerateUnitsModal(true);
-        return;
-      }
-      if (requestedKind === 'upload') {
+      } else if (safeMethod === 'upload') {
         setBuildUnitsInputMode('material');
         setShowGenerateUnitsModal(true);
-        return;
-      }
-      if (requestedKind === 'paste' || requestedKind === 'paste_plain') {
-        setShowParseUnitsModal(true);
-      }
+      } else if (safeMethod === 'paste_plain') setShowParseUnitsModal(true);
     },
     [
       subject?.id,
+      subject?.name,
+      subjectName,
+      selectedChildIds,
       draftSubjectId,
       openingAddUnits,
     ]

@@ -7795,6 +7795,8 @@ export default function PlanYearModal({
     if (typeof window === 'undefined') return;
     window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
     window.dispatchEvent(new CustomEvent('refreshSubjects'));
+    // Schedule/targets views subscribe to plan health invalidation for fresh gap calculations.
+    window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
   }, []);
 
   const persistFamilyPlannerTargetsDebounced = useCallback(() => {
