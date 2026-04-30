@@ -25,6 +25,57 @@ import NextRecommendedActionRow from './NextRecommendedActionRow';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 
+async function hydrateLearningAssignees(learning = [], familyId) {
+  const items = Array.isArray(learning) ? learning : [];
+  const eventIds = items
+    .map((event) => event?.id)
+    .filter((id) => id != null && id !== '');
+  if (!familyId || eventIds.length === 0) return items;
+
+  try {
+    const { data, error } = await supabase
+      .from('events')
+      .select('id, child_id, child_ids')
+      .eq('family_id', familyId)
+      .in('id', eventIds);
+
+    if (error || !Array.isArray(data) || data.length === 0) {
+      return items;
+    }
+
+    const assigneesByEventId = new Map(
+      data.map((row) => [String(row.id), row])
+    );
+
+    return items.map((event) => {
+      const assigneeRow = assigneesByEventId.get(String(event?.id));
+      if (!assigneeRow) return event;
+
+      const rowChildIds = Array.isArray(assigneeRow.child_ids)
+        ? assigneeRow.child_ids.filter((id) => id != null && id !== '')
+        : [];
+      const fallbackChildId =
+        assigneeRow.child_id != null && assigneeRow.child_id !== ''
+          ? [assigneeRow.child_id]
+          : [];
+      const mergedChildIds =
+        rowChildIds.length > 0
+          ? rowChildIds
+          : Array.isArray(event?.child_ids) && event.child_ids.length > 0
+            ? event.child_ids
+            : fallbackChildId;
+
+      return {
+        ...event,
+        child_id: assigneeRow.child_id ?? event?.child_id ?? null,
+        child_ids: mergedChildIds,
+      };
+    });
+  } catch {
+    return items;
+  }
+}
+
 export default function ParentHomeScreen({
   familyId: propFamilyId,
   onNavigate,
@@ -189,12 +240,20 @@ export default function ParentHomeScreen({
         children: [],
         subjects: [],
       };
+      const learningWithAssignees = await hydrateLearningAssignees(
+        homeDataResult.learning,
+        familyId
+      );
+      const normalizedHomeData = {
+        ...homeDataResult,
+        learning: learningWithAssignees,
+      };
       
       setError(null);
-      setHomeData(homeDataResult);
+      setHomeData(normalizedHomeData);
       
       // Save to cache
-      saveHomeDataToCache(familyId, dateStr, homeDataResult);
+      saveHomeDataToCache(familyId, dateStr, normalizedHomeData);
 
       // Load notification count
       await loadNotificationCount();

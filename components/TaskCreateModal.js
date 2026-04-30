@@ -37,6 +37,11 @@ const CHIP_BORDER = '#e5e7eb';
 const DEFAULT_START_TIME = '9:00 AM';
 const DEFAULT_DURATION_MINUTES = 30;
 let createTaskEventAllowOverlapsSupported = true;
+const parseSubjectChildIds = (raw) =>
+  String(raw == null ? '' : raw)
+    .split(';')
+    .map((id) => id.trim())
+    .filter(Boolean);
 
 const EVENT_TYPES = [
   'Lesson',
@@ -859,6 +864,10 @@ export default function TaskCreateModal({
       setLoadingMaterials(false);
     }
   }, [familyId, session, toast]);
+  const loadMaterialsRef = useRef(loadMaterials);
+  useEffect(() => {
+    loadMaterialsRef.current = loadMaterials;
+  }, [loadMaterials]);
 
   // Fetch subject-dependent data while modal is open.
   useEffect(() => {
@@ -874,9 +883,9 @@ export default function TaskCreateModal({
   // Load materials once when modal opens.
   useEffect(() => {
     if (visible && familyId) {
-      loadMaterials();
+      loadMaterialsRef.current?.();
     }
-  }, [visible, familyId, loadMaterials]);
+  }, [visible, familyId]);
 
   // New library items (e.g. syllabus from Edit Subject) should appear in attachment picker while modal is open
   useEffect(() => {
@@ -884,11 +893,11 @@ export default function TaskCreateModal({
     const onMaterialsRefresh = (e) => {
       const fid = e?.detail?.familyId;
       if (fid && fid !== familyId) return;
-      loadMaterials();
+      loadMaterialsRef.current?.();
     };
     window.addEventListener('refreshMaterials', onMaterialsRefresh);
     return () => window.removeEventListener('refreshMaterials', onMaterialsRefresh);
-  }, [familyId, visible, loadMaterials]);
+  }, [familyId, visible]);
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
@@ -986,14 +995,20 @@ export default function TaskCreateModal({
       const subjectMap = new Map();
       
       (allSubjects || []).forEach(subject => {
-        const isFamilyWide = subject.child_id === null;
-        const isForSelectedChild = subject.child_id !== null && assigneeIds.includes(subject.child_id);
+        const subjectChildIds = parseSubjectChildIds(subject.child_id);
+        const isFamilyWide = subjectChildIds.length === 0;
+        const isForSelectedChild = subjectChildIds.some((id) =>
+          assigneeIds.some((assigneeId) => String(assigneeId) === String(id))
+        );
         // Always include the subject matching defaultSubjectId, even if filters would exclude it
         const isDefaultSubject = !!defaultSubjectId && subject.id === defaultSubjectId;
         const shouldInclude = isFamilyWide || isForSelectedChild || isDefaultSubject;
         
         if (shouldInclude) {
           const existing = subjectMap.get(subject.name);
+          const existingChildIds = existing ? parseSubjectChildIds(existing.child_id) : [];
+          const existingIsFamilyWide = existingChildIds.length === 0;
+          const subjectIsFamilyWide = subjectChildIds.length === 0;
           
           // If no existing entry, add this one
           if (!existing) {
@@ -1001,28 +1016,35 @@ export default function TaskCreateModal({
             console.log(`Including subject "${subject.name}" - child_id: ${subject.child_id === null ? 'null (family-wide)' : subject.child_id}`);
           } 
           // If existing is family-wide and this is child-specific, replace it (prefer child-specific)
-          else if (existing.child_id === null && subject.child_id !== null) {
+          else if (existingIsFamilyWide && !subjectIsFamilyWide) {
             subjectMap.set(subject.name, subject);
             console.log(`Replacing family-wide "${subject.name}" with child-specific version for child ${subject.child_id}`);
           }
           // If existing is child-specific and this is also child-specific, keep existing (already preferred)
-          else if (existing.child_id !== null && subject.child_id !== null) {
+          else if (!existingIsFamilyWide && !subjectIsFamilyWide) {
             // If both are child-specific, prefer:
             // 1) The one matching defaultSubjectId if present
             // 2) Otherwise the one matching the first selected assignee
             const existingIsDefault = !!defaultSubjectId && existing.id === defaultSubjectId;
             const currentIsDefault = !!defaultSubjectId && subject.id === defaultSubjectId;
+            const firstAssigneeId = assigneeIds[0];
+            const currentMatchesFirst = subjectChildIds.some(
+              (id) => String(id) === String(firstAssigneeId)
+            );
+            const existingMatchesFirst = existingChildIds.some(
+              (id) => String(id) === String(firstAssigneeId)
+            );
             
             if (currentIsDefault && !existingIsDefault) {
               subjectMap.set(subject.name, subject);
-            } else if (!existingIsDefault && subject.child_id === assigneeIds[0] && existing.child_id !== assigneeIds[0]) {
+            } else if (!existingIsDefault && currentMatchesFirst && !existingMatchesFirst) {
               subjectMap.set(subject.name, subject);
             } else {
               console.log(`Skipping duplicate child-specific "${subject.name}" for child ${subject.child_id}`);
             }
           }
           // If both are family-wide, keep the first one (already added)
-          else if (existing.child_id === null && subject.child_id === null) {
+          else if (existingIsFamilyWide && subjectIsFamilyWide) {
             console.log(`Skipping duplicate family-wide "${subject.name}"`);
           }
         } else {

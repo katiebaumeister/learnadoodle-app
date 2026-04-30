@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Clock, AlertTriangle, ChevronRight, Plus, Package, ClipboardList, GraduationCap } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { useSession } from '../../contexts/SessionContext';
 import { getMaterialFileTypeLabel } from '../materials/MaterialDocViewerModal';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
+import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 
 function getSubjectTermLabel(term) {
   const raw = String(term || '').trim().toLowerCase();
@@ -30,27 +31,6 @@ function formatNaturalList(items = []) {
   if (list.length === 1) return list[0];
   if (list.length === 2) return `${list[0]} and ${list[1]}`;
   return `${list.slice(0, -1).join(', ')}, and ${list[list.length - 1]}`;
-}
-
-const AVATAR_SOURCES = {
-  prof1: require('../../assets/prof1.png'),
-  prof2: require('../../assets/prof2.png'),
-  prof3: require('../../assets/prof3.png'),
-  prof4: require('../../assets/prof4.png'),
-  prof5: require('../../assets/prof5.png'),
-  prof6: require('../../assets/prof6.png'),
-  prof7: require('../../assets/prof7.png'),
-  prof8: require('../../assets/prof8.png'),
-  prof9: require('../../assets/prof9.png'),
-  prof10: require('../../assets/prof10.png'),
-};
-
-function resolveAvatarSource(avatarValue) {
-  const raw = String(avatarValue || '').trim();
-  if (!raw) return AVATAR_SOURCES.prof1;
-  if (/^(https?:\/\/|data:)/i.test(raw)) return { uri: raw };
-  const key = raw.toLowerCase().replace(/\.(png|jpe?g|webp|gif)$/i, '');
-  return AVATAR_SOURCES[key] || AVATAR_SOURCES.prof1;
 }
 
 export default function SubjectOverviewCard({
@@ -112,23 +92,13 @@ export default function SubjectOverviewCard({
     return timeStr ? `${weekday} ${timeStr}` : weekday;
   };
 
-  // Get assigned children names and objects (moved up for use in handlers)
+  // Get assigned children names (moved up for use in handlers)
   const assignedChildren = subject.assignedChildren || [];
   
   // Always show all assigned children's dots, even when filtering
   // The filtering is handled at the subject level in SubjectsPage, not at the dot level
   // This allows users to see which subjects are shared across multiple children
   const childrenNames = assignedChildren.map(id => getChildName(id)).filter(Boolean);
-  
-  // Get child objects - ensure we find children by ID
-  // Use the same matching logic as getChildName to ensure consistency
-  // Always show all assigned children, not just the filtered one
-  const assignedChildrenObjects = assignedChildren
-    .map(id => {
-      const child = getChildById(id);
-      return child || null;
-    })
-    .filter(Boolean);
   
   // Get assigned child IDs for defaulting in modals (use original assignedChildren, not filtered)
   // We keep the full array so multi-child subjects can default all related children.
@@ -243,14 +213,26 @@ export default function SubjectOverviewCard({
           return {
             id: String(child?.id || childId),
             name,
-            avatar: child?.avatar || child?.avatar_url || null,
+          };
+        })
+        .filter(Boolean),
+    [assignedChildren, children],
+  );
+  const assignedChildrenColorDots = useMemo(
+    () =>
+      assignedChildren
+        .map((childId) => {
+          const child = getChildById(childId);
+          if (!child) return null;
+          return {
+            id: String(child.id || childId),
+            color: getChildColorFromAvatar(child.avatar || child.avatar_url),
           };
         })
         .filter(Boolean),
     [assignedChildren, children],
   );
   const studentsMetaLine = formatNaturalList(childrenNames);
-  const headerMetaLine = [yearTermLine].filter(Boolean).join(' · ');
 
   const openHomeReviewList = (e) => {
     if (e?.stopPropagation) e.stopPropagation();
@@ -502,27 +484,21 @@ export default function SubjectOverviewCard({
                 </View>
               ) : null}
             </View>
-            {assignedChildrenObjects.length > 0 ? (
+            {assignedChildrenColorDots.length > 0 ? (
               <View style={styles.childrenDotsContainer}>
-                {assignedChildrenObjects.map((child, index) => {
-                  if (!child) return null;
-                  
-                  const childColor = getChildColorFromAvatar(child.avatar);
-                  
-                  return (
-                    <View
-                      key={child.id}
-                      style={[
-                        styles.childDot,
-                        { 
-                          backgroundColor: childColor,
-                          marginLeft: index > 0 ? -4 : 0,
-                          zIndex: assignedChildrenObjects.length - index,
-                        }
-                      ]}
-                    />
-                  );
-                })}
+                {assignedChildrenColorDots.slice(0, 3).map((chip, index) => (
+                  <View
+                    key={chip.id}
+                    style={[
+                      styles.childDot,
+                      {
+                        backgroundColor: chip.color,
+                        marginLeft: index > 0 ? -4 : 0,
+                        zIndex: assignedChildrenColorDots.length - index,
+                      },
+                    ]}
+                  />
+                ))}
               </View>
             ) : (
               <View
@@ -543,27 +519,31 @@ export default function SubjectOverviewCard({
               </View>
             )}
           </View>
-          {headerMetaLine ? (
-            <Text style={styles.subjectMetaLine}>{headerMetaLine}</Text>
-          ) : null}
-          {assignedChildrenMeta.length > 0 ? (
-            <View style={styles.subjectStudentsInlineRow}>
-              {assignedChildrenMeta.map((child, index) => (
-                <View key={`${child.id}-${index}`} style={styles.subjectStudentInlineItem}>
-                  <Image
-                    source={resolveAvatarSource(child.avatar)}
-                    style={styles.subjectStudentInlineAvatar}
-                    resizeMode="cover"
-                  />
-                  <Text style={styles.subjectStudentInlineName}>
-                    {child.name}
-                    {index < assignedChildrenMeta.length - 1 ? ' ·' : ''}
-                  </Text>
+          {(yearTermLine || assignedChildrenMeta.length > 0 || studentsMetaLine) ? (
+            <View style={styles.subjectMetaRow}>
+              {yearTermLine ? <Text style={styles.subjectMetaLine}>{yearTermLine}</Text> : null}
+              {assignedChildrenMeta.length > 0 ? (
+                <View style={styles.subjectAssigneeGroup}>
+                  {yearTermLine ? <Text style={styles.subjectMetaSeparator}> · </Text> : null}
+                  <View style={styles.subjectAssigneeInline}>
+                    <ChildAvatarCluster
+                      childIds={assignedChildrenMeta.map((child) => child.id)}
+                      familyChildren={children}
+                      size={30}
+                      overlap={-9}
+                    />
+                    <Text style={styles.subjectStudentInlineName}>
+                      {assignedChildrenMeta.map((child) => child.name).join(', ')}
+                    </Text>
+                  </View>
                 </View>
-              ))}
+              ) : studentsMetaLine ? (
+                <View style={styles.subjectAssigneeGroup}>
+                  {yearTermLine ? <Text style={styles.subjectMetaSeparator}> · </Text> : null}
+                  <Text style={styles.subjectStudentInlineName}>{studentsMetaLine}</Text>
+                </View>
+              ) : null}
             </View>
-          ) : studentsMetaLine ? (
-            <Text style={styles.subjectMetaLine}>{studentsMetaLine}</Text>
           ) : null}
           {subjectIntent && (
             <Text style={styles.subjectIntent}>{subjectIntent}</Text>
@@ -839,7 +819,6 @@ const styles = StyleSheet.create({
   },
   subjectMetaLine: {
     marginTop: 4,
-    marginBottom: 6,
     fontSize: 12,
     color: '#374151',
     lineHeight: 16,
@@ -848,31 +827,51 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  subjectStudentsInlineRow: {
-    marginTop: 4,
+  subjectMetaRow: {
+    marginBottom: 6,
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    rowGap: 4,
-    columnGap: 10,
   },
-  subjectStudentInlineItem: {
+  subjectMetaSeparator: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#6B7280',
+    lineHeight: 16,
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectAssigneeGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
   },
-  subjectStudentInlineAvatar: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+  subjectAssigneeInline: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   subjectStudentInlineName: {
     color: '#6B7280',
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '400',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  childrenDotsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  childDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
   studentsRow: {
     flexDirection: 'row',
@@ -1032,18 +1031,6 @@ const styles = StyleSheet.create({
   },
   actionButtonPillTextHovered: {
     fontWeight: '600',
-  },
-  childrenDotsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  childDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
   },
   searchPreviewSection: {
     marginTop: 14,

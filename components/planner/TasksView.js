@@ -27,6 +27,7 @@ export default function TasksView({
   const [trashEvents, setTrashEvents] = useState(() =>
     preloadedTrashEvents != null ? preloadedTrashEvents : [],
   );
+  const [sectionEvents, setSectionEvents] = useState([]);
 
   const prevFamilyIdRef = useRef(undefined);
   useEffect(() => {
@@ -173,6 +174,56 @@ export default function TasksView({
     }
   }, [familyIdProp, events]);
 
+  const fetchSectionEvents = useCallback(async (section) => {
+    if (!['today', 'tomorrow', 'next2weeks', 'completed'].includes(section)) {
+      setSectionEvents([]);
+      return;
+    }
+    try {
+      const familyIdFromEvents =
+        familyIdProp ||
+        events.find((e) => e.family_id || e.familyId)?.family_id ||
+        events.find((e) => e.family_id || e.familyId)?.familyId;
+      if (!familyIdFromEvents) return;
+
+      let query = supabase
+        .from('events')
+        .select('*')
+        .eq('family_id', familyIdFromEvents)
+        .is('deleted_at', null)
+        .is('canceled_at', null)
+        .neq('status', 'canceled');
+
+      if (section === 'completed') {
+        query = query
+          .eq('status', 'done')
+          .order('start_ts', { ascending: false, nullsFirst: false })
+          .limit(300);
+      } else {
+        const today = startOfToday();
+        const start = new Date(today);
+        start.setHours(0, 0, 0, 0);
+        const end = addDays(today, 14);
+        end.setHours(23, 59, 59, 999);
+        query = query
+          .or('is_backlog.is.false,is_backlog.is.null')
+          .gte('start_ts', start.toISOString())
+          .lte('start_ts', end.toISOString())
+          .order('start_ts', { ascending: true })
+          .limit(500);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        console.error(`[TasksView] Error fetching ${section} events:`, error);
+        return;
+      }
+      setSectionEvents(data || []);
+    } catch (error) {
+      console.error(`[TasksView] Error fetching ${section} events:`, error);
+    }
+  }, [familyIdProp, events]);
+
   useEffect(() => {
     if (preloadedBacklogEvents != null) {
       setBacklogEvents(preloadedBacklogEvents);
@@ -202,6 +253,10 @@ export default function TasksView({
     fetchBacklogItems();
     fetchTrashItems();
   }, [fetchBacklogItems, fetchTrashItems]);
+
+  useEffect(() => {
+    fetchSectionEvents(activeSection);
+  }, [activeSection, fetchSectionEvents]);
 
   // Listen for calendar refresh events to refetch backlog items
   useEffect(() => {
@@ -433,10 +488,13 @@ export default function TasksView({
     const twoWeeksFromNow = addDays(today, 14);
     // Use nonDeletedEvents instead of events (nonDeletedEvents already includes expanded Project events)
     const eventsToFilter = nonDeletedEvents || events;
+    const combinedEvents = [...eventsToFilter, ...(Array.isArray(sectionEvents) ? sectionEvents : [])]
+      .filter(Boolean)
+      .filter((ev, index, self) => index === self.findIndex((e) => String(e.id) === String(ev.id)));
     
     switch (section) {
       case 'today':
-        return eventsToFilter.filter(ev => {
+        return combinedEvents.filter(ev => {
           // Exclude backlog items and soft-deleted events from today view
           if (ev.is_backlog === true) return false;
           if (ev.deleted || ev.deleted_at) return false;
@@ -449,7 +507,7 @@ export default function TasksView({
         });
       
       case 'tomorrow':
-        return eventsToFilter.filter(ev => {
+        return combinedEvents.filter(ev => {
           // Exclude backlog items and soft-deleted events from tomorrow view
           if (ev.is_backlog === true) return false;
           if (ev.deleted || ev.deleted_at) return false;
@@ -462,7 +520,7 @@ export default function TasksView({
         });
       
       case 'next2weeks':
-        return eventsToFilter.filter(ev => {
+        return combinedEvents.filter(ev => {
           // Exclude backlog items and soft-deleted events from next 2 weeks view
           if (ev.is_backlog === true) return false;
           if (ev.deleted || ev.deleted_at) return false;
@@ -495,7 +553,7 @@ export default function TasksView({
         return uniqueBacklog;
       
       case 'completed':
-        return eventsToFilter
+        return combinedEvents
           .filter(ev => ev.status === 'done' && !ev.deleted && !ev.deleted_at)
           .sort((a, b) => {
             const aDate = a.start || a.start_ts || a.start_local;
@@ -549,7 +607,7 @@ export default function TasksView({
     }
     // For other views, filter out any deleted events that might have slipped through
     return filtered.filter(ev => !ev.deleted && !ev.deleted_at);
-  }, [activeSection, nonDeletedEvents, selectedList, backlogEvents, trashEvents]);
+  }, [activeSection, nonDeletedEvents, selectedList, backlogEvents, trashEvents, sectionEvents]);
 
   // Trash display: group plan placeholder events into one row per plan; other events stay as single rows
   const trashDisplayItems = useMemo(() => {

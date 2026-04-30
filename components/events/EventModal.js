@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, Modal, ActivityIndicator, Platform } from 'react-native';
 import { colors } from '../../theme/colors';
 import EventDetails from './EventDetails';
 import { getEvent, getSyllabusById } from '../../lib/apiClient';
@@ -59,6 +59,16 @@ export default function EventModal({
     return t === 'holiday';
   };
 
+  const initialEventSignature = [
+    String(initialEvent?.id || ''),
+    String(initialEvent?.updated_at || ''),
+    String(initialEvent?.start_ts || ''),
+    String(initialEvent?.end_ts || ''),
+    String(initialEvent?.start_local || ''),
+    String(initialEvent?.end_local || ''),
+    String(initialEvent?.status || ''),
+  ].join('|');
+
   useEffect(() => {
     if (visible && eventId) {
       if (isHolidayEvent(eventId, initialEvent)) {
@@ -79,13 +89,13 @@ export default function EventModal({
       setLoading(!initialEvent);
       setIsEditingState(false); // Start in view mode for existing events
     }
-  }, [visible, eventId, initialEvent]);
+  }, [visible, eventId, initialEventSignature]);
   
   const loadEvent = useCallback(async (forceUseDb = false) => {
     if (!eventId) return;
     if (isHolidayEvent(eventId, initialEvent)) return;
 
-    if (!event && !initialEvent) {
+    if (!initialEvent) {
       setLoading(true);
     }
     try {
@@ -176,7 +186,7 @@ export default function EventModal({
     } finally {
       setLoading(false);
     }
-  }, [eventId, event, initialEvent]);
+  }, [eventId, initialEventSignature]);
   
   // Listen for event reschedule events to refresh the event data
   useEffect(() => {
@@ -310,10 +320,13 @@ export default function EventModal({
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <TouchableOpacity
+        <View
           style={StyleSheet.absoluteFill}
-          activeOpacity={1}
-          onPress={onClose}
+          accessibilityRole={Platform.OS === 'web' ? 'button' : undefined}
+          accessibilityLabel="Dismiss"
+          {...(Platform.OS === 'web'
+            ? { onClick: onClose, onMouseDown: onClose }
+            : { onTouchEnd: onClose })}
         />
         <View style={[styles.container, isEditing && styles.containerEditMode]}>
           {/* Content */}
@@ -374,7 +387,11 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     width: '100%',
     maxWidth: 860,
-    height: Platform.OS === 'web' ? '86vh' : '86%',
+    maxHeight: Platform.OS === 'web' ? '86vh' : '86%',
+    minHeight: Platform.OS === 'web' ? 340 : '52%',
+    ...(Platform.OS === 'web' && {
+      height: 'auto',
+    }),
     shadowColor: '#24324A',
     shadowOpacity: 0.14,
     shadowRadius: 28,
@@ -385,7 +402,11 @@ const styles = StyleSheet.create({
   containerEditMode: {
     width: '100%',
     maxWidth: 860,
-    height: Platform.OS === 'web' ? '86vh' : '86%',
+    maxHeight: Platform.OS === 'web' ? '86vh' : '86%',
+    minHeight: Platform.OS === 'web' ? 420 : '60%',
+    ...(Platform.OS === 'web' && {
+      height: 'auto',
+    }),
   },
   header: {
     flexDirection: 'row',
@@ -439,11 +460,13 @@ const styles = StyleSheet.create({
     borderRadius: 1,
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
     backgroundColor: 'transparent',
   },
   contentEditMode: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
     backgroundColor: '#ffffff',
   },
   loadingContainer: {

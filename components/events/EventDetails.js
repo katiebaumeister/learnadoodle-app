@@ -157,25 +157,48 @@ function emitMaterialLinkageEventsIfChangedWeb(familyId, eventBefore, eventAfter
 /** Same rules as fetchSubjects — filter family + child-specific subjects for assignees (dedupe by name). */
 function filterSubjectsForAssignees(allSubjects, assigneeIds) {
   if (!assigneeIds?.length) return [];
+  const parseSubjectChildIds = (raw) =>
+    String(raw == null ? '' : raw)
+      .split(';')
+      .map((id) => id.trim())
+      .filter(Boolean);
   const subjectMap = new Map();
   (allSubjects || []).forEach((subject) => {
-    const isFamilyWide = subject.child_id == null;
-    const isForSelectedChild = subject.child_id != null && assigneeIds.includes(subject.child_id);
+    const subjectChildIds = parseSubjectChildIds(subject.child_id);
+    const isFamilyWide = subjectChildIds.length === 0;
+    const isForSelectedChild = subjectChildIds.some((id) =>
+      assigneeIds.some((assigneeId) => String(assigneeId) === String(id))
+    );
     const shouldInclude = isFamilyWide || isForSelectedChild;
     if (!shouldInclude) return;
     const existing = subjectMap.get(subject.name);
+    const existingChildIds = existing ? parseSubjectChildIds(existing.child_id) : [];
+    const existingIsFamilyWide = existingChildIds.length === 0;
+    const subjectIsFamilyWide = subjectChildIds.length === 0;
     if (!existing) {
       subjectMap.set(subject.name, subject);
-    } else if (existing.child_id == null && subject.child_id != null) {
+    } else if (existingIsFamilyWide && !subjectIsFamilyWide) {
       subjectMap.set(subject.name, subject);
-    } else if (existing.child_id != null && subject.child_id != null) {
+    } else if (!existingIsFamilyWide && !subjectIsFamilyWide) {
       const firstAssigneeId = assigneeIds[0];
-      if (subject.child_id === firstAssigneeId && existing.child_id !== firstAssigneeId) {
+      const currentMatchesFirst = subjectChildIds.some(
+        (id) => String(id) === String(firstAssigneeId)
+      );
+      const existingMatchesFirst = existingChildIds.some(
+        (id) => String(id) === String(firstAssigneeId)
+      );
+      if (currentMatchesFirst && !existingMatchesFirst) {
         subjectMap.set(subject.name, subject);
       }
     }
   });
   return Array.from(subjectMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function sameIdList(a = [], b = []) {
+  const left = (Array.isArray(a) ? a : []).map((x) => String(x?.id || x)).join('|');
+  const right = (Array.isArray(b) ? b : []).map((x) => String(x?.id || x)).join('|');
+  return left === right;
 }
 
 /** Assignee chips — matches hydrate effect so first paint matches loaded event. */
@@ -886,6 +909,53 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
   const [showGoalDropdown, setShowGoalDropdown] = useState(false);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
+  const familyMembersSignature = useMemo(
+    () =>
+      (familyMembers || [])
+        .map((m) => `${String(m?.id || '')}:${String(m?.name || m?.first_name || '')}`)
+        .join('|'),
+    [familyMembers]
+  );
+  const assigneeIdsSignature = useMemo(
+    () => (assigneeIds || []).map((id) => String(id)).join('|'),
+    [assigneeIds]
+  );
+  const conflictResolutionSignature = useMemo(() => {
+    const c = conflictResolutionContext;
+    if (!c) return '';
+    const ce = c.conflictEvent || {};
+    const me = c.movedEvent || {};
+    const s = c.suggestedChange || {};
+    return [
+      String(c.conflictMessage || ''),
+      String(ce.id || ''),
+      String(ce.start_ts || ''),
+      String(ce.end_ts || ''),
+      String(me.id || ''),
+      String(me.start_ts || ''),
+      String(me.end_ts || ''),
+      String(s.newStart || s.new_start || ''),
+      String(s.newEnd || s.new_end || ''),
+    ].join('|');
+  }, [conflictResolutionContext]);
+  const preloadedSubjectsSignature = useMemo(
+    () =>
+      Array.isArray(preloadedSubjects)
+        ? preloadedSubjects
+            .map((s) => `${String(s?.id || '')}:${String(s?.child_id || '')}:${String(s?.name || '')}`)
+            .join('|')
+        : '',
+    [preloadedSubjects]
+  );
+  const preloadedAcademicYearsSignature = useMemo(
+    () =>
+      Array.isArray(preloadedAcademicYears)
+        ? preloadedAcademicYears
+            .map((a) => `${String(a?.id || '')}:${String(a?.start_date || '')}:${String(a?.end_date || '')}`)
+            .join('|')
+        : '',
+    [preloadedAcademicYears]
+  );
   
   // Recurring event state
   const [isRecurring, setIsRecurring] = useState(false);
@@ -985,11 +1055,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   useEffect(() => {
     if (!isParentView || !familyId || assigneeIds.length === 0) {
-      setHasInvitedAssignee(false);
+      setHasInvitedAssignee((prev) => (prev ? false : prev));
       return;
     }
     if (hasInvitedAssigneeFromMembers) {
-      setHasInvitedAssignee(true);
+      setHasInvitedAssignee((prev) => (prev ? prev : true));
       return;
     }
     let cancelled = false;
@@ -1001,7 +1071,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           .eq('family_id', familyId)
           .in('member_role', ['child', 'student']);
         if (cancelled || error) {
-          if (!cancelled) setHasInvitedAssignee(false);
+          if (!cancelled) setHasInvitedAssignee((prev) => (prev ? false : prev));
           return;
         }
         const wanted = new Set(assigneeIds.map(String));
@@ -1013,9 +1083,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           }
           return Array.isArray(scope) && scope.some((id) => wanted.has(String(id)));
         });
-        if (!cancelled) setHasInvitedAssignee(hasLinked);
+        if (!cancelled) setHasInvitedAssignee((prev) => (prev === hasLinked ? prev : hasLinked));
       } catch (_) {
-        if (!cancelled) setHasInvitedAssignee(false);
+        if (!cancelled) setHasInvitedAssignee((prev) => (prev ? false : prev));
       }
     })();
     return () => {
@@ -1026,13 +1096,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const loadEventLinkedHelpAssignment = useCallback(async () => {
     const et = event?.event_type || eventType;
     if (!familyId || !helpChildId || !event?.id || !session?.role_flags?.isChild) {
-      setEventLinkedHelpAssignment(null);
-      setLinkedHelpReady(true);
+      setEventLinkedHelpAssignment((prev) => (prev == null ? prev : null));
+      setLinkedHelpReady((prev) => (prev ? prev : true));
       return;
     }
     if (!isSchoolWorkEventType(et)) {
-      setEventLinkedHelpAssignment(null);
-      setLinkedHelpReady(true);
+      setEventLinkedHelpAssignment((prev) => (prev == null ? prev : null));
+      setLinkedHelpReady((prev) => (prev ? prev : true));
       return;
     }
     const mySeq = linkedHelpFetchSeq.current;
@@ -1049,12 +1119,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         return;
       }
       const match = (rows || []).find((r) => assignmentRowLinksEventId(r, event.id)) || null;
-      setEventLinkedHelpAssignment(match);
+      setEventLinkedHelpAssignment((prev) => {
+        const prevId = prev?.id ? String(prev.id) : '';
+        const nextId = match?.id ? String(match.id) : '';
+        return prevId === nextId ? prev : match;
+      });
     } catch {
       if (mySeq !== linkedHelpFetchSeq.current) return;
     } finally {
       if (mySeq === linkedHelpFetchSeq.current) {
-        setLinkedHelpReady(true);
+        setLinkedHelpReady((prev) => (prev ? prev : true));
       }
     }
   }, [familyId, helpChildId, event?.id, event?.event_type, eventType, session?.role_flags?.isChild]);
@@ -1062,13 +1136,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const loadEventLinkedParentAssignments = useCallback(async () => {
     const et = event?.event_type || eventType;
     if (!familyId || !event?.id || !isParentView) {
-      setParentLinkedAssignments([]);
-      setParentLinkedReady(true);
+      setParentLinkedAssignments((prev) => (prev.length === 0 ? prev : []));
+      setParentLinkedReady((prev) => (prev ? prev : true));
       return;
     }
     if (!isSchoolWorkEventType(et)) {
-      setParentLinkedAssignments([]);
-      setParentLinkedReady(true);
+      setParentLinkedAssignments((prev) => (prev.length === 0 ? prev : []));
+      setParentLinkedReady((prev) => (prev ? prev : true));
       return;
     }
     const mySeq = parentLinkedFetchSeq.current;
@@ -1086,12 +1160,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         return;
       }
       const matches = (rows || []).filter((r) => assignmentRowLinksEventId(r, event.id));
-      setParentLinkedAssignments(matches);
+      setParentLinkedAssignments((prev) => (sameIdList(prev, matches) ? prev : matches));
     } catch {
       if (mySeq !== parentLinkedFetchSeq.current) return;
     } finally {
       if (mySeq === parentLinkedFetchSeq.current) {
-        setParentLinkedReady(true);
+        setParentLinkedReady((prev) => (prev ? prev : true));
       }
     }
   }, [familyId, event?.id, event?.event_type, eventType, isParentView]);
@@ -1100,26 +1174,30 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     linkedHelpFetchSeq.current += 1;
     const et = event?.event_type || eventType;
     if (!familyId || !event?.id || !session?.role_flags?.isChild) {
-      setEventLinkedHelpAssignment(null);
-      setLinkedHelpReady(true);
+      setEventLinkedHelpAssignment((prev) => (prev == null ? prev : null));
+      setLinkedHelpReady((prev) => (prev ? prev : true));
       return;
     }
     if (!helpChildId || !isSchoolWorkEventType(et)) {
-      setEventLinkedHelpAssignment(null);
-      setLinkedHelpReady(true);
+      setEventLinkedHelpAssignment((prev) => (prev == null ? prev : null));
+      setLinkedHelpReady((prev) => (prev ? prev : true));
       return;
     }
     if (preloadedFamilyAssignments === null) {
-      setEventLinkedHelpAssignment(null);
-      setLinkedHelpReady(false);
+      setEventLinkedHelpAssignment((prev) => (prev == null ? prev : null));
+      setLinkedHelpReady((prev) => (prev ? false : prev));
       return;
     }
     const match =
       preloadedFamilyAssignments.find(
         (r) => String(r.child_id) === String(helpChildId) && assignmentRowLinksEventId(r, event.id)
       ) || null;
-    setEventLinkedHelpAssignment(match);
-    setLinkedHelpReady(true);
+    setEventLinkedHelpAssignment((prev) => {
+      const prevId = prev?.id ? String(prev.id) : '';
+      const nextId = match?.id ? String(match.id) : '';
+      return prevId === nextId ? prev : match;
+    });
+    setLinkedHelpReady((prev) => (prev ? prev : true));
   }, [event?.id, helpChildId, preloadedFamilyAssignments, session?.role_flags?.isChild, familyId, event?.event_type, eventType]);
 
   useEffect(() => {
@@ -1137,23 +1215,23 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     parentLinkedFetchSeq.current += 1;
     const et = event?.event_type || eventType;
     if (!isParentView || !familyId || !event?.id) {
-      setParentLinkedAssignments([]);
-      setParentLinkedReady(true);
+      setParentLinkedAssignments((prev) => (prev.length === 0 ? prev : []));
+      setParentLinkedReady((prev) => (prev ? prev : true));
       return;
     }
     if (!isSchoolWorkEventType(et)) {
-      setParentLinkedAssignments([]);
-      setParentLinkedReady(true);
+      setParentLinkedAssignments((prev) => (prev.length === 0 ? prev : []));
+      setParentLinkedReady((prev) => (prev ? prev : true));
       return;
     }
     if (preloadedFamilyAssignments === null) {
-      setParentLinkedAssignments([]);
-      setParentLinkedReady(false);
+      setParentLinkedAssignments((prev) => (prev.length === 0 ? prev : []));
+      setParentLinkedReady((prev) => (prev ? false : prev));
       return;
     }
     const matches = preloadedFamilyAssignments.filter((r) => assignmentRowLinksEventId(r, event.id));
-    setParentLinkedAssignments(matches);
-    setParentLinkedReady(true);
+    setParentLinkedAssignments((prev) => (sameIdList(prev, matches) ? prev : matches));
+    setParentLinkedReady((prev) => (prev ? prev : true));
   }, [event?.id, event?.event_type, eventType, preloadedFamilyAssignments, isParentView, familyId]);
 
   useEffect(() => {
@@ -1205,6 +1283,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [chipConflictLoading, setChipConflictLoading] = useState(false);
   const onEditingChangeRef = useRef(onEditingChange);
   const lastHydratedEventSignatureRef = useRef(null);
+  const lastMaterialsLoadKeyRef = useRef('');
+  const lastSubjectsLoadKeyRef = useRef('');
 
   const editConflictEnterOp = useRef(new Animated.Value(0)).current;
   const editConflictEnterY = useRef(new Animated.Value(5)).current;
@@ -1216,11 +1296,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   }, [onEditingChange]);
 
   useEffect(() => {
-    setChipConflictBannerDismissed(false);
-    setChipConflictMessage(null);
-    setChipConflictSuggestion(null);
-    setChipConflictLoading(false);
-  }, [event?.id, conflictResolutionContext]);
+    setChipConflictBannerDismissed((prev) => (prev ? false : prev));
+    setChipConflictMessage((prev) => (prev == null ? prev : null));
+    setChipConflictSuggestion((prev) => (prev == null ? prev : null));
+    setChipConflictLoading((prev) => (prev ? false : prev));
+  }, [event?.id, conflictResolutionSignature]);
 
   useEffect(() => {
     const shouldHydratePersistentConflict =
@@ -1233,20 +1313,30 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (conflictResolutionContext?.conflictEvent || conflictResolutionContext?.conflictMessage) {
       const conflictEv = conflictResolutionContext.conflictEvent;
       if (conflictResolutionContext.conflictMessage) {
-        setChipConflictMessage(conflictResolutionContext.conflictMessage);
+        setChipConflictMessage((prev) =>
+          prev === conflictResolutionContext.conflictMessage ? prev : conflictResolutionContext.conflictMessage
+        );
       } else if (conflictEv?.title) {
         const who = assigneeLabelForConflict(assigneeIds, familyMembers);
         const lead = who ? `${who} — ` : '';
-        setChipConflictMessage(`${lead}${conflictEv.title} (${formatConflictMetaFromEvent(conflictEv).replace(' · ', ', ')})`);
+        const nextMsg = `${lead}${conflictEv.title} (${formatConflictMetaFromEvent(conflictEv).replace(' · ', ', ')})`;
+        setChipConflictMessage((prev) => (prev === nextMsg ? prev : nextMsg));
       }
       if (conflictResolutionContext?.suggestedChange) {
-        setChipConflictSuggestion(conflictResolutionContext.suggestedChange);
+        setChipConflictSuggestion((prev) => {
+          const prevSig = prev
+            ? `${String(prev.newStart || prev.new_start || '')}|${String(prev.newEnd || prev.new_end || '')}`
+            : '';
+          const next = conflictResolutionContext.suggestedChange;
+          const nextSig = `${String(next.newStart || next.new_start || '')}|${String(next.newEnd || next.new_end || '')}`;
+          return prevSig === nextSig ? prev : next;
+        });
       }
-      setChipConflictLoading(false);
+      setChipConflictLoading((prev) => (prev ? false : prev));
       return;
     }
     let cancelled = false;
-    setChipConflictLoading(true);
+    setChipConflictLoading((prev) => (prev ? prev : true));
     (async () => {
       try {
         const movedStart = new Date(event.start_ts);
@@ -1356,9 +1446,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     event?.start_ts,
     event?.end_ts,
     familyId,
-    familyMembers,
-    assigneeIds,
-    conflictResolutionContext,
+    familyMembersSignature,
+    assigneeIdsSignature,
+    conflictResolutionSignature,
   ]);
 
   useEffect(() => {
@@ -1412,12 +1502,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         );
 
         if (!chipConflictMessage && conflictResolutionContext.conflictMessage) {
-          setChipConflictMessage(conflictResolutionContext.conflictMessage);
+          setChipConflictMessage((prev) =>
+            prev === conflictResolutionContext.conflictMessage ? prev : conflictResolutionContext.conflictMessage
+          );
         }
         if (suggestion) {
-          setChipConflictSuggestion({
+          const nextSuggestion = {
             ...suggestion,
             message: formatConflictSuggestionMessage(suggestion.newStart, suggestion.newEnd),
+          };
+          setChipConflictSuggestion((prev) => {
+            const prevSig = prev
+              ? `${String(prev.newStart || prev.new_start || '')}|${String(prev.newEnd || prev.new_end || '')}`
+              : '';
+            const nextSig = `${String(nextSuggestion.newStart || nextSuggestion.new_start || '')}|${String(nextSuggestion.newEnd || nextSuggestion.new_end || '')}`;
+            return prevSig === nextSig ? prev : nextSuggestion;
           });
         }
       } catch (_) {
@@ -1432,10 +1531,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     chipConflictBannerDismissed,
     chipConflictMessage,
     familyId,
-    conflictResolutionContext,
+    conflictResolutionSignature,
     event?.start_ts,
     event?.end_ts,
-    assigneeIds,
+    assigneeIdsSignature,
   ]);
 
   const mergeDescriptionWithNote = (prev, note) => {
@@ -2215,28 +2314,39 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     };
   }, [event?.id, event?.recurrence_rule, event?.parent_event_id, event?.recurrence_id, event?.generated_by, event?.source_block_id]);
 
-  // Load materials, subjects when editing starts or when event loads (for view mode)
+  // Load materials when event opens (guarded against repeated same-key execution).
   useEffect(() => {
-    if (familyId && event?.id) {
-      loadMaterials();
-      const hasPreloaded =
-        Array.isArray(preloadedSubjects) &&
-        preloadedSubjects.length > 0 &&
-        assigneeIds.length > 0;
-      if (hasPreloaded) {
-        const nextSubjects = filterSubjectsForAssignees(preloadedSubjects, assigneeIds);
-        setSubjects((prev) => {
-          const prevIds = (prev || []).map((s) => String(s?.id || '')).join('|');
-          const nextIds = (nextSubjects || []).map((s) => String(s?.id || '')).join('|');
-          return prevIds === nextIds ? prev : nextSubjects;
-        });
-      }
-      fetchSubjects({ background: hasPreloaded });
-      if (assigneeIds.length > 0) {
-        fetchSubjectGoals(assigneeIds[0]);
-      }
+    if (!familyId || !event?.id) return;
+    const loadKey = `${familyId}:${event.id}`;
+    if (lastMaterialsLoadKeyRef.current === loadKey) return;
+    lastMaterialsLoadKeyRef.current = loadKey;
+    loadMaterials();
+  }, [familyId, event?.id]);
+
+  // Load subject-related data (guarded against repeated same-key execution).
+  useEffect(() => {
+    if (!familyId || !event?.id) return;
+    const loadKey = `${familyId}:${event.id}:${assigneeIdsSignature}:${preloadedSubjectsSignature}`;
+    if (lastSubjectsLoadKeyRef.current === loadKey) return;
+    lastSubjectsLoadKeyRef.current = loadKey;
+
+    const hasPreloaded =
+      Array.isArray(preloadedSubjects) &&
+      preloadedSubjects.length > 0 &&
+      assigneeIds.length > 0;
+    if (hasPreloaded) {
+      const nextSubjects = filterSubjectsForAssignees(preloadedSubjects, assigneeIds);
+      setSubjects((prev) => {
+        const prevIds = (prev || []).map((s) => String(s?.id || '')).join('|');
+        const nextIds = (nextSubjects || []).map((s) => String(s?.id || '')).join('|');
+        return prevIds === nextIds ? prev : nextSubjects;
+      });
     }
-  }, [familyId, event?.id, assigneeIds, preloadedSubjects]);
+    fetchSubjects({ background: hasPreloaded });
+    if (assigneeIds.length > 0) {
+      fetchSubjectGoals(assigneeIds[0]);
+    }
+  }, [familyId, event?.id, assigneeIdsSignature, preloadedSubjectsSignature]);
 
   // Merge shell preloaded academic years into list (same shape as fetch; keeps rows merged from event-specific fetch)
   useEffect(() => {
@@ -2246,13 +2356,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       preloadedAcademicYears.forEach((a) => {
         if (a?.id) byId.set(a.id, a);
       });
-      return Array.from(byId.values()).sort((a, b) => {
+      const next = Array.from(byId.values()).sort((a, b) => {
         const sa = a.start_date ? String(a.start_date).slice(0, 10) : '';
         const sb = b.start_date ? String(b.start_date).slice(0, 10) : '';
         return sb.localeCompare(sa);
       });
+      const prevSig = (prev || [])
+        .map((a) => `${String(a?.id || '')}:${String(a?.start_date || '')}:${String(a?.end_date || '')}`)
+        .join('|');
+      const nextSig = next
+        .map((a) => `${String(a?.id || '')}:${String(a?.start_date || '')}:${String(a?.end_date || '')}`)
+        .join('|');
+      return prevSig === nextSig ? prev : next;
     });
-  }, [preloadedAcademicYears]);
+  }, [preloadedAcademicYearsSignature]);
 
   // Load academic years for Instructional accounting (Counts toward year plan → Plan dropdown)
   useEffect(() => {
@@ -2297,10 +2414,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           list = [linkedRow, ...list];
         }
       }
-      if (!cancelled) setAcademicYears(list);
+      if (!cancelled) {
+        setAcademicYears((prev) => {
+          const prevSig = (prev || [])
+            .map((a) => `${String(a?.id || '')}:${String(a?.start_date || '')}:${String(a?.end_date || '')}`)
+            .join('|');
+          const nextSig = (list || [])
+            .map((a) => `${String(a?.id || '')}:${String(a?.start_date || '')}:${String(a?.end_date || '')}`)
+            .join('|');
+          return prevSig === nextSig ? prev : list;
+        });
+      }
     })();
     return () => { cancelled = true; };
-  }, [familyId, preloadedAcademicYears, academicYearId]);
+  }, [familyId, preloadedAcademicYearsSignature, academicYearId]);
 
   // When academic_year_id is set after the list query, or preloaded list omitted this id, merge the row in.
   useEffect(() => {
@@ -2414,7 +2541,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const materialsData = await getMaterials(familyId, {}, session);
       console.log('[EventDetails] Loaded materials:', materialsData?.length || 0);
       
-      setMaterials(materialsData || []);
+      setMaterials((prev) => (sameIdList(prev, materialsData || []) ? prev : (materialsData || [])));
       if (materialsData.length === 0) {
         console.warn('[EventDetails] No materials found for familyId:', familyId);
       }
@@ -4327,6 +4454,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 onPress={() => setShowSendToStudentModal(true)}
                 style={[
                   styles.connectedPlanBanner,
+                  styles.sendToStudentBanner,
                   (countsTowardPlan && academicYearId) || showParentAlertsRow ? { marginTop: 8 } : { marginTop: 14 },
                 ]}
                 {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
@@ -5059,6 +5187,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             onPress={() => setShowSendToStudentModal(true)}
             style={[
               styles.connectedPlanBanner,
+              styles.sendToStudentBanner,
               (countsTowardPlan && academicYearId) ? { marginTop: 8 } : { marginTop: 14 },
             ]}
             {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
@@ -8952,6 +9081,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  sendToStudentBanner: {
+    alignSelf: 'flex-start',
+    width: 'auto',
+    maxWidth: '100%',
   },
   connectedPlanBannerLink: {
     color: '#85C4F2',
