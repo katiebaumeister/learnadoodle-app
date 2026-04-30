@@ -15,6 +15,9 @@ import {
   Calendar,
   Clock,
   Plus,
+  Sparkles,
+  Upload,
+  Pencil,
   FileText,
   ExternalLink,
   Trash2,
@@ -24,6 +27,7 @@ import {
   X,
   HelpCircle,
   ChevronRight,
+  BarChart3,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
@@ -43,6 +47,7 @@ import { extractStudentHelpReason, formatDueShort } from '../tutor/tutorHelpUtil
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
 import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import {
   SubjectAttendanceYearHeatmap,
   SubjectAttendanceMonthDrilldown,
@@ -56,6 +61,11 @@ import { archiveMaterial } from '../../lib/services/materialsClient';
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_PROGRESS = false;
 const WEEKDAY_PLURALS = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+const LEARNING_GOALS_METHOD_LABELS = {
+  manual: 'Manual input',
+  plain_text_parsed: 'Paste plain text',
+  ai_generated: 'Generate curriculum',
+};
 
 function formatWeekdayList(days = []) {
   const labels = [...new Set(days)]
@@ -236,11 +246,45 @@ export default function SubjectDetailPage({
   const [subjectPlanYearId, setSubjectPlanYearId] = useState(null);
   const [subjectPlanData, setSubjectPlanData] = useState(null);
   const [attendanceInsightsMode, setAttendanceInsightsMode] = useState(null);
+  const [learningGoalsUnits, setLearningGoalsUnits] = useState([]);
+  const [learningGoalsSource, setLearningGoalsSource] = useState(null);
+  const [learningGoalsLoading, setLearningGoalsLoading] = useState(false);
   const loadingRef = useRef(false);
   const openingPlanBuilderRef = useRef(false);
   const autoOpenedMaterialKeyRef = useRef(null);
   const materialHighlightTimeoutRef = useRef(null);
   const materialContextMenuIdRef = useRef(`subject-detail-material-context-menu-${Math.random().toString(36).slice(2)}`);
+  const openSubjectUnitsEditor = useCallback(() => {
+    if (!onEditSubject || !subjectData?.subject) return;
+    onEditSubject(subjectData.subject);
+  }, [onEditSubject, subjectData]);
+  const openSubjectUnitsEditorForMethod = useCallback(
+    (_method) => {
+      openSubjectUnitsEditor();
+    },
+    [openSubjectUnitsEditor]
+  );
+  const loadLearningGoalsStructure = useCallback(async () => {
+    const sid = subjectData?.subject?.id;
+    if (!familyId || !sid) {
+      setLearningGoalsUnits([]);
+      setLearningGoalsSource(null);
+      return;
+    }
+    setLearningGoalsLoading(true);
+    try {
+      const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, sid, null);
+      if (error) throw error;
+      setLearningGoalsUnits(Array.isArray(data?.units) ? data.units : []);
+      setLearningGoalsSource(data?.saved_content_source || null);
+    } catch (err) {
+      console.warn('[SubjectDetailPage] Failed loading learning goals structure:', err);
+      setLearningGoalsUnits([]);
+      setLearningGoalsSource(null);
+    } finally {
+      setLearningGoalsLoading(false);
+    }
+  }, [familyId, subjectData?.subject?.id]);
   /** Parent often passes inline callbacks; keep loadSubjectDetail stable so mount effect does not loop. */
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -297,6 +341,10 @@ export default function SubjectDetailPage({
     loadSubjectDetail({ silent: !!preloadedSubjectData });
     // Intentionally omit preloadedSubjectData: parent updates cache object after each fetch; re-running would loop.
   }, [subjectId, familyId, loadSubjectDetail]);
+
+  useEffect(() => {
+    loadLearningGoalsStructure();
+  }, [loadLearningGoalsStructure]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -475,6 +523,15 @@ export default function SubjectDetailPage({
     () => buildCalendarConnectionsHeaderLine(subject),
     [subject]
   );
+  const totalLearningGoalLessons = useMemo(
+    () => (learningGoalsUnits || []).reduce((sum, unit) => sum + ((unit?.lessons || []).length || 0), 0),
+    [learningGoalsUnits]
+  );
+  const hasLearningGoalsContent = totalLearningGoalLessons > 0;
+  const learningGoalsSourceLabel = useMemo(() => {
+    const key = String(learningGoalsSource || '').trim().toLowerCase();
+    return LEARNING_GOALS_METHOD_LABELS[key] || (key ? key.replace(/_/g, ' ') : null);
+  }, [learningGoalsSource]);
 
   useEffect(() => {
     if (!initialOpenMaterialId) return;
@@ -1146,7 +1203,23 @@ export default function SubjectDetailPage({
             activeOpacity={0.8}
           >
             <Text style={styles.summaryTileLabel}>Learning Goals</Text>
-            <Text style={styles.summaryTileValue}>Coming soon</Text>
+            {hasLearningGoalsContent ? (
+              <>
+                <Text style={styles.summaryTileValue}>
+                  {totalLearningGoalLessons} lesson{totalLearningGoalLessons === 1 ? '' : 's'}
+                </Text>
+                <Text style={styles.summaryTileSubtext} numberOfLines={2}>
+                  Across {learningGoalsUnits.length} unit{learningGoalsUnits.length === 1 ? '' : 's'} for {subject?.name || 'this subject'}.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.summaryTileValue}>No goals yet</Text>
+                <Text style={styles.summaryTileSubtext} numberOfLines={2}>
+                  Add lessons or units for {subject?.name || 'this subject'}.
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -1362,6 +1435,38 @@ export default function SubjectDetailPage({
                     {attendance30Days.absent} Absent
                   </Text>
                 </View>
+                <View style={styles.attendanceModePillsGroup}>
+                  <TouchableOpacity
+                    style={[styles.sectionModePill, attendanceInsightsMode === 'heatmap' && styles.sectionModePillActive]}
+                    onPress={() =>
+                      setAttendanceInsightsMode((current) => (current === 'heatmap' ? null : 'heatmap'))
+                    }
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.sectionModePillInner}>
+                      <BarChart3 size={14} color={attendanceInsightsMode === 'heatmap' ? '#2F6FA8' : '#6B7280'} />
+                      <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'heatmap' && styles.sectionModePillTextActive]}>
+                        Heat Map
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.sectionModePill, attendanceInsightsMode === 'drilldown' && styles.sectionModePillActive]}
+                    onPress={() =>
+                      setAttendanceInsightsMode((current) => (current === 'drilldown' ? null : 'drilldown'))
+                    }
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.sectionModePillInner}>
+                      <Calendar size={14} color={attendanceInsightsMode === 'drilldown' ? '#2F6FA8' : '#6B7280'} />
+                      <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'drilldown' && styles.sectionModePillTextActive]}>
+                        Drill Down
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
               </View>
               <View style={styles.attendanceList}>
                 {(showAttendanceExpanded ? attendanceRecordsForUI : attendanceRecordsForUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
@@ -1411,32 +1516,6 @@ export default function SubjectDetailPage({
                     <Text style={styles.emptyStateButtonText}>Past lessons & bulk actions</Text>
                   </TouchableOpacity>
                 ) : null}
-                <View style={styles.attendanceModePillsGroup}>
-                  <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceInsightsMode === 'heatmap' && styles.sectionModePillActive]}
-                    onPress={() =>
-                      setAttendanceInsightsMode((current) => (current === 'heatmap' ? null : 'heatmap'))
-                    }
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'heatmap' && styles.sectionModePillTextActive]}>
-                      Year heatmap grid
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceInsightsMode === 'drilldown' && styles.sectionModePillActive]}
-                    onPress={() =>
-                      setAttendanceInsightsMode((current) => (current === 'drilldown' ? null : 'drilldown'))
-                    }
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'drilldown' && styles.sectionModePillTextActive]}>
-                      Month drill-down
-                    </Text>
-                  </TouchableOpacity>
-                </View>
               </View>
               {attendanceInsightsPanel}
             </View>
@@ -1468,9 +1547,12 @@ export default function SubjectDetailPage({
                     activeOpacity={0.8}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'heatmap' && styles.sectionModePillTextActive]}>
-                      Year heatmap grid
-                    </Text>
+                    <View style={styles.sectionModePillInner}>
+                      <BarChart3 size={14} color={attendanceInsightsMode === 'heatmap' ? '#2F6FA8' : '#6B7280'} />
+                      <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'heatmap' && styles.sectionModePillTextActive]}>
+                        Heat Map
+                      </Text>
+                    </View>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.sectionModePill, attendanceInsightsMode === 'drilldown' && styles.sectionModePillActive]}
@@ -1480,9 +1562,12 @@ export default function SubjectDetailPage({
                     activeOpacity={0.8}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'drilldown' && styles.sectionModePillTextActive]}>
-                      Month drill-down
-                    </Text>
+                    <View style={styles.sectionModePillInner}>
+                      <Calendar size={14} color={attendanceInsightsMode === 'drilldown' ? '#2F6FA8' : '#6B7280'} />
+                      <Text style={[styles.sectionModePillText, attendanceInsightsMode === 'drilldown' && styles.sectionModePillTextActive]}>
+                        Drill Down
+                      </Text>
+                    </View>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1689,9 +1774,117 @@ export default function SubjectDetailPage({
             </TouchableOpacity>
           </View>
           <View style={styles.emptyStateBox}>
-            <Text style={styles.emptyStateText}>
-              Learning Goals logic is still being built to provide you with typical state learning requirements. Check back soon...
-            </Text>
+            {!hasLearningGoalsContent ? (
+              <Text style={styles.emptyStateText}>
+                Learning Goals appear once you add class lessons or units.
+              </Text>
+            ) : null}
+            {learningGoalsLoading ? (
+              <Text style={styles.learningGoalsLoadingText}>Loading current units...</Text>
+            ) : null}
+            {hasLearningGoalsContent ? (
+              <>
+                <View style={styles.learningGoalsSummaryRow}>
+                  <Text style={styles.learningGoalsSummaryText}>
+                    {learningGoalsUnits.length} units • {totalLearningGoalLessons} lessons
+                  </Text>
+                  {learningGoalsSourceLabel ? (
+                    <View style={styles.learningGoalsSourceBadge}>
+                      <Text style={styles.learningGoalsSourceBadgeText}>Built via {learningGoalsSourceLabel}</Text>
+                    </View>
+                  ) : null}
+                </View>
+                <View style={styles.learningGoalsList}>
+                  {learningGoalsUnits.map((unit, unitIndex) => {
+                    const lessonTitles = (unit?.lessons || [])
+                      .map((lesson) => String(lesson?.title || '').trim())
+                      .filter(Boolean);
+                    return (
+                      <View key={`${unit?.title || 'unit'}-${unitIndex}`} style={styles.learningGoalsUnitCard}>
+                        <Text style={styles.learningGoalsUnitTitle}>{unit?.title || `Unit ${unitIndex + 1}`}</Text>
+                        <Text style={styles.learningGoalsUnitMeta}>
+                          {(unit?.lessons || []).length} {(unit?.lessons || []).length === 1 ? 'lesson' : 'lessons'}
+                        </Text>
+                        {lessonTitles.slice(0, 4).map((lessonTitle, lessonIndex) => (
+                          <Text key={`${lessonTitle}-${lessonIndex}`} style={styles.learningGoalsLessonRow}>
+                            • {lessonTitle}
+                          </Text>
+                        ))}
+                        {lessonTitles.length > 4 ? (
+                          <Text style={styles.learningGoalsMoreText}>+{lessonTitles.length - 4} more lessons</Text>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
+              </>
+            ) : null}
+            {onEditSubject ? (
+              <View style={styles.learningGoalsActionsWrap}>
+                {hasLearningGoalsContent ? (
+                  <TouchableOpacity
+                    style={styles.learningGoalsEditCurrentButton}
+                    onPress={openSubjectUnitsEditor}
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.learningGoalsActionInner}>
+                      <Edit2 size={14} color="#5E6C84" />
+                      <Text style={styles.learningGoalsEditCurrentText}>Edit current units</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+                {hasLearningGoalsContent ? (
+                  <Text style={styles.learningGoalsMethodsLabel}>Add or update with another method:</Text>
+                ) : null}
+                <View style={styles.learningGoalsActionsRow}>
+                <TouchableOpacity
+                  style={styles.learningGoalsActionPill}
+                  onPress={() => openSubjectUnitsEditorForMethod('manual')}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.learningGoalsActionInner}>
+                    <Plus size={14} color="#5E6C84" />
+                    <Text style={styles.learningGoalsActionText}>Add units</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.learningGoalsActionPill}
+                  onPress={() => openSubjectUnitsEditorForMethod('generate')}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.learningGoalsActionInner}>
+                    <Sparkles size={14} color="#5E6C84" />
+                    <Text style={styles.learningGoalsActionText}>Generate curriculum</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.learningGoalsActionPill}
+                  onPress={() => openSubjectUnitsEditorForMethod('upload')}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.learningGoalsActionInner}>
+                    <Upload size={14} color="#5E6C84" />
+                    <Text style={styles.learningGoalsActionText}>Upload material</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.learningGoalsActionPill}
+                  onPress={() => openSubjectUnitsEditorForMethod('paste')}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.learningGoalsActionInner}>
+                    <Pencil size={14} color="#5E6C84" />
+                    <Text style={styles.learningGoalsActionText}>Paste plain text</Text>
+                  </View>
+                </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
           </View>
         </View>
       </ScrollView>
@@ -2355,6 +2548,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FAFB',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
+  sectionModePillInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   sectionModePillActive: {
     borderColor: 'rgba(107, 179, 232, 0.55)',
     backgroundColor: 'rgba(133, 196, 242, 0.14)',
@@ -2588,6 +2786,150 @@ const styles = StyleSheet.create({
     color: colors.muted || '#6B7280',
     lineHeight: 20,
     marginBottom: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsLoadingText: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 14,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 10,
+    flexWrap: 'wrap',
+  },
+  learningGoalsSummaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsSourceBadge: {
+    borderWidth: 1,
+    borderColor: 'rgba(107, 179, 232, 0.35)',
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  learningGoalsSourceBadgeText: {
+    fontSize: 12,
+    color: '#3974A7',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsList: {
+    gap: 8,
+    marginBottom: 14,
+  },
+  learningGoalsUnitCard: {
+    borderWidth: 1,
+    borderColor: '#E6ECF3',
+    borderRadius: 10,
+    backgroundColor: '#FAFCFF',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  learningGoalsUnitTitle: {
+    fontSize: 15,
+    color: '#1F2937',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsUnitMeta: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+    marginBottom: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsLessonRow: {
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsMoreText: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsActionsWrap: {
+    gap: 8,
+  },
+  learningGoalsEditCurrentButton: {
+    minHeight: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#CFE2F6',
+    backgroundColor: '#F2F8FF',
+    paddingHorizontal: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+  },
+  learningGoalsEditCurrentText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#3F5E86',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsMethodsLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+  },
+  learningGoalsActionPill: {
+    minHeight: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D9E0EA',
+    backgroundColor: '#F8FAFD',
+    paddingHorizontal: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  learningGoalsActionInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  learningGoalsActionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#5E6C84',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

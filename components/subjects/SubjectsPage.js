@@ -36,6 +36,7 @@ import SubjectDetailPage from './SubjectDetailPage';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
 import HelpPopover from '../planner/HelpPopover';
+import PlannerSettingsContent from '../settings/PlannerSettingsContent';
 
 const SEARCH_SECTION_KEYWORDS = {
   'attendance-section': ['attendance', 'attended', 'present', 'absent', 'lesson', 'lessons', 'event', 'events'],
@@ -215,6 +216,7 @@ export default function SubjectsPage({
   const [showExportHint, setShowExportHint] = useState(false);
   const [exportHintPosition, setExportHintPosition] = useState({ top: 0, left: 0 });
   const [showSubjectsExportModal, setShowSubjectsExportModal] = useState(false);
+  const [showPlanningPreferencesModal, setShowPlanningPreferencesModal] = useState(false);
   const [subjectsExportType, setSubjectsExportType] = useState('schedule');
   const [subjectsExportFormat, setSubjectsExportFormat] = useState('excel');
   const [subjectsExportStartDate, setSubjectsExportStartDate] = useState('');
@@ -1677,6 +1679,44 @@ export default function SubjectsPage({
         />
       )}
       <Modal
+        visible={showPlanningPreferencesModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPlanningPreferencesModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.exportModalBackdrop}
+          activeOpacity={1}
+          onPress={() => setShowPlanningPreferencesModal(false)}
+        >
+          <TouchableOpacity style={styles.planningPreferencesModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.planningPreferencesHeaderRow}>
+              <Text style={styles.planningPreferencesModalTitle}>Planning preferences</Text>
+              <TouchableOpacity
+                onPress={() => setShowPlanningPreferencesModal(false)}
+                style={styles.planningPreferencesCloseButton}
+                hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              >
+                <X size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.planningPreferencesBody}>
+              <PlannerSettingsContent
+                familyId={familyId}
+                embeddedInModal
+                onSave={() => {
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+                    window.dispatchEvent(new CustomEvent('refreshSubjects'));
+                  }
+                  loadSubjects();
+                }}
+              />
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+      <Modal
         visible={showSubjectsExportModal}
         transparent
         animationType="fade"
@@ -1817,6 +1857,7 @@ export default function SubjectsPage({
             visibleSubjects={filteredSubjects}
             allSubjects={subjects}
             onDone={() => setSelectedModeFilter('view')}
+            onOpenPlannerSettings={() => setShowPlanningPreferencesModal(true)}
             onOpenSubject={(subjectId) => {
               const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
               if (match) {
@@ -2129,6 +2170,46 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     padding: 20,
+  },
+  planningPreferencesModalCard: {
+    width: '100%',
+    maxWidth: 980,
+    maxHeight: '90%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  planningPreferencesHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    backgroundColor: '#F8FAFC',
+  },
+  planningPreferencesModalTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  planningPreferencesCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  planningPreferencesBody: {
+    flex: 1,
+    minHeight: 520,
   },
   exportModalTitle: {
     fontSize: 24,

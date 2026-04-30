@@ -5435,10 +5435,10 @@ export default function PlanYearModal({
   // Fetch target_scope from family_planner_settings for plan resolution (overall vs per_subject)
   useEffect(() => {
     if (!visible || !familyId) return;
-    getFamilyPlannerSettings(familyId).then(() => {
+    getFamilyPlannerSettings(familyId, selectedSchoolYearOption?.label || null).then(() => {
       setTargetScopeFromSettings('per_subject');
     });
-  }, [visible, familyId]);
+  }, [visible, familyId, selectedSchoolYearOption?.label]);
 
   // While open, pick up Learning goals / target changes saved from Family → Planning Preferences or Edit subject.
   useEffect(() => {
@@ -5446,8 +5446,8 @@ export default function PlanYearModal({
     if (!visible || !familyId) return;
     const onRefresh = () => {
       Promise.all([
-        getFamilyPlannerSettings(familyId),
-        getPlanDefaultsFromSettings(familyId),
+        getFamilyPlannerSettings(familyId, selectedSchoolYearOption?.label || null),
+        getPlanDefaultsFromSettings(familyId, selectedSchoolYearOption?.label || null),
       ]).then(([, defaultsPayload]) => {
         setTargetScopeFromSettings('per_subject');
         if (!defaultsPayload?.error) {
@@ -5461,7 +5461,7 @@ export default function PlanYearModal({
     };
     window.addEventListener('refreshPlanDefaults', onRefresh);
     return () => window.removeEventListener('refreshPlanDefaults', onRefresh);
-  }, [visible, familyId]);
+  }, [visible, familyId, selectedSchoolYearOption?.label]);
 
   // Keep per-subject cadence draft in sync with instructional blocks (for future API / validation).
   useEffect(() => {
@@ -5496,21 +5496,24 @@ export default function PlanYearModal({
     if (!visible || !familyId || planStep !== 'logistics') return;
     let cancelled = false;
     setPlanningDefaultsLoading(true);
-    getPlanDefaultsFromSettings(familyId).then(({ settings, exclusions, excluded_holiday_dates, error }) => {
+    getPlanDefaultsFromSettings(familyId, selectedSchoolYearOption?.label || null).then(({ settings, exclusions, excluded_holiday_dates, error }) => {
       if (cancelled) return;
       setPlanningDefaultsLoading(false);
       if (!error) setPlanningDefaultsData({ settings, exclusions: exclusions || [], excluded_holiday_dates: excluded_holiday_dates || [] });
       else setPlanningDefaultsData(null);
     });
     return () => { cancelled = true; };
-  }, [visible, familyId, planStep]);
+  }, [visible, familyId, planStep, selectedSchoolYearOption?.label]);
 
   // When opening for a new plan (no existing plan loaded), pre-fill from family_planner_settings + planner_exclusions, then fallback to latest academic_year
   useEffect(() => {
     if (!visible || !familyId || academicYearId || initialAcademicYearId || savedTargetsAppliedRef.current) return;
     let cancelled = false;
     (async () => {
-      const { settings, exclusions, excluded_holiday_dates, error: settingsErr } = await getPlanDefaultsFromSettings(familyId);
+      const { settings, exclusions, excluded_holiday_dates, error: settingsErr } = await getPlanDefaultsFromSettings(
+        familyId,
+        selectedSchoolYearOption?.label || null
+      );
       if (cancelled) return;
       if (!settingsErr && settings) {
         const modeRaw = typeof settings.default_constraint_mode === 'string'
@@ -5599,7 +5602,7 @@ export default function PlanYearModal({
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, familyId, academicYearId, initialAcademicYearId]);
+  }, [visible, familyId, academicYearId, initialAcademicYearId, selectedSchoolYearOption?.label]);
 
   // When opening with initial subject (e.g. from "Generate curriculum"), scope to that subject
   useEffect(() => {
@@ -7531,14 +7534,14 @@ export default function PlanYearModal({
           default_target_hours: snap.planConstraintMode === 'hours' ? (parseFloat(snap.planTargetHours) || null) : null,
           default_planned_hours_per_day:
             snap.planConstraintMode === 'hours' ? (parseFloat(snap.hoursPerDay) || null) : null,
-        });
+        }, selectedSchoolYearOption?.label || null);
         if (error) throw error;
         dispatchPlanningPrefsSynced();
       } catch (e) {
         toast?.push?.(e?.message || 'Failed to save planning preferences', 'error');
       }
     }, 400);
-  }, [familyId, toast, dispatchPlanningPrefsSynced]);
+  }, [familyId, toast, dispatchPlanningPrefsSynced, selectedSchoolYearOption?.label]);
 
   const persistFamilyHolidaySettingsDebounced = useCallback(
     (followValue) => {
@@ -7551,7 +7554,7 @@ export default function PlanYearModal({
             follow_public_holidays: followValue !== false,
             holiday_country: countryCode || 'US',
             holiday_region: regionCode ?? null,
-          });
+          }, selectedSchoolYearOption?.label || null);
           if (error) throw error;
           dispatchPlanningPrefsSynced();
         } catch (e) {
@@ -7559,7 +7562,7 @@ export default function PlanYearModal({
         }
       }, 350);
     },
-    [familyId, toast, countryCode, regionCode, dispatchPlanningPrefsSynced],
+    [familyId, toast, countryCode, regionCode, dispatchPlanningPrefsSynced, selectedSchoolYearOption?.label],
   );
 
   const persistFamilyHolidayBreakExclusionsDebounced = useCallback(
@@ -7573,6 +7576,7 @@ export default function PlanYearModal({
             familyId,
             nextCustomHolidays || [],
             nextCustomBreaks || [],
+            selectedSchoolYearOption?.label || null,
           );
           if (error) throw error;
           dispatchPlanningPrefsSynced();
@@ -7581,7 +7585,7 @@ export default function PlanYearModal({
         }
       }, 400);
     },
-    [familyId, toast, dispatchPlanningPrefsSynced],
+    [familyId, toast, dispatchPlanningPrefsSynced, selectedSchoolYearOption?.label],
   );
 
   const persistExcludedPublicHolidayDatesDebounced = useCallback(
@@ -7595,7 +7599,11 @@ export default function PlanYearModal({
             const match = (nextPublicHolidaysList || []).find((h) => (h?.date || '').slice(0, 10) === d);
             return { date: d, name: match?.name || 'Holiday' };
           });
-          const { error } = await saveExcludedPublicHolidayDates(familyId, datesWithNames);
+          const { error } = await saveExcludedPublicHolidayDates(
+            familyId,
+            datesWithNames,
+            selectedSchoolYearOption?.label || null
+          );
           if (error) throw error;
           dispatchPlanningPrefsSynced();
         } catch (e) {
@@ -7603,7 +7611,7 @@ export default function PlanYearModal({
         }
       }, 350);
     },
-    [familyId, toast, dispatchPlanningPrefsSynced],
+    [familyId, toast, dispatchPlanningPrefsSynced, selectedSchoolYearOption?.label],
   );
 
   const handleToggleFollowGlobalHolidays = useCallback(() => {
@@ -7617,14 +7625,18 @@ export default function PlanYearModal({
       setTargetScopeFromSettings(scope);
       if (!familyId) return;
       try {
-        const { error } = await saveFamilyPlannerSettings(familyId, { target_scope: scope });
+        const { error } = await saveFamilyPlannerSettings(
+          familyId,
+          { target_scope: scope },
+          selectedSchoolYearOption?.label || null
+        );
         if (error) throw error;
         dispatchPlanningPrefsSynced();
       } catch (e) {
         toast?.push?.(e?.message || 'Failed to save', 'error');
       }
     },
-    [familyId, toast, dispatchPlanningPrefsSynced],
+    [familyId, toast, dispatchPlanningPrefsSynced, selectedSchoolYearOption?.label],
   );
   const adoptCurrentPlanningPreferencesTarget = useCallback(() => {
     if (!adoptableOverallTargetFromSettings) return;
@@ -8296,9 +8308,17 @@ export default function PlanYearModal({
   const savePlanLabel = buildPlanSubjectName
     ? `Save ${buildPlanSubjectName} Plan`
     : 'Save plan';
-  const modalHeaderPlanTitle = buildPlanSubjectName
-    ? `Add a New ${buildPlanSubjectName} Plan`
-    : 'Add a New Plan';
+  const modalHeaderPlanTitle = isEditingExistingPlanFlow
+    ? (
+      buildPlanSubjectName
+        ? `Editing ${buildPlanSubjectName}'s Plan`
+        : 'Editing Plan'
+    )
+    : (
+      buildPlanSubjectName
+        ? `Add a New ${buildPlanSubjectName} Plan`
+        : 'Add a New Plan'
+    );
   const unitHeaderSubtitle =
     unitFocusSubjectNameForHeader && effectiveSubjectIds.length > 1 && (planStep === 'source' || planStep === 'unit_structure')
       ? t('planMyYear.multiSubjectUnits.headerUnitsFor', { subjectName: unitFocusSubjectNameForHeader })
@@ -11945,41 +11965,11 @@ export default function PlanYearModal({
             {showPlanEditingModeBanner && (
               <View style={styles.planEditingModeBanner}>
                 <View style={styles.planEditingModeBannerInner}>
-                  <View style={styles.planEditingModeBannerLeft}>
-                    {academicYearId ? (
-                      <TouchableOpacity
-                        onPress={goBackFromLogisticsToPlanList}
-                        activeOpacity={0.85}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={styles.planEditingModeBannerLink}>
-                          {openForNewPlan ? '← Back to plan list' : '← Back'}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <View />
-                    )}
-                  </View>
+                  <View style={styles.planEditingModeBannerLeft} />
                   <View style={styles.planEditingModeBannerCenter} pointerEvents="none">
                     <Text style={styles.planEditingModeBannerLabel}>Editing mode</Text>
                   </View>
-                  <View style={styles.planEditingModeBannerRight}>
-                    {subjectDetailOverlayChrome ? (
-                      <TouchableOpacity
-                        onPress={(e) => {
-                          if (Platform.OS === 'web' && e?.stopPropagation) e.stopPropagation();
-                          onClose();
-                        }}
-                        style={styles.subjectDetailPlanCloseCircle}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        accessibilityLabel="Close"
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <X size={16} color="#0f172a" strokeWidth={2.5} />
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
+                  <View style={styles.planEditingModeBannerRight} />
                 </View>
               </View>
             )}
@@ -12636,7 +12626,7 @@ export default function PlanYearModal({
                             <Text style={[styles.holidayDate, { fontSize: 13 }]}>{h.date}</Text>
                             <Text style={[styles.holidayName, { fontSize: 13 }]}>{h.name}</Text>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                              <TouchableOpacity onPress={async () => { try { await addExclusion({ family_id: familyId, scope_type: 'family_default', exclusion_type: 'holiday', start_date: h.date, end_date: h.date, label: h.name || '' }); const { settings, exclusions } = await getPlanDefaultsFromSettings(familyId); setPlanningDefaultsData({ settings, exclusions: exclusions || [] }); toast?.push?.('Saved to Planning Preferences', 'success'); } catch (e) { toast?.push?.(e?.message || 'Failed to save', 'error'); } }} style={{ padding: 4 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                              <TouchableOpacity onPress={async () => { try { await addExclusion({ family_id: familyId, scope_type: 'family_default', school_year_label: selectedSchoolYearOption?.label || null, exclusion_type: 'holiday', start_date: h.date, end_date: h.date, label: h.name || '' }); const { settings, exclusions } = await getPlanDefaultsFromSettings(familyId, selectedSchoolYearOption?.label || null); setPlanningDefaultsData({ settings, exclusions: exclusions || [] }); toast?.push?.('Saved to Planning Preferences', 'success'); } catch (e) { toast?.push?.(e?.message || 'Failed to save', 'error'); } }} style={{ padding: 4 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                                 <Text style={{ fontSize: 12, color: ACCENT }}>Save to settings</Text>
                               </TouchableOpacity>
                               <TouchableOpacity onPress={() => idx >= 0 && removeCustomHoliday(idx)} style={styles.deleteButton}>
@@ -12656,7 +12646,7 @@ export default function PlanYearModal({
                             <Text style={[styles.holidayDate, { fontSize: 13 }]}>{b.start} – {b.end}</Text>
                             <Text style={[styles.holidayName, { fontSize: 13 }]}>{b.name}</Text>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                              <TouchableOpacity onPress={async () => { try { await addExclusion({ family_id: familyId, scope_type: 'family_default', exclusion_type: 'break', start_date: b.start, end_date: b.end, label: b.name || '' }); const { settings, exclusions } = await getPlanDefaultsFromSettings(familyId); setPlanningDefaultsData({ settings, exclusions: exclusions || [] }); toast?.push?.('Saved to Planning Preferences', 'success'); } catch (e) { toast?.push?.(e?.message || 'Failed to save', 'error'); } }} style={{ padding: 4 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                              <TouchableOpacity onPress={async () => { try { await addExclusion({ family_id: familyId, scope_type: 'family_default', school_year_label: selectedSchoolYearOption?.label || null, exclusion_type: 'break', start_date: b.start, end_date: b.end, label: b.name || '' }); const { settings, exclusions } = await getPlanDefaultsFromSettings(familyId, selectedSchoolYearOption?.label || null); setPlanningDefaultsData({ settings, exclusions: exclusions || [] }); toast?.push?.('Saved to Planning Preferences', 'success'); } catch (e) { toast?.push?.(e?.message || 'Failed to save', 'error'); } }} style={{ padding: 4 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                                 <Text style={{ fontSize: 12, color: ACCENT }}>Save to settings</Text>
                               </TouchableOpacity>
                               <TouchableOpacity onPress={() => idx >= 0 && removeCustomBreak(idx)} style={styles.deleteButton}>

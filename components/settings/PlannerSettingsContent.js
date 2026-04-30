@@ -4,7 +4,7 @@
  * Flat layout: static sections, no accordions, Profile-style rhythm.
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import {
   Platform,
   Modal,
 } from 'react-native';
-import { Plus, Trash2, Pencil, Check, X } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, ChevronDown } from 'lucide-react';
 import {
   getFamilyPlannerSettings,
   saveFamilyPlannerSettings,
@@ -53,6 +53,35 @@ const parsePositiveFloatOrNull = (value) => {
 };
 
 const normalizeTargetMode = (mode) => (typeof mode === 'string' ? mode.toLowerCase() : '');
+const formatSchoolYearLabel = (startYear) => `${startYear}/${String(startYear + 1).slice(-2)}`;
+const normalizeSchoolYearLabel = (label) => {
+  const raw = String(label || '').trim();
+  if (!raw) return '';
+  const slashMatch = raw.match(/(\d{4})\s*\/\s*(\d{2})/);
+  if (slashMatch) return `${slashMatch[1]}/${slashMatch[2]}`;
+  const dashMatch = raw.match(/(\d{4})\s*-\s*(\d{4})/);
+  if (dashMatch) {
+    const start = Number(dashMatch[1]);
+    return Number.isFinite(start) ? formatSchoolYearLabel(start) : '';
+  }
+  return raw;
+};
+
+const parseSchoolYearLabel = (label) => {
+  const normalized = normalizeSchoolYearLabel(label);
+  const m = normalized.match(/^(\d{4})\/(\d{2})$/);
+  if (!m) return null;
+  const start = Number(m[1]);
+  const end = 2000 + Number(m[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return { start, end };
+};
+
+const withinYmdRange = (ymd, minYmd, maxYmd) => {
+  const v = String(ymd || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  return (!minYmd || v >= minYmd) && (!maxYmd || v <= maxYmd);
+};
 
 const deriveSubjectTargetState = (subjectsList) => {
   const st = {};
@@ -82,7 +111,13 @@ const deriveSubjectTargetState = (subjectsList) => {
   return { subjectTargetsMap: st, firstActiveTarget };
 };
 
-export default function PlannerSettingsContent({ familyId, onSave, initialData, readOnly = false }) {
+export default function PlannerSettingsContent({
+  familyId,
+  onSave,
+  initialData,
+  readOnly = false,
+  embeddedInModal = false,
+}) {
   const toast = useToast();
   const [loading, setLoading] = useState(!initialData);
   const [saving, setSaving] = useState(false);
@@ -128,10 +163,66 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
   // Subject targets (per-subject defaults)
   const [subjects, setSubjects] = useState([]);
   const [subjectTargets, setSubjectTargets] = useState({}); // { subjectId: { mode, days, hours } }
+  const [schoolYearOptions, setSchoolYearOptions] = useState([]);
+  const [selectedSchoolYearLabel, setSelectedSchoolYearLabel] = useState('');
+  const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
+  const [schoolYearMenuAnchor, setSchoolYearMenuAnchor] = useState(null);
+  const schoolYearTriggerRef = useRef(null);
 
   useEffect(() => {
     stateRef.current = { targetScope, goalMode, targetDays, targetHours, hoursPerDay, followGlobalHolidays, countryCode, regionCode, customHolidays, customBreaks, subjectTargets };
   });
+
+  const selectedYearMeta = useMemo(() => {
+    const parsed = parseSchoolYearLabel(selectedSchoolYearLabel);
+    if (parsed) return parsed;
+    const now = new Date();
+    const start = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+    return { start, end: start + 1 };
+  }, [selectedSchoolYearLabel]);
+  const currentSchoolYearLabel = useMemo(() => {
+    const now = new Date();
+    const start = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+    return formatSchoolYearLabel(start);
+  }, []);
+  const yearRangeMinYmd = `${selectedYearMeta.start}-01-01`;
+  const yearRangeMaxYmd = `${selectedYearMeta.end}-12-31`;
+
+  const visibleSubjects = useMemo(
+    () => {
+      const selected = normalizeSchoolYearLabel(selectedSchoolYearLabel);
+      return (subjects || []).filter((subj) => {
+        const subjectYear = normalizeSchoolYearLabel(subj?.school_year);
+        if (subjectYear) return subjectYear === selected;
+        // Legacy subjects may not have school_year persisted; show them in current year.
+        return selected === currentSchoolYearLabel;
+      });
+    },
+    [subjects, selectedSchoolYearLabel, currentSchoolYearLabel]
+  );
+
+  const visibleCustomHolidays = useMemo(
+    () => (customHolidays || []).map((h, idx) => ({ ...h, _idx: idx })).filter((h) => withinYmdRange(h.date, yearRangeMinYmd, yearRangeMaxYmd)),
+    [customHolidays, yearRangeMinYmd, yearRangeMaxYmd]
+  );
+  const visibleCustomBreaks = useMemo(
+    () =>
+      (customBreaks || [])
+        .map((b, idx) => ({ ...b, _idx: idx }))
+        .filter((b) => {
+          const startIn = withinYmdRange(b.start, yearRangeMinYmd, yearRangeMaxYmd);
+          const endIn = withinYmdRange(b.end, yearRangeMinYmd, yearRangeMaxYmd);
+          const wrapsRange = String(b.start || '') <= yearRangeMinYmd && String(b.end || '') >= yearRangeMaxYmd;
+          return startIn || endIn || wrapsRange;
+        }),
+    [customBreaks, yearRangeMinYmd, yearRangeMaxYmd]
+  );
+
+  useEffect(() => {
+    if (!familyId || !selectedSchoolYearLabel || readOnly) return;
+    const normalizedYear = normalizeSchoolYearLabel(selectedSchoolYearLabel);
+    saveFamilyPlannerSettings(familyId, { default_school_year: normalizedYear }, normalizedYear).catch(() => {});
+  }, [familyId, selectedSchoolYearLabel, readOnly]);
 
   // Apply preloaded data from FamilyPanel when available (avoids loading flash when navigating to Planning Preferences)
   useEffect(() => {
@@ -143,6 +234,9 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
     setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
     setHoursPerDay(s.default_planned_hours_per_day != null ? String(s.default_planned_hours_per_day) : '5');
     setFollowGlobalHolidays(s.follow_public_holidays !== false);
+    if (s.default_school_year) {
+      setSelectedSchoolYearLabel(normalizeSchoolYearLabel(String(s.default_school_year)));
+    }
     const ex = initialData.exclusions || [];
     const holidays = ex.filter((e) => e.exclusion_type === 'holiday').map((e) => ({
       id: e.id,
@@ -171,6 +265,39 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
     setLoading(false);
   }, [initialData]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadSchoolYears = async () => {
+      const { data } = await supabase
+        .from('school_year_templates')
+        .select('label, start_year')
+        .order('start_year', { ascending: true });
+      if (cancelled) return;
+      const dbLabels = Array.from(
+        new Set((data || []).map((row) => normalizeSchoolYearLabel(row?.label)).filter(Boolean))
+      );
+      const now = new Date();
+      const currentStart = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+      const futureLabels = Array.from({ length: 12 }, (_, idx) => formatSchoolYearLabel(currentStart + idx));
+      const labels = Array.from(new Set([...dbLabels, ...futureLabels]))
+        .filter(Boolean)
+        .sort((a, b) => {
+          const ay = parseSchoolYearLabel(a)?.start ?? 0;
+          const by = parseSchoolYearLabel(b)?.start ?? 0;
+          return ay - by;
+        });
+      setSchoolYearOptions(labels);
+      if (!selectedSchoolYearLabel) {
+        const fallback = `${currentStart}/${String(currentStart + 1).slice(-2)}`;
+        setSelectedSchoolYearLabel(labels.includes(fallback) ? fallback : (labels[0] || fallback));
+      }
+    };
+    loadSchoolYears();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSchoolYearLabel]);
+
   const showSaved = () => {
     setSavedIndicator(true);
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -182,7 +309,10 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
     setLoading(true);
     setError(null);
     try {
-      const { settings: s, exclusions: ex, excluded_holiday_dates: excludedDates, error: planErr } = await getPlanDefaultsFromSettings(familyId);
+      const { settings: s, exclusions: ex, excluded_holiday_dates: excludedDates, error: planErr } = await getPlanDefaultsFromSettings(
+        familyId,
+        selectedSchoolYearLabel
+      );
       if (planErr) throw planErr;
       if (s) {
         setTargetScope(s.target_scope || 'overall');
@@ -191,6 +321,9 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
         setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
         setHoursPerDay(s.default_planned_hours_per_day != null ? String(s.default_planned_hours_per_day) : '5');
         setFollowGlobalHolidays(s.follow_public_holidays !== false);
+        if (s.default_school_year) {
+          setSelectedSchoolYearLabel(normalizeSchoolYearLabel(String(s.default_school_year)));
+        }
       }
       setExcludedPublicHolidayDates(Array.isArray(excludedDates) ? excludedDates : []);
       const holidays = (ex || []).filter((e) => e.exclusion_type === 'holiday').map((e) => ({
@@ -209,7 +342,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
       // Load subjects for Subject Targets section
       const { data: subjectsData } = await supabase
         .from('subject')
-        .select('id, name, default_constraint_mode, default_target_days, default_target_hours')
+        .select('id, name, school_year, default_constraint_mode, default_target_days, default_target_hours')
         .eq('family_id', familyId)
         .order('name');
       setSubjects(subjectsData || []);
@@ -226,7 +359,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
             default_constraint_mode: firstActiveTarget.mode,
             default_target_days: firstActiveTarget.mode === 'days' ? parsePositiveIntOrNull(firstActiveTarget.days) : null,
             default_target_hours: firstActiveTarget.mode === 'hours' ? parsePositiveFloatOrNull(firstActiveTarget.hours) : null,
-          }).catch(() => {});
+          }, selectedSchoolYearLabel).catch(() => {});
         }
       }
     } catch (err) {
@@ -234,7 +367,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
     } finally {
       setLoading(false);
     }
-  }, [familyId]);
+  }, [familyId, selectedSchoolYearLabel]);
 
   /** Keep Subject targets in sync when a subject is saved elsewhere (e.g. Edit subject modal). */
   const reloadSubjectTargetsFromDb = useCallback(async () => {
@@ -242,7 +375,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
     try {
       const { data: subjectsData } = await supabase
         .from('subject')
-        .select('id, name, default_constraint_mode, default_target_days, default_target_hours')
+        .select('id, name, school_year, default_constraint_mode, default_target_days, default_target_hours')
         .eq('family_id', familyId)
         .order('name');
       const list = subjectsData || [];
@@ -305,6 +438,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
       try {
         const settingsPayload = {
           target_scope: s.targetScope || 'overall',
+          default_school_year: selectedSchoolYearLabel || null,
           default_constraint_mode: s.goalMode,
           default_target_days: s.goalMode === 'days' ? parseInt(s.targetDays, 10) : null,
           default_target_hours: s.goalMode === 'hours' ? parseInt(s.targetHours, 10) : null,
@@ -314,9 +448,14 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
           holiday_region: s.regionCode ?? null,
           ...updates,
         };
-        const { error: settingsErr } = await saveFamilyPlannerSettings(familyId, settingsPayload);
+        const { error: settingsErr } = await saveFamilyPlannerSettings(familyId, settingsPayload, selectedSchoolYearLabel);
         if (settingsErr) throw settingsErr;
-        const { error: exErr } = await syncFamilyHolidayBreakExclusions(familyId, s.customHolidays, s.customBreaks);
+        const { error: exErr } = await syncFamilyHolidayBreakExclusions(
+          familyId,
+          s.customHolidays,
+          s.customBreaks,
+          selectedSchoolYearLabel
+        );
         if (exErr) throw exErr;
         showSaved();
         loadDefaults(); // refresh to get new exclusion ids
@@ -333,7 +472,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
         setSaving(false);
       }
     },
-    [familyId, onSave, toast, loadDefaults, readOnly]
+    [familyId, onSave, toast, loadDefaults, readOnly, selectedSchoolYearLabel]
   );
 
   const debouncedPersist = useCallback(() => {
@@ -346,7 +485,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
       return;
     }
     setTargetScope(scope);
-    const { error } = await saveFamilyPlannerSettings(familyId, { target_scope: scope });
+    const { error } = await saveFamilyPlannerSettings(familyId, { target_scope: scope }, selectedSchoolYearLabel);
     if (!error) {
       showSaved();
       if (typeof window !== 'undefined') {
@@ -362,7 +501,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
       const hours = mode === 'hours' ? (s.targetHours || '1000') : '';
       setSubjectTargets((prev) => {
         const next = { ...prev };
-        subjects.forEach((subj) => {
+        visibleSubjects.forEach((subj) => {
           if (!next[subj.id] || next[subj.id].mode === 'none') {
             next[subj.id] = { mode, days, hours };
           }
@@ -392,9 +531,26 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
     setFollowGlobalHolidays(v);
     setTimeout(debouncedPersist, 300);
   };
+  const openAddSubjectModal = useCallback(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('openAddSubjectModal', {
+          detail: {
+            schoolYear: selectedSchoolYearLabel || null,
+          },
+        })
+      );
+      return;
+    }
+    toast.push('Open Subjects to add a new subject.', 'info');
+  }, [selectedSchoolYearLabel, toast]);
   const addHoliday = () => {
     if (!newHolidayDate || !newHolidayName.trim()) {
       toast.push('Enter date and name.', 'error');
+      return;
+    }
+    if (!withinYmdRange(newHolidayDate, yearRangeMinYmd, yearRangeMaxYmd)) {
+      toast.push(`Date must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
       return;
     }
     setCustomHolidays([
@@ -426,6 +582,10 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
   };
   const saveEditHoliday = (index) => {
     const { date, name } = editingHolidayDraft;
+    if (!withinYmdRange(date, yearRangeMinYmd, yearRangeMaxYmd)) {
+      toast.push(`Date must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
+      return;
+    }
     const next = [...customHolidays];
     next[index] = { ...next[index], date, name };
     setCustomHolidays(next);
@@ -441,6 +601,10 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
     }
     if (newBreakStart > newBreakEnd) {
       toast.push('End date must be on or after start.', 'error');
+      return;
+    }
+    if (!withinYmdRange(newBreakStart, yearRangeMinYmd, yearRangeMaxYmd) || !withinYmdRange(newBreakEnd, yearRangeMinYmd, yearRangeMaxYmd)) {
+      toast.push(`Dates must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
       return;
     }
     setCustomBreaks([
@@ -473,6 +637,10 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
   };
   const saveEditBreak = (index) => {
     const { start, end, name } = editingBreakDraft;
+    if (!withinYmdRange(start, yearRangeMinYmd, yearRangeMaxYmd) || !withinYmdRange(end, yearRangeMinYmd, yearRangeMaxYmd)) {
+      toast.push(`Dates must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
+      return;
+    }
     const next = [...customBreaks];
     next[index] = { ...next[index], start, end, name };
     setCustomBreaks(next);
@@ -509,7 +677,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
             default_constraint_mode: mode,
             default_target_days: mode === 'days' ? days : null,
             default_target_hours: mode === 'hours' ? hours : null,
-          });
+          }, selectedSchoolYearLabel);
           setTargetScope('per_subject');
           setGoalMode(mode);
           if (mode === 'days') setTargetDays(days != null ? String(days) : '');
@@ -530,8 +698,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
 
   const sectionStyle = {
     paddingTop: 0,
-    paddingBottom: 20,
-    marginBottom: 20,
+    paddingBottom: embeddedInModal ? 14 : 20,
+    marginBottom: embeddedInModal ? 14 : 20,
   };
   const sectionTitleStyle = {
     fontSize: 18,
@@ -543,7 +711,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
   const sectionDividerStyle = {
     height: 1,
     backgroundColor: BORDER,
-    marginBottom: 20,
+    marginBottom: embeddedInModal ? 14 : 20,
   };
   const pageTitleStyle = {
     fontSize: 36,
@@ -652,7 +820,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
   };
   if (loading) {
     return (
-      <View style={{ padding: 32, alignItems: 'center' }}>
+      <View style={{ padding: embeddedInModal ? 20 : 32, alignItems: 'center' }}>
         <ActivityIndicator size="large" color={ACCENT} />
         <Text style={{ marginTop: 12, fontSize: 14, color: TEXT_BLACK }}>Loading...</Text>
       </View>
@@ -660,7 +828,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
   }
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 32 }}>
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: embeddedInModal ? 20 : 32 }}>
       <View style={{ paddingHorizontal: 0, paddingTop: 0 }}>
         {readOnly ? (
           <View
@@ -678,16 +846,59 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
             </Text>
           </View>
         ) : null}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={pageTitleStyle}>Planning Preferences</Text>
-          {savedIndicator && (
-            <Text style={{ fontSize: 13, color: '#10b981', fontWeight: '500' }}>Saved</Text>
-          )}
-        </View>
-
+        {!embeddedInModal ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={pageTitleStyle}>Planning Preferences</Text>
+            {savedIndicator && (
+              <Text style={{ fontSize: 13, color: '#10b981', fontWeight: '500' }}>Saved</Text>
+            )}
+          </View>
+        ) : null}
         {/* Learning Goals */}
         <View style={sectionStyle}>
-          <Text style={sectionTitleStyle}>Learning Goals</Text>
+          <View style={{ alignSelf: 'flex-start' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={sectionTitleStyle}>Learning Goals • </Text>
+              <View>
+                <TouchableOpacity
+                  ref={schoolYearTriggerRef}
+                  onPress={() => {
+                    if (showSchoolYearDropdown) {
+                      setShowSchoolYearDropdown(false);
+                      return;
+                    }
+                    const triggerNode = schoolYearTriggerRef.current;
+                    if (triggerNode && typeof triggerNode.measureInWindow === 'function') {
+                      triggerNode.measureInWindow((x, y, width, height) => {
+                        setSchoolYearMenuAnchor({ x, y, width, height });
+                        setShowSchoolYearDropdown(true);
+                      });
+                    } else {
+                      setSchoolYearMenuAnchor(null);
+                      setShowSchoolYearDropdown(true);
+                    }
+                  }}
+                  style={{ flexDirection: 'row', alignItems: 'center' }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={sectionTitleStyle}>
+                    {selectedSchoolYearLabel ? `${selectedSchoolYearLabel} School Year` : 'School Year'}
+                  </Text>
+                  <View
+                    style={{
+                      marginLeft: 2,
+                      marginTop: -7,
+                      width: 16,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
+                  </View>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
           <View style={sectionDividerStyle} />
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
             <TouchableOpacity style={chip(targetScope === 'overall')} onPress={() => handleTargetScopeChange('overall')}>
@@ -759,9 +970,22 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
           <View style={sectionStyle}>
             <Text style={sectionTitleStyle}>Subject targets</Text>
             <View style={sectionDividerStyle} />
-            {subjects.length === 0 ? null : (
+            {visibleSubjects.length === 0 ? (
               <View>
-              {subjects.map((subj) => {
+                <Text style={{ fontSize: 13, color: MUTED }}>
+                  No subjects found for {selectedSchoolYearLabel || 'this school year'}.
+                </Text>
+                <TouchableOpacity
+                  onPress={openAddSubjectModal}
+                  style={[addOutlineButtonStyle, { marginTop: 10 }]}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={addOutlineButtonTextStyle}>+ Add subject</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View>
+              {visibleSubjects.map((subj) => {
                 const t = subjectTargets[subj.id] || { mode: 'none', days: '', hours: '' };
                 return (
                   <View key={subj.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -830,10 +1054,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                 onPress={() => {
                   if (followGlobalHolidays) {
                     setShowPublicHolidaysPicker(true);
-                    const start = new Date().toISOString().slice(0, 10);
-                    const end = new Date();
-                    end.setFullYear(end.getFullYear() + 1);
-                    const endStr = end.toISOString().slice(0, 10);
+                    const start = yearRangeMinYmd;
+                    const endStr = yearRangeMaxYmd;
                     setPublicHolidaysLoading(true);
                     getPublicHolidaysForRange(countryCode || 'US', start, endStr).then(({ data: res }) => {
                       setPublicHolidaysList(res?.holidays || []);
@@ -906,7 +1128,11 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                       const h = publicHolidaysList.find((x) => (x.date || '').slice(0, 10) === d);
                       return { date: d, name: h?.name || 'Holiday' };
                     });
-                    const { error: saveErr } = await saveExcludedPublicHolidayDates(familyId, datesWithNames);
+                    const { error: saveErr } = await saveExcludedPublicHolidayDates(
+                      familyId,
+                      datesWithNames,
+                      selectedSchoolYearLabel
+                    );
                     if (saveErr) toast?.push?.(saveErr?.message || 'Failed to save', 'error');
                     else {
                       toast?.push?.('Saved', 'success');
@@ -928,14 +1154,76 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
           </Modal>
         )}
 
+        {showSchoolYearDropdown && (
+          <Modal
+            animationType="none"
+            transparent
+            visible={showSchoolYearDropdown}
+            onRequestClose={() => setShowSchoolYearDropdown(false)}
+          >
+            <View style={{ flex: 1 }}>
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={() => setShowSchoolYearDropdown(false)}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'transparent' }}
+              />
+              <View
+                style={{
+                  position: 'absolute',
+                  top: (schoolYearMenuAnchor?.y || 120) + (schoolYearMenuAnchor?.height || 32) + 4,
+                  left: schoolYearMenuAnchor?.x || 220,
+                  minWidth: Math.max(240, schoolYearMenuAnchor?.width || 0),
+                  maxHeight: 260,
+                  borderWidth: 1,
+                  borderColor: BORDER,
+                  borderRadius: 10,
+                  backgroundColor: '#FFFFFF',
+                  shadowColor: '#000',
+                  shadowOpacity: 0.14,
+                  shadowRadius: 8,
+                  shadowOffset: { width: 0, height: 4 },
+                  elevation: 20,
+                }}
+              >
+                <ScrollView nestedScrollEnabled>
+                  {schoolYearOptions.map((label) => {
+                    const isActive = label === selectedSchoolYearLabel;
+                    return (
+                      <TouchableOpacity
+                        key={label}
+                        onPress={() => {
+                          setSelectedSchoolYearLabel(label);
+                          setShowSchoolYearDropdown(false);
+                        }}
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 10,
+                          backgroundColor: isActive ? CHIP_SELECTED_BG : '#FFFFFF',
+                          borderBottomWidth: schoolYearOptions[schoolYearOptions.length - 1] === label ? 0 : 1,
+                          borderBottomColor: BORDER,
+                        }}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={{ fontSize: 14, color: isActive ? CHIP_SELECTED_BORDER : TEXT_BLACK, fontWeight: isActive ? '600' : '500' }}>
+                          {label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            </View>
+          </Modal>
+        )}
+
         {/* Custom days (single-date exclusions) */}
         <View style={sectionStyle}>
           <Text style={sectionTitleStyle}>{PLANNING_PREFERENCES_UI.customDaysSectionTitle}</Text>
           <View style={sectionDividerStyle} />
           <View>
-              {customHolidays.map((h, i) => (
+              {visibleCustomHolidays.map((h, i) => (
                 <View key={h.id || i} style={{ marginBottom: 8 }}>
-                  {editingHolidayIndex === i ? (
+                  {editingHolidayIndex === h._idx ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <PlannerPreferenceDateField
                         value={editingHolidayDraft.date}
@@ -946,6 +1234,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                         mutedColor="rgba(15,23,42,0.4)"
                         style={inputStyle}
                         width={120}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
                       />
                       <TextInput
                         value={editingHolidayDraft.name}
@@ -955,7 +1245,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                         placeholderTextColor="rgba(15,23,42,0.4)"
                       />
                       <TouchableOpacity
-                        onPress={() => saveEditHoliday(i)}
+                        onPress={() => saveEditHoliday(h._idx)}
                         style={{ padding: 8 }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
@@ -971,11 +1261,11 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                         {h.date} — {h.name}
                       </Text>
                       <View style={rowActionButtonsStyle}>
-                        <TouchableOpacity onPress={() => startEditHoliday(i)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                        <TouchableOpacity onPress={() => startEditHoliday(h._idx)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                           <Pencil size={16} color="#374151" />
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={() => removeHoliday(i)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Trash2 size={16} color="#374151" />
+                        <TouchableOpacity onPress={() => removeHoliday(h._idx)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Trash2 size={16} color="#991B1B" />
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -993,6 +1283,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                     mutedColor="rgba(15,23,42,0.4)"
                     style={inputStyle}
                     width={120}
+                    minDate={yearRangeMinYmd}
+                    maxDate={yearRangeMaxYmd}
                   />
                   <TextInput
                     value={newHolidayName}
@@ -1025,9 +1317,9 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
           <Text style={sectionTitleStyle}>{PLANNING_PREFERENCES_UI.rangesSectionTitle}</Text>
           <View style={sectionDividerStyle} />
           <View>
-              {customBreaks.map((b, i) => (
+              {visibleCustomBreaks.map((b, i) => (
                 <View key={b.id || i} style={{ marginBottom: 8 }}>
-                  {editingBreakIndex === i ? (
+                  {editingBreakIndex === b._idx ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <PlannerPreferenceDateField
                         value={editingBreakDraft.start}
@@ -1038,6 +1330,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                         mutedColor="rgba(15,23,42,0.4)"
                         style={inputStyle}
                         width={100}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
                       />
                       <PlannerPreferenceDateField
                         value={editingBreakDraft.end}
@@ -1048,6 +1342,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                         mutedColor="rgba(15,23,42,0.4)"
                         style={inputStyle}
                         width={100}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
                       />
                       <TextInput
                         value={editingBreakDraft.name}
@@ -1057,7 +1353,7 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                         placeholderTextColor="rgba(15,23,42,0.4)"
                       />
                       <TouchableOpacity
-                        onPress={() => saveEditBreak(i)}
+                        onPress={() => saveEditBreak(b._idx)}
                         style={{ padding: 8 }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
@@ -1073,11 +1369,11 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                         {b.start}–{b.end} {b.name}
                       </Text>
                       <View style={{ flexDirection: 'row', gap: 4 }}>
-                        <TouchableOpacity onPress={() => startEditBreak(i)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                        <TouchableOpacity onPress={() => startEditBreak(b._idx)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                           <Pencil size={14} color={MUTED} />
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={() => removeBreak(i)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Trash2 size={14} color="#94A3B8" />
+                        <TouchableOpacity onPress={() => removeBreak(b._idx)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Trash2 size={14} color="#991B1B" />
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -1095,6 +1391,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                     mutedColor="rgba(15,23,42,0.4)"
                     style={inputStyle}
                     width={100}
+                    minDate={yearRangeMinYmd}
+                    maxDate={yearRangeMaxYmd}
                   />
                   <PlannerPreferenceDateField
                     value={newBreakEnd}
@@ -1105,6 +1403,8 @@ export default function PlannerSettingsContent({ familyId, onSave, initialData, 
                     mutedColor="rgba(15,23,42,0.4)"
                     style={inputStyle}
                     width={100}
+                    minDate={yearRangeMinYmd}
+                    maxDate={yearRangeMaxYmd}
                   />
                   <TextInput
                     value={newBreakName}

@@ -51,24 +51,55 @@ export function parseLocalYyyyMmDd(s) {
  * @param {Date | null} selectedDate — highlighted day; null = none
  * @param {(d: Date) => void} onSelectDate — called with local calendar date, then caller closes
  */
-export function AppCalendarDatePickerModal({ visible, onClose, selectedDate, onSelectDate }) {
+export function AppCalendarDatePickerModal({
+  visible,
+  onClose,
+  selectedDate,
+  onSelectDate,
+  minDate = null,
+  maxDate = null,
+}) {
   const selectedKey =
     selectedDate && !isNaN(selectedDate.getTime()) ? selectedDate.getTime() : null;
+  const minKey = minDate && !isNaN(minDate.getTime()) ? minDate.getTime() : null;
+  const maxKey = maxDate && !isNaN(maxDate.getTime()) ? maxDate.getTime() : null;
+
+  const clampMonth = (monthDate) => {
+    if (!monthDate || isNaN(monthDate.getTime())) return monthDate;
+    const candidate = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+    if (minKey != null) {
+      const minMonth = new Date(new Date(minKey).getFullYear(), new Date(minKey).getMonth(), 1);
+      if (candidate < minMonth) return minMonth;
+    }
+    if (maxKey != null) {
+      const maxMonth = new Date(new Date(maxKey).getFullYear(), new Date(maxKey).getMonth(), 1);
+      if (candidate > maxMonth) return maxMonth;
+    }
+    return candidate;
+  };
 
   const [viewMonth, setViewMonth] = useState(() => {
     const b = selectedKey != null ? new Date(selectedKey) : new Date();
-    return new Date(b.getFullYear(), b.getMonth(), 1);
+    return clampMonth(new Date(b.getFullYear(), b.getMonth(), 1));
   });
 
   useEffect(() => {
     if (!visible) return;
     const b = selectedKey != null ? new Date(selectedKey) : new Date();
-    setViewMonth(new Date(b.getFullYear(), b.getMonth(), 1));
-  }, [visible, selectedKey]);
+    setViewMonth(clampMonth(new Date(b.getFullYear(), b.getMonth(), 1)));
+  }, [visible, selectedKey, minKey, maxKey]);
 
   const titleFont = Platform.OS === 'web'
     ? { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
     : {};
+
+  const currentMonthStart = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+  const prevMonthStart = new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1);
+  const nextMonthStart = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1);
+  const canGoPrevMonth = minKey == null || prevMonthStart >= new Date(new Date(minKey).getFullYear(), new Date(minKey).getMonth(), 1);
+  const canGoNextMonth = maxKey == null || nextMonthStart <= new Date(new Date(maxKey).getFullYear(), new Date(maxKey).getMonth(), 1);
+  const canGoPrevYear = minKey == null || new Date(viewMonth.getFullYear() - 1, viewMonth.getMonth(), 1) >= new Date(new Date(minKey).getFullYear(), new Date(minKey).getMonth(), 1);
+  const canGoNextYear = maxKey == null || new Date(viewMonth.getFullYear() + 1, viewMonth.getMonth(), 1) <= new Date(new Date(maxKey).getFullYear(), new Date(maxKey).getMonth(), 1);
 
   return (
     <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
@@ -93,14 +124,15 @@ export function AppCalendarDatePickerModal({ visible, onClose, selectedDate, onS
           >
             <TouchableOpacity
               onPress={() => {
+                if (!canGoPrevMonth) return;
                 const newMonth = new Date(viewMonth);
                 newMonth.setMonth(newMonth.getMonth() - 1);
-                setViewMonth(newMonth);
+                setViewMonth(clampMonth(newMonth));
               }}
               style={{ padding: 4 }}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <ChevronLeft size={20} color={FG} />
+              <ChevronLeft size={20} color={canGoPrevMonth ? FG : '#CBD5E1'} />
             </TouchableOpacity>
             <Text
               style={{
@@ -114,14 +146,15 @@ export function AppCalendarDatePickerModal({ visible, onClose, selectedDate, onS
             </Text>
             <TouchableOpacity
               onPress={() => {
+                if (!canGoNextMonth) return;
                 const newMonth = new Date(viewMonth);
                 newMonth.setMonth(newMonth.getMonth() + 1);
-                setViewMonth(newMonth);
+                setViewMonth(clampMonth(newMonth));
               }}
               style={{ padding: 4 }}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <ChevronRight size={20} color={FG} />
+              <ChevronRight size={20} color={canGoNextMonth ? FG : '#CBD5E1'} />
             </TouchableOpacity>
           </View>
 
@@ -136,19 +169,22 @@ export function AppCalendarDatePickerModal({ visible, onClose, selectedDate, onS
           >
             <TouchableOpacity
               onPress={() => {
+                if (!canGoPrevYear) return;
                 const newMonth = new Date(viewMonth);
                 newMonth.setFullYear(newMonth.getFullYear() - 1);
-                setViewMonth(newMonth);
+                setViewMonth(clampMonth(newMonth));
               }}
               style={{ padding: 4 }}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={{ fontSize: 12, color: SUB, ...titleFont }}>← Year</Text>
+              <Text style={{ fontSize: 12, color: canGoPrevYear ? SUB : '#CBD5E1', ...titleFont }}>← Year</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
                 const t = new Date();
-                setViewMonth(new Date(t.getFullYear(), t.getMonth(), 1));
+                const tKey = t.getTime();
+                if ((minKey != null && tKey < minKey) || (maxKey != null && tKey > maxKey)) return;
+                setViewMonth(clampMonth(new Date(t.getFullYear(), t.getMonth(), 1)));
                 onSelectDate(t);
                 onClose();
               }}
@@ -168,14 +204,15 @@ export function AppCalendarDatePickerModal({ visible, onClose, selectedDate, onS
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
+                if (!canGoNextYear) return;
                 const newMonth = new Date(viewMonth);
                 newMonth.setFullYear(newMonth.getFullYear() + 1);
-                setViewMonth(newMonth);
+                setViewMonth(clampMonth(newMonth));
               }}
               style={{ padding: 4 }}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={{ fontSize: 12, color: SUB, ...titleFont }}>Year →</Text>
+              <Text style={{ fontSize: 12, color: canGoNextYear ? SUB : '#CBD5E1', ...titleFont }}>Year →</Text>
             </TouchableOpacity>
           </View>
 
@@ -214,11 +251,14 @@ export function AppCalendarDatePickerModal({ visible, onClose, selectedDate, onS
                         const isCurrentMonth = day.getMonth() === month;
                         const isSelected = selectedStr != null && day.toDateString() === selectedStr;
                         const isToday = day.toDateString() === todayStr;
+                        const dayKey = day.getTime();
+                        const isInRange = (minKey == null || dayKey >= minKey) && (maxKey == null || dayKey <= maxKey);
 
                         return (
                           <TouchableOpacity
                             key={idx}
                             onPress={() => {
+                              if (!isInRange) return;
                               onSelectDate(day);
                               onClose();
                             }}
@@ -231,6 +271,7 @@ export function AppCalendarDatePickerModal({ visible, onClose, selectedDate, onS
                               backgroundColor: isSelected ? ACCENT : 'transparent',
                               borderWidth: isToday ? 2 : 0,
                               borderColor: isToday ? ACCENT : 'transparent',
+                              opacity: isInRange ? 1 : 0.35,
                             }}
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                           >
@@ -270,9 +311,19 @@ export function PlannerPreferenceDateField({
   borderColor = '#E2E8F0',
   textColor = 'rgba(15,23,42,0.9)',
   mutedColor = 'rgba(15,23,42,0.45)',
+  minDate = null,
+  maxDate = null,
 }) {
   const [open, setOpen] = useState(false);
   const selectedDate = useMemo(() => parseLocalYyyyMmDd(value), [value]);
+  const minDateObj = useMemo(
+    () => (minDate instanceof Date ? minDate : parseLocalYyyyMmDd(String(minDate || ''))),
+    [minDate]
+  );
+  const maxDateObj = useMemo(
+    () => (maxDate instanceof Date ? maxDate : parseLocalYyyyMmDd(String(maxDate || ''))),
+    [maxDate]
+  );
   const label =
     selectedDate && !isNaN(selectedDate.getTime())
       ? selectedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -301,6 +352,8 @@ export function PlannerPreferenceDateField({
         visible={open}
         onClose={() => setOpen(false)}
         selectedDate={selectedDate}
+        minDate={minDateObj}
+        maxDate={maxDateObj}
         onSelectDate={(d) => {
           onChange(formatLocalYyyyMmDd(d));
           setOpen(false);

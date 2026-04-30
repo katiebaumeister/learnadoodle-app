@@ -4267,7 +4267,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.sidebarButton, activeSection === 'connections' && styles.sidebarButtonActive]}
-              onPress={() => setActiveSection('connections')}
+              onPress={() => setShowComingSoonModal(true)}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <Text style={[styles.sidebarButtonText, activeSection === 'connections' && styles.sidebarButtonTextActive]}>
@@ -4292,7 +4292,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 styles.sidebarCard,
                 activeSection === 'subscription' && styles.sidebarSubscriptionCardActive,
               ]}
-              onPress={() => setActiveSection('subscription')}
+              onPress={() => setShowComingSoonModal(true)}
               activeOpacity={0.9}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >

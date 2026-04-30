@@ -275,16 +275,27 @@ def compute_rebalance_rhythm(
     start_iso = datetime.combine(ws, datetime.min.time()).replace(tzinfo=timezone.utc).isoformat()
     end_iso = datetime.combine(we, datetime.max.time()).replace(tzinfo=timezone.utc).isoformat()
 
-    # Planner defaults (avoid maybe_single — not all supabase-py versions expose it)
+    # Planner defaults (year-scoped; fallback to any row for backward compatibility)
+    school_year_label = f"{ws.year}/{str((ws.year + 1) % 100).zfill(2)}" if ws.month >= 8 else f"{ws.year - 1}/{str(ws.year % 100).zfill(2)}"
     try:
         fps = (
             supabase.table("family_planner_settings")
             .select("allowed_weekdays, default_planned_hours_per_day")
             .eq("family_id", family_id)
+            .eq("school_year_label", school_year_label)
             .limit(1)
             .execute()
         )
         rows = fps.data or []
+        if not rows:
+            legacy = (
+                supabase.table("family_planner_settings")
+                .select("allowed_weekdays, default_planned_hours_per_day")
+                .eq("family_id", family_id)
+                .limit(1)
+                .execute()
+            )
+            rows = legacy.data or []
         fps_row = rows[0] if rows else {}
     except Exception:
         fps_row = {}

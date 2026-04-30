@@ -10,9 +10,10 @@ export function ModalSectionCard({
   onPress,
   children,
   accent = '#7C70F4',
+  allowOverflow = false,
 }) {
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, allowOverflow && styles.wrapOverflowVisible]}>
       <TouchableOpacity style={styles.header} onPress={onPress} activeOpacity={0.85}>
         <View style={styles.left}>
           <View style={styles.iconWrap}>
@@ -45,6 +46,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     // Keep a small visual gap between stacked collapsible cards.
     marginBottom: 8,
+  },
+  wrapOverflowVisible: {
+    overflow: 'visible',
   },
   header: {
     minHeight: 64,
