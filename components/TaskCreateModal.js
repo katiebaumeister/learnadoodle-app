@@ -37,6 +37,7 @@ const CHIP_BORDER = '#e5e7eb';
 const DEFAULT_START_TIME = '9:00 AM';
 const DEFAULT_DURATION_MINUTES = 30;
 let createTaskEventAllowOverlapsSupported = true;
+const ENABLE_LIVE_CONFLICT_CHECK = false;
 const parseSubjectChildIds = (raw) =>
   String(raw == null ? '' : raw)
     .split(';')
@@ -171,6 +172,10 @@ export default function TaskCreateModal({
       : (defaultChildId ? [defaultChildId] : []);
 
   const [assigneeIds, setAssigneeIds] = useState(initialAssigneeIds);
+  const assigneeIdsSignature = useMemo(
+    () => (Array.isArray(assigneeIds) ? assigneeIds.map((id) => String(id)).sort().join('|') : ''),
+    [assigneeIds]
+  );
   const [notes, setNotes] = useState('');
   const [showAcademicDetails, setShowAcademicDetails] = useState(false); // Collapsed by default
   const [showNotesSection, setShowNotesSection] = useState(false); // Collapsed by default (match Add Subject)
@@ -242,6 +247,8 @@ export default function TaskCreateModal({
   const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
   const [materialDropdownPositionReady, setMaterialDropdownPositionReady] = useState(false);
   const wasVisibleRef = useRef(false);
+  const lastOpenLoadKeyRef = useRef('');
+  const lastMaterialsLoadKeyRef = useRef('');
   
   // Standards state
   const [attachedStandards, setAttachedStandards] = useState([]);
@@ -391,6 +398,17 @@ export default function TaskCreateModal({
   const [shouldAutoAdjust, setShouldAutoAdjust] = useState(false); // Flag for "Adjust automatically"
   const [suggestedChange, setSuggestedChange] = useState(null); // { newStart: Date, newEnd: Date, message: "..." }
   const [changeAccepted, setChangeAccepted] = useState(false); // Track if the suggested change was accepted
+  const setConflictWarningSafely = useCallback((nextWarning) => {
+    setConflictWarning((prev) => {
+      if (!nextWarning) return prev == null ? prev : null;
+      const prevSig = prev
+        ? `${String(prev?.event?.id || '')}|${String(prev?.message || '')}|${String(prev?.conflictCount || 0)}`
+        : '';
+      const nextSig = `${String(nextWarning?.event?.id || '')}|${String(nextWarning?.message || '')}|${String(nextWarning?.conflictCount || 0)}`;
+      return prevSig === nextSig ? prev : nextWarning;
+    });
+  }, []);
+  const lastConflictCheckKeyRef = useRef('');
 
   const conflictChildren = mapChildrenForConflict(familyMembers);
   const parsedConflictMessage = conflictWarning?.message ? parseConflictMessageString(conflictWarning.message) : null;
@@ -460,11 +478,35 @@ export default function TaskCreateModal({
 
   // Detect conflicts when date/time/child changes
   useEffect(() => {
+    if (!ENABLE_LIVE_CONFLICT_CHECK) {
+      setConflictWarningSafely(null);
+      return;
+    }
+    const dueDateMs = dueDate instanceof Date ? dueDate.getTime() : NaN;
+    const eventEndDateMs = eventEndDate instanceof Date ? eventEndDate.getTime() : NaN;
     if (!visible || placement !== 'calendar' || allDay || !startTime || assigneeIds.length === 0 || !dueDate) {
-      setConflictWarning(null);
+      lastConflictCheckKeyRef.current = '';
+      setConflictWarningSafely(null);
       return;
     }
 
+    const conflictCheckKey = [
+      visible ? '1' : '0',
+      placement || '',
+      allDay ? '1' : '0',
+      String(startTime || ''),
+      String(endTime || ''),
+      assigneeIdsSignature,
+      Number.isFinite(dueDateMs) ? String(dueDateMs) : '',
+      Number.isFinite(eventEndDateMs) ? String(eventEndDateMs) : '',
+      String(eventType || ''),
+      String(familyId || ''),
+      changeAccepted ? '1' : '0',
+    ].join('|');
+    if (lastConflictCheckKeyRef.current === conflictCheckKey) return;
+    lastConflictCheckKeyRef.current = conflictCheckKey;
+
+    let cancelled = false;
     const checkConflicts = async () => {
       console.log('[TaskCreateModal] Checking for conflicts...', {
         visible,
@@ -482,7 +524,8 @@ export default function TaskCreateModal({
         
         const resolvedStart = applyTimeToDate(baseDate, startTime);
         if (!resolvedStart) {
-          setConflictWarning(null);
+          if (cancelled) return;
+          setConflictWarningSafely(null);
           return;
         }
 
@@ -503,7 +546,8 @@ export default function TaskCreateModal({
         }
         
         if (!resolvedEnd || resolvedEnd <= resolvedStart) {
-          setConflictWarning(null);
+          if (cancelled) return;
+          setConflictWarningSafely(null);
           return;
         }
 
@@ -512,9 +556,11 @@ export default function TaskCreateModal({
           existingEvents = await fetchPotentialConflictingEvents(resolvedStart, resolvedEnd, assigneeIds);
         } catch (error) {
           console.error('[TaskCreateModal] Error fetching events for conflict detection:', error);
-          setConflictWarning(null);
+          if (cancelled) return;
+          setConflictWarningSafely(null);
           return;
         }
+        if (cancelled) return;
 
         console.log('[TaskCreateModal] Fetched events for conflict check:', {
           eventCount: existingEvents?.length || 0,
@@ -591,7 +637,7 @@ export default function TaskCreateModal({
         if (conflicts.length > 0) {
           // Show first conflict with metadata
           console.log('[TaskCreateModal] Setting conflict warning:', conflicts[0]);
-          setConflictWarning({
+          setConflictWarningSafely({
             ...conflicts[0],
             conflictCount: conflicts.length,
             allConflicts: conflicts,
@@ -602,7 +648,7 @@ export default function TaskCreateModal({
           }
         } else {
           console.log('[TaskCreateModal] No conflicts found, clearing warning');
-          setConflictWarning(null);
+          setConflictWarningSafely(null);
           // Don't clear suggestedChange if the change was already accepted
           if (!changeAccepted) {
             setSuggestedChange(null);
@@ -610,14 +656,31 @@ export default function TaskCreateModal({
         }
       } catch (err) {
         console.error('[TaskCreateModal] Error in conflict detection:', err);
-        setConflictWarning(null);
+        if (cancelled) return;
+        setConflictWarningSafely(null);
       }
     };
 
     // Debounce conflict detection
     const timeoutId = setTimeout(checkConflicts, 300);
-    return () => clearTimeout(timeoutId);
-  }, [visible, placement, allDay, startTime, endTime, assigneeIds, dueDate, eventEndDate, eventType, familyId, changeAccepted]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [
+    visible,
+    placement,
+    allDay,
+    startTime,
+    endTime,
+    assigneeIdsSignature,
+    dueDate?.getTime?.(),
+    eventEndDate?.getTime?.(),
+    eventType,
+    familyId,
+    changeAccepted,
+    setConflictWarningSafely,
+  ]);
   
   // Recurring event state
   const [isRecurring, setIsRecurring] = useState(false);
@@ -637,21 +700,34 @@ export default function TaskCreateModal({
   // Sync calendar view month when due date changes externally
   useEffect(() => {
     if (!showCalendarPicker) {
-      setCalendarViewMonth(dueDate);
+      setCalendarViewMonth((prev) => {
+        const prevTs = prev instanceof Date ? prev.getTime() : NaN;
+        const nextTs = dueDate instanceof Date ? dueDate.getTime() : NaN;
+        return prevTs === nextTs ? prev : dueDate;
+      });
     }
   }, [dueDate, showCalendarPicker]);
 
   // Sync end date calendar view month when recurrence end date changes externally
   useEffect(() => {
     if (!showEndDateCalendarPicker && recurrenceEndDate) {
-      setEndDateCalendarViewMonth(new Date(recurrenceEndDate));
+      setEndDateCalendarViewMonth((prev) => {
+        const next = new Date(recurrenceEndDate);
+        const prevTs = prev instanceof Date ? prev.getTime() : NaN;
+        const nextTs = next.getTime();
+        return prevTs === nextTs ? prev : next;
+      });
     }
   }, [recurrenceEndDate, showEndDateCalendarPicker]);
 
   // Sync event end date calendar view month when event end date changes externally
   useEffect(() => {
     if (!showEventEndDatePicker && eventEndDate) {
-      setEventEndDateCalendarViewMonth(eventEndDate);
+      setEventEndDateCalendarViewMonth((prev) => {
+        const prevTs = prev instanceof Date ? prev.getTime() : NaN;
+        const nextTs = eventEndDate instanceof Date ? eventEndDate.getTime() : NaN;
+        return prevTs === nextTs ? prev : eventEndDate;
+      });
     }
   }, [eventEndDate, showEventEndDatePicker]);
 
@@ -846,20 +922,25 @@ export default function TaskCreateModal({
   // Load materials from library (now unified in materials table)
   const loadMaterials = useCallback(async () => {
     if (!familyId) return;
-    setLoadingMaterials(true);
+    setLoadingMaterials((prev) => (prev ? prev : true));
     try {
       // Load all materials (includes both purchased materials and uploaded files)
       const materialsData = await getMaterials(familyId, {}, session);
       console.log('[TaskCreateModal] Loaded materials:', materialsData?.length || 0);
-      
-      setMaterials(materialsData || []);
-      if (materialsData.length === 0) {
+
+      const nextMaterials = Array.isArray(materialsData) ? materialsData : [];
+      setMaterials((prev) => {
+        const prevSig = (prev || []).map((m) => String(m?.id || '')).join('|');
+        const nextSig = nextMaterials.map((m) => String(m?.id || '')).join('|');
+        return prevSig === nextSig ? prev : nextMaterials;
+      });
+      if (nextMaterials.length === 0) {
         console.warn('[TaskCreateModal] No materials found for familyId:', familyId);
       }
     } catch (error) {
       console.error('[TaskCreateModal] Failed to load materials:', error);
       toast.push('Failed to load materials from library', 'error');
-      setMaterials([]);
+      setMaterials((prev) => (Array.isArray(prev) && prev.length === 0 ? prev : []));
     } finally {
       setLoadingMaterials(false);
     }
@@ -872,18 +953,25 @@ export default function TaskCreateModal({
   // Fetch subject-dependent data while modal is open.
   useEffect(() => {
     if (visible && familyId) {
+      const loadKey = `${String(familyId)}:${assigneeIdsSignature}`;
+      if (lastOpenLoadKeyRef.current === loadKey) return;
+      lastOpenLoadKeyRef.current = loadKey;
       fetchSubjects();
       if (assigneeIds.length > 0) {
         fetchSubjectGoals(assigneeIds[0]); // Fetch goals for first selected child
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, familyId, assigneeIds]);
+  }, [visible, familyId, assigneeIdsSignature]);
 
   // Load materials once when modal opens.
   useEffect(() => {
     if (visible && familyId) {
-      loadMaterialsRef.current?.();
+      const loadKey = `${String(familyId)}:${visible ? 'open' : 'closed'}`;
+      if (lastMaterialsLoadKeyRef.current !== loadKey) {
+        lastMaterialsLoadKeyRef.current = loadKey;
+        loadMaterialsRef.current?.();
+      }
     }
   }, [visible, familyId]);
 
@@ -901,6 +989,8 @@ export default function TaskCreateModal({
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
+      lastOpenLoadKeyRef.current = '';
+      lastMaterialsLoadKeyRef.current = '';
       setTitle(defaultTitle && String(defaultTitle).trim() ? defaultTitle : '');
       setDueDate(defaultDate ?? new Date());
       setEventEndDate(null);
@@ -960,6 +1050,9 @@ export default function TaskCreateModal({
       setChangeAccepted(false);
       setPlanBuilderInlineError('');
     }
+    if (!visible) {
+      lastMaterialsLoadKeyRef.current = '';
+    }
     wasVisibleRef.current = visible;
   }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId]);
 
@@ -969,7 +1062,7 @@ export default function TaskCreateModal({
     try {
       // If no assignees selected, show no subjects (user must select assignee first)
       if (assigneeIds.length === 0) {
-        setSubjects([]);
+        setSubjects((prev) => (Array.isArray(prev) && prev.length === 0 ? prev : []));
         setLoadingSubjects(false);
         return;
       }
@@ -1058,7 +1151,11 @@ export default function TaskCreateModal({
       console.log('Filtered and deduplicated subjects:', fetchedSubjects.map(s => `${s.name} (child_id: ${s.child_id === null ? 'null (family-wide)' : s.child_id})`));
       
       console.log('Filtered subjects:', fetchedSubjects, 'for assignees:', assigneeIds);
-      setSubjects(fetchedSubjects);
+      setSubjects((prev) => {
+        const prevSig = (prev || []).map((s) => String(s?.id || '')).join('|');
+        const nextSig = (fetchedSubjects || []).map((s) => String(s?.id || '')).join('|');
+        return prevSig === nextSig ? prev : fetchedSubjects;
+      });
       
       // Clear selected subject if it's no longer valid
       if (subjectId && !fetchedSubjects.find(s => s.id === subjectId)) {
@@ -1066,7 +1163,7 @@ export default function TaskCreateModal({
       }
     } catch (error) {
       console.error('Error in fetchSubjects:', error);
-      setSubjects([]);
+      setSubjects((prev) => (Array.isArray(prev) && prev.length === 0 ? prev : []));
     } finally {
       setLoadingSubjects(false);
     }
@@ -4750,36 +4847,40 @@ export default function TaskCreateModal({
       )}
 
       {/* Add Subject Modal */}
-      <AddSubjectModal
-        visible={showAddSubjectModal}
-        onClose={() => setShowAddSubjectModal(false)}
-        onSubjectAdded={(newSubject) => {
-          // Refresh subjects list
-          fetchSubjects();
-          // Select the newly added subject
-          if (newSubject?.id) {
-            setSubjectId(newSubject.id);
-          }
-        }}
-        familyId={familyId}
-        defaultChildId={assigneeIds.length > 0 ? assigneeIds[0] : null}
-        children={familyMembers}
-      />
+      {showAddSubjectModal ? (
+        <AddSubjectModal
+          visible
+          onClose={() => setShowAddSubjectModal(false)}
+          onSubjectAdded={(newSubject) => {
+            // Refresh subjects list
+            fetchSubjects();
+            // Select the newly added subject
+            if (newSubject?.id) {
+              setSubjectId(newSubject.id);
+            }
+          }}
+          familyId={familyId}
+          defaultChildId={assigneeIds.length > 0 ? assigneeIds[0] : null}
+          children={familyMembers}
+        />
+      ) : null}
 
-      <AddMaterialModal
-        visible={showAddMaterialModal}
-        onClose={() => setShowAddMaterialModal(false)}
-        onSaved={(saved) => {
-          loadMaterials();
-          const id = saved?.id;
-          if (id) {
-            setSelectedMaterialId(id);
-            setAttachedMaterialIds([id]);
-          }
-        }}
-        familyId={familyId}
-        children={familyMembers}
-      />
+      {showAddMaterialModal ? (
+        <AddMaterialModal
+          visible
+          onClose={() => setShowAddMaterialModal(false)}
+          onSaved={(saved) => {
+            loadMaterials();
+            const id = saved?.id;
+            if (id) {
+              setSelectedMaterialId(id);
+              setAttachedMaterialIds([id]);
+            }
+          }}
+          familyId={familyId}
+          children={familyMembers}
+        />
+      ) : null}
 
     </Modal>
   );

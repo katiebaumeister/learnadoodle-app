@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, Modal, ActivityIndicator, Platform } from 'react-native';
 import { colors } from '../../theme/colors';
 import EventDetails from './EventDetails';
@@ -37,6 +37,7 @@ export default function EventModal({
   const [syllabus, setSyllabus] = useState(null);
   const [loading, setLoading] = useState(!initialEvent);
   const [isEditingState, setIsEditingState] = useState(false);
+  const lastAppliedEventSignatureRef = useRef('');
   
   // Use schedulingMode directly when opening - this ensures immediate edit mode
   // without waiting for effects to run
@@ -69,6 +70,29 @@ export default function EventModal({
     String(initialEvent?.status || ''),
   ].join('|');
 
+  const toEventSignature = useCallback((ev) => {
+    if (!ev) return '';
+    const recurrenceSig =
+      ev.recurrence_rule == null
+        ? ''
+        : (typeof ev.recurrence_rule === 'string'
+          ? ev.recurrence_rule
+          : JSON.stringify(ev.recurrence_rule));
+    return [
+      String(ev.id || ''),
+      String(ev.updated_at || ''),
+      String(ev.start_ts || ev.start || ev.start_local || ''),
+      String(ev.end_ts || ev.end || ev.end_local || ''),
+      String(ev.status || ''),
+      String(ev.event_type || ''),
+      String(ev.subject_id || ''),
+      String(ev.child_id || ''),
+      Array.isArray(ev.child_ids) ? ev.child_ids.map(String).sort().join(',') : '',
+      String(ev.material_id || ''),
+      recurrenceSig,
+    ].join('|');
+  }, []);
+
   useEffect(() => {
     if (visible && eventId) {
       if (isHolidayEvent(eventId, initialEvent)) {
@@ -78,18 +102,31 @@ export default function EventModal({
       }
       // Set initialEvent optimistically for immediate display
       if (initialEvent) {
-        setEvent(initialEvent);
+        setEvent((prev) => {
+          const prevSig = toEventSignature(prev);
+          const nextSig = toEventSignature(initialEvent);
+          if (prevSig === nextSig) return prev;
+          lastAppliedEventSignatureRef.current = nextSig;
+          return initialEvent;
+        });
         setLoading(false);
       }
       // Always reload from database; use DB times (forceUseDb=true) so plan-applied times show correctly
       loadEvent(true);
     } else {
-      setEvent(initialEvent ?? null);
+      const nextEvent = initialEvent ?? null;
+      setEvent((prev) => {
+        const prevSig = toEventSignature(prev);
+        const nextSig = toEventSignature(nextEvent);
+        if (prevSig === nextSig) return prev;
+        lastAppliedEventSignatureRef.current = nextSig;
+        return nextEvent;
+      });
       setSyllabus(null);
       setLoading(!initialEvent);
       setIsEditingState(false); // Start in view mode for existing events
     }
-  }, [visible, eventId, initialEventSignature]);
+  }, [visible, eventId, initialEventSignature, toEventSignature]);
   
   const loadEvent = useCallback(async (forceUseDb = false) => {
     if (!eventId) return;
@@ -113,12 +150,17 @@ export default function EventModal({
 
       // When forceUseDb (after plan apply / calendar refresh), use raw DB data so plan time updates show
       if (forceUseDb) {
-        setEvent({ ...data });
+        const next = { ...data };
+        const nextSig = toEventSignature(next);
+        if (lastAppliedEventSignatureRef.current !== nextSig) {
+          lastAppliedEventSignatureRef.current = nextSig;
+          setEvent(next);
+        }
         setLoading(false);
         return;
       }
       
-        setEvent(prev => {
+      setEvent(prev => {
         // Check if initialEvent has optimistic updates (different times than database)
         const hasOptimisticUpdate = initialEvent && (
           (initialEvent.start_ts && initialEvent.start_ts !== data.start_ts) ||
@@ -172,6 +214,10 @@ export default function EventModal({
           delete merged.subject;
         }
         
+        const prevSig = toEventSignature(prev);
+        const nextSig = toEventSignature(merged);
+        if (prevSig === nextSig) return prev;
+        lastAppliedEventSignatureRef.current = nextSig;
         return merged;
       });
       
@@ -186,7 +232,7 @@ export default function EventModal({
     } finally {
       setLoading(false);
     }
-  }, [eventId, initialEventSignature]);
+  }, [eventId, initialEventSignature, toEventSignature]);
   
   // Listen for event reschedule events to refresh the event data
   useEffect(() => {

@@ -4739,7 +4739,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         }}
       />
       <AddMaterialModal visible={showAddMaterialModal} onClose={() => setShowAddMaterialModal(false)} familyId={family?.id || familyId} />
-      <TaskCreateModal visible={showTaskModal} onClose={() => setShowTaskModal(false)} familyId={family?.id || familyId} />
+      {showTaskModal ? (
+        <TaskCreateModal visible onClose={() => setShowTaskModal(false)} familyId={family?.id || familyId} />
+      ) : null}
       <GoogleDriveImportModal
         visible={showGoogleDriveImportModal}
         onClose={() => setShowGoogleDriveImportModal(false)}

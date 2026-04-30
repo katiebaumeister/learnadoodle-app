@@ -280,22 +280,8 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
           delete originalTarget._dragDomNode;
         }
         
-        // Trigger click on the original target if we have onEventPress
-        // Use requestAnimationFrame to ensure it happens after React has processed the state update
-        if (originalTarget && onEventPress) {
-          const event = events.find(ev => ev.id === eventId);
-          if (event) {
-            // Use requestAnimationFrame to ensure state is cleared first
-            requestAnimationFrame(() => {
-              setTimeout(() => {
-                console.log('[MonthGrid] Triggering onEventPress for event:', event.id);
-                if (onEventPress) {
-                  onEventPress(event);
-                }
-              }, 20);
-            });
-          }
-        }
+        // Click-open is handled by the chip's onClick handler.
+        // Avoid double-opening event modals from both mouseup and click paths.
         return;
       }
       

@@ -4513,8 +4513,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       {/* Removed: PlanYearWizard instance - use IntelligenceHub → Planner AI → Plan the Year */}
 
       {/* Global Task Create Modal - available from any screen (planner, home, family, etc.) */}
+      {showTaskModal ? (
       <TaskCreateModal
-        visible={showTaskModal}
+        visible
           onClose={() => {
             setShowTaskModal(false);
             setTaskModalChildId(null);
@@ -4558,7 +4559,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               }
             }
           }}
-        />
+      />
+      ) : null}
 
       {/* Global Event Modal - available from any screen (family, planner, etc.) */}
       <EventModal

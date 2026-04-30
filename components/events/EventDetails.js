@@ -1285,6 +1285,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const lastHydratedEventSignatureRef = useRef(null);
   const lastMaterialsLoadKeyRef = useRef('');
   const lastSubjectsLoadKeyRef = useRef('');
+  const lastChipConflictHydrationKeyRef = useRef('');
 
   const editConflictEnterOp = useRef(new Animated.Value(0)).current;
   const editConflictEnterY = useRef(new Animated.Value(5)).current;
@@ -1300,241 +1301,52 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setChipConflictMessage((prev) => (prev == null ? prev : null));
     setChipConflictSuggestion((prev) => (prev == null ? prev : null));
     setChipConflictLoading((prev) => (prev ? false : prev));
+    lastChipConflictHydrationKeyRef.current = '';
   }, [event?.id, conflictResolutionSignature]);
 
   useEffect(() => {
-    const shouldHydratePersistentConflict =
+    const shouldHydrateFromContext =
       openConflictResolution ||
       !!conflictResolutionContext?.conflictEvent ||
       !!conflictResolutionContext?.conflictMessage;
-    if (!shouldHydratePersistentConflict || chipConflictBannerDismissed || !event?.id || !familyId || !event.start_ts) {
-      return;
+    if (!shouldHydrateFromContext || chipConflictBannerDismissed || !event?.id) return;
+
+    const hydrationKey = `${String(event.id)}:${conflictResolutionSignature}:${openConflictResolution ? 'open' : 'closed'}`;
+    if (lastChipConflictHydrationKeyRef.current === hydrationKey) return;
+    lastChipConflictHydrationKeyRef.current = hydrationKey;
+
+    const contextMessage = conflictResolutionContext?.conflictMessage;
+    const contextConflictEvent = conflictResolutionContext?.conflictEvent;
+    if (contextMessage) {
+      setChipConflictMessage((prev) => (prev === contextMessage ? prev : contextMessage));
+    } else if (contextConflictEvent?.title) {
+      const who = assigneeLabelForConflict(assigneeIds, familyMembers);
+      const lead = who ? `${who} — ` : '';
+      const nextMsg = `${lead}${contextConflictEvent.title} (${formatConflictMetaFromEvent(contextConflictEvent).replace(' · ', ', ')})`;
+      setChipConflictMessage((prev) => (prev === nextMsg ? prev : nextMsg));
     }
-    if (conflictResolutionContext?.conflictEvent || conflictResolutionContext?.conflictMessage) {
-      const conflictEv = conflictResolutionContext.conflictEvent;
-      if (conflictResolutionContext.conflictMessage) {
-        setChipConflictMessage((prev) =>
-          prev === conflictResolutionContext.conflictMessage ? prev : conflictResolutionContext.conflictMessage
-        );
-      } else if (conflictEv?.title) {
-        const who = assigneeLabelForConflict(assigneeIds, familyMembers);
-        const lead = who ? `${who} — ` : '';
-        const nextMsg = `${lead}${conflictEv.title} (${formatConflictMetaFromEvent(conflictEv).replace(' · ', ', ')})`;
-        setChipConflictMessage((prev) => (prev === nextMsg ? prev : nextMsg));
-      }
-      if (conflictResolutionContext?.suggestedChange) {
-        setChipConflictSuggestion((prev) => {
-          const prevSig = prev
-            ? `${String(prev.newStart || prev.new_start || '')}|${String(prev.newEnd || prev.new_end || '')}`
-            : '';
-          const next = conflictResolutionContext.suggestedChange;
-          const nextSig = `${String(next.newStart || next.new_start || '')}|${String(next.newEnd || next.new_end || '')}`;
-          return prevSig === nextSig ? prev : next;
-        });
-      }
-      setChipConflictLoading((prev) => (prev ? false : prev));
-      return;
+
+    if (conflictResolutionContext?.suggestedChange) {
+      setChipConflictSuggestion((prev) => {
+        const prevSig = prev
+          ? `${String(prev.newStart || prev.new_start || '')}|${String(prev.newEnd || prev.new_end || '')}`
+          : '';
+        const next = conflictResolutionContext.suggestedChange;
+        const nextSig = `${String(next.newStart || next.new_start || '')}|${String(next.newEnd || next.new_end || '')}`;
+        return prevSig === nextSig ? prev : next;
+      });
+    } else if (contextMessage || contextConflictEvent) {
+      setChipConflictSuggestion((prev) => (prev == null ? prev : null));
     }
-    let cancelled = false;
-    setChipConflictLoading((prev) => (prev ? prev : true));
-    (async () => {
-      try {
-        const movedStart = new Date(event.start_ts);
-        if (isNaN(movedStart.getTime())) {
-          if (!cancelled) {
-            setChipConflictLoading(false);
-            setChipConflictMessage('another event');
-          }
-          return;
-        }
-        const y = movedStart.getFullYear();
-        const mo = movedStart.getMonth();
-        const da = movedStart.getDate();
-        const localStartOfDay = new Date(y, mo, da, 0, 0, 0, 0);
-        const localEndOfDay = new Date(y, mo, da, 23, 59, 59, 999);
 
-        const { data, error } = await supabase
-          .from('events')
-          .select('*')
-          .eq('family_id', familyId)
-          .gte('start_ts', localStartOfDay.toISOString())
-          .lte('start_ts', localEndOfDay.toISOString())
-          .neq('status', 'canceled')
-          .is('canceled_at', null)
-          .is('deleted_at', null);
-
-        if (cancelled) return;
-        if (error) {
-          setChipConflictLoading(false);
-          onOpenConflictResolutionConsumed?.();
-          return;
-        }
-
-        const movedForConflict = {
-          ...event,
-          child_id: assigneeIds[0] || event.child_id || null,
-          child_ids: assigneeIds.length > 0 ? assigneeIds : (Array.isArray(event.child_ids) ? event.child_ids : []),
-        };
-        const first = findFirstConflictEvent(movedForConflict, data || []);
-        if (!first) {
-          setChipConflictLoading(false);
-          setChipConflictMessage('another event');
-          setChipConflictSuggestion(null);
-          return;
-        }
-
-        const eventDate = new Date(first.start_ts);
-        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        const dayName = dayNames[eventDate.getDay()];
-        const monthName = monthNames[eventDate.getMonth()];
-        const day = eventDate.getDate();
-
-        const formatTime = (d) => {
-          let hours = d.getHours();
-          const minutes = d.getMinutes();
-          const period = hours >= 12 ? 'PM' : 'AM';
-          if (hours > 12) hours -= 12;
-          else if (hours === 0) hours = 12;
-          return minutes === 0 ? `${hours} ${period}` : `${hours}:${minutes.toString().padStart(2, '0')} ${period}`;
-        };
-        const eventStart = new Date(first.start_ts);
-        const eventEnd = new Date(first.end_ts || first.start_ts);
-        const startTimeStr = formatTime(eventStart);
-        const endTimeStr = formatTime(eventEnd);
-        const startTimeOnly = startTimeStr.replace(/\s*(AM|PM)$/i, '');
-        const endTimeOnly = endTimeStr.replace(/\s*(AM|PM)$/i, '');
-        const period = startTimeStr.includes('PM') ? 'PM' : 'AM';
-        const timeRange = `${startTimeOnly}–${endTimeOnly} ${period}`;
-
-        const ids = initialAssigneeIdsFromEvent(event);
-        const who = assigneeLabelForConflict(ids, familyMembers);
-        const lead = who ? `${who} — ` : '';
-        const msg = `${lead}${first.title} (${dayName} ${monthName} ${day}, ${timeRange})`;
-
-        if (!cancelled) {
-          const currentStart = new Date(event.start_ts);
-          const currentEnd = new Date(event.end_ts || new Date(currentStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000));
-          const childIds = initialAssigneeIdsFromEvent(movedForConflict);
-          const suggestion = findNextAvailableConflictSlot(first, currentStart, currentEnd, data || [], childIds);
-          setChipConflictMessage(msg);
-          setChipConflictSuggestion(
-            suggestion
-              ? {
-                  ...suggestion,
-                  message: formatConflictSuggestionMessage(suggestion.newStart, suggestion.newEnd),
-                }
-              : null
-          );
-          setChipConflictLoading(false);
-        }
-      } catch (_) {
-        if (!cancelled) {
-          setChipConflictLoading(false);
-          setChipConflictMessage('another event');
-          setChipConflictSuggestion(null);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    setChipConflictLoading((prev) => (prev ? false : prev));
   }, [
+    event?.id,
     openConflictResolution,
     chipConflictBannerDismissed,
-    event?.id,
-    event?.start_ts,
-    event?.end_ts,
-    familyId,
+    conflictResolutionSignature,
+    assigneeIdsSignature,
     familyMembersSignature,
-    assigneeIdsSignature,
-    conflictResolutionSignature,
-  ]);
-
-  useEffect(() => {
-    if (
-      chipConflictBannerDismissed ||
-      !familyId ||
-      !conflictResolutionContext?.conflictEvent ||
-      !conflictResolutionContext?.movedEvent
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-    (async () => {
-      try {
-        const moved = conflictResolutionContext.movedEvent;
-        const conflictEv = conflictResolutionContext.conflictEvent;
-        const currentStart = new Date(moved.start_ts || event?.start_ts);
-        const currentEnd = new Date(
-          moved.end_ts ||
-          event?.end_ts ||
-          new Date(currentStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000)
-        );
-        if (isNaN(currentStart.getTime()) || isNaN(currentEnd.getTime())) return;
-
-        const y = currentStart.getFullYear();
-        const mo = currentStart.getMonth();
-        const da = currentStart.getDate();
-        const localStartOfDay = new Date(y, mo, da, 0, 0, 0, 0);
-        const localEndOfDay = new Date(y, mo, da, 23, 59, 59, 999);
-
-        const { data } = await supabase
-          .from('events')
-          .select('*')
-          .eq('family_id', familyId)
-          .gte('start_ts', localStartOfDay.toISOString())
-          .lte('start_ts', localEndOfDay.toISOString())
-          .neq('status', 'canceled')
-          .is('canceled_at', null)
-          .is('deleted_at', null);
-
-        if (cancelled) return;
-
-        const childIds = moved.child_id ? [moved.child_id] : (moved.child_ids || assigneeIds || []);
-        const suggestion = findNextAvailableConflictSlot(
-          conflictEv,
-          currentStart,
-          currentEnd,
-          data || [],
-          childIds
-        );
-
-        if (!chipConflictMessage && conflictResolutionContext.conflictMessage) {
-          setChipConflictMessage((prev) =>
-            prev === conflictResolutionContext.conflictMessage ? prev : conflictResolutionContext.conflictMessage
-          );
-        }
-        if (suggestion) {
-          const nextSuggestion = {
-            ...suggestion,
-            message: formatConflictSuggestionMessage(suggestion.newStart, suggestion.newEnd),
-          };
-          setChipConflictSuggestion((prev) => {
-            const prevSig = prev
-              ? `${String(prev.newStart || prev.new_start || '')}|${String(prev.newEnd || prev.new_end || '')}`
-              : '';
-            const nextSig = `${String(nextSuggestion.newStart || nextSuggestion.new_start || '')}|${String(nextSuggestion.newEnd || nextSuggestion.new_end || '')}`;
-            return prevSig === nextSig ? prev : nextSuggestion;
-          });
-        }
-      } catch (_) {
-        /* ignore */
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    chipConflictBannerDismissed,
-    chipConflictMessage,
-    familyId,
-    conflictResolutionSignature,
-    event?.start_ts,
-    event?.end_ts,
-    assigneeIdsSignature,
   ]);
 
   const mergeDescriptionWithNote = (prev, note) => {
@@ -1976,7 +1788,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               width: rect.width, // Match the selector box width exactly
               maxHeight: dropdownMaxHeight,
             };
-            setMaterialDropdownPosition(newPosition);
+            setMaterialDropdownPosition((prev) => {
+              if (
+                prev?.top === newPosition.top &&
+                prev?.left === newPosition.left &&
+                prev?.width === newPosition.width &&
+                prev?.maxHeight === newPosition.maxHeight
+              ) {
+                return prev;
+              }
+              return newPosition;
+            });
           }
         }
       };
@@ -2007,7 +1829,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               left: rect.left,
               width: Math.max(rect.width, 200),
             };
-            setSubjectDropdownPosition(newPosition);
+            setSubjectDropdownPosition((prev) => {
+              if (
+                prev?.top === newPosition.top &&
+                prev?.left === newPosition.left &&
+                prev?.width === newPosition.width
+              ) {
+                return prev;
+              }
+              return newPosition;
+            });
           }
         }
       };
@@ -2588,7 +2419,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }
 
       const filteredSubjects = filterSubjectsForAssignees(allSubjects, assigneeIds);
-      setSubjects(filteredSubjects);
+      setSubjects((prev) => {
+        const prevSig = (prev || []).map((s) => String(s?.id || '')).join('|');
+        const nextSig = (filteredSubjects || []).map((s) => String(s?.id || '')).join('|');
+        return prevSig === nextSig ? prev : filteredSubjects;
+      });
     } catch (error) {
       console.error('Error in fetchSubjects:', error);
       if (!background) setSubjects([]);
@@ -6961,8 +6796,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   return (
     <>
+      {showRecurringDeleteModal ? (
       <Modal
-        visible={showRecurringDeleteModal}
+        visible
         transparent
         animationType="fade"
         onRequestClose={() => {
@@ -7053,66 +6889,74 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+      ) : null}
       <View style={{ flex: 1, backgroundColor: '#ffffff', minHeight: 400 }}>
         {editing ? renderEditForm() : renderViewMode()}
       </View>
           
           {/* Standards Search Modal */}
-          <StandardsSearchModal
-            visible={showStandardsModal}
-            onClose={() => setShowStandardsModal(false)}
-            onSelect={handleAttachStandards}
-            subjectId={subjectId}
-            initialSelected={attachedStandards}
-          />
+          {showStandardsModal ? (
+            <StandardsSearchModal
+              visible
+              onClose={() => setShowStandardsModal(false)}
+              onSelect={handleAttachStandards}
+              subjectId={subjectId}
+              initialSelected={attachedStandards}
+            />
+          ) : null}
 
           {/* Add Subject Modal */}
-          <AddSubjectModal
-            visible={showAddSubjectModal}
-            onClose={() => setShowAddSubjectModal(false)}
-            onSubjectAdded={(newSubject) => {
-              fetchSubjects();
-              if (newSubject?.id) {
-                setSubjectId(newSubject.id);
-              }
-            }}
-            familyId={familyId}
-            defaultChildId={assigneeIds.length > 0 ? assigneeIds[0] : null}
-          />
+          {showAddSubjectModal ? (
+            <AddSubjectModal
+              visible
+              onClose={() => setShowAddSubjectModal(false)}
+              onSubjectAdded={(newSubject) => {
+                fetchSubjects();
+                if (newSubject?.id) {
+                  setSubjectId(newSubject.id);
+                }
+              }}
+              familyId={familyId}
+              defaultChildId={assigneeIds.length > 0 ? assigneeIds[0] : null}
+            />
+          ) : null}
 
-          <AskParentHelpModal
-            visible={showAskParentHelpModal}
-            onClose={() => {
-              setShowAskParentHelpModal(false);
-              setAskHelpModalAssignment(null);
-            }}
-            onSent={() => {
-              toast.push('Sent to your parent', 'success');
-              loadEventLinkedHelpAssignment();
-              setAskHelpModalAssignment(null);
-              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+          {showAskParentHelpModal ? (
+            <AskParentHelpModal
+              visible
+              onClose={() => {
+                setShowAskParentHelpModal(false);
+                setAskHelpModalAssignment(null);
+              }}
+              onSent={() => {
+                toast.push('Sent to your parent', 'success');
+                loadEventLinkedHelpAssignment();
+                setAskHelpModalAssignment(null);
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+                }
+              }}
+              familyId={familyId}
+              childId={event?.child_id || (assigneeIds.length > 0 ? assigneeIds[0] : null) || session?.child_id}
+              assignment={askHelpModalAssignment}
+              eventContext={
+                askHelpModalAssignment
+                  ? null
+                  : event?.id
+                    ? {
+                        id: event.id,
+                        title: event.title || draftTitle,
+                        start_ts: event.start_ts,
+                        end_ts: event.end_ts,
+                      }
+                    : null
               }
-            }}
-            familyId={familyId}
-            childId={event?.child_id || (assigneeIds.length > 0 ? assigneeIds[0] : null) || session?.child_id}
-            assignment={askHelpModalAssignment}
-            eventContext={
-              askHelpModalAssignment
-                ? null
-                : event?.id
-                  ? {
-                      id: event.id,
-                      title: event.title || draftTitle,
-                      start_ts: event.start_ts,
-                      end_ts: event.end_ts,
-                    }
-                  : null
-            }
-          />
+            />
+          ) : null}
 
+          {showSendToStudentModal ? (
           <Modal
-            visible={showSendToStudentModal}
+            visible
             transparent
             animationType="fade"
             onRequestClose={() => {
@@ -7268,13 +7112,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </TouchableOpacity>
             </TouchableOpacity>
           </Modal>
+          ) : null}
 
-          <StudentHelpHistoryModal
-            visible={showStudentHelpHistoryModal}
-            onClose={() => setShowStudentHelpHistoryModal(false)}
-            assignment={eventLinkedHelpAssignment}
-            contextTitle={event?.title || draftTitle}
-          />
+          {showStudentHelpHistoryModal ? (
+            <StudentHelpHistoryModal
+              visible
+              onClose={() => setShowStudentHelpHistoryModal(false)}
+              assignment={eventLinkedHelpAssignment}
+              contextTitle={event?.title || draftTitle}
+            />
+          ) : null}
 
           {parentHelpModalAssignment && showParentHelpModal ? (
             <RespondToHelpRequestModal
@@ -7314,20 +7161,22 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           ) : null}
 
           {/* Add Material Modal */}
-          <AddMaterialModal
-            visible={showAddMaterialModal}
-            onClose={() => setShowAddMaterialModal(false)}
-            onSaved={(saved) => {
-              loadMaterials();
-              const id = saved?.id;
-              if (id) {
-                setSelectedMaterialId(id);
-                setAttachedMaterialIds([id]);
-              }
-            }}
-            familyId={familyId}
-            children={familyMembers}
-          />
+          {showAddMaterialModal ? (
+            <AddMaterialModal
+              visible
+              onClose={() => setShowAddMaterialModal(false)}
+              onSaved={(saved) => {
+                loadMaterials();
+                const id = saved?.id;
+                if (id) {
+                  setSelectedMaterialId(id);
+                  setAttachedMaterialIds([id]);
+                }
+              }}
+              familyId={familyId}
+              children={familyMembers}
+            />
+          ) : null}
 
           {/* Mini Calendar Picker Modal */}
           {showCalendarPicker && (
