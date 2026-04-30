@@ -147,6 +147,7 @@ import {
 } from '../../lib/planEditListCache';
 import { formatSubjectPlanHeading } from '../../lib/formatSubjectPlanHeading';
 import { prefetchPlanEditListForFamily } from '../../lib/services/plannerPrefetch';
+import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 
 // Constants for curriculum building
 const SOURCE_TYPES = [
@@ -1777,6 +1778,7 @@ export default function PlanYearModal({
   const [showDeletePlanConfirm, setShowDeletePlanConfirm] = useState(false);
   const [deletingPlan, setDeletingPlan] = useState(false);
   const [planListContextMenu, setPlanListContextMenu] = useState(null); // { x, y, planId }
+  const [forceUnitStructureOverlay, setForceUnitStructureOverlay] = useState(false);
   const [suggestionAccepted, setSuggestionAccepted] = useState(false);
 
   // Phase 3: constraint mode + target (I need X days | X hours)
@@ -3842,16 +3844,6 @@ export default function PlanYearModal({
   useEffect(() => {
     if (!PLAN_MY_YEAR_LOGISTICS_FIRST || planStep !== 'logistics') return;
     if (!familyId) return;
-    if (openForNewPlan) {
-      setSavedCurriculumHasLessonsBySubjectId({});
-      setSavedCurriculumStatsBySubjectId({});
-      return;
-    }
-    if (!initialAcademicYearId && !academicYearId) {
-      setSavedCurriculumHasLessonsBySubjectId({});
-      setSavedCurriculumStatsBySubjectId({});
-      return;
-    }
     const subjectIds = subjectIdsKeyForCadenceFetch.split(',').filter(Boolean);
     if (subjectIds.length === 0) {
       setSavedCurriculumHasLessonsBySubjectId({});
@@ -3859,18 +3851,58 @@ export default function PlanYearModal({
       return;
     }
     let cancelled = false;
+    // Hydrate immediately from warm caches so Step 3 pills do not "blink" inactive.
+    const effectiveYearId = academicYearId || initialAcademicYearId || null;
+    const cachedHasLessons = {};
+    const cachedStats = {};
+    subjectIds.forEach((sid) => {
+      const yearCacheKey = curriculumStructureCacheKey(sid, effectiveYearId);
+      const nullYearCacheKey = curriculumStructureCacheKey(sid, null);
+      const cachedStructure =
+        curriculumStructureCacheRef.current.get(yearCacheKey)
+        || curriculumStructureCacheRef.current.get(nullYearCacheKey)
+        || null;
+      const cachedUnitsFromProgress = getSubjectProgressCache(familyId, sid)?.curriculumUnits;
+      const units = Array.isArray(cachedStructure?.units)
+        ? cachedStructure.units
+        : (Array.isArray(cachedUnitsFromProgress) ? cachedUnitsFromProgress : null);
+      if (!Array.isArray(units)) return;
+      const lessonCount = units.reduce(
+        (total, unit) => total + ((Array.isArray(unit?.lessons) ? unit.lessons : []).length),
+        0,
+      );
+      cachedHasLessons[sid] = lessonCount > 0;
+      cachedStats[sid] = { lessonCount, unitCount: units.length };
+    });
+    if (Object.keys(cachedHasLessons).length > 0) {
+      setSavedCurriculumHasLessonsBySubjectId((prev) => ({ ...prev, ...cachedHasLessons }));
+      setSavedCurriculumStatsBySubjectId((prev) => ({ ...prev, ...cachedStats }));
+    }
+
     (async () => {
       const nextHasLessons = {};
       const nextStats = {};
       await Promise.all(
         subjectIds.map(async (sid) => {
           try {
-            const effectiveYearId = academicYearId || initialAcademicYearId || null;
-            const { data, error } = await fetchSubjectCurriculumEventsStructure(
-              familyId,
-              sid,
-              effectiveYearId
-            );
+            const yearCacheKey = curriculumStructureCacheKey(sid, effectiveYearId);
+            const nullYearCacheKey = curriculumStructureCacheKey(sid, null);
+            let data = curriculumStructureCacheRef.current.get(yearCacheKey)
+              || curriculumStructureCacheRef.current.get(nullYearCacheKey)
+              || null;
+            let error = null;
+            if (!data) {
+              const response = await fetchSubjectCurriculumEventsStructure(
+                familyId,
+                sid,
+                effectiveYearId
+              );
+              data = response?.data || null;
+              error = response?.error || null;
+              if (!error && data) {
+                curriculumStructureCacheRef.current.set(yearCacheKey, data);
+              }
+            }
             if (cancelled) return;
             if (error) {
               nextHasLessons[sid] = false;
@@ -3944,11 +3976,9 @@ export default function PlanYearModal({
   const cadenceShowChangeUnitsForSubject = useCallback(
     (subjectId) => {
       if (!subjectId) return false;
-      if (openForNewPlan) return false;
-      if (!initialAcademicYearId && !academicYearId) return false;
       return savedCurriculumHasLessonsBySubjectId[String(subjectId)] === true;
     },
-    [openForNewPlan, initialAcademicYearId, academicYearId, savedCurriculumHasLessonsBySubjectId],
+    [savedCurriculumHasLessonsBySubjectId],
   );
 
   const hasAnySavedCurriculumUnits = useMemo(
@@ -4006,10 +4036,76 @@ export default function PlanYearModal({
 
   const handleOpenCadenceUnitMethod = useCallback(
     (subjectId, method) => {
+      setForceUnitStructureOverlay(false);
       openCadenceUnitMethod(subjectId, method);
     },
     [openCadenceUnitMethod],
   );
+
+  const handleOpenEditCurrentUnits = useCallback(
+    async (subjectId) => {
+      if (!ensureUnitSubjectForUnitStructure(subjectId)) return;
+      setUnitFocusSubjectId(subjectId);
+      setParsedContent(null);
+      setParseContentError(null);
+      setParsingContent(false);
+      setCadenceDifferentMethodNotice(null);
+      suppressManualCurriculumHydrateRef.current = false;
+      setUnitStructureError(null);
+      setForceUnitStructureOverlay(true);
+      setPlanSource('paste');
+      setDraftData(null);
+      setRawText('');
+      setPlanStep('unit_structure');
+      setLoadingUnitStructure(true);
+      try {
+        const effectiveYearId = academicYearId || initialAcademicYearId || null;
+        const cacheKey = curriculumStructureCacheKey(subjectId, effectiveYearId);
+        const cached = curriculumStructureCacheRef.current.get(cacheKey);
+        const { data, error } = cached
+          ? { data: cached, error: null }
+          : await fetchSubjectCurriculumEventsStructure(familyId, subjectId, effectiveYearId);
+        if (error) throw error;
+        if (data) {
+          curriculumStructureCacheRef.current.set(cacheKey, data);
+        }
+        const units = Array.isArray(data?.units) ? data.units : [];
+        setSavedContentSource(data?.saved_content_source ?? null);
+        setUnitStructureData({ units });
+        const loaded = manualDraftFromUnitStructureData({ units });
+        if (loaded) {
+          setManualDraft(loaded);
+          setExpandedUnitIndexManual(0);
+          setExpandedUnits(new Set([0]));
+        } else {
+          setManualDraft(createInitialManualDraft());
+          setExpandedUnitIndexManual(0);
+          setExpandedUnits(new Set([0]));
+        }
+        setUnitStructureStep('draft');
+      } catch (_) {
+        setUnitStructureData({ units: [] });
+        setManualDraft(createInitialManualDraft());
+        setExpandedUnitIndexManual(0);
+        setExpandedUnits(new Set([0]));
+        setUnitStructureStep('draft');
+      } finally {
+        setLoadingUnitStructure(false);
+      }
+    },
+    [
+      ensureUnitSubjectForUnitStructure,
+      academicYearId,
+      initialAcademicYearId,
+      familyId,
+    ],
+  );
+
+  useEffect(() => {
+    if (planStep !== 'unit_structure') {
+      setForceUnitStructureOverlay(false);
+    }
+  }, [planStep]);
 
   useEffect(() => {
     if (cadenceYieldsInstructionalSlots) setAddContentCadenceInlineHint(false);
@@ -11040,7 +11136,7 @@ export default function PlanYearModal({
   /** Subject-detail links (Manual input, Paste, etc.) should show unit structure full-screen, not logistics behind a nested modal. */
   // In subject-detail build-plan flow, keep unit-structure inside the same modal shell
   // instead of opening a second nested modal overlay.
-  const inlineUnitStructureFromSubjectDetail = Boolean(fromSubjectDetail);
+  const inlineUnitStructureFromSubjectDetail = Boolean(fromSubjectDetail) && !forceUnitStructureOverlay;
   const isSubjectDetailAddUnitsMode =
     Boolean(returnToSubjectModalAfterUnitSave) && planStep === 'unit_structure';
   const addUnitsModalTitle = 'Add units';
@@ -13501,12 +13597,15 @@ export default function PlanYearModal({
                         </Text>
                         <View style={styles.stepContent}>
                         {step3CurriculumCards.map((card, idx) => {
-                          const quickActions = [
-                            { key: 'add', label: 'Add units', method: 'paste', icon: Plus },
-                            { key: 'generate', label: s('planMyYear.multiSubjectUnits.cadenceGenerateLabel'), method: 'generate', icon: Sparkles },
-                            { key: 'upload', label: s('planMyYear.sections.useASource.options.upload.label'), method: 'upload', icon: Upload },
-                            { key: 'paste_plain', label: s('planMyYear.sections.useASource.options.pastePlain.label'), method: 'paste_plain', icon: Pencil },
-                          ];
+                          const editCurrentMethod = mapEventSourceToCadenceMethod(savedContentSource) || 'paste';
+                          const quickActions = card.hasCurriculum
+                            ? [{ key: 'edit_current', label: 'Edit current units', method: editCurrentMethod, icon: Pencil }]
+                            : [
+                              { key: 'add', label: 'Manually add units', method: 'paste', icon: Plus },
+                              { key: 'generate', label: s('planMyYear.multiSubjectUnits.cadenceGenerateLabel'), method: 'generate', icon: Sparkles },
+                              { key: 'upload', label: s('planMyYear.sections.useASource.options.upload.label'), method: 'upload', icon: Upload },
+                              { key: 'paste_plain', label: s('planMyYear.sections.useASource.options.pastePlain.label'), method: 'paste_plain', icon: Pencil },
+                            ];
                           return (
                             <View
                               key={`step3-card-${card.subjectId}`}
@@ -13520,11 +13619,17 @@ export default function PlanYearModal({
                                 {quickActions.map((action) => {
                                   const Icon = action.icon;
                                   const isSavedCurriculumChip =
-                                    card.hasCurriculum && action.method === 'paste';
+                                    action.key !== 'edit_current' && card.hasCurriculum;
                                   return (
                                   <TouchableOpacity
                                     key={`${card.subjectId}-${action.key}`}
-                                    onPress={() => handleOpenCadenceUnitMethod(card.subjectId, action.method)}
+                                    onPress={() => {
+                                      if (action.key === 'edit_current') {
+                                        handleOpenEditCurrentUnits(card.subjectId);
+                                        return;
+                                      }
+                                      handleOpenCadenceUnitMethod(card.subjectId, action.method);
+                                    }}
                                     activeOpacity={0.8}
                                     accessibilityRole="button"
                                     accessibilityLabel={t('planMyYear.multiSubjectUnits.a11yCadenceAddUnitsMethod', {

@@ -497,7 +497,7 @@ export function SubjectAttendanceMonthDrilldown({
   return (
     <View style={styles.attendanceDrilldownSection}>
       <Text style={styles.attendanceDrilldownTitle}>Month drill-down</Text>
-      <Text style={styles.attendanceDrilldownHelp}>
+      <Text style={[styles.attendanceDrilldownHelp, styles.attendanceDrilldownHelpMonth]}>
         Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended.
       </Text>
       <View style={styles.attendanceDrilldownGrid}>
@@ -797,6 +797,9 @@ const styles = StyleSheet.create({
     fontSize: TOKENS.fontSizeCaption,
     color: TOKENS.textMuted,
     marginBottom: 6,
+  },
+  attendanceDrilldownHelpMonth: {
+    marginBottom: 4,
   },
   attendanceDrilldownGrid: {
     flexDirection: 'row',

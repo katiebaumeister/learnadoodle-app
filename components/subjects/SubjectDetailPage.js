@@ -710,11 +710,7 @@ export default function SubjectDetailPage({
     [learningGoalsUnits]
   );
   const hasLearningGoalsContent = totalLearningGoalUnits > 0 || totalLearningGoalLessons > 0;
-  const learningGoalsMethodTitle = useMemo(() => {
-    const key = String(learningGoalsSource || '').trim().toLowerCase();
-    const label = LEARNING_GOALS_METHOD_LABELS[key] || (key ? key.replace(/_/g, ' ') : 'Manual input');
-    return String(label || 'Manual input').toUpperCase();
-  }, [learningGoalsSource]);
+  const learningGoalsMethodTitle = useMemo(() => 'SAVED UNITS', []);
   const learningGoalsBuildSummaryLine = useMemo(() => (
     `${totalLearningGoalUnits} ${totalLearningGoalUnits === 1 ? 'unit' : 'units'} · ${totalLearningGoalLessons} ${totalLearningGoalLessons === 1 ? 'lesson' : 'lessons'} built`
   ), [totalLearningGoalUnits, totalLearningGoalLessons]);
@@ -1177,20 +1173,73 @@ export default function SubjectDetailPage({
     return null;
   }, [attendanceRate30, attendance30Days]);
 
-  // List view should show one row per event/date (ignore child-level duplicate records).
+  // List view should show all subject events with attendance-aware status tags.
   const attendanceRecordsListUI = useMemo(() => {
-    const seen = new Set();
-    const rows = [];
-    for (const record of attendanceRecordsForUI) {
+    const records = Array.isArray(attendanceRecordsForUI) ? attendanceRecordsForUI : [];
+    const attendanceByEventId = new Map();
+    records.forEach((record) => {
       const eventId = String(record?.event_id || '').trim();
-      const dayKey = String(record?.day_date || '').slice(0, 10);
-      const dedupeKey = eventId ? `ev:${eventId}|${dayKey}` : `row:${String(record?.id || '')}`;
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-      rows.push(record);
-    }
-    return rows;
-  }, [attendanceRecordsForUI]);
+      if (!eventId) return;
+      const status = String(record?.status || '').trim().toLowerCase();
+      const prev = attendanceByEventId.get(eventId) || {
+        hasAttended: false,
+        hasUnattended: false,
+        minutes: 0,
+      };
+      if (status === 'present' || status === 'partial') prev.hasAttended = true;
+      if (status === 'absent') prev.hasUnattended = true;
+      const mins = Number(record?.minutes);
+      if (Number.isFinite(mins) && mins > prev.minutes) prev.minutes = mins;
+      attendanceByEventId.set(eventId, prev);
+    });
+
+    const eventRows = (subjectEvents || [])
+      .filter((event) => event && event?.is_backlog !== true && String(event?.status || '').toLowerCase() !== 'canceled')
+      .map((event) => {
+        const eventId = String(event?.id || '').trim();
+        const tsRaw = event?.start_ts || event?.due_ts || event?.end_ts || null;
+        const tsMs = tsRaw ? new Date(tsRaw).getTime() : NaN;
+        const dayKey = tsRaw && Number.isFinite(tsMs) ? String(tsRaw).slice(0, 10) : '';
+        const isUpcoming = Number.isFinite(tsMs) && tsMs > Date.now();
+        const attendanceMeta = attendanceByEventId.get(eventId);
+        let statusLabel = 'Unattended';
+        let statusTone = 'unattended';
+        if (attendanceMeta?.hasAttended) {
+          statusLabel = 'Attended';
+          statusTone = 'attended';
+        } else if (attendanceMeta?.hasUnattended) {
+          statusLabel = 'Unattended';
+          statusTone = 'unattended';
+        } else if (isUpcoming) {
+          statusLabel = 'Upcoming';
+          statusTone = 'upcoming';
+        }
+        const eventMinutes = (() => {
+          if (Number.isFinite(attendanceMeta?.minutes) && attendanceMeta.minutes > 0) return attendanceMeta.minutes;
+          const durationMinutes = Number(event?.duration_minutes);
+          if (Number.isFinite(durationMinutes) && durationMinutes > 0) return Math.round(durationMinutes);
+          const startMs = event?.start_ts ? new Date(event.start_ts).getTime() : NaN;
+          const endMs = event?.end_ts ? new Date(event.end_ts).getTime() : NaN;
+          if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+            return Math.round((endMs - startMs) / 60000);
+          }
+          return 60;
+        })();
+        return {
+          id: `event-row-${eventId || Math.random().toString(36).slice(2)}`,
+          event_id: eventId || null,
+          day_date: dayKey,
+          minutes: eventMinutes,
+          title: String(event?.title || 'Lesson').trim() || 'Lesson',
+          statusLabel,
+          statusTone,
+          sortTs: Number.isFinite(tsMs) ? tsMs : 0,
+        };
+      })
+      .sort((a, b) => Number(b.sortTs || 0) - Number(a.sortTs || 0));
+
+    return eventRows;
+  }, [attendanceRecordsForUI, subjectEvents]);
 
   const attendanceTargetProgress = useMemo(() => {
     const sid = String(subject?.id || '').trim();
@@ -1768,13 +1817,13 @@ export default function SubjectDetailPage({
                 <View style={styles.attendanceChip}>
                   <CheckCircle size={14} color="#10B981" />
                   <Text style={styles.attendanceChipText}>
-                    {attendance30Days.present} Present
+                    {attendance30Days.present} Attended
                   </Text>
                 </View>
                 <View style={styles.attendanceChip}>
                   <XCircle size={14} color="#EF4444" />
                   <Text style={styles.attendanceChipText}>
-                    {attendance30Days.absent} Absent
+                    {attendance30Days.absent} Unattended
                   </Text>
                 </View>
               </View>
@@ -2652,7 +2701,7 @@ export default function SubjectDetailPage({
               <Text style={styles.emptyStateButtonText}>Edit attendance</Text>
             </TouchableOpacity>
           </View>
-          {attendanceRecordsForUI.length > 0 ? (
+          {(attendanceViewMode === 'list' ? attendanceRecordsListUI.length > 0 : attendanceRecordsForUI.length > 0) ? (
             <View style={styles.emptyStateBox}>
               {attendanceSummaryChips}
               {attendanceViewMode === 'list' ? (
@@ -2660,6 +2709,8 @@ export default function SubjectDetailPage({
                   <View style={styles.attendanceList}>
                     {(showAttendanceExpanded ? attendanceRecordsListUI : attendanceRecordsListUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
                       const event = (subjectData?.events || []).find(e => e.id === record.event_id);
+                      const statusLabel = String(record?.statusLabel || '');
+                      const statusTone = String(record?.statusTone || '').toLowerCase();
                       return (
                         <TouchableOpacity
                           key={record.id}
@@ -2670,9 +2721,18 @@ export default function SubjectDetailPage({
                         >
                           <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
                           <Text style={styles.attendanceItemTitle}>
-                            {event?.title || 'Lesson'}
+                            {record?.title || event?.title || 'Lesson'}
                           </Text>
-                          <Text style={styles.attendanceItemStatus}>{record.status}</Text>
+                          <Text
+                            style={[
+                              styles.attendanceItemStatus,
+                              statusTone === 'attended' && styles.attendanceItemStatusAttended,
+                              statusTone === 'unattended' && styles.attendanceItemStatusUnattended,
+                              statusTone === 'upcoming' && styles.attendanceItemStatusUpcoming,
+                            ]}
+                          >
+                            {statusLabel}
+                          </Text>
                           <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
                         </TouchableOpacity>
                       );
@@ -2702,9 +2762,11 @@ export default function SubjectDetailPage({
             <View style={styles.emptyStateBox}>
               {attendanceSummaryChips}
               {attendanceViewMode === 'list' ? null : attendanceInsightsPanel}
-              <Text style={styles.emptyStateText}>
-                Attendance appears once you complete an event attached to this subject.
-              </Text>
+              {attendanceViewMode === 'list' ? (
+                <Text style={styles.emptyStateText}>
+                  Attendance appears once you complete an event attached to this subject.
+                </Text>
+              ) : null}
             </View>
           )}
         </View>
@@ -2965,8 +3027,8 @@ export default function SubjectDetailPage({
             {hasLearningGoalsContent ? (
               <View style={styles.learningGoalsMethodWarningBox}>
                 <Text style={styles.learningGoalsMethodWarningText}>
-                  You previously saved units and lessons for this subject. Open that method to edit your previous inputs,
-                  or build a new unit structure below. Your calendar stays as-is until you save.
+                  You previously saved units and lessons for this subject. Choose an option to override those current
+                  units and lessons, or go to Edit current units to make changes to current.
                 </Text>
               </View>
             ) : null}
@@ -4768,6 +4830,18 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  attendanceItemStatusAttended: {
+    color: '#2f7fb8',
+    fontWeight: '600',
+  },
+  attendanceItemStatusUnattended: {
+    color: '#e68f88',
+    fontWeight: '600',
+  },
+  attendanceItemStatusUpcoming: {
+    color: '#86b5e6',
+    fontWeight: '600',
   },
   attendanceShowMoreBtn: {
     marginTop: 12,
