@@ -46,6 +46,7 @@ export default function DayEventsPanel({
   onMarkAllAttended,
   onEventPress,
   getEventMinutes,
+  compactEventRows = false,
 }) {
   const [pressedEventId, setPressedEventId] = useState(null);
   const sortedEvents = [...events].sort((a, b) => {
@@ -111,7 +112,11 @@ export default function DayEventsPanel({
                     {...(Platform.OS === 'web' && onEventPress && { cursor: 'pointer' })}
                   >
                     <TouchableOpacity
-                      style={[styles.toggleCircle, isPresent && styles.toggleCirclePresent]}
+                      style={[
+                        styles.toggleCircle,
+                        compactEventRows && styles.toggleCircleCompact,
+                        isPresent && styles.toggleCirclePresent,
+                      ]}
                       onPress={(ev) => {
                         ev?.stopPropagation?.();
                         onToggleEventAttendance && onToggleEventAttendance(e.id);
@@ -122,14 +127,23 @@ export default function DayEventsPanel({
                       hitSlop={8}
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      {isPresent ? <Check size={16} color="#16a34a" strokeWidth={2.5} /> : null}
+                      {isPresent ? <Check size={compactEventRows ? 14 : 16} color="#16a34a" strokeWidth={2.5} /> : null}
                     </TouchableOpacity>
                     <View style={styles.eventContent}>
-                      <Text style={styles.eventTitle} numberOfLines={1}>{e.title || 'Event'}</Text>
-                      <Text style={styles.eventMeta} numberOfLines={1}>
-                        {timeStr(e) ? `${timeStr(e)} • ${duration(e, getEventMinutes)}` : duration(e, getEventMinutes)}
-                        {e.subject_id ? ' • Subject' : ''}
-                      </Text>
+                      {compactEventRows ? (
+                        <Text style={styles.eventLine} numberOfLines={1}>
+                          {(e.title || 'Event')}
+                          {` · ${timeStr(e) ? `${timeStr(e)} • ${duration(e, getEventMinutes)}` : duration(e, getEventMinutes)}`}
+                        </Text>
+                      ) : (
+                        <>
+                          <Text style={styles.eventTitle} numberOfLines={1}>{e.title || 'Event'}</Text>
+                          <Text style={styles.eventMeta} numberOfLines={1}>
+                            {timeStr(e) ? `${timeStr(e)} • ${duration(e, getEventMinutes)}` : duration(e, getEventMinutes)}
+                            {e.subject_id ? ' • Subject' : ''}
+                          </Text>
+                        </>
+                      )}
                     </View>
                     {onEventPress && (
                       <ChevronRight size={18} color="rgba(15,23,42,0.4)" style={styles.chevron} />
@@ -178,7 +192,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
   },
   dateLabel: { fontSize: 16, fontWeight: '600', color: TOKENS.text },
   statusPill: {
@@ -194,8 +208,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 4,
+    gap: 6,
+    marginTop: 0,
   },
   headerMeta: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted, flex: 1 },
   markAllBtn: {
@@ -209,8 +223,8 @@ const styles = StyleSheet.create({
   headerDivider: {
     height: 1,
     backgroundColor: 'rgba(15,23,42,0.06)',
-    marginTop: 12,
-    marginBottom: 16,
+    marginTop: 6,
+    marginBottom: 10,
   },
   scroll: { maxHeight: 320 },
   empty: {
@@ -249,8 +263,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(34,197,94,0.14)',
     borderColor: 'rgba(34,197,94,0.35)',
   },
+  toggleCircleCompact: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+  },
   eventContent: { flex: 1, minWidth: 0 },
   eventTitle: { fontSize: 14, fontWeight: '600', color: TOKENS.text },
   eventMeta: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted, marginTop: 4 },
+  eventLine: { fontSize: 13, color: TOKENS.text, fontWeight: '500' },
   chevron: { marginLeft: 4 },
 });

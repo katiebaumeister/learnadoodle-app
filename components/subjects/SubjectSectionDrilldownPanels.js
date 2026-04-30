@@ -521,6 +521,7 @@ export function SubjectAttendanceMonthDrilldown({
             childName={selectedKey ? 'All children' : null}
             events={selectedEvents}
             attendanceByEventId={selectedAttendanceByEventId}
+            compactEventRows
             onToggleEventAttendance={selectedKey && onToggleEventAttendance ? (eventId) => onToggleEventAttendance(selectedKey, eventId) : null}
             onMarkAllAttended={selectedKey && onMarkAllAttendedDay ? () => onMarkAllAttendedDay(selectedKey) : null}
             onEventPress={onOpenEventDetails ? (event) => onOpenEventDetails(event.id, event) : null}
@@ -658,7 +659,7 @@ const styles = StyleSheet.create({
   detailRowMeta: { fontSize: 12, color: '#64748b', marginTop: 2 },
   emptyBox: { paddingVertical: 12 },
   emptyText: { fontSize: 13, color: '#64748b' },
-  subjectHeatmapWrap: { marginTop: 6 },
+  subjectHeatmapWrap: { marginTop: 0 },
   subjectHeatmapHelpText: {
     fontSize: TOKENS.fontSizeCaption,
     color: TOKENS.textMuted,
@@ -777,8 +778,8 @@ const styles = StyleSheet.create({
     }),
   },
   attendanceDrilldownSection: {
-    marginTop: TOKENS.s1,
-    paddingTop: 2,
+    marginTop: 0,
+    paddingTop: 0,
   },
   attendanceDrilldownTitle: {
     fontSize: 20,
@@ -799,7 +800,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   attendanceDrilldownHelpMonth: {
-    marginBottom: 4,
+    marginBottom: 8,
   },
   attendanceDrilldownGrid: {
     flexDirection: 'row',

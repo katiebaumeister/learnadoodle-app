@@ -1236,7 +1236,7 @@ export default function SubjectDetailPage({
           sortTs: Number.isFinite(tsMs) ? tsMs : 0,
         };
       })
-      .sort((a, b) => Number(b.sortTs || 0) - Number(a.sortTs || 0));
+      .sort((a, b) => Number(a.sortTs || 0) - Number(b.sortTs || 0));
 
     return eventRows;
   }, [attendanceRecordsForUI, subjectEvents]);
@@ -1775,19 +1775,6 @@ export default function SubjectDetailPage({
             </View>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.attendanceViewChip, attendanceViewMode === 'year' && styles.attendanceViewChipActive]}
-            onPress={() => setAttendanceViewMode('year')}
-            activeOpacity={0.8}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <View style={styles.attendanceViewChipInner}>
-              <BarChart3 size={12} color={attendanceViewMode === 'year' ? '#6BB3E8' : '#6B7280'} />
-              <Text style={[styles.attendanceViewChipText, attendanceViewMode === 'year' && styles.attendanceViewChipTextActive]}>
-                Year
-              </Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity
             style={[styles.attendanceViewChip, attendanceViewMode === 'month' && styles.attendanceViewChipActive]}
             onPress={() => setAttendanceViewMode('month')}
             activeOpacity={0.8}
@@ -1797,6 +1784,19 @@ export default function SubjectDetailPage({
               <Calendar size={12} color={attendanceViewMode === 'month' ? '#6BB3E8' : '#6B7280'} />
               <Text style={[styles.attendanceViewChipText, attendanceViewMode === 'month' && styles.attendanceViewChipTextActive]}>
                 Month
+              </Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.attendanceViewChip, attendanceViewMode === 'year' && styles.attendanceViewChipActive]}
+            onPress={() => setAttendanceViewMode('year')}
+            activeOpacity={0.8}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <View style={styles.attendanceViewChipInner}>
+              <BarChart3 size={12} color={attendanceViewMode === 'year' ? '#6BB3E8' : '#6B7280'} />
+              <Text style={[styles.attendanceViewChipText, attendanceViewMode === 'year' && styles.attendanceViewChipTextActive]}>
+                Year
               </Text>
             </View>
           </TouchableOpacity>
@@ -2007,10 +2007,17 @@ export default function SubjectDetailPage({
     return null;
   }, []);
 
-  const applyOptimisticProgressByEventIds = useCallback((eventIds = [], markPresent = true) => {
+  const applyOptimisticProgressByEventIds = useCallback((
+    eventIds = [],
+    markPresent = true,
+    { dateKey = null, minutesByEventId = {} } = {},
+  ) => {
     const normalizedIds = [...new Set((eventIds || []).map((id) => String(id || '')).filter(Boolean))];
     if (normalizedIds.length === 0) return;
     const idSet = new Set(normalizedIds);
+    const scopedDayKey = DATE_KEY_RE.test(String(dateKey || '').slice(0, 10))
+      ? String(dateKey).slice(0, 10)
+      : null;
     setSubjectData((prev) => {
       if (!prev) return prev;
       const baseAttendance = Array.isArray(prev.attendanceRecords) ? prev.attendanceRecords : [];
@@ -2019,31 +2026,68 @@ export default function SubjectDetailPage({
             const mapped = baseAttendance.map((record) => {
               const recordEventId = String(record?.event_id || '');
               if (!recordEventId || !idSet.has(recordEventId)) return record;
+              if (scopedDayKey) {
+                const recordDay = String(record?.day_date || '').slice(0, 10);
+                if (recordDay && recordDay !== scopedDayKey) return record;
+              }
               if (isAttendancePresentLike(record?.status)) return record;
               return { ...record, status: 'present' };
             });
             const presentEventIds = new Set(
               mapped
-                .filter((record) => isAttendancePresentLike(record?.status))
+                .filter((record) => {
+                  if (!isAttendancePresentLike(record?.status)) return false;
+                  if (!scopedDayKey) return true;
+                  return String(record?.day_date || '').slice(0, 10) === scopedDayKey;
+                })
                 .map((record) => String(record?.event_id || ''))
                 .filter(Boolean)
             );
             normalizedIds.forEach((eventId) => {
               if (presentEventIds.has(eventId)) return;
+              const parsedMinutes = Number(minutesByEventId?.[eventId]);
               mapped.push({
-                id: `optimistic-progress-${eventId}`,
+                id: `optimistic-progress-${eventId}-${scopedDayKey || 'na'}`,
                 event_id: eventId,
+                day_date: scopedDayKey,
                 status: 'present',
+                minutes: Number.isFinite(parsedMinutes) && parsedMinutes > 0 ? parsedMinutes : 60,
               });
             });
             return mapped;
           })()
-        : baseAttendance.map((record) => {
-            const recordEventId = String(record?.event_id || '');
-            if (!recordEventId || !idSet.has(recordEventId)) return record;
-            if (!isAttendancePresentLike(record?.status)) return record;
-            return { ...record, status: 'absent' };
-          });
+        : (() => {
+            const mapped = baseAttendance.map((record) => {
+              const recordEventId = String(record?.event_id || '');
+              if (!recordEventId || !idSet.has(recordEventId)) return record;
+              if (scopedDayKey) {
+                const recordDay = String(record?.day_date || '').slice(0, 10);
+                if (recordDay && recordDay !== scopedDayKey) return record;
+              }
+              if (!isAttendancePresentLike(record?.status)) return record;
+              return { ...record, status: 'absent' };
+            });
+            if (scopedDayKey) {
+              const existingIdsForDay = new Set(
+                mapped
+                  .filter((record) => String(record?.day_date || '').slice(0, 10) === scopedDayKey)
+                  .map((record) => String(record?.event_id || ''))
+                  .filter(Boolean)
+              );
+              normalizedIds.forEach((eventId) => {
+                if (existingIdsForDay.has(eventId)) return;
+                const parsedMinutes = Number(minutesByEventId?.[eventId]);
+                mapped.push({
+                  id: `optimistic-progress-${eventId}-${scopedDayKey}`,
+                  event_id: eventId,
+                  day_date: scopedDayKey,
+                  status: 'absent',
+                  minutes: Number.isFinite(parsedMinutes) && parsedMinutes > 0 ? parsedMinutes : 60,
+                });
+              });
+            }
+            return mapped;
+          })();
       const nextProgress = computeProgressPercentFromEventsAndAttendance(prev.events || [], nextAttendance);
       const nextData = {
         ...prev,
@@ -2100,12 +2144,26 @@ export default function SubjectDetailPage({
             'create attendance'
           )));
         }
-        applyOptimisticProgressByEventIds([event.id], false);
+        applyOptimisticProgressByEventIds(
+          [event.id],
+          false,
+          {
+            dateKey: normKey,
+            minutesByEventId: { [String(event.id)]: getEventMinutes(event) || 60 },
+          },
+        );
       } else {
         const siblings = getSiblingEventsOnDay(normKey, event, subjectEvents || []);
-        const siblingIds = [];
+        const siblingIds = siblings
+          .map((sibling) => sibling?.id)
+          .filter(Boolean);
+        const minutesByEventId = {};
+        siblings.forEach((sibling) => {
+          if (!sibling?.id) return;
+          minutesByEventId[String(sibling.id)] = getEventMinutes(sibling) || 60;
+        });
+        applyOptimisticProgressByEventIds(siblingIds, true, { dateKey: normKey, minutesByEventId });
         for (const sibling of siblings) {
-          if (sibling?.id) siblingIds.push(sibling.id);
           const childIds = resolveChildIdsForAttendanceEvent(sibling);
           if (!childIds.length) continue;
           const minutes = getEventMinutes(sibling);
@@ -2137,7 +2195,6 @@ export default function SubjectDetailPage({
           await Promise.all(upserts);
           await runEventStatusBestEffort(sibling.id, 'done');
         }
-        applyOptimisticProgressByEventIds(siblingIds, true);
       }
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2170,8 +2227,14 @@ export default function SubjectDetailPage({
     if (!dayEvents.length) return;
     try {
       const dayEventIds = [];
+      const minutesByEventId = {};
+      dayEvents.forEach((event) => {
+        if (!event?.id) return;
+        dayEventIds.push(event.id);
+        minutesByEventId[String(event.id)] = getEventMinutes(event) || 60;
+      });
+      applyOptimisticProgressByEventIds(dayEventIds, true, { dateKey: normKey, minutesByEventId });
       for (const event of dayEvents) {
-        if (event?.id) dayEventIds.push(event.id);
         const childIds = resolveChildIdsForAttendanceEvent(event);
         if (!childIds.length) continue;
         const minutes = getEventMinutes(event);
@@ -2203,7 +2266,6 @@ export default function SubjectDetailPage({
         await Promise.all(upserts);
         await runEventStatusBestEffort(event.id, 'done');
       }
-      applyOptimisticProgressByEventIds(dayEventIds, true);
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
@@ -3808,7 +3870,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   attendanceInsightsPanelWrap: {
-    marginTop: 12,
+    marginTop: 0,
   },
   attendanceSummaryWrap: {
     marginBottom: 8,
