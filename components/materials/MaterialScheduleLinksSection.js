@@ -12,6 +12,7 @@ const FG = '#111827';
 const MUTED = '#9ca3af';
 const BORDER = '#e5e7eb';
 const ACCENT = '#2563eb';
+const ICON_GOLD = '#E39A4B';
 
 function lessonUnitLine(ev) {
   const unit = ((ev.curriculum_unit_title || ev.unit || '') + '').trim();
@@ -95,23 +96,21 @@ export default function MaterialScheduleLinksSection({
 
   const card = (
     <View style={styles.blockSection}>
-      <TouchableOpacity
-        style={[styles.sectionHeader, open && styles.sectionHeaderWithBody]}
-        onPress={() => setOpen(!open)}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.sectionTitle}>Schedule Link</Text>
-        {open ? <ChevronUp size={20} color={SUB} /> : <ChevronDown size={20} color={SUB} />}
+      <TouchableOpacity style={styles.sectionHeader} onPress={() => setOpen(!open)} activeOpacity={0.7}>
+        <View style={styles.sectionHeaderLeft}>
+          <View style={styles.iconWrap}>
+            <Calendar size={17} color={ICON_GOLD} />
+          </View>
+          <Text style={styles.sectionTitle}>Schedule Link</Text>
+        </View>
+        {open ? <ChevronUp size={18} color="#98A2B3" /> : <ChevronDown size={18} color="#98A2B3" />}
       </TouchableOpacity>
       {open && (
         <View style={styles.body}>
           {loading ? (
             <ActivityIndicator size="small" color={ACCENT} style={{ marginVertical: 8 }} />
           ) : events.length === 0 ? (
-            <Text style={styles.hint}>
-              Not linked to a calendar event yet. Attach this material from an event or lesson in the planner to
-              connect it to your plan.
-            </Text>
+            <Text style={styles.hint}>Attach this material to an event in your planner to see linking here.</Text>
           ) : (
             events.map((ev, idx) => {
               const dateStr = (ev.date_local && String(ev.date_local).slice(0, 10)) || '';
@@ -169,17 +168,19 @@ export default function MaterialScheduleLinksSection({
 }
 
 const styles = StyleSheet.create({
-  /* Matches AddMaterialModal `blockSection` / `sectionHeader` / `sectionTitle` (Provider, Review, etc.) */
+  /* Match Add/Edit Material `ModalSectionCard` treatment */
   blockSection: {
+    borderRadius: 18,
+    backgroundColor: '#F8F9FC',
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 12,
-    padding: 10,
+    borderColor: '#EEF1F6',
+    overflow: 'hidden',
     marginBottom: 8,
-    backgroundColor: '#f9fafb',
-    overflow: 'visible',
   },
   sectionHeader: {
+    minHeight: 64,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -187,29 +188,35 @@ const styles = StyleSheet.create({
       web: { cursor: 'pointer' },
     }),
   },
-  sectionHeaderWithBody: {
-    marginBottom: 8,
+  sectionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  iconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#EEF0FF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sectionTitle: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '600',
-    color: FG,
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#2B3345',
     textAlign: 'left',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   body: {
-    paddingBottom: 0,
+    paddingHorizontal: 18,
+    paddingBottom: 18,
+    paddingTop: 2,
   },
   hint: {
-    fontSize: 13,
-    color: SUB,
-    lineHeight: 19,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    fontSize: 14,
+    color: '#7B869A',
+    lineHeight: 20,
   },
   row: {
     paddingVertical: 10,
