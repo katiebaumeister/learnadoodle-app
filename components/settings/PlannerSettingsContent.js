@@ -41,6 +41,7 @@ const BORDER = '#E2E8F0';
 /** Selected chips — planner violet border/text + soft lavender fill */
 const CHIP_SELECTED_BORDER = 'rgba(139, 92, 246, 0.5)';
 const CHIP_SELECTED_BG = 'rgba(139, 92, 246, 0.15)';
+const plannerSettingsSnapshotCache = new Map();
 
 const parsePositiveIntOrNull = (value) => {
   const n = parseInt(String(value ?? '').trim(), 10);
@@ -114,12 +115,14 @@ const deriveSubjectTargetState = (subjectsList) => {
 export default function PlannerSettingsContent({
   familyId,
   onSave,
+  onRequestClose,
   initialData,
   readOnly = false,
   embeddedInModal = false,
+  lockedSchoolYearLabel = null,
 }) {
   const toast = useToast();
-  const [loading, setLoading] = useState(!initialData);
+  const [loading, setLoading] = useState(!initialData && !embeddedInModal);
   const [saving, setSaving] = useState(false);
   const [savedIndicator, setSavedIndicator] = useState(false);
   const [error, setError] = useState(null);
@@ -168,10 +171,83 @@ export default function PlannerSettingsContent({
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [schoolYearMenuAnchor, setSchoolYearMenuAnchor] = useState(null);
   const schoolYearTriggerRef = useRef(null);
+  const normalizedLockedSchoolYearLabel = useMemo(
+    () => normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim()),
+    [lockedSchoolYearLabel]
+  );
+  const isSchoolYearLocked = Boolean(normalizedLockedSchoolYearLabel);
+  const snapshotCacheKey = useMemo(() => {
+    const yearLabel = normalizeSchoolYearLabel(
+      isSchoolYearLocked ? normalizedLockedSchoolYearLabel : selectedSchoolYearLabel
+    ) || 'current';
+    return `${String(familyId || 'unknown')}::${yearLabel}`;
+  }, [familyId, isSchoolYearLocked, normalizedLockedSchoolYearLabel, selectedSchoolYearLabel]);
+
+  useEffect(() => {
+    if (!isSchoolYearLocked) return;
+    if (selectedSchoolYearLabel !== normalizedLockedSchoolYearLabel) {
+      setSelectedSchoolYearLabel(normalizedLockedSchoolYearLabel);
+    }
+    if (showSchoolYearDropdown) setShowSchoolYearDropdown(false);
+  }, [isSchoolYearLocked, normalizedLockedSchoolYearLabel, selectedSchoolYearLabel, showSchoolYearDropdown]);
+
+  useEffect(() => {
+    if (!embeddedInModal) return;
+    const cached = plannerSettingsSnapshotCache.get(snapshotCacheKey);
+    if (!cached) return;
+    setTargetScope(cached.targetScope || 'overall');
+    setGoalMode(cached.goalMode || 'none');
+    setTargetDays(cached.targetDays ?? '180');
+    setTargetHours(cached.targetHours ?? '1000');
+    setHoursPerDay(cached.hoursPerDay ?? '5');
+    setFollowGlobalHolidays(cached.followGlobalHolidays !== false);
+    setExcludedPublicHolidayDates(Array.isArray(cached.excludedPublicHolidayDates) ? cached.excludedPublicHolidayDates : []);
+    setCustomHolidays(Array.isArray(cached.customHolidays) ? cached.customHolidays : []);
+    setCustomBreaks(Array.isArray(cached.customBreaks) ? cached.customBreaks : []);
+    setSubjects(Array.isArray(cached.subjects) ? cached.subjects : []);
+    setSubjectTargets(cached.subjectTargets && typeof cached.subjectTargets === 'object' ? cached.subjectTargets : {});
+    if (!isSchoolYearLocked && cached.selectedSchoolYearLabel) {
+      setSelectedSchoolYearLabel(normalizeSchoolYearLabel(cached.selectedSchoolYearLabel));
+    }
+    setLoading(false);
+  }, [embeddedInModal, snapshotCacheKey, isSchoolYearLocked]);
 
   useEffect(() => {
     stateRef.current = { targetScope, goalMode, targetDays, targetHours, hoursPerDay, followGlobalHolidays, countryCode, regionCode, customHolidays, customBreaks, subjectTargets };
   });
+
+  useEffect(() => {
+    if (!embeddedInModal) return;
+    plannerSettingsSnapshotCache.set(snapshotCacheKey, {
+      targetScope,
+      goalMode,
+      targetDays,
+      targetHours,
+      hoursPerDay,
+      followGlobalHolidays,
+      excludedPublicHolidayDates: Array.isArray(excludedPublicHolidayDates) ? [...excludedPublicHolidayDates] : [],
+      customHolidays: Array.isArray(customHolidays) ? [...customHolidays] : [],
+      customBreaks: Array.isArray(customBreaks) ? [...customBreaks] : [],
+      subjects: Array.isArray(subjects) ? [...subjects] : [],
+      subjectTargets: subjectTargets && typeof subjectTargets === 'object' ? { ...subjectTargets } : {},
+      selectedSchoolYearLabel,
+    });
+  }, [
+    embeddedInModal,
+    snapshotCacheKey,
+    targetScope,
+    goalMode,
+    targetDays,
+    targetHours,
+    hoursPerDay,
+    followGlobalHolidays,
+    excludedPublicHolidayDates,
+    customHolidays,
+    customBreaks,
+    subjects,
+    subjectTargets,
+    selectedSchoolYearLabel,
+  ]);
 
   const selectedYearMeta = useMemo(() => {
     const parsed = parseSchoolYearLabel(selectedSchoolYearLabel);
@@ -219,10 +295,10 @@ export default function PlannerSettingsContent({
   );
 
   useEffect(() => {
-    if (!familyId || !selectedSchoolYearLabel || readOnly) return;
+    if (!familyId || !selectedSchoolYearLabel || readOnly || isSchoolYearLocked) return;
     const normalizedYear = normalizeSchoolYearLabel(selectedSchoolYearLabel);
     saveFamilyPlannerSettings(familyId, { default_school_year: normalizedYear }, normalizedYear).catch(() => {});
-  }, [familyId, selectedSchoolYearLabel, readOnly]);
+  }, [familyId, selectedSchoolYearLabel, readOnly, isSchoolYearLocked]);
 
   // Apply preloaded data from FamilyPanel when available (avoids loading flash when navigating to Planning Preferences)
   useEffect(() => {
@@ -234,7 +310,7 @@ export default function PlannerSettingsContent({
     setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
     setHoursPerDay(s.default_planned_hours_per_day != null ? String(s.default_planned_hours_per_day) : '5');
     setFollowGlobalHolidays(s.follow_public_holidays !== false);
-    if (s.default_school_year) {
+    if (s.default_school_year && !isSchoolYearLocked) {
       setSelectedSchoolYearLabel(normalizeSchoolYearLabel(String(s.default_school_year)));
     }
     const ex = initialData.exclusions || [];
@@ -263,7 +339,7 @@ export default function PlannerSettingsContent({
       if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
     }
     setLoading(false);
-  }, [initialData]);
+  }, [initialData, isSchoolYearLocked]);
 
   useEffect(() => {
     let cancelled = false;
@@ -287,6 +363,10 @@ export default function PlannerSettingsContent({
           return ay - by;
         });
       setSchoolYearOptions(labels);
+      if (isSchoolYearLocked) {
+        setSelectedSchoolYearLabel(normalizedLockedSchoolYearLabel);
+        return;
+      }
       if (!selectedSchoolYearLabel) {
         const fallback = `${currentStart}/${String(currentStart + 1).slice(-2)}`;
         setSelectedSchoolYearLabel(labels.includes(fallback) ? fallback : (labels[0] || fallback));
@@ -296,7 +376,7 @@ export default function PlannerSettingsContent({
     return () => {
       cancelled = true;
     };
-  }, [selectedSchoolYearLabel]);
+  }, [selectedSchoolYearLabel, isSchoolYearLocked, normalizedLockedSchoolYearLabel]);
 
   const showSaved = () => {
     setSavedIndicator(true);
@@ -321,7 +401,7 @@ export default function PlannerSettingsContent({
         setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
         setHoursPerDay(s.default_planned_hours_per_day != null ? String(s.default_planned_hours_per_day) : '5');
         setFollowGlobalHolidays(s.follow_public_holidays !== false);
-        if (s.default_school_year) {
+        if (s.default_school_year && !isSchoolYearLocked) {
           setSelectedSchoolYearLabel(normalizeSchoolYearLabel(String(s.default_school_year)));
         }
       }
@@ -367,7 +447,7 @@ export default function PlannerSettingsContent({
     } finally {
       setLoading(false);
     }
-  }, [familyId, selectedSchoolYearLabel]);
+  }, [familyId, selectedSchoolYearLabel, isSchoolYearLocked]);
 
   /** Keep Subject targets in sync when a subject is saved elsewhere (e.g. Edit subject modal). */
   const reloadSubjectTargetsFromDb = useCallback(async () => {
@@ -402,7 +482,11 @@ export default function PlannerSettingsContent({
       }
       subjectTargetsExternalReloadTimerRef.current = setTimeout(() => {
         subjectTargetsExternalReloadTimerRef.current = null;
-        reloadSubjectTargetsFromDb();
+        if (initialData) {
+          reloadSubjectTargetsFromDb();
+        } else {
+          loadDefaults();
+        }
       }, 150);
     };
     window.addEventListener('refreshPlanDefaults', scheduleReload);
@@ -414,7 +498,7 @@ export default function PlannerSettingsContent({
         clearTimeout(subjectTargetsExternalReloadTimerRef.current);
       }
     };
-  }, [familyId, reloadSubjectTargetsFromDb]);
+  }, [familyId, reloadSubjectTargetsFromDb, loadDefaults, initialData]);
 
   useEffect(() => {
     if (initialData) return; // Use preloaded data from FamilyPanel, skip fetch
@@ -430,7 +514,7 @@ export default function PlannerSettingsContent({
       if (!familyId) return;
       if (readOnly) {
         toast.push('Your family admin has disabled changing planning preferences.', 'error');
-        return;
+        return false;
       }
       const s = stateRef.current;
       setSaving(true);
@@ -465,9 +549,11 @@ export default function PlannerSettingsContent({
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
           window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
         }
+        return true;
       } catch (err) {
         setError(err?.message || 'Failed to save');
         toast.push(err?.message || 'Failed to save', 'error');
+        return false;
       } finally {
         setSaving(false);
       }
@@ -478,6 +564,13 @@ export default function PlannerSettingsContent({
   const debouncedPersist = useCallback(() => {
     persist({});
   }, [persist]);
+
+  const handleEmbeddedSave = useCallback(async () => {
+    const ok = await persist({});
+    if (ok && typeof onRequestClose === 'function') {
+      onRequestClose();
+    }
+  }, [persist, onRequestClose]);
 
   const handleTargetScopeChange = async (scope) => {
     if (readOnly) {
@@ -698,20 +791,20 @@ export default function PlannerSettingsContent({
 
   const sectionStyle = {
     paddingTop: 0,
-    paddingBottom: embeddedInModal ? 14 : 20,
-    marginBottom: embeddedInModal ? 14 : 20,
+    paddingBottom: embeddedInModal ? 12 : 20,
+    marginBottom: embeddedInModal ? 12 : 20,
   };
   const sectionTitleStyle = {
-    fontSize: 18,
+    fontSize: embeddedInModal ? 16 : 18,
     fontWeight: '600',
     color: '#374151',
-    marginBottom: 12,
+    marginBottom: embeddedInModal ? 10 : 12,
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   };
   const sectionDividerStyle = {
     height: 1,
     backgroundColor: BORDER,
-    marginBottom: embeddedInModal ? 14 : 20,
+    marginBottom: embeddedInModal ? 12 : 20,
   };
   const pageTitleStyle = {
     fontSize: 36,
@@ -721,8 +814,8 @@ export default function PlannerSettingsContent({
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   };
   const chip = (active) => ({
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingVertical: embeddedInModal ? 5 : 6,
+    paddingHorizontal: embeddedInModal ? 10 : 12,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: active ? CHIP_SELECTED_BORDER : BORDER,
@@ -730,7 +823,7 @@ export default function PlannerSettingsContent({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   });
   const chipText = (active) => ({
-    fontSize: 14,
+    fontSize: embeddedInModal ? 13 : 14,
     fontWeight: active ? '600' : '500',
     color: active ? CHIP_SELECTED_BORDER : TEXT_BLACK,
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
@@ -739,9 +832,9 @@ export default function PlannerSettingsContent({
     borderWidth: 1,
     borderColor: BORDER,
     borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    fontSize: 14,
+    paddingVertical: embeddedInModal ? 7 : 8,
+    paddingHorizontal: embeddedInModal ? 10 : 12,
+    fontSize: embeddedInModal ? 13 : 14,
     color: TEXT_BLACK,
     minWidth: 72,
   };
@@ -784,9 +877,9 @@ export default function PlannerSettingsContent({
     gap: 12,
   };
   const rowActionButtonStyle = {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: embeddedInModal ? 32 : 36,
+    height: embeddedInModal ? 32 : 36,
+    borderRadius: embeddedInModal ? 16 : 18,
     backgroundColor: '#f9fafb',
     alignItems: 'center',
     justifyContent: 'center',
@@ -798,8 +891,8 @@ export default function PlannerSettingsContent({
   const addOutlineButtonStyle = {
     alignItems: 'center',
     justifyContent: 'center',
-    height: 32,
-    paddingHorizontal: 12,
+    height: embeddedInModal ? 30 : 32,
+    paddingHorizontal: embeddedInModal ? 10 : 12,
     borderRadius: 999,
     borderWidth: 1,
     borderStyle: 'dashed',
@@ -811,14 +904,87 @@ export default function PlannerSettingsContent({
     }),
   };
   const addOutlineButtonTextStyle = {
-    fontSize: 14,
+    fontSize: embeddedInModal ? 13 : 14,
     fontWeight: '600',
     color: '#5AAEF2',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   };
-  if (loading) {
+  const embeddedTitleRowStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  };
+  const embeddedTitleStyle = {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#111827',
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  };
+  const embeddedCloseButtonStyle = {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  };
+  const embeddedFooterActionsStyle = {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 16,
+    paddingTop: 8,
+  };
+  const embeddedCancelButtonStyle = {
+    minWidth: 92,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  };
+  const embeddedCancelButtonTextStyle = {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  };
+  const embeddedSaveButtonStyle = {
+    minWidth: 132,
+    paddingVertical: 12,
+    paddingHorizontal: 22,
+    borderRadius: 10,
+    backgroundColor: '#90CAF5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
+    }),
+  };
+  const embeddedSaveButtonTextStyle = {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  };
+  if (loading && !embeddedInModal) {
     return (
       <View style={{ padding: embeddedInModal ? 20 : 32, alignItems: 'center' }}>
         <ActivityIndicator size="large" color={ACCENT} />
@@ -828,8 +994,28 @@ export default function PlannerSettingsContent({
   }
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: embeddedInModal ? 20 : 32 }}>
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{
+        paddingBottom: embeddedInModal ? 32 : 32,
+        paddingHorizontal: embeddedInModal ? 26 : 0,
+        paddingTop: embeddedInModal ? 22 : 0,
+      }}
+    >
       <View style={{ paddingHorizontal: 0, paddingTop: 0 }}>
+        {embeddedInModal ? (
+          <View style={embeddedTitleRowStyle}>
+            <Text style={embeddedTitleStyle}>Planning Preferences</Text>
+            <TouchableOpacity
+              onPress={() => onRequestClose?.()}
+              style={embeddedCloseButtonStyle}
+              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <X size={18} color="#64748B" />
+            </TouchableOpacity>
+          </View>
+        ) : null}
         {readOnly ? (
           <View
             style={{
@@ -860,42 +1046,50 @@ export default function PlannerSettingsContent({
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Text style={sectionTitleStyle}>Learning Goals • </Text>
               <View>
-                <TouchableOpacity
-                  ref={schoolYearTriggerRef}
-                  onPress={() => {
-                    if (showSchoolYearDropdown) {
-                      setShowSchoolYearDropdown(false);
-                      return;
-                    }
-                    const triggerNode = schoolYearTriggerRef.current;
-                    if (triggerNode && typeof triggerNode.measureInWindow === 'function') {
-                      triggerNode.measureInWindow((x, y, width, height) => {
-                        setSchoolYearMenuAnchor({ x, y, width, height });
-                        setShowSchoolYearDropdown(true);
-                      });
-                    } else {
-                      setSchoolYearMenuAnchor(null);
-                      setShowSchoolYearDropdown(true);
-                    }
-                  }}
-                  style={{ flexDirection: 'row', alignItems: 'center' }}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={sectionTitleStyle}>
-                    {selectedSchoolYearLabel ? `${selectedSchoolYearLabel} School Year` : 'School Year'}
-                  </Text>
-                  <View
-                    style={{
-                      marginLeft: 2,
-                      marginTop: -7,
-                      width: 16,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
+                {isSchoolYearLocked ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={sectionTitleStyle}>
+                      {selectedSchoolYearLabel ? `${selectedSchoolYearLabel} School Year` : 'School Year'}
+                    </Text>
                   </View>
-                </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    ref={schoolYearTriggerRef}
+                    onPress={() => {
+                      if (showSchoolYearDropdown) {
+                        setShowSchoolYearDropdown(false);
+                        return;
+                      }
+                      const triggerNode = schoolYearTriggerRef.current;
+                      if (triggerNode && typeof triggerNode.measureInWindow === 'function') {
+                        triggerNode.measureInWindow((x, y, width, height) => {
+                          setSchoolYearMenuAnchor({ x, y, width, height });
+                          setShowSchoolYearDropdown(true);
+                        });
+                      } else {
+                        setSchoolYearMenuAnchor(null);
+                        setShowSchoolYearDropdown(true);
+                      }
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center' }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={sectionTitleStyle}>
+                      {selectedSchoolYearLabel ? `${selectedSchoolYearLabel} School Year` : 'School Year'}
+                    </Text>
+                    <View
+                      style={{
+                        marginLeft: 2,
+                        marginTop: -7,
+                        width: 16,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
+                    </View>
+                  </TouchableOpacity>
+                )}
               </View>
             </View>
           </View>
@@ -1154,7 +1348,7 @@ export default function PlannerSettingsContent({
           </Modal>
         )}
 
-        {showSchoolYearDropdown && (
+        {!isSchoolYearLocked && showSchoolYearDropdown && (
           <Modal
             animationType="none"
             transparent
@@ -1442,6 +1636,27 @@ export default function PlannerSettingsContent({
         </View>
 
         {error && <Text style={{ color: '#DC2626', fontSize: 14, marginTop: 12 }}>{error}</Text>}
+        {embeddedInModal ? (
+          <View style={embeddedFooterActionsStyle}>
+            <TouchableOpacity
+              style={embeddedCancelButtonStyle}
+              onPress={() => onRequestClose?.()}
+              disabled={saving}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={embeddedCancelButtonTextStyle}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[embeddedSaveButtonStyle, saving && { opacity: 0.7, ...(Platform.OS === 'web' ? { boxShadow: 'none' } : null) }]}
+              onPress={handleEmbeddedSave}
+              disabled={saving}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Check size={16} color="#ffffff" />
+              <Text style={embeddedSaveButtonTextStyle}>{saving ? 'Saving…' : 'Save'}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </View>
 
     </ScrollView>

@@ -37,6 +37,7 @@ import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
 import HelpPopover from '../planner/HelpPopover';
 import PlannerSettingsContent from '../settings/PlannerSettingsContent';
+import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
 
 const SEARCH_SECTION_KEYWORDS = {
   'attendance-section': ['attendance', 'attended', 'present', 'absent', 'lesson', 'lessons', 'event', 'events'],
@@ -217,6 +218,7 @@ export default function SubjectsPage({
   const [exportHintPosition, setExportHintPosition] = useState({ top: 0, left: 0 });
   const [showSubjectsExportModal, setShowSubjectsExportModal] = useState(false);
   const [showPlanningPreferencesModal, setShowPlanningPreferencesModal] = useState(false);
+  const [planningPreferencesSchoolYearLabel, setPlanningPreferencesSchoolYearLabel] = useState(null);
   const [subjectsExportType, setSubjectsExportType] = useState('schedule');
   const [subjectsExportFormat, setSubjectsExportFormat] = useState('excel');
   const [subjectsExportStartDate, setSubjectsExportStartDate] = useState('');
@@ -1682,28 +1684,29 @@ export default function SubjectsPage({
         visible={showPlanningPreferencesModal}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowPlanningPreferencesModal(false)}
+        onRequestClose={() => {
+          setShowPlanningPreferencesModal(false);
+          setPlanningPreferencesSchoolYearLabel(null);
+        }}
       >
         <TouchableOpacity
           style={styles.exportModalBackdrop}
           activeOpacity={1}
-          onPress={() => setShowPlanningPreferencesModal(false)}
+          onPress={() => {
+            setShowPlanningPreferencesModal(false);
+            setPlanningPreferencesSchoolYearLabel(null);
+          }}
         >
           <TouchableOpacity style={styles.planningPreferencesModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
-            <View style={styles.planningPreferencesHeaderRow}>
-              <Text style={styles.planningPreferencesModalTitle}>Planning preferences</Text>
-              <TouchableOpacity
-                onPress={() => setShowPlanningPreferencesModal(false)}
-                style={styles.planningPreferencesCloseButton}
-                hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-              >
-                <X size={18} color="#64748B" />
-              </TouchableOpacity>
-            </View>
             <View style={styles.planningPreferencesBody}>
               <PlannerSettingsContent
                 familyId={familyId}
                 embeddedInModal
+                lockedSchoolYearLabel={planningPreferencesSchoolYearLabel || null}
+                onRequestClose={() => {
+                  setShowPlanningPreferencesModal(false);
+                  setPlanningPreferencesSchoolYearLabel(null);
+                }}
                 onSave={() => {
                   if (Platform.OS === 'web' && typeof window !== 'undefined') {
                     window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
@@ -1730,10 +1733,20 @@ export default function SubjectsPage({
           }}
         >
           <TouchableOpacity style={styles.exportModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.exportModalTitle}>Export subject data</Text>
-            <Text style={styles.exportModalSubtitle}>
-              Export one data type at a time. Dates and students default to your current filters.
-            </Text>
+            <View style={styles.exportModalHeaderRow}>
+              <Text style={styles.exportModalTitle}>Export subject data</Text>
+              <TouchableOpacity
+                style={styles.exportModalCloseButton}
+                onPress={() => {
+                  if (!subjectsExportBusy) setShowSubjectsExportModal(false);
+                }}
+                disabled={subjectsExportBusy}
+                hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                {...(Platform.OS === 'web' && { cursor: subjectsExportBusy ? 'default' : 'pointer' })}
+              >
+                <X size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
 
             <Text style={styles.exportModalLabel}>Data type</Text>
             <View style={styles.exportTypeRow}>
@@ -1784,22 +1797,28 @@ export default function SubjectsPage({
             <View style={styles.exportDateRow}>
               <View style={styles.exportDateCol}>
                 <Text style={styles.exportModalLabel}>Start date</Text>
-                <TextInput
-                  style={styles.exportDateInput}
+                <PlannerPreferenceDateField
+                  style={styles.exportDatePickerField}
                   value={subjectsExportStartDate}
-                  onChangeText={setSubjectsExportStartDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#94A3B8"
+                  onChange={setSubjectsExportStartDate}
+                  placeholder="Start date"
+                  borderColor="#E2E8F0"
+                  textColor="#1F2937"
+                  mutedColor="#94A3B8"
+                  maxDate={subjectsExportEndDate || null}
                 />
               </View>
               <View style={styles.exportDateCol}>
                 <Text style={styles.exportModalLabel}>End date</Text>
-                <TextInput
-                  style={styles.exportDateInput}
+                <PlannerPreferenceDateField
+                  style={styles.exportDatePickerField}
                   value={subjectsExportEndDate}
-                  onChangeText={setSubjectsExportEndDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#94A3B8"
+                  onChange={setSubjectsExportEndDate}
+                  placeholder="End date"
+                  borderColor="#E2E8F0"
+                  textColor="#1F2937"
+                  mutedColor="#94A3B8"
+                  minDate={subjectsExportStartDate || null}
                 />
               </View>
             </View>
@@ -1837,6 +1856,7 @@ export default function SubjectsPage({
                 onPress={runSubjectsExport}
                 disabled={subjectsExportBusy}
               >
+                <Download size={14} color="#FFFFFF" />
                 <Text style={styles.exportSubmitText}>{subjectsExportBusy ? 'Exporting…' : 'Export'}</Text>
               </TouchableOpacity>
             </View>
@@ -1857,7 +1877,12 @@ export default function SubjectsPage({
             visibleSubjects={filteredSubjects}
             allSubjects={subjects}
             onDone={() => setSelectedModeFilter('view')}
-            onOpenPlannerSettings={() => setShowPlanningPreferencesModal(true)}
+            onOpenPlannerSettings={(schoolYearLabel) => {
+              setPlanningPreferencesSchoolYearLabel(
+                String(schoolYearLabel || '').trim() || selectedYearFilter || getCurrentSchoolYear()
+              );
+              setShowPlanningPreferencesModal(true);
+            }}
             onOpenSubject={(subjectId) => {
               const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
               if (match) {
@@ -2169,11 +2194,30 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    padding: 20,
+    paddingTop: 28,
+    paddingBottom: 28,
+    paddingHorizontal: 34,
+  },
+  exportModalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  exportModalCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   planningPreferencesModalCard: {
     width: '100%',
-    maxWidth: 980,
+    maxWidth: 940,
     maxHeight: '90%',
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -2185,14 +2229,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
     backgroundColor: '#F8FAFC',
   },
   planningPreferencesModalTitle: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
     color: '#111827',
     ...(Platform.OS === 'web' && {
@@ -2210,6 +2254,7 @@ const styles = StyleSheet.create({
   planningPreferencesBody: {
     flex: 1,
     minHeight: 520,
+    paddingBottom: 8,
   },
   exportModalTitle: {
     fontSize: 24,
@@ -2217,15 +2262,6 @@ const styles = StyleSheet.create({
     color: '#111827',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  exportModalSubtitle: {
-    marginTop: 6,
-    marginBottom: 14,
-    fontSize: 13,
-    color: '#64748B',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   exportModalLabel: {
@@ -2291,6 +2327,15 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  exportDatePickerField: {
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+  },
   exportStudentsWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -2334,33 +2379,51 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   exportCancelButton: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    minWidth: 92,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   exportCancelText: {
     fontSize: 14,
-    color: '#475569',
+    color: '#374151',
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   exportSubmitButton: {
-    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minWidth: 132,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#1E293B',
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderColor: '#90CAF5',
+    backgroundColor: '#90CAF5',
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
+    }),
   },
   exportSubmitButtonDisabled: {
     opacity: 0.55,
+    ...(Platform.OS === 'web' && {
+      boxShadow: 'none',
+    }),
   },
   exportSubmitText: {
-    fontSize: 14,
-    color: '#FFFFFF',
+    fontSize: 15,
+    color: '#ffffff',
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   summaryCard: {
     marginHorizontal: 24,

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { BarChart3, CalendarPlus, Check, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, SlidersHorizontal, Sparkles, Upload, X } from 'lucide-react';
+import { CalendarPlus, Check, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, SlidersHorizontal, Sparkles, Upload, X } from 'lucide-react';
 import { applyToCalendar, getAcademicYear, getPlanHealth } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
 import { getFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
@@ -52,6 +53,12 @@ function formatScheduleScopeLabel(scopeId) {
   if (scopeId === 'fall_term') return 'Fall Term';
   if (scopeId === 'spring_term') return 'Spring Term';
   if (scopeId === 'full_year') return 'Full Year';
+  return '';
+}
+
+function formatScheduleScopeChipLabel(scopeId) {
+  if (scopeId === 'fall_term') return 'Fall term';
+  if (scopeId === 'spring_term') return 'Spring term';
   return '';
 }
 
@@ -519,11 +526,7 @@ export default function SubjectsPlanBuilder({
     termTitle: '',
     events: [],
   });
-  const [showCourseTotalsModal, setShowCourseTotalsModal] = useState(false);
-  const [courseTotalsModalData, setCourseTotalsModalData] = useState({
-    termTitle: '',
-    rows: [],
-  });
+  const [hoverHintKey, setHoverHintKey] = useState(null);
   const [eventsRefreshKey, setEventsRefreshKey] = useState(0);
   const [familyPlannerSettings, setFamilyPlannerSettings] = useState({
     target_scope: 'overall',
@@ -844,10 +847,12 @@ export default function SubjectsPlanBuilder({
         .sort((a, b) => String(a.start_time || '').localeCompare(String(b.start_time || '')))
         .flatMap((block) => {
           const ids = Array.isArray(block.subject_ids) ? block.subject_ids : [];
+          const scopeId = normalizeSubjectTerm(block?.scopeId);
+          const termLabel = formatScheduleScopeChipLabel(scopeId);
           if (ids.length === 0) return [];
           return ids.map((sid) => {
             const subjectName = allSubjectPool.find((s) => String(s?.id) === String(sid))?.name || 'Subject';
-            return { subjectName, startTime: block.start_time || '09:00' };
+            return { subjectName, startTime: block.start_time || '09:00', termLabel };
           });
         });
       return {
@@ -857,8 +862,6 @@ export default function SubjectsPlanBuilder({
       };
     })
   ), [allSubjectPool]);
-
-  const homeTermOrder = useMemo(() => ['fall_term', 'spring_term'], []);
 
   useEffect(() => {
     if (selectedYearFilter === 'all') return;
@@ -878,104 +881,109 @@ export default function SubjectsPlanBuilder({
   const termSections = useMemo(() => {
     if (!displaySchoolYear) return [];
     const selectedStartYear = Number(displaySchoolYear?.start_year);
+    const selectedEndYear = Number(displaySchoolYear?.end_year);
     if (!Number.isFinite(selectedStartYear)) return [];
     const now = new Date();
     const nowMs = now.getTime();
     const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const fullYearCore = (planCores || []).find((row) => (
+    if (!Number.isFinite(selectedEndYear)) return [];
+    const yearRange = formatYmdFromTemplateYear(selectedStartYear, selectedEndYear, 'full_year');
+    const relevantScopeIds = ['fall_term', 'spring_term', 'full_year'];
+    const relevantCores = (planCores || []).filter((row) => (
       Number(row?.startYear) === selectedStartYear
-      && String(row?.scopeId || '').trim() === 'full_year'
-    )) || null;
-    const fullYearBlocks = Array.isArray(fullYearCore?.blocksLite) ? fullYearCore.blocksLite : [];
+      && relevantScopeIds.includes(String(row?.scopeId || '').trim())
+    ));
+    const blocks = relevantCores.flatMap((core) => {
+      const scopeId = String(core?.scopeId || '').trim();
+      return (Array.isArray(core?.blocksLite) ? core.blocksLite : []).map((block) => ({ ...block, scopeId }));
+    });
+    const dayRows = buildDayRowsFromBlocks(blocks);
+    const daySet = new Set(
+      blocks.flatMap((block) => (
+        Array.isArray(block?.weekdays)
+          ? block.weekdays.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+          : []
+      ))
+    );
+    const scheduledWeekdays = [...daySet];
+    const rangeStartMs = yearRange?.start_date ? new Date(`${yearRange.start_date}T00:00:00`).getTime() : null;
+    const rangeEndMs = yearRange?.end_date ? new Date(`${yearRange.end_date}T23:59:59`).getTime() : null;
+    const plannedDays = yearRange
+      ? countOccurrencesInRange(yearRange.start_date, yearRange.end_date, scheduledWeekdays)
+      : 0;
+    const completedDays = yearRange
+      ? countOccurrencesInRange(yearRange.start_date, todayYmd > yearRange.end_date ? yearRange.end_date : todayYmd, scheduledWeekdays)
+      : 0;
+    const status = !yearRange
+      ? 'Unknown'
+      : (todayYmd > yearRange.end_date ? 'Complete' : (todayYmd < yearRange.start_date ? 'Upcoming' : 'In progress'));
 
-    return homeTermOrder.map((termId) => {
-      const core = (planCores || []).find((row) => (
-        Number(row?.startYear) === selectedStartYear
-        && String(row?.scopeId || '').trim() === String(termId)
-      )) || null;
-      const termBlocks = Array.isArray(core?.blocksLite) ? core.blocksLite : [];
-      const blocks = [...termBlocks, ...fullYearBlocks];
-      const dayRows = buildDayRowsFromBlocks(blocks);
-      const daySet = new Set(
-        blocks.flatMap((block) => (
-          Array.isArray(block?.weekdays)
-            ? block.weekdays.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
-            : []
-        ))
+    const slotSubjectIds = relevantScopeIds.flatMap((scopeId) => {
+      const slotKey = buildPlanSlotKey(selectedStartYear, scopeId);
+      return slotKey ? (planSubjectIdsBySlot?.[slotKey] || []) : [];
+    });
+    const slotSubjectNames = relevantScopeIds.flatMap((scopeId) => {
+      const slotKey = buildPlanSlotKey(selectedStartYear, scopeId);
+      return slotKey ? (planSubjectNamesBySlot?.[slotKey] || []) : [];
+    });
+    const plannedSet = new Set((slotSubjectIds || []).map((id) => String(id)));
+    const plannedNameSet = new Set((slotSubjectNames || []).map((name) => normalizeSubjectName(name)));
+    const subjectsInYear = (baseSubjects || []).filter(
+      (subject) => String(subject?.school_year || '').trim() === String(displaySchoolYear?.label || '').trim()
+    );
+    const subjectPlans = subjectsInYear.map((subject) => {
+      const subjectId = String(subject?.id || '');
+      const normalizedName = normalizeSubjectName(subject?.name);
+      const blocksForSubject = blocks.filter((block) =>
+        Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
       );
-      const scheduledWeekdays = [...daySet];
-      const dateRange = formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, termId);
-      const termStartMs = dateRange?.start_date ? new Date(`${dateRange.start_date}T00:00:00`).getTime() : null;
-      const termEndMs = dateRange?.end_date ? new Date(`${dateRange.end_date}T23:59:59`).getTime() : null;
-      const plannedDays = dateRange
-        ? countOccurrencesInRange(dateRange.start_date, dateRange.end_date, scheduledWeekdays)
-        : 0;
-      const completedDays = dateRange
-        ? countOccurrencesInRange(dateRange.start_date, todayYmd > dateRange.end_date ? dateRange.end_date : todayYmd, scheduledWeekdays)
-        : 0;
-      const status = !dateRange
-        ? 'Unknown'
-        : (todayYmd > dateRange.end_date ? 'Complete' : (todayYmd < dateRange.start_date ? 'Upcoming' : 'In progress'));
-
-      const slotKey = buildPlanSlotKey(selectedStartYear, termId);
-      const slotSubjectIds = slotKey ? (planSubjectIdsBySlot?.[slotKey] || []) : [];
-      const slotSubjectNames = slotKey ? (planSubjectNamesBySlot?.[slotKey] || []) : [];
-      const fullYearSlotKey = buildPlanSlotKey(selectedStartYear, 'full_year');
-      const fullYearSubjectIds = fullYearSlotKey ? (planSubjectIdsBySlot?.[fullYearSlotKey] || []) : [];
-      const fullYearSubjectNames = fullYearSlotKey ? (planSubjectNamesBySlot?.[fullYearSlotKey] || []) : [];
-      const plannedSet = new Set([...(slotSubjectIds || []), ...(fullYearSubjectIds || [])].map((id) => String(id)));
-      const plannedNameSet = new Set([...(slotSubjectNames || []), ...(fullYearSubjectNames || [])].map((name) => normalizeSubjectName(name)));
-      const subjectsInTerm = (baseSubjects || []).filter((subject) => subjectMatchesYearTerm(subject, displaySchoolYear?.label, termId));
-      const subjectPlans = subjectsInTerm.map((subject) => {
-        const subjectId = String(subject?.id || '');
-        const normalizedName = normalizeSubjectName(subject?.name);
-        const blocksForSubject = blocks.filter((block) =>
-          Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
-        );
-        const attachedIds = Array.isArray(subject?.assignedChildren)
-          ? subject.assignedChildren.map((id) => String(id)).filter(Boolean)
-          : [];
-        const effectiveAttachedIds = attachedIds.length > 0 ? attachedIds : allChildIds;
-        const attachedStudentNames = effectiveAttachedIds
-          .map((childId) => childNameById[String(childId)] || null)
-          .filter(Boolean);
-        const eventItems = instructionalEventsBySubject?.[subjectId] || [];
-        let pastEventsCount = 0;
-        let plannedEventsCount = 0;
-        const termEventItems = [];
-        eventItems.forEach((eventItem) => {
-          const eventMs = Number(eventItem?.startMs);
-          if (!Number.isFinite(eventMs)) return;
-          if (Number.isFinite(termStartMs) && eventMs < termStartMs) return;
-          if (Number.isFinite(termEndMs) && eventMs > termEndMs) return;
-          termEventItems.push(eventItem);
-          if (eventMs < nowMs) pastEventsCount += 1;
-          else plannedEventsCount += 1;
-        });
-        return {
-          id: subjectId,
-          name: subject?.name || 'Subject',
-          hasPlan: (subjectId ? plannedSet.has(subjectId) : false) || (normalizedName ? plannedNameSet.has(normalizedName) : false),
-          cadenceText: formatSubjectCadence(blocksForSubject),
-          pastEventsCount,
-          plannedEventsCount,
-          eventItems: termEventItems,
-          attachedStudentIds: effectiveAttachedIds,
-          attachedStudentsLabel: attachedStudentNames.join(', '),
-        };
+      const attachedIds = Array.isArray(subject?.assignedChildren)
+        ? subject.assignedChildren.map((id) => String(id)).filter(Boolean)
+        : [];
+      const effectiveAttachedIds = attachedIds.length > 0 ? attachedIds : allChildIds;
+      const attachedStudentNames = effectiveAttachedIds
+        .map((childId) => childNameById[String(childId)] || null)
+        .filter(Boolean);
+      const eventItems = instructionalEventsBySubject?.[subjectId] || [];
+      let pastEventsCount = 0;
+      let plannedEventsCount = 0;
+      const yearEventItems = [];
+      eventItems.forEach((eventItem) => {
+        const eventMs = Number(eventItem?.startMs);
+        if (!Number.isFinite(eventMs)) return;
+        if (Number.isFinite(rangeStartMs) && eventMs < rangeStartMs) return;
+        if (Number.isFinite(rangeEndMs) && eventMs > rangeEndMs) return;
+        yearEventItems.push(eventItem);
+        if (eventMs < nowMs) pastEventsCount += 1;
+        else plannedEventsCount += 1;
       });
-
+      const schoolTermId = normalizeSubjectTerm(subject?.school_term);
+      const schoolTermLabel = schoolTermId === 'full_year' ? '' : formatScheduleScopeLabel(schoolTermId);
       return {
-        id: termId,
-        title: formatScheduleScopeLabel(termId),
-        status,
-        plannedDays,
-        completedDays,
-        dayRows,
-        subjectPlans,
+        id: subjectId,
+        name: subject?.name || 'Subject',
+        schoolTermId,
+        schoolTermLabel,
+        hasPlan: (subjectId ? plannedSet.has(subjectId) : false) || (normalizedName ? plannedNameSet.has(normalizedName) : false),
+        cadenceText: formatSubjectCadence(blocksForSubject),
+        pastEventsCount,
+        plannedEventsCount,
+        eventItems: yearEventItems,
+        attachedStudentIds: effectiveAttachedIds,
+        attachedStudentsLabel: attachedStudentNames.join(', '),
       };
     });
-  }, [displaySchoolYear, homeTermOrder, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject]);
+
+    return [{
+      id: 'school_year',
+      title: 'Weekly Cadence',
+      status,
+      plannedDays,
+      completedDays,
+      dayRows,
+      subjectPlans,
+    }];
+  }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject]);
 
   const yearTargetSummary = useMemo(() => {
     if (!displaySchoolYear) return null;
@@ -1436,9 +1444,9 @@ export default function SubjectsPlanBuilder({
 
   const openPlanningPreferences = useCallback(() => {
     if (typeof onOpenPlannerSettings === 'function') {
-      onOpenPlannerSettings();
+      onOpenPlannerSettings(displaySchoolYear?.label || null);
     }
-  }, [onOpenPlannerSettings]);
+  }, [onOpenPlannerSettings, displaySchoolYear?.label]);
 
   const openSubjectEditModal = useCallback((subjectId) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -1462,49 +1470,11 @@ export default function SubjectsPlanBuilder({
     setShowSubjectEventsModal(true);
   }, []);
 
-  const openCourseTotalsModal = useCallback((termSection) => {
-    const rows = Array.isArray(termSection?.subjectPlans)
-      ? termSection.subjectPlans.map((row) => ({
-        id: row?.id || `row-${Math.random()}`,
-        name: row?.name || 'Subject',
-        total: Number(row?.pastEventsCount || 0) + Number(row?.plannedEventsCount || 0),
-        past: Number(row?.pastEventsCount || 0),
-        planned: Number(row?.plannedEventsCount || 0),
-      }))
-      : [];
-    setCourseTotalsModalData({
-      termTitle: termSection?.title || '',
-      rows,
-    });
-    setShowCourseTotalsModal(true);
-  }, []);
-
   if (surfaceMode === 'home') {
     return (
       <View style={styles.wrap}>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.emptyScheduleSection}>
-            {yearTargetSummary ? (
-              <View style={styles.yearTargetsCard}>
-                <View style={styles.yearTargetsTopRow}>
-                  <View style={styles.yearTargetsHeaderCopy}>
-                    <Text style={styles.yearTargetsTitle}>Year target snapshot</Text>
-                    <Text style={styles.yearTargetsSubtitle}>
-                      {yearTargetSummary.scopeLabel} - {yearTargetSummary.targetLabel}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.yearTargetsPrimaryAction}
-                    onPress={openPlanningPreferences}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.yearTargetsPrimaryActionText}>{yearTargetSummary.ctaLabel}</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.yearTargetsTotalText}>{yearTargetSummary.totalLabel}</Text>
-                <Text style={styles.yearTargetsHelperText}>{yearTargetSummary.helperLabel}</Text>
-              </View>
-            ) : null}
             {termSections.map((termSection, index) => {
               return (
                 <View
@@ -1516,23 +1486,6 @@ export default function SubjectsPlanBuilder({
                 >
                   <View style={styles.termSectionHeaderRow}>
                     <Text style={styles.termHeaderCompactTitle}>{termSection.title}</Text>
-                    <View style={styles.termActions}>
-                      <TouchableOpacity
-                        style={styles.secondaryButton}
-                        onPress={openPlanningPreferences}
-                      >
-                        <SlidersHorizontal size={16} color="#374151" />
-                        <Text style={styles.secondaryButtonText}>Planning preferences</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.primaryButton}
-                        onPress={() => openCourseTotalsModal(termSection)}
-                      >
-                        <BarChart3 size={16} color="#374151" />
-                        <Text style={styles.primaryButtonText}>Course totals</Text>
-                      </TouchableOpacity>
-                    </View>
                   </View>
                   <View style={styles.termHeaderDivider} />
 
@@ -1544,6 +1497,7 @@ export default function SubjectsPlanBuilder({
                             key: `${row.key}-${entry.subjectName}-${entry.startTime}-${idx}`,
                             title: entry.subjectName,
                             time: toAmPm(entry.startTime),
+                            termLabel: entry.termLabel || '',
                           }));
                           return (
                             <View key={row.key} style={styles.dayColumn}>
@@ -1555,13 +1509,16 @@ export default function SubjectsPlanBuilder({
                                     <TouchableOpacity key={lesson.key} style={styles.lessonChip} activeOpacity={0.8}>
                                       <Text style={styles.lessonTitle}>{lesson.title}</Text>
                                       <Text style={styles.lessonTime}>{lesson.time}</Text>
+                                      {lesson.termLabel ? (
+                                        <Text style={styles.lessonTerm}>{lesson.termLabel}</Text>
+                                      ) : null}
                                     </TouchableOpacity>
                                   ))
                                 ) : (
                                   <TouchableOpacity
                                     style={styles.addSlotButton}
                                     onPress={() => {
-                                      setSelectedTerm(termSection.id);
+                                      setSelectedTerm('full_year');
                                       openSubjectPicker('add');
                                     }}
                                     activeOpacity={0.8}
@@ -1580,7 +1537,7 @@ export default function SubjectsPlanBuilder({
                           {termSection.subjectPlans.length === 0 ? (
                             <View style={[styles.subjectRow, styles.subjectRowLast]}>
                               <View style={styles.subjectCadence}>
-                                <Text style={styles.subjectCadenceText}>No subjects for this term yet. Create a new subject, then add a plan.</Text>
+                                <Text style={styles.subjectCadenceText}>No subjects for this school year yet. Create a new subject, then add a plan.</Text>
                               </View>
                             </View>
                           ) : (
@@ -1616,9 +1573,12 @@ export default function SubjectsPlanBuilder({
                                     <Text style={styles.subjectCadenceText}>
                                       {row.cadenceText || 'No scheduled plan yet.'}
                                     </Text>
+                                    {row.schoolTermLabel ? (
+                                      <Text style={styles.subjectMeta}>{row.schoolTermLabel}</Text>
+                                    ) : null}
                                     <TouchableOpacity
                                       style={styles.subjectEventCountLink}
-                                      onPress={() => openSubjectEventsModal(row, termSection.title)}
+                                      onPress={() => openSubjectEventsModal(row, row.schoolTermLabel || termSection.title)}
                                       activeOpacity={0.8}
                                     >
                                       <Text style={styles.subjectEventCountText}>
@@ -1628,20 +1588,39 @@ export default function SubjectsPlanBuilder({
                                   </View>
 
                                   <View style={styles.subjectRowActions}>
-                                    <TouchableOpacity
+                                    {!row.hasPlan ? (
+                                      <View style={styles.needsPlanChip}>
+                                        <Text style={styles.needsPlanChipText}>NEEDS PLAN</Text>
+                                      </View>
+                                    ) : null}
+                                    <Pressable
                                       style={styles.subjectRowActionButton}
                                       onPress={() => openSubjectEditModal(row.id)}
-                                      activeOpacity={0.8}
+                                      accessibilityLabel={`Edit ${row.name || 'subject'}`}
+                                      onHoverIn={Platform.OS === 'web' ? () => setHoverHintKey(`edit-${row.id}`) : undefined}
+                                      onHoverOut={Platform.OS === 'web' ? () => setHoverHintKey(null) : undefined}
                                     >
+                                      {Platform.OS === 'web' && hoverHintKey === `edit-${row.id}` ? (
+                                        <View style={[styles.actionHoverHint, styles.actionHoverHintCentered]}>
+                                          <Text style={styles.actionHoverHintText}>Edit subject</Text>
+                                        </View>
+                                      ) : null}
                                       <Pencil size={16} color="#374151" />
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
+                                    </Pressable>
+                                    <Pressable
                                       style={styles.subjectRowActionButton}
-                                      onPress={() => openBuilderForSubject(row.id, row.hasPlan ? 'edit' : 'add', termSection.id)}
-                                      activeOpacity={0.8}
+                                      onPress={() => openBuilderForSubject(row.id, row.hasPlan ? 'edit' : 'add', row.schoolTermId || 'full_year')}
+                                      accessibilityLabel={row.hasPlan ? `Edit plan for ${row.name || 'subject'}` : `Create plan for ${row.name || 'subject'}`}
+                                      onHoverIn={Platform.OS === 'web' ? () => setHoverHintKey(`plan-${row.id}`) : undefined}
+                                      onHoverOut={Platform.OS === 'web' ? () => setHoverHintKey(null) : undefined}
                                     >
+                                      {Platform.OS === 'web' && hoverHintKey === `plan-${row.id}` ? (
+                                        <View style={[styles.actionHoverHint, styles.actionHoverHintPlan]}>
+                                          <Text style={styles.actionHoverHintText}>{row.hasPlan ? 'Edit plan' : 'Create plan'}</Text>
+                                        </View>
+                                      ) : null}
                                       <CalendarPlus size={16} color="#0d9488" />
-                                    </TouchableOpacity>
+                                    </Pressable>
                                   </View>
 
                                 </View>
@@ -1654,6 +1633,35 @@ export default function SubjectsPlanBuilder({
                 </View>
               );
             })}
+            {yearTargetSummary ? (
+              <View style={styles.yearTargetsSection}>
+                <View style={styles.yearTargetsSectionHeaderRow}>
+                  <Text style={styles.termHeaderCompactTitle}>Year Targets</Text>
+                  <View style={styles.termActions}>
+                    <TouchableOpacity
+                      style={styles.secondaryButton}
+                      onPress={openPlanningPreferences}
+                    >
+                      <SlidersHorizontal size={16} color="#374151" />
+                      <Text style={styles.secondaryButtonText}>Planning preferences</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={styles.termHeaderDivider} />
+                <View style={styles.yearTargetsCard}>
+                  <View style={styles.yearTargetsTopRow}>
+                    <View style={styles.yearTargetsHeaderCopy}>
+                      <Text style={styles.yearTargetsTitle}>Year target snapshot</Text>
+                      <Text style={styles.yearTargetsSubtitle}>
+                        {yearTargetSummary.scopeLabel} - {yearTargetSummary.targetLabel}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.yearTargetsTotalText}>{yearTargetSummary.totalLabel}</Text>
+                  <Text style={styles.yearTargetsHelperText}>{yearTargetSummary.helperLabel}</Text>
+                </View>
+              </View>
+            ) : null}
           </View>
         </ScrollView>
         <Modal
@@ -1777,7 +1785,7 @@ export default function SubjectsPlanBuilder({
               </View>
               <ScrollView style={styles.subjectEventsList} contentContainerStyle={styles.subjectEventsListContent}>
                 {(subjectEventsModalData.events || []).length === 0 ? (
-                  <Text style={styles.subjectEventsEmptyText}>No instructional events found for this term.</Text>
+                  <Text style={styles.subjectEventsEmptyText}>No instructional events found for this school year.</Text>
                 ) : (
                   (subjectEventsModalData.events || []).map((eventItem) => (
                     <View key={eventItem.id} style={styles.subjectEventRow}>
@@ -1791,47 +1799,6 @@ export default function SubjectsPlanBuilder({
                       {eventItem.unitName ? (
                         <Text style={styles.subjectEventRowUnit}>Unit: {eventItem.unitName}</Text>
                       ) : null}
-                    </View>
-                  ))
-                )}
-              </ScrollView>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </Modal>
-        <Modal
-          visible={showCourseTotalsModal}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setShowCourseTotalsModal(false)}
-        >
-          <TouchableOpacity style={styles.subjectEventsOverlay} activeOpacity={1} onPress={() => {}}>
-            <TouchableOpacity style={styles.subjectEventsModal} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
-              <View style={styles.subjectEventsHeader}>
-                <View style={styles.subjectEventsHeaderTextWrap}>
-                  <Text style={styles.subjectEventsTitle}>
-                    Course totals
-                  </Text>
-                  <Text style={styles.subjectEventsSubtitle}>
-                    {courseTotalsModalData.termTitle ? `${courseTotalsModalData.termTitle} totals` : 'Totals by course'}
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={() => setShowCourseTotalsModal(false)} style={styles.subjectEventsCloseButton}>
-                  <X size={18} color="#64748B" />
-                </TouchableOpacity>
-              </View>
-              <ScrollView style={styles.subjectEventsList} contentContainerStyle={styles.subjectEventsListContent}>
-                {(courseTotalsModalData.rows || []).length === 0 ? (
-                  <Text style={styles.subjectEventsEmptyText}>No courses found for this term.</Text>
-                ) : (
-                  (courseTotalsModalData.rows || []).map((row) => (
-                    <View key={row.id} style={styles.subjectEventRow}>
-                      <View style={styles.subjectEventRowTop}>
-                        <Text style={styles.subjectEventRowTitle}>{row.name}</Text>
-                        <Text style={styles.subjectEventRowSource}>{row.total} total</Text>
-                      </View>
-                      <Text style={styles.subjectEventRowDate}>
-                        {`${row.past} past, ${row.planned} planned`}
-                      </Text>
                     </View>
                   ))
                 )}
@@ -2273,14 +2240,26 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     gap: 0,
   },
+  yearTargetsSection: {
+    marginTop: 12,
+    paddingVertical: 12,
+  },
+  yearTargetsSectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    marginTop: 0,
+    gap: 8,
+    paddingHorizontal: 2,
+  },
   yearTargetsCard: {
-    borderWidth: 1,
-    borderColor: 'rgba(181, 191, 249, 0.9)',
-    borderRadius: 16,
-    backgroundColor: '#ECEFFD',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    marginBottom: 14,
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+    paddingVertical: 0,
+    paddingHorizontal: 2,
+    marginBottom: 0,
   },
   yearTargetsTopRow: {
     flexDirection: 'row',
@@ -2327,26 +2306,6 @@ const styles = StyleSheet.create({
     maxWidth: 900,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  yearTargetsPrimaryAction: {
-    minHeight: 42,
-    borderRadius: 12,
-    backgroundColor: '#4f46e5',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      boxShadow: '0 10px 24px rgba(79, 70, 229, 0.32)',
-    }),
-  },
-  yearTargetsPrimaryActionText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ffffff',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   termCard: {
@@ -2506,6 +2465,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#6C93D6',
   },
+  lessonTerm: {
+    marginTop: 4,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+  },
   addSlotButton: {
     height: 42,
     borderRadius: 14,
@@ -2588,7 +2554,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  needsPlanChip: {
+    height: 24,
+    paddingHorizontal: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    backgroundColor: '#fffbeb',
+    alignItems: 'center',
     justifyContent: 'center',
+  },
+  needsPlanChipText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    color: '#b45309',
   },
   subjectRowActionButton: {
     width: 36,
@@ -2599,6 +2581,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
+    }),
+  },
+  actionHoverHint: {
+    position: 'absolute',
+    top: '100%',
+    marginTop: 8,
+    backgroundColor: '#0f172a',
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    zIndex: 20,
+    minWidth: 84,
+    alignItems: 'center',
+  },
+  actionHoverHintCentered: {
+    left: '50%',
+    transform: [{ translateX: -42 }],
+  },
+  actionHoverHintPlan: {
+    right: 0,
+    alignItems: 'flex-start',
+  },
+  actionHoverHintText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      whiteSpace: 'nowrap',
     }),
   },
   subjectRight: {
