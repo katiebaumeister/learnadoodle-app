@@ -387,6 +387,7 @@ export default function SubjectDetailPage({
   onSubjectDataUpdate = null,
   initialScrollToSectionId = null,
   initialOpenMaterialId = null,
+  initialProgressAction = null,
 }) {
   const session = useSession();
   const toast = useToast();
@@ -423,6 +424,7 @@ export default function SubjectDetailPage({
   const loadingRef = useRef(false);
   const openingPlanBuilderRef = useRef(false);
   const autoOpenedMaterialKeyRef = useRef(null);
+  const autoOpenedProgressActionRef = useRef(null);
   const materialHighlightTimeoutRef = useRef(null);
   const materialContextMenuIdRef = useRef(`subject-detail-material-context-menu-${Math.random().toString(36).slice(2)}`);
   const loadLearningGoalsStructure = useCallback(async () => {
@@ -762,6 +764,42 @@ export default function SubjectDetailPage({
     setShowLearningGoalsMethodModal(false);
     openSubjectUnitsEditorForMethod(method);
   }, [openSubjectUnitsEditorForMethod]);
+
+  useEffect(() => {
+    const action = String(initialProgressAction || '').trim().toLowerCase();
+    if (!action || !subjectId) return;
+    const actionKey = `${subjectId}:${action}`;
+    if (autoOpenedProgressActionRef.current === actionKey) return;
+    autoOpenedProgressActionRef.current = actionKey;
+    const t = setTimeout(() => {
+      if (action === 'attendance_edit') {
+        scrollToSection('attendance-section');
+        setShowPastEventsAttendanceModal(true);
+        return;
+      }
+      if (action === 'grades_add') {
+        scrollToSection('grades-section');
+        setShowPastEventsGradesModal(true);
+        return;
+      }
+      if (action === 'learning_goals_add') {
+        scrollToSection('learning-goals-section');
+        openLearningGoalsMethodModal();
+        return;
+      }
+      if (action === 'learning_goals_edit') {
+        scrollToSection('learning-goals-section');
+        openSubjectUnitsEditor();
+      }
+    }, 260);
+    return () => clearTimeout(t);
+  }, [
+    initialProgressAction,
+    subjectId,
+    scrollToSection,
+    openLearningGoalsMethodModal,
+    openSubjectUnitsEditor,
+  ]);
 
   useEffect(() => {
     if (!initialOpenMaterialId) return;

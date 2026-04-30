@@ -204,6 +204,7 @@ export default function SubjectsPage({
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
   const [pendingScrollToSectionId, setPendingScrollToSectionId] = useState(null);
   const [pendingOpenMaterialId, setPendingOpenMaterialId] = useState(null);
+  const [pendingProgressAction, setPendingProgressAction] = useState(null);
   const [expandedSummaryMetric, setExpandedSummaryMetric] = useState(null);
   const [openComplianceRequirement, setOpenComplianceRequirement] = useState(null);
   const [complianceRowHoverKey, setComplianceRowHoverKey] = useState(null);
@@ -363,6 +364,31 @@ export default function SubjectsPage({
       loadingRef.current = false;
     }
   }, [familyId, selectedChildFilter, onSubjectsUpdate]);
+
+  const refreshSubjectDetailById = useCallback(async (subjectId) => {
+    const sid = String(subjectId || '').trim();
+    if (!sid || !familyId) return null;
+    try {
+      const detailData = await getSubjectDetail(sid, familyId, null, session);
+      if (!detailData) return null;
+      setSubjectDetailCache((prev) => ({
+        ...(prev || {}),
+        [sid]: detailData,
+      }));
+      if (onSubjectDetailUpdate) {
+        onSubjectDetailUpdate(sid, detailData);
+      }
+      setSubjects((prev) => (prev || []).map((row) => (
+        String(row?.id) === sid
+          ? { ...row, progressPercent: detailData?.progressPercent ?? row?.progressPercent }
+          : row
+      )));
+      return detailData;
+    } catch (err) {
+      console.warn(`[SubjectsPage] Failed refreshing detail for subject ${sid}:`, err);
+      return null;
+    }
+  }, [familyId, session, onSubjectDetailUpdate]);
 
   // Lock child filter for child/student view
   useEffect(() => {
@@ -625,11 +651,12 @@ export default function SubjectsPage({
     searchQueryNormalized,
   ]);
 
-  const handleSubjectClick = useCallback((subject, sectionOverride = null, materialId = null) => {
+  const handleSubjectClick = useCallback((subject, sectionOverride = null, materialId = null, progressAction = null) => {
     if (!subject?.id) return;
     const sectionId = sectionOverride || detectedSectionFromSearch || null;
     setPendingScrollToSectionId(sectionId);
     setPendingOpenMaterialId(materialId || null);
+    setPendingProgressAction(progressAction || null);
     setSelectedSubjectId(subject.id);
     setExpandedSummaryMetric(null);
   }, [detectedSectionFromSearch]);
@@ -1527,10 +1554,12 @@ export default function SubjectsPage({
     setSelectedSubjectId(null);
     setPendingScrollToSectionId(null);
     setPendingOpenMaterialId(null);
+    setPendingProgressAction(null);
   };
 
   const openSubjectToSection = (subjectId, sectionId) => {
     setPendingScrollToSectionId(sectionId);
+    setPendingProgressAction(null);
     setSelectedSubjectId(subjectId);
     setExpandedSummaryMetric(null);
   };
@@ -1815,6 +1844,7 @@ export default function SubjectsPage({
           preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
           initialScrollToSectionId={pendingScrollToSectionId}
           initialOpenMaterialId={pendingOpenMaterialId}
+          initialProgressAction={pendingProgressAction}
           onSubjectDataUpdate={(data) => {
             const updatedCache = {
               ...subjectDetailCache,
@@ -2106,16 +2136,18 @@ export default function SubjectsPage({
         <View style={styles.coursesTabContent}>
           {renderCoursesHeaderFilters()}
           <ProgressTab
+            familyId={familyId}
             children={safeChildren}
             filteredSubjects={filteredSubjects}
             subjectDetailCache={subjectDetailCache}
             selectedChildFilter={selectedChildFilter}
             selectedYearFilter={selectedYearFilter}
             hideYearHeader
-            onOpenSubject={(subjectId) => {
+            onRefreshSubjectDetail={refreshSubjectDetailById}
+            onOpenSubject={(subjectId, options = null) => {
               const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
               if (match) {
-                handleSubjectClick(match);
+                handleSubjectClick(match, null, null, options?.action || null);
               }
             }}
           />
