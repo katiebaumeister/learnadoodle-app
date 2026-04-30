@@ -2134,7 +2134,7 @@ export default function SubjectsPage({
         </View>
       ) : selectedModeFilter === 'progress' ? (
         <View style={styles.coursesTabContent}>
-          {renderCoursesHeaderFilters()}
+          {renderCoursesHeaderFilters({ showTermRow: false })}
           <ProgressTab
             familyId={familyId}
             children={safeChildren}
