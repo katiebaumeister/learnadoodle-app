@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
   Modal,
   Platform,
   Pressable,
@@ -682,9 +684,12 @@ export default function SubjectsPlanBuilder({
   const [subjectPickerAction, setSubjectPickerAction] = useState('add'); // add | edit
   const [saving, setSaving] = useState(false);
   const [applyingSuggestionSubjectId, setApplyingSuggestionSubjectId] = useState(null);
-  const [expandedYearTargetSuggestions, setExpandedYearTargetSuggestions] = useState({});
+  const [expandedYearTargetSuggestionId, setExpandedYearTargetSuggestionId] = useState(null);
+  const yearTargetChevronAnimByIdRef = useRef({});
+  const yearTargetSuggestionAnimByIdRef = useRef({});
   const [blocksBySubject, setBlocksBySubject] = useState({});
   const [instructionalEventsBySubject, setInstructionalEventsBySubject] = useState({});
+  const [attendedDayKeysBySubject, setAttendedDayKeysBySubject] = useState({});
   const [showSubjectEventsModal, setShowSubjectEventsModal] = useState(false);
   const [subjectEventsModalData, setSubjectEventsModalData] = useState({
     subjectName: '',
@@ -698,6 +703,8 @@ export default function SubjectsPlanBuilder({
     events: [],
   });
   const [showUpcomingEventsModal, setShowUpcomingEventsModal] = useState(false);
+  const [showApplySuggestionConfirmModal, setShowApplySuggestionConfirmModal] = useState(false);
+  const [pendingSuggestionToApply, setPendingSuggestionToApply] = useState(null);
   const [markingAttendanceEventId, setMarkingAttendanceEventId] = useState(null);
   const [upcomingEventsModalData, setUpcomingEventsModalData] = useState({
     subjectId: null,
@@ -880,16 +887,19 @@ export default function SubjectsPlanBuilder({
     const loadInstructionalEvents = async () => {
       if (!hasValidFamilyId || !displaySchoolYear) {
         setInstructionalEventsBySubject({});
+        setAttendedDayKeysBySubject({});
         return;
       }
       const subjectIds = (baseSubjects || []).map((s) => String(s?.id || '').trim()).filter(Boolean);
       if (subjectIds.length === 0) {
         setInstructionalEventsBySubject({});
+        setAttendedDayKeysBySubject({});
         return;
       }
       const schoolYearRange = formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year');
       if (!schoolYearRange?.start_date || !schoolYearRange?.end_date) {
         setInstructionalEventsBySubject({});
+        setAttendedDayKeysBySubject({});
         return;
       }
       try {
@@ -905,7 +915,41 @@ export default function SubjectsPlanBuilder({
           .neq('status', 'canceled');
         if (cancelled) return;
         if (error) throw error;
+        const eventMetaById = {};
+        (data || []).forEach((row) => {
+          if (!isInstructionalEvent(row)) return;
+          const eventId = row?.id ? String(row.id) : '';
+          const subjectId = String(row?.subject_id || '').trim();
+          if (!eventId || !subjectId) return;
+          const startDay = String(row?.start_ts || row?.due_ts || '').slice(0, 10);
+          eventMetaById[eventId] = {
+            subjectId,
+            startDay,
+          };
+        });
+        let attendanceRows = [];
+        const attendanceEventIds = Object.keys(eventMetaById);
+        if (attendanceEventIds.length > 0) {
+          const { data: rawAttendanceRows } = await supabase
+            .from('attendance_records')
+            .select('event_id, day_date, status')
+            .in('event_id', attendanceEventIds);
+          attendanceRows = Array.isArray(rawAttendanceRows) ? rawAttendanceRows : [];
+        }
         const nextBySubject = {};
+        const attendedSetsBySubject = {};
+        attendanceRows.forEach((row) => {
+          const eventId = String(row?.event_id || '').trim();
+          if (!eventId) return;
+          const meta = eventMetaById[eventId];
+          if (!meta?.subjectId) return;
+          const status = String(row?.status || '').trim().toLowerCase();
+          if (!(status === 'present' || status === 'partial')) return;
+          const dayKey = String(row?.day_date || meta.startDay || '').slice(0, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
+          if (!attendedSetsBySubject[meta.subjectId]) attendedSetsBySubject[meta.subjectId] = new Set();
+          attendedSetsBySubject[meta.subjectId].add(dayKey);
+        });
         (data || []).forEach((row) => {
           if (!isInstructionalEvent(row)) return;
           const subjectId = String(row?.subject_id || '').trim();
@@ -935,6 +979,7 @@ export default function SubjectsPlanBuilder({
             status: String(row?.status || '').trim().toLowerCase(),
             instructional_status: String(row?.instructional_status || '').trim().toUpperCase(),
             is_backlog: row?.is_backlog === true,
+            sourceBlockId: String(row?.source_block_id || '').trim() || null,
             durationHours: Number.isFinite(Number(row?.duration_minutes)) && Number(row.duration_minutes) > 0
               ? Number(row.duration_minutes) / 60
               : (
@@ -949,9 +994,17 @@ export default function SubjectsPlanBuilder({
         Object.keys(nextBySubject).forEach((subjectId) => {
           nextBySubject[subjectId].sort((a, b) => Number(a?.startMs || 0) - Number(b?.startMs || 0));
         });
+        const nextAttendedBySubject = {};
+        Object.keys(attendedSetsBySubject).forEach((subjectId) => {
+          nextAttendedBySubject[subjectId] = [...attendedSetsBySubject[subjectId]].sort();
+        });
         setInstructionalEventsBySubject(nextBySubject);
+        setAttendedDayKeysBySubject(nextAttendedBySubject);
       } catch (_) {
-        if (!cancelled) setInstructionalEventsBySubject({});
+        if (!cancelled) {
+          setInstructionalEventsBySubject({});
+          setAttendedDayKeysBySubject({});
+        }
       }
     };
     loadInstructionalEvents();
@@ -1241,18 +1294,35 @@ export default function SubjectsPlanBuilder({
         .map((childId) => childNameById[String(childId)] || null)
         .filter(Boolean);
       const eventItems = instructionalEventsBySubject?.[subjectId] || [];
-      let pastEventsCount = 0;
-      let plannedEventsCount = 0;
-      const yearEventItems = [];
+      const attendedDaySet = new Set();
+      const upcomingDaySet = new Set();
+      const yearEventItemsByDay = new Map();
+      const attendanceDayKeys = Array.isArray(attendedDayKeysBySubject?.[subjectId])
+        ? attendedDayKeysBySubject[subjectId]
+        : [];
+      attendanceDayKeys.forEach((dayKey) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey || ''))) return;
+        const dayMs = new Date(`${String(dayKey).slice(0, 10)}T12:00:00`).getTime();
+        if (!Number.isFinite(dayMs)) return;
+        if (Number.isFinite(rangeStartMs) && dayMs < rangeStartMs) return;
+        if (Number.isFinite(rangeEndMs) && dayMs > rangeEndMs) return;
+        if (dayMs > nowMs) return;
+        attendedDaySet.add(String(dayKey).slice(0, 10));
+      });
       eventItems.forEach((eventItem) => {
         const eventMs = Number(eventItem?.startMs);
         if (!Number.isFinite(eventMs)) return;
         if (Number.isFinite(rangeStartMs) && eventMs < rangeStartMs) return;
         if (Number.isFinite(rangeEndMs) && eventMs > rangeEndMs) return;
-        yearEventItems.push(eventItem);
-        if (eventMs < nowMs) pastEventsCount += 1;
-        else plannedEventsCount += 1;
+        const dayKey = new Date(eventMs).toISOString().slice(0, 10);
+        if (!dayKey) return;
+        if (!yearEventItemsByDay.has(dayKey)) yearEventItemsByDay.set(dayKey, eventItem);
+        if (eventMs >= nowMs) upcomingDaySet.add(dayKey);
       });
+      const yearEventItems = [...yearEventItemsByDay.values()]
+        .sort((a, b) => Number(a?.startMs || 0) - Number(b?.startMs || 0));
+      const pastEventsCount = attendedDaySet.size;
+      const plannedEventsCount = upcomingDaySet.size;
       const plannedLessonsCountForTarget = yearEventItems.length;
       const plannedLessonsHoursForTarget = yearEventItems.reduce(
         (sum, item) => sum + (Number(item?.durationHours) || 0),
@@ -1424,7 +1494,7 @@ export default function SubjectsPlanBuilder({
       dayRows,
       subjectPlans,
     }];
-  }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject, activeScheduleCore, familyPlannerSettings, subjectTargetSettingsById]);
+  }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject, attendedDayKeysBySubject, activeScheduleCore, familyPlannerSettings, subjectTargetSettingsById]);
 
   const trackingMode = useMemo(() => {
     const scope = String(familyPlannerSettings?.target_scope || 'overall').trim().toLowerCase();
@@ -1438,8 +1508,9 @@ export default function SubjectsPlanBuilder({
       .map((row) => {
         const targetDays = Number(row.targetValue);
         const completedDays = Math.max(0, Number(row.actualDays || 0));
-        const upcomingDays = Math.max(0, Number(row.plannedEventsCount || 0));
-        const projectedDays = completedDays + upcomingDays;
+        const plannedProjectedDays = Math.max(0, Number(row.plannedCapacityDays || row.projectedDays || 0));
+        const projectedDays = Math.max(completedDays, plannedProjectedDays);
+        const upcomingDays = Math.max(0, projectedDays - completedDays);
         const gapDays = projectedDays - targetDays;
         const requiredPace = Number(row.requiredPaceDaysPerWeek || 0);
         const currentPace = Number(row.currentPaceDaysPerWeek || 0);
@@ -1926,6 +1997,26 @@ export default function SubjectsPlanBuilder({
     }
   }, [familyId, displaySchoolYear?.start_year, planCores, activeScheduleCore, toast]);
 
+  const openApplySuggestionConfirmModal = useCallback((suggestionRow) => {
+    if (!suggestionRow?.suggestedEndYmd) return;
+    setPendingSuggestionToApply(suggestionRow);
+    setShowApplySuggestionConfirmModal(true);
+  }, []);
+
+  const closeApplySuggestionConfirmModal = useCallback(() => {
+    if (applyingSuggestionSubjectId) return;
+    setShowApplySuggestionConfirmModal(false);
+    setPendingSuggestionToApply(null);
+  }, [applyingSuggestionSubjectId]);
+
+  const confirmApplySuggestionFromModal = useCallback(async () => {
+    if (!pendingSuggestionToApply) return;
+    const targetSuggestion = pendingSuggestionToApply;
+    setShowApplySuggestionConfirmModal(false);
+    setPendingSuggestionToApply(null);
+    await applySuggestedTermExtension(targetSuggestion);
+  }, [pendingSuggestionToApply, applySuggestedTermExtension]);
+
   const openPlannerView = () => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     if (activeSchedule?.row?.id) {
@@ -2322,6 +2413,58 @@ export default function SubjectsPlanBuilder({
     return out;
   }, [yearTargetSummary]);
 
+  const getYearTargetChevronAnim = useCallback((subjectId) => {
+    const key = String(subjectId || '').trim();
+    if (!key) return null;
+    if (!yearTargetChevronAnimByIdRef.current[key]) {
+      yearTargetChevronAnimByIdRef.current[key] = new Animated.Value(0);
+    }
+    return yearTargetChevronAnimByIdRef.current[key];
+  }, []);
+
+  const getYearTargetSuggestionAnim = useCallback((subjectId) => {
+    const key = String(subjectId || '').trim();
+    if (!key) return null;
+    if (!yearTargetSuggestionAnimByIdRef.current[key]) {
+      yearTargetSuggestionAnimByIdRef.current[key] = new Animated.Value(0);
+    }
+    return yearTargetSuggestionAnimByIdRef.current[key];
+  }, []);
+
+  const animateYearTargetDisclosure = useCallback((subjectId, toOpen) => {
+    const chevronAnim = getYearTargetChevronAnim(subjectId);
+    const suggestionAnim = getYearTargetSuggestionAnim(subjectId);
+    if (!chevronAnim || !suggestionAnim) return;
+    Animated.timing(chevronAnim, {
+      toValue: toOpen ? 1 : 0,
+      duration: 180,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+    Animated.timing(suggestionAnim, {
+      toValue: toOpen ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: false,
+    }).start();
+  }, [getYearTargetChevronAnim, getYearTargetSuggestionAnim]);
+
+  const toggleYearTargetSuggestion = useCallback((subjectId) => {
+    const key = String(subjectId || '').trim();
+    if (!key) return;
+    setExpandedYearTargetSuggestionId((prev) => {
+      if (prev === key) {
+        animateYearTargetDisclosure(key, false);
+        return null;
+      }
+      if (prev) animateYearTargetDisclosure(prev, false);
+      const suggestionAnim = getYearTargetSuggestionAnim(key);
+      if (suggestionAnim) suggestionAnim.setValue(0);
+      animateYearTargetDisclosure(key, true);
+      return key;
+    });
+  }, [animateYearTargetDisclosure, getYearTargetSuggestionAnim]);
+
   if (surfaceMode === 'home') {
     return (
       <View style={styles.wrap}>
@@ -2445,7 +2588,7 @@ export default function SubjectsPlanBuilder({
                                           if (!canToggleYearTargetSuggestion) return;
                                           const subjectId = String(row?.id || '').trim();
                                           if (!subjectId) return;
-                                          setExpandedYearTargetSuggestions((prev) => ({ ...prev, [subjectId]: !prev?.[subjectId] }));
+                                          toggleYearTargetSuggestion(subjectId);
                                         }}
                                         activeOpacity={canToggleYearTargetSuggestion ? 0.8 : 1}
                                         disabled={!canToggleYearTargetSuggestion}
@@ -2548,7 +2691,26 @@ export default function SubjectsPlanBuilder({
                         const showSuggestion = Boolean(catchUpRow);
                         const suggestionSummary = String(catchUpRow?.suggestionSummaryText || '').trim();
                         const suggestedDaysText = catchUpRow?.extensionAddedDatesLabel || catchUpRow?.suggestedAddedDaysLabel || '';
-                        const isExpanded = expandedYearTargetSuggestions[String(row?.id || '').trim()] === true;
+                        const rowId = String(row?.id || '').trim();
+                        const isExpanded = expandedYearTargetSuggestionId === rowId;
+                        const chevronAnim = showSuggestion ? getYearTargetChevronAnim(rowId) : null;
+                        const suggestionAnim = showSuggestion ? getYearTargetSuggestionAnim(rowId) : null;
+                        const chevronRotate = chevronAnim
+                          ? chevronAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: ['0deg', '180deg'],
+                          })
+                          : '0deg';
+                        const suggestionAnimatedStyle = suggestionAnim ? {
+                          maxHeight: suggestionAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, 180],
+                          }),
+                          opacity: suggestionAnim.interpolate({
+                            inputRange: [0, 0.15, 1],
+                            outputRange: [0, 0.35, 1],
+                          }),
+                        } : null;
                         return (
                         <React.Fragment key={`year-target-row-${row.id}`}>
                         <View
@@ -2593,34 +2755,52 @@ export default function SubjectsPlanBuilder({
                             </Text>
                           </View>
                           <View style={[styles.yearTargetsCellWrap, styles.yearTargetsBalanceCol, styles.yearTargetsGapCellWrap]}>
-                            <TouchableOpacity
+                            <Pressable
                               onPress={() => {
                                 if (!showSuggestion) return;
-                                const rowId = String(row?.id || '').trim();
-                                if (!rowId) return;
-                                setExpandedYearTargetSuggestions((prev) => ({ ...prev, [rowId]: !prev?.[rowId] }));
+                                toggleYearTargetSuggestion(rowId);
                               }}
-                              activeOpacity={showSuggestion ? 0.8 : 1}
                               disabled={!showSuggestion}
-                              {...(Platform.OS === 'web' && showSuggestion && { cursor: 'pointer' })}
+                              style={({ hovered }) => [
+                                styles.yearTargetsGapChipButton,
+                                row.gapDays < 0 && styles.yearTargetsNegativeBalancePill,
+                                row.gapDays > 0 && styles.yearTargetsPositiveGapPill,
+                                showSuggestion && styles.yearTargetsGapChipButtonInteractive,
+                                hovered && showSuggestion && styles.yearTargetsGapChipButtonHover,
+                                hovered && showSuggestion && row.gapDays < 0 && styles.yearTargetsGapChipButtonNegativeHover,
+                                hovered && showSuggestion && row.gapDays > 0 && styles.yearTargetsGapChipButtonPositiveHover,
+                              ]}
                             >
-                              <Text
-                                style={[
-                                  styles.yearTargetsBalancePill,
-                                  styles.yearTargetsGapPill,
-                                  row.gapDays < 0 && styles.yearTargetsNegativeBalancePill,
-                                  row.gapDays > 0 && styles.yearTargetsPositiveGapPill,
-                                  row.gapDays < 0 && styles.yearTargetsNegativeBalanceText,
-                                  row.gapDays > 0 && styles.yearTargetsPositiveGapText,
-                                ]}
-                              >
-                                {`${row.gapDays > 0 ? `+${row.gapDays}` : row.gapDays} days`}
-                              </Text>
-                            </TouchableOpacity>
+                              <View style={styles.yearTargetsGapChipContent}>
+                                <Text
+                                  style={[
+                                    styles.yearTargetsBalancePill,
+                                    row.gapDays < 0 && styles.yearTargetsNegativeBalanceText,
+                                    row.gapDays > 0 && styles.yearTargetsPositiveGapText,
+                                  ]}
+                                >
+                                  {`${row.gapDays > 0 ? `+${row.gapDays}` : row.gapDays} days`}
+                                </Text>
+                                {showSuggestion ? (
+                                  <Animated.View style={[styles.yearTargetsGapChipChevronWrap, { transform: [{ rotate: chevronRotate }] }]}>
+                                    <Text
+                                      style={[
+                                        styles.yearTargetsGapChipChevron,
+                                        row.gapDays < 0 && styles.yearTargetsNegativeBalanceText,
+                                        row.gapDays > 0 && styles.yearTargetsPositiveGapText,
+                                      ]}
+                                    >
+                                      ▾
+                                    </Text>
+                                  </Animated.View>
+                                ) : null}
+                              </View>
+                            </Pressable>
                           </View>
                         </View>
                         {showSuggestion && isExpanded ? (
                           <View style={[styles.yearTargetsTableRow, styles.yearTargetsExpandedSuggestionRow]}>
+                            <Animated.View style={[styles.yearTargetsExpandedSuggestionWrap, suggestionAnimatedStyle]}>
                             <View style={styles.yearTargetsExpandedSuggestionContainer}>
                               <View style={styles.yearTargetsExpandedSuggestionTopLine}>
                                 <Text style={styles.yearTargetsPredictiveItemGap}>{`${catchUpRow.shortDays} days short`}</Text>
@@ -2645,7 +2825,7 @@ export default function SubjectsPlanBuilder({
                                   </Text>
                                   {catchUpRow.suggestedEndYmd ? (
                                     <TouchableOpacity
-                                      onPress={() => applySuggestedTermExtension(catchUpRow)}
+                                      onPress={() => openApplySuggestionConfirmModal(catchUpRow)}
                                       activeOpacity={0.85}
                                       disabled={applyingSuggestionSubjectId === catchUpRow.id}
                                       style={[
@@ -2667,6 +2847,7 @@ export default function SubjectsPlanBuilder({
                                 </View>
                               ) : null}
                             </View>
+                            </Animated.View>
                           </View>
                         ) : null}
                         </React.Fragment>
@@ -2679,6 +2860,64 @@ export default function SubjectsPlanBuilder({
             ) : null}
           </View>
         </ScrollView>
+        <Modal
+          visible={showApplySuggestionConfirmModal}
+          transparent
+          animationType="fade"
+          onRequestClose={closeApplySuggestionConfirmModal}
+        >
+          <TouchableOpacity
+            style={styles.subjectPickerOverlay}
+            activeOpacity={1}
+            onPress={closeApplySuggestionConfirmModal}
+          >
+            <TouchableOpacity style={styles.applySuggestionConfirmModal} activeOpacity={1} onPress={() => {}}>
+              <View style={styles.applySuggestionConfirmHeader}>
+                <Text style={styles.applySuggestionConfirmTitle}>Apply suggestion</Text>
+                <TouchableOpacity
+                  onPress={closeApplySuggestionConfirmModal}
+                  style={styles.subjectPickerClose}
+                  disabled={Boolean(applyingSuggestionSubjectId)}
+                  {...(Platform.OS === 'web' && { cursor: applyingSuggestionSubjectId ? 'default' : 'pointer' })}
+                >
+                  <X size={20} color="#6b7280" />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.applySuggestionConfirmBodyText}>
+                {`This will update ${pendingSuggestionToApply?.name || 'this subject'} to end on ${formatDateDisplayYmd(pendingSuggestionToApply?.suggestedEndYmd || '')} and regenerate the plan events.`}
+              </Text>
+              <View style={styles.applySuggestionConfirmActions}>
+                <TouchableOpacity
+                  style={styles.subjectPickerCancelBtn}
+                  onPress={closeApplySuggestionConfirmModal}
+                  disabled={Boolean(applyingSuggestionSubjectId)}
+                  {...(Platform.OS === 'web' && { cursor: applyingSuggestionSubjectId ? 'default' : 'pointer' })}
+                >
+                  <Text style={styles.subjectPickerCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.applySuggestionConfirmActionBtn,
+                    applyingSuggestionSubjectId && styles.applySuggestionConfirmActionBtnDisabled,
+                  ]}
+                  onPress={confirmApplySuggestionFromModal}
+                  disabled={Boolean(applyingSuggestionSubjectId)}
+                  {...(Platform.OS === 'web' && { cursor: applyingSuggestionSubjectId ? 'default' : 'pointer' })}
+                >
+                  <CheckCircle2 size={16} color="#FFFFFF" strokeWidth={2.2} />
+                  <Text
+                    style={[
+                      styles.applySuggestionConfirmActionBtnText,
+                      applyingSuggestionSubjectId && styles.applySuggestionConfirmActionBtnTextDisabled,
+                    ]}
+                  >
+                    {applyingSuggestionSubjectId ? 'Applying...' : 'Apply'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
         <Modal
           visible={showSubjectPickerModal}
           transparent
@@ -3787,18 +4026,46 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   yearTargetsBalancePill: {
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: '#1F2937',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  yearTargetsGapPill: {
-    backgroundColor: '#F8FAFC',
+  yearTargetsGapChipButton: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  yearTargetsGapChipButtonInteractive: {
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearTargetsGapChipButtonHover: {
+    transform: [{ translateY: -1 }],
+  },
+  yearTargetsGapChipButtonNegativeHover: {
+    backgroundColor: '#FEE2E2',
+  },
+  yearTargetsGapChipButtonPositiveHover: {
+    backgroundColor: '#DCFCE7',
+  },
+  yearTargetsGapChipContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  yearTargetsGapChipChevronWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  yearTargetsGapChipChevron: {
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 13,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   yearTargetsNegativeBalancePill: {
     backgroundColor: 'rgba(239, 68, 68, 0.12)',
@@ -4023,6 +4290,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 0,
     paddingBottom: 10,
+  },
+  yearTargetsExpandedSuggestionWrap: {
+    width: '100%',
+    overflow: 'hidden',
   },
   yearTargetsExpandedSuggestionContainer: {
     width: '100%',
@@ -5268,6 +5539,78 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
     }),
+  },
+  applySuggestionConfirmModal: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    padding: 32,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
+    }),
+  },
+  applySuggestionConfirmHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+    gap: 10,
+  },
+  applySuggestionConfirmTitle: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  applySuggestionConfirmBodyText: {
+    fontSize: 14,
+    color: '#4B5563',
+    lineHeight: 21,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  applySuggestionConfirmActions: {
+    marginTop: 18,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
+  },
+  applySuggestionConfirmActionBtn: {
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#9ECFFB',
+    backgroundColor: '#9ECFFB',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  applySuggestionConfirmActionBtnDisabled: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F1F5F9',
+  },
+  applySuggestionConfirmActionBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  applySuggestionConfirmActionBtnTextDisabled: {
+    color: '#94A3B8',
   },
   subjectPickerHeader: {
     flexDirection: 'row',

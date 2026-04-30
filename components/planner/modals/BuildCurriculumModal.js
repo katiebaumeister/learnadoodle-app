@@ -3402,7 +3402,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   primaryButton: {
-    backgroundColor: '#4285F4',
+    backgroundColor: '#6BB3E8',
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 20,

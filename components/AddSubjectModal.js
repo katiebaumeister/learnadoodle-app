@@ -27,6 +27,26 @@ import {
 } from '../lib/services/deleteSubjectCascade';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+const GRADE_OPTION_SET = new Set(GRADE_OPTIONS);
+
+function normalizeGradeValue(rawGrade) {
+  if (rawGrade == null) return null;
+  const trimmed = String(rawGrade).trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  if (lower === 'k' || lower === 'kindergarten') return 'K';
+  const match = lower.match(/\d+/);
+  if (!match) return null;
+  const parsed = parseInt(match[0], 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 12) return null;
+  return String(parsed);
+}
+
+function gradeSortValue(normalizedGrade) {
+  if (normalizedGrade === 'K') return 0;
+  const n = parseInt(String(normalizedGrade), 10);
+  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+}
 
 /** Matches child / grade chips and primary actions (light blue). */
 const PLANNING_CHIP_SELECTED = {
@@ -129,6 +149,7 @@ export default function AddSubjectModal({
   const [additionalNotes, setAdditionalNotes] = useState('');
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [grade, setGrade] = useState(GRADE_OPTIONS[0] || '');
+  const [gradeManuallyEdited, setGradeManuallyEdited] = useState(false);
   const [schoolYear, setSchoolYear] = useState(initialSchoolYear || getDefaultSchoolYear());
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [schoolTerm, setSchoolTerm] = useState(initialSchoolTerm || getDefaultSchoolTerm());
@@ -177,6 +198,7 @@ export default function AddSubjectModal({
   const [showManualUnitsModal, setShowManualUnitsModal] = useState(false);
   const [showParseUnitsModal, setShowParseUnitsModal] = useState(false);
   const [showGenerateUnitsModal, setShowGenerateUnitsModal] = useState(false);
+  const [buildUnitsInputMode, setBuildUnitsInputMode] = useState('topic');
 
   // Accordion state (all collapsed by default)
   const [showMaterialsAccordion, setShowMaterialsAccordion] = useState(false);
@@ -222,6 +244,7 @@ export default function AddSubjectModal({
         setSubjectName(subject.name || '');
         setAdditionalNotes(subject.notes || subject.summary || '');
         setGrade(subject.grade || GRADE_OPTIONS[0] || '');
+        setGradeManuallyEdited(true);
         setSchoolYear(subject.school_year || getDefaultSchoolYear());
         setSchoolTerm(subject.school_term || getDefaultSchoolTerm());
         setCredits(subject.credits ? String(subject.credits) : '');
@@ -244,6 +267,8 @@ export default function AddSubjectModal({
       } else {
         // Add mode - use defaults
         setAdditionalNotes('');
+        setGrade(GRADE_OPTIONS[0] || '');
+        setGradeManuallyEdited(false);
         setSchoolYear(initialSchoolYear || getDefaultSchoolYear());
         setSchoolTerm(initialSchoolTerm || getDefaultSchoolTerm());
         setSelectedSyllabusMaterialId(null);
@@ -268,6 +293,7 @@ export default function AddSubjectModal({
       setAdditionalNotes('');
       setSelectedChildIds([]);
       setGrade(GRADE_OPTIONS[0] || '');
+      setGradeManuallyEdited(false);
       setSchoolYear(getDefaultSchoolYear());
       setShowSchoolYearDropdown(false);
       setSchoolTerm(getDefaultSchoolTerm());
@@ -295,6 +321,7 @@ export default function AddSubjectModal({
       setShowCurrentUnitsModal(false);
       setCurriculumUnits([]);
       setLoadingCurriculum(false);
+      setBuildUnitsInputMode('topic');
       setShowMaterialsAccordion(false);
       setShowPlanningAccordion(false);
       setShowLogisticsAccordion(false);
@@ -305,6 +332,29 @@ export default function AddSubjectModal({
       hasPrefilledFromFamilyRef.current = false;
     }
   }, [visible, defaultChildId, defaultChildIds, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject]);
+
+  // Add mode: default grade to selected students (lowest grade when multiple).
+  useEffect(() => {
+    if (!visible) return;
+    if (subject) return;
+    if (gradeManuallyEdited) return;
+    if (!Array.isArray(selectedChildIds) || selectedChildIds.length === 0) return;
+    if (!Array.isArray(children) || children.length === 0) return;
+
+    const selectedSet = new Set(selectedChildIds.map(String));
+    const normalizedSelectedGrades = (children || [])
+      .filter((child) => selectedSet.has(String(child?.id)))
+      .map((child) => normalizeGradeValue(child?.grade_level ?? child?.grade ?? child?.grade_label))
+      .filter((g) => g && GRADE_OPTION_SET.has(g));
+
+    if (!normalizedSelectedGrades.length) return;
+    const lowestGrade = [...normalizedSelectedGrades].sort(
+      (a, b) => gradeSortValue(a) - gradeSortValue(b)
+    )[0];
+    if (lowestGrade && lowestGrade !== grade) {
+      setGrade(lowestGrade);
+    }
+  }, [visible, subject, gradeManuallyEdited, selectedChildIds, children, grade]);
 
   // Clear transient validation/banner errors as soon as form state is corrected.
   useEffect(() => {
@@ -502,19 +552,14 @@ export default function AddSubjectModal({
     }
   }, [onClose, subject?.id, draftSubjectId, familyId, subjectName]);
 
-  /** Same global flows as Course Structure / library: manual, paste, upload, generate. Web dispatches to WebLayout. */
+  /** Open Add units flows directly from Add/Edit Subject (no Plan Builder modal hop). */
   const openAddUnitsCurriculumAction = useCallback(
     async (kind) => {
-      if (Platform.OS !== 'web' || typeof window === 'undefined') return;
       if (openingAddUnits) return;
-      const childIds = selectedChildIds.length
-        ? selectedChildIds
-        : (children || []).map((c) => c.id).filter(Boolean);
-      let ensuredSubjectId = subject?.id ?? draftSubjectId ?? null;
-      if (!ensuredSubjectId && (kind === 'manual' || kind === 'paste' || kind === 'generate')) {
+      if (!(subject?.id ?? draftSubjectId ?? null)) {
         try {
           setOpeningAddUnits(true);
-          ensuredSubjectId = await ensureDraftSubjectExists();
+          await ensureDraftSubjectExists();
         } catch (e) {
           setError(e?.message || 'Unable to prepare subject for Add units.');
           return;
@@ -522,39 +567,28 @@ export default function AddSubjectModal({
           setOpeningAddUnits(false);
         }
       }
-      const base = {
-        subjectId: ensuredSubjectId,
-        subjectName: (subjectName || '').trim() || subject?.name || 'Subject',
-        familyId,
-        childIds,
-      };
       const requestedKind = String(kind || '').trim().toLowerCase();
-      const mappedMethod = requestedKind === 'paste' ? 'paste_plain' : requestedKind;
-      const safeMethod = ['manual', 'paste_plain', 'upload', 'generate'].includes(mappedMethod)
-        ? mappedMethod
-        : null;
-      window.dispatchEvent(
-        new CustomEvent('openPlanYearModal', {
-          detail: {
-            from: 'subject_detail',
-            ...base,
-            openAsModal: true,
-            openToEditList: false,
-            skipPlanSummary: true,
-            openDirectlyToScope: true,
-            initialUnitStructureMethod: safeMethod,
-          },
-        })
-      );
+      if (requestedKind === 'manual') {
+        setShowManualUnitsModal(true);
+        return;
+      }
+      if (requestedKind === 'generate') {
+        setBuildUnitsInputMode('topic');
+        setShowGenerateUnitsModal(true);
+        return;
+      }
+      if (requestedKind === 'upload') {
+        setBuildUnitsInputMode('material');
+        setShowGenerateUnitsModal(true);
+        return;
+      }
+      if (requestedKind === 'paste' || requestedKind === 'paste_plain') {
+        setShowParseUnitsModal(true);
+      }
     },
     [
       subject?.id,
       draftSubjectId,
-      subject?.name,
-      subjectName,
-      familyId,
-      selectedChildIds,
-      children,
       openingAddUnits,
       ensureDraftSubjectExists,
     ]
@@ -1294,6 +1328,12 @@ export default function AddSubjectModal({
                     );
                   })}
                 </ScrollView>
+                {selectedChildIds.length > 1 ? (
+                  <Text style={styles.studentsMultiSubjectNote}>
+                    If adding a subject for multiple children but differing learning materials or learning levels,
+                    we recommend adding as two separate subjects.
+                  </Text>
+                ) : null}
               </View>
             ) : null}
 
@@ -1314,7 +1354,10 @@ export default function AddSubjectModal({
                           styles.gradeChip,
                           grade === g && styles.gradeChipSelected
                         ]}
-                        onPress={() => setGrade(g)}
+                        onPress={() => {
+                          setGrade(g);
+                          setGradeManuallyEdited(true);
+                        }}
                       >
                         <Text style={[
                           styles.gradeChipText,
@@ -2190,7 +2233,8 @@ export default function AddSubjectModal({
       selectedChildIds={selectedChildIds}
       initialSubjectId={subject?.id ?? draftSubjectId ?? null}
       initialSubjectName={(subjectName || '').trim() || subject?.name || 'Subject'}
-      initialInputMode="topic"
+      initialInputMode={buildUnitsInputMode}
+      initialMaterialId={selectedLessonPlanMaterialId || selectedSyllabusMaterialId || null}
       onComplete={() => {
         setShowGenerateUnitsModal(false);
         refreshAfterUnitsSaved(subject?.id ?? draftSubjectId ?? null);
@@ -2623,6 +2667,15 @@ const styles = StyleSheet.create({
   },
   childrenScroll: {
     marginTop: 6,
+  },
+  studentsMultiSubjectNote: {
+    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#6b7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   childChip: {
     paddingHorizontal: 12,

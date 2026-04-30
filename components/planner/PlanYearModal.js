@@ -403,6 +403,46 @@ function formatDateShort(ymd) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function addDaysToYmd(ymd, daysToAdd) {
+  const key = String(ymd || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
+  const d = dateStringToDate(key);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() + Number(daysToAdd || 0));
+  return toLocalYYYYMMDD(d);
+}
+
+function listDatesForWeekdaysInRange(startYmd, endYmd, weekdayNums = []) {
+  const startKey = String(startYmd || '').slice(0, 10);
+  const endKey = String(endYmd || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startKey) || !/^\d{4}-\d{2}-\d{2}$/.test(endKey) || startKey > endKey) return [];
+  const daySet = new Set(
+    (Array.isArray(weekdayNums) ? weekdayNums : [])
+      .map((day) => Number(day))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+  );
+  if (daySet.size === 0) return [];
+  const out = [];
+  const cursor = dateStringToDate(startKey);
+  const end = dateStringToDate(endKey);
+  while (cursor.getTime() <= end.getTime()) {
+    if (daySet.has(cursor.getDay())) {
+      out.push(toLocalYYYYMMDD(cursor));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}
+
+function formatWeekdaySummary(dayNums = []) {
+  const unique = [...new Set((dayNums || []).map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b);
+  if (unique.length === 0) return '';
+  const monToFri = [1, 2, 3, 4, 5];
+  const isMonToFri = monToFri.every((d) => unique.includes(d)) && unique.length === 5;
+  if (isMonToFri) return 'Mon-Fri';
+  return unique.map((d) => WEEKDAY_LABELS[d] || '').filter(Boolean).join(', ');
+}
+
 /** "09:00–10:00" → "9–10"; keeps half-hours as "9:30–10:30". */
 function compressSuggestedTimeForChip(label) {
   if (!label || typeof label !== 'string') return '';
@@ -2524,7 +2564,6 @@ export default function PlanYearModal({
   const openCadenceUnitMethod = useCallback(
     (subjectId, method) => {
       if (!ensureUnitSubjectForUnitStructure(subjectId)) return;
-      if (PLAN_MY_YEAR_LOGISTICS_FIRST && !cadenceReadyForUnitStructureRef.current) return;
       setUnitFocusSubjectId(subjectId);
       setParsedContent(null);
       setParseContentError(null);
@@ -3179,27 +3218,82 @@ export default function PlanYearModal({
     const deltaRaw = Number(projectedValue) - Number(roundedTarget);
     const delta = mode === 'hours' ? Math.round(deltaRaw * 10) / 10 : Math.round(deltaRaw);
     const deficit = Math.max(0, Number(roundedTarget) - Number(projectedValue));
-    const start = dateStringToDate(startDate);
-    const end = dateStringToDate(endDate);
-    const rangeDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1);
-    const sessionsPerWeek = projectedDays > 0 ? (projectedDays / (rangeDays / 7)) : 0;
-    const deficitSessions = mode === 'hours'
-      ? (avgSessionHours > 0 ? (deficit / avgSessionHours) : 0)
-      : deficit;
-    const suggestedEndYmd = (() => {
-      if (!(deficit > 0)) return null;
-      if (!(sessionsPerWeek > 0)) return null;
-      const addedCalendarDays = Math.max(1, Math.ceil((deficitSessions / sessionsPerWeek) * 7));
-      const next = new Date(end);
-      next.setDate(next.getDate() + addedCalendarDays);
-      return toLocalYYYYMMDD(next);
+    const schoolYearLabel = String(subject?.school_year || '').trim();
+    const schoolYearMatch = schoolYearLabel.match(/(\d{4})\s*[/\-]\s*(\d{2,4})/);
+    const parsedStartYear = schoolYearMatch ? Number(schoolYearMatch[1]) : NaN;
+    let parsedEndYear = schoolYearMatch ? Number(schoolYearMatch[2]) : NaN;
+    if (Number.isFinite(parsedStartYear) && Number.isFinite(parsedEndYear) && parsedEndYear < 100) {
+      parsedEndYear = Math.floor(parsedStartYear / 100) * 100 + parsedEndYear;
+    }
+    const schoolYearStartYmd = Number.isFinite(parsedStartYear)
+      ? `${parsedStartYear}-08-01`
+      : String(startDate || '').slice(0, 10);
+    const schoolYearEndYmd = Number.isFinite(parsedEndYear)
+      ? `${parsedEndYear}-05-31`
+      : String(endDate || '').slice(0, 10);
+    const schoolYearStart = dateStringToDate(schoolYearStartYmd);
+    const schoolYearEnd = dateStringToDate(schoolYearEndYmd);
+    const planningWeeks = (
+      !Number.isNaN(schoolYearStart.getTime())
+      && !Number.isNaN(schoolYearEnd.getTime())
+      && schoolYearEnd.getTime() >= schoolYearStart.getTime()
+    )
+      ? Math.max(1, Math.ceil(((schoolYearEnd.getTime() - schoolYearStart.getTime()) / (24 * 60 * 60 * 1000) + 1) / 7))
+      : 40;
+    const shortDays = Math.max(0, Number(roundedTarget) - Number(projectedDays));
+    const rawCatchUp = shortDays / Math.max(1, planningWeeks);
+    const lowSessionsPerWeek = rawCatchUp > 0 ? Math.min(7, Math.max(1, Math.floor(rawCatchUp))) : 0;
+    const highSessionsPerWeek = rawCatchUp > 0 ? Math.min(7, Math.max(lowSessionsPerWeek, Math.ceil(rawCatchUp))) : 0;
+    const existingDayNums = [...new Set(
+      (subjectBlocks || [])
+        .flatMap((block) => (Array.isArray(block?.weekdays) ? block.weekdays : []))
+        .map((day) => Number(day))
+        .filter((day) => Number.isInteger(day) && day >= 1 && day <= 5)
+    )].sort((a, b) => a - b);
+    const missingWeekdays = [1, 2, 3, 4, 5].filter((day) => !existingDayNums.includes(day));
+    const suggestedAddedDayCount = rawCatchUp > 0 ? Math.min(missingWeekdays.length, Math.max(1, highSessionsPerWeek)) : 0;
+    const suggestedAddedDayNums = suggestedAddedDayCount > 0 ? missingWeekdays.slice(0, suggestedAddedDayCount) : [];
+    const suggestedAddedDaysLabel = suggestedAddedDayNums.length > 0 ? formatWeekdaySummary(suggestedAddedDayNums) : '';
+    const baselineSessionsPerWeek = projectedDays > 0
+      ? (projectedDays / Math.max(1, planningWeeks))
+      : 0;
+    const extendWeeksForSubject = rawCatchUp > 0
+      ? (
+        baselineSessionsPerWeek > 0
+          ? Math.min(52, Math.max(1, Math.ceil(shortDays / baselineSessionsPerWeek)))
+          : Math.min(52, Math.max(1, Math.ceil(shortDays / Math.max(1, Number(lowSessionsPerWeek || 1)))))
+      )
+      : 0;
+    const suggestedEndYmd = extendWeeksForSubject > 0 && endDate
+      ? addDaysToYmd(endDate, extendWeeksForSubject * 7)
+      : null;
+    const extensionStartYmd = suggestedEndYmd ? addDaysToYmd(endDate, 1) : null;
+    const extensionAddedDates = extensionStartYmd && suggestedEndYmd
+      ? listDatesForWeekdaysInRange(extensionStartYmd, suggestedEndYmd, existingDayNums)
+      : [];
+    const extensionAddedDatesLabel = (() => {
+      if (!Array.isArray(extensionAddedDates) || extensionAddedDates.length === 0) return '';
+      const shown = extensionAddedDates.slice(0, 6).map((ymd) => formatDateShort(ymd)).filter(Boolean);
+      if (shown.length === 0) return '';
+      const remaining = extensionAddedDates.length - shown.length;
+      return remaining > 0 ? `${shown.join(', ')} (+${remaining} more)` : shown.join(', ');
     })();
+    const suggestionSummaryText = (suggestedEndYmd && suggestedAddedDaysLabel)
+      ? 'Extend term length and add multiple class days a week.'
+      : (suggestedEndYmd
+        ? 'Extend term length or add class days per week.'
+        : (suggestedAddedDaysLabel ? 'Add class days per week.' : ''));
 
     return {
       mode,
       projectedValue,
       targetValue: roundedTarget,
       delta,
+      shortDays,
+      lowSessionsPerWeek,
+      highSessionsPerWeek,
+      suggestionSummaryText,
+      extensionAddedDatesLabel,
       calculationDetail: mode === 'hours'
         ? `${projectedDays} sessions × ${avgSessionHours} hr/session`
         : `${projectedDays} planned sessions in selected range`,
@@ -3912,12 +4006,9 @@ export default function PlanYearModal({
 
   const handleOpenCadenceUnitMethod = useCallback(
     (subjectId, method) => {
-      if (!cadenceYieldsInstructionalSlots) {
-        setAddContentCadenceInlineHint(true);
-      }
       openCadenceUnitMethod(subjectId, method);
     },
-    [cadenceYieldsInstructionalSlots, openCadenceUnitMethod],
+    [openCadenceUnitMethod],
   );
 
   useEffect(() => {
@@ -5810,7 +5901,8 @@ export default function PlanYearModal({
       setDraftData(null);
       setRawText('');
       setUnitStructureStep('input');
-      setManualDraft(createInitialManualDraft());
+      // Keep draft empty here so saved unit structure can hydrate first.
+      setManualDraft(null);
       setExpandedUnitIndexManual(0);
       setExpandedUnits(new Set([0]));
     } else if (method === 'paste_plain') {
@@ -6003,6 +6095,8 @@ export default function PlanYearModal({
           }
         } catch (err) {
           console.error('Error loading unit structure:', err);
+          // Keep unit flows usable even if loading fails.
+          setUnitStructureData({ units: [] });
         } finally {
           setLoadingUnitStructure(false);
         }
@@ -6212,6 +6306,76 @@ export default function PlanYearModal({
     children,
     blocks,
     generationScope,
+  ]);
+
+  const runParsePlainTextPreview = useCallback(async () => {
+    const availableSubjectId = unitPipelineSubjectId;
+    const availableSubject = availableSubjectId
+      ? baseSubjectList.find((s) => String(s.id) === String(availableSubjectId))
+      : null;
+    if (!availableSubject || !familyId || !rawText.trim()) {
+      setUnitStructureError(availableSubject ? 'Please paste some content to parse.' : 'Subject not found.');
+      return;
+    }
+    const pastedSnapshot = rawText;
+    setParsing(true);
+    setUnitStructureError(null);
+    setImportParseStreamPreview('');
+    let streamed = '';
+    try {
+      const { data, error: err } = await parsePlainTextStream(
+        {
+          subject_id: availableSubject?.id,
+          family_id: familyId,
+          subject_name: availableSubject?.name || '',
+          raw_text: pastedSnapshot.trim(),
+          source_title: sourceTitle.trim() || null,
+          source_type: sourceType === 'auto_detect' ? null : sourceType,
+          parse_mode: parseMode === 'auto_detect' ? null : parseMode,
+          detect_dates: detectDates,
+          preserve_source_headings: preserveHeadings,
+          ignore_policy_text: ignorePolicyText,
+          extract_assignments: extractAssignments,
+          extract_assessments: extractAssessments,
+          special_instructions: specialInstructionsParse.trim() || null,
+        },
+        {
+          onDelta: (chunk) => {
+            streamed += chunk;
+            setImportParseStreamPreview(buildImportStreamPreviewDisplay(streamed));
+          },
+        }
+      );
+      if (err || !data) {
+        setUnitStructureError(err?.message || 'Failed to parse content');
+        return;
+      }
+      setRawText(data.raw_text || pastedSnapshot);
+      setDraftData(data);
+      setUnitStructureStep('draft');
+      if (data.units && data.units.length > 0) {
+        setExpandedUnits(new Set([0]));
+      }
+    } catch (err) {
+      setUnitStructureError(err.message || 'Failed to parse content');
+    } finally {
+      setImportParseStreamPreview('');
+      setParsing(false);
+    }
+  }, [
+    unitPipelineSubjectId,
+    baseSubjectList,
+    familyId,
+    rawText,
+    sourceTitle,
+    sourceType,
+    parseMode,
+    detectDates,
+    preserveHeadings,
+    ignorePolicyText,
+    extractAssignments,
+    extractAssessments,
+    specialInstructionsParse,
   ]);
 
   /** Parse content for upload/link/paste so the next screen can use it to plan events. */
@@ -8447,8 +8611,9 @@ export default function PlanYearModal({
     : PLAN_MY_YEAR_LOGISTICS_FIRST
       ? t('planMyYear.multiSubjectUnits.footerSkipLogisticsFirst')
       : t('planMyYear.multiSubjectUnits.footerSkipClassic');
-  const hideFooterSkipForPasteImportInput =
+  const showPastePlainPreviewFooter =
     planSource === 'paste_plain' && unitStructureStep === 'input' && !draftData && !manualDraft;
+  const hideFooterSkipForPasteImportInput = false;
   const showUploadMaterialPreviewFooter =
     planSource === 'upload' && unitStructureStep === 'input' && !draftData && !manualDraft;
   const showGenerateCurriculumFooter =
@@ -8483,6 +8648,8 @@ export default function PlanYearModal({
     if (draftData) return;
     if (manualDraft) return;
     if (!unitPipelineSubjectId || !familyId) return;
+    // Avoid seeding a blank draft before existing saved units hydrate.
+    if (!unitStructureData) return;
     if (loadingUnitStructure) return;
     if (suppressManualCurriculumHydrateRef.current) return;
     const persisted = (unitStructureData?.units || []).some((u) => (u.lessons || []).length > 0);
@@ -10454,57 +10621,6 @@ export default function PlanYearModal({
                 
                 // Paste plain text: Import & Extract interface
                 if (planSource === 'paste_plain' && unitStructureStep === 'input') {
-                  const runParsePlainTextPreview = async () => {
-                    if (!availableSubject || !familyId || !rawText.trim()) {
-                      setUnitStructureError(availableSubject ? 'Please paste some content to parse.' : 'Subject not found.');
-                      return;
-                    }
-                    const pastedSnapshot = rawText;
-                    setParsing(true);
-                    setUnitStructureError(null);
-                    setImportParseStreamPreview('');
-                    let streamed = '';
-                    try {
-                      const { data, error: err } = await parsePlainTextStream(
-                        {
-                          subject_id: availableSubject?.id,
-                          family_id: familyId,
-                          subject_name: availableSubject?.name || '',
-                          raw_text: pastedSnapshot.trim(),
-                          source_title: sourceTitle.trim() || null,
-                          source_type: sourceType === 'auto_detect' ? null : sourceType,
-                          parse_mode: parseMode === 'auto_detect' ? null : parseMode,
-                          detect_dates: detectDates,
-                          preserve_source_headings: preserveHeadings,
-                          ignore_policy_text: ignorePolicyText,
-                          extract_assignments: extractAssignments,
-                          extract_assessments: extractAssessments,
-                          special_instructions: specialInstructionsParse.trim() || null,
-                        },
-                        {
-                          onDelta: (chunk) => {
-                            streamed += chunk;
-                            setImportParseStreamPreview(buildImportStreamPreviewDisplay(streamed));
-                          },
-                        }
-                      );
-                      if (err || !data) {
-                        setUnitStructureError(err?.message || 'Failed to parse content');
-                        return;
-                      }
-                      setRawText(data.raw_text || pastedSnapshot);
-                      setDraftData(data);
-                      setUnitStructureStep('draft');
-                      if (data.units && data.units.length > 0) {
-                        setExpandedUnits(new Set([0]));
-                      }
-                    } catch (err) {
-                      setUnitStructureError(err.message || 'Failed to parse content');
-                    } finally {
-                      setImportParseStreamPreview('');
-                      setParsing(false);
-                    }
-                  };
                   const pasteHintLabel = importParseHintLabelFromKey(detectPastedStructureHintKey(rawText));
                   return (
                     <View>
@@ -10596,23 +10712,6 @@ export default function PlanYearModal({
                           </View>
                         )}
 
-                        <TouchableOpacity
-                          onPress={runParsePlainTextPreview}
-                          style={[styles.primaryButton, { width: '100%', alignSelf: 'stretch', marginTop: 4 }]}
-                          disabled={parsing || !rawText.trim()}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          {parsing ? (
-                            <>
-                              <ActivityIndicator size="small" color={BG} style={{ marginRight: 8 }} />
-                              <Text style={styles.primaryButtonText}>
-                                {t('planMyYear.multiSubjectUnits.importPreviewStructureLoading')}
-                              </Text>
-                            </>
-                          ) : (
-                            <Text style={styles.primaryButtonText}>{t('planMyYear.multiSubjectUnits.importPreviewStructure')}</Text>
-                          )}
-                        </TouchableOpacity>
                       </View>
                     </View>
                   );
@@ -13553,37 +13652,74 @@ export default function PlanYearModal({
                             </Text>
                             {step4TargetComparison ? (
                               <>
-                                <Text style={{ fontSize: 12, color: TEXT_SECONDARY, marginTop: 4, lineHeight: 17 }}>
-                                  {step4TargetComparison.mode === 'hours'
-                                    ? `${step4TargetComparison.projectedValue} planned hours vs ${step4TargetComparison.targetValue} target hours`
-                                    : `${step4TargetComparison.projectedValue} planned days vs ${step4TargetComparison.targetValue} target days`}
-                                </Text>
-                                <Text style={{ fontSize: 11, color: MUTED, marginTop: 2, lineHeight: 16 }}>
-                                  Calculated as {step4TargetComparison.calculationDetail}.
-                                </Text>
-                                {step4TargetComparison.delta !== 0 ? (
-                                  <Text
-                                    style={{
-                                      fontSize: 12,
-                                      marginTop: 2,
-                                      lineHeight: 17,
-                                      color: step4TargetComparison.delta > 0 ? ACCENT : ERROR,
-                                    }}
-                                  >
-                                    {step4TargetComparison.delta > 0
-                                      ? `${Math.abs(step4TargetComparison.delta)} over target`
-                                      : `${Math.abs(step4TargetComparison.delta)} under target`}
-                                  </Text>
+                                {step4TargetComparison.mode === 'days' && step4TargetComparison.shortDays > 0 ? (
+                                  <View style={styles.previewSuggestionContainer}>
+                                    <View style={styles.previewSuggestionTopLine}>
+                                      <Text style={styles.previewSuggestionGapPill}>
+                                        {`${step4TargetComparison.shortDays} days short`}
+                                      </Text>
+                                      <View style={styles.previewSuggestionPaceWrap}>
+                                        <Text style={styles.previewSuggestionPaceArrow}>→</Text>
+                                        <Text style={styles.previewSuggestionPaceText}>
+                                          {`+${step4TargetComparison.lowSessionsPerWeek}${step4TargetComparison.highSessionsPerWeek > step4TargetComparison.lowSessionsPerWeek ? `-${step4TargetComparison.highSessionsPerWeek}` : ''}/week`}
+                                        </Text>
+                                      </View>
+                                    </View>
+                                    {step4TargetComparison.suggestionSummaryText ? (
+                                      <View style={styles.previewSuggestionLineRow}>
+                                        <Text style={styles.previewSuggestionLine}>
+                                          {`Suggestion: ${step4TargetComparison.suggestionSummaryText}`}
+                                        </Text>
+                                      </View>
+                                    ) : null}
+                                    {step4TargetComparison.extensionAddedDatesLabel ? (
+                                      <View style={styles.previewSuggestionLineRow}>
+                                        <Text style={styles.previewSuggestionLine}>
+                                          {`Suggested days: ${step4TargetComparison.extensionAddedDatesLabel}.`}
+                                        </Text>
+                                        {step4TargetComparison.suggestedEndYmd ? (
+                                          <TouchableOpacity
+                                            style={styles.previewSuggestionApplyButton}
+                                            onPress={() => setEndDate(step4TargetComparison.suggestedEndYmd)}
+                                            activeOpacity={0.85}
+                                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                          >
+                                            <Text style={styles.previewSuggestionApplyButtonText}>Apply</Text>
+                                          </TouchableOpacity>
+                                        ) : null}
+                                      </View>
+                                    ) : null}
+                                  </View>
                                 ) : (
-                                  <Text style={{ fontSize: 12, color: ACCENT, marginTop: 2, lineHeight: 17 }}>
-                                    On target
-                                  </Text>
+                                  <>
+                                    <Text style={{ fontSize: 12, color: TEXT_SECONDARY, marginTop: 4, lineHeight: 17 }}>
+                                      {step4TargetComparison.mode === 'hours'
+                                        ? `${step4TargetComparison.projectedValue} planned hours vs ${step4TargetComparison.targetValue} target hours`
+                                        : `${step4TargetComparison.projectedValue} planned days vs ${step4TargetComparison.targetValue} target days`}
+                                    </Text>
+                                    <Text style={{ fontSize: 11, color: MUTED, marginTop: 2, lineHeight: 16 }}>
+                                      Calculated as {step4TargetComparison.calculationDetail}.
+                                    </Text>
+                                    {step4TargetComparison.delta !== 0 ? (
+                                      <Text
+                                        style={{
+                                          fontSize: 12,
+                                          marginTop: 2,
+                                          lineHeight: 17,
+                                          color: step4TargetComparison.delta > 0 ? ACCENT : ERROR,
+                                        }}
+                                      >
+                                        {step4TargetComparison.delta > 0
+                                          ? `${Math.abs(step4TargetComparison.delta)} over target`
+                                          : `${Math.abs(step4TargetComparison.delta)} under target`}
+                                      </Text>
+                                    ) : (
+                                      <Text style={{ fontSize: 12, color: ACCENT, marginTop: 2, lineHeight: 17 }}>
+                                        On target
+                                      </Text>
+                                    )}
+                                  </>
                                 )}
-                                {step4TargetComparison.delta < 0 && step4TargetComparison.suggestedEndYmd ? (
-                                  <Text style={{ fontSize: 11, color: MUTED, marginTop: 2, lineHeight: 16 }}>
-                                    Suggestion: extend term length to {formatDateDisplay(step4TargetComparison.suggestedEndYmd)}.
-                                  </Text>
-                                ) : null}
                                 {step4TargetComparison.isOverallAdjusted ? (
                                   <Text style={{ fontSize: 11, color: MUTED, marginTop: 2, lineHeight: 16 }}>
                                     {step4TargetComparison.mode === 'hours'
@@ -14893,7 +15029,7 @@ export default function PlanYearModal({
                       </>
                     ) : isSubjectDetailAddUnitsMode ? (
                       <View style={styles.footerPrimaryActionInner}>
-                        <Save size={16} color="#FFFFFF" strokeWidth={2.2} />
+                        <Sparkles size={16} color="#FFFFFF" strokeWidth={2.2} />
                         <Text style={styles.footerPrimaryActionText}>Save</Text>
                       </View>
                     ) : renderFooterPrimaryLabel(
@@ -14977,6 +15113,27 @@ export default function PlanYearModal({
                     ]}
                     {...(Platform.OS === 'web' && {
                       cursor: parsing || !selectedMaterialId ? 'not-allowed' : 'pointer',
+                    })}
+                  >
+                    {parsing ? (
+                      <>
+                        <ActivityIndicator size="small" color={BG} style={{ marginRight: 8 }} />
+                        <Text style={styles.primaryButtonText}>
+                          {t('planMyYear.multiSubjectUnits.importPreviewStructureLoading')}
+                        </Text>
+                      </>
+                    ) : renderFooterPrimaryLabel(t('planMyYear.multiSubjectUnits.importPreviewStructure'))}
+                  </TouchableOpacity>
+                ) : showPastePlainPreviewFooter ? (
+                  <TouchableOpacity
+                    onPress={runParsePlainTextPreview}
+                    disabled={parsing || !rawText.trim()}
+                    style={[
+                      styles.primaryButton,
+                      (parsing || !rawText.trim()) && styles.primaryButtonDisabled,
+                    ]}
+                    {...(Platform.OS === 'web' && {
+                      cursor: parsing || !rawText.trim() ? 'not-allowed' : 'pointer',
                     })}
                   >
                     {parsing ? (
@@ -17625,10 +17782,10 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   footerPrimaryActionButton: {
-    minHeight: 46,
-    borderRadius: 10,
+    minHeight: 50,
+    borderRadius: 16,
     backgroundColor: EVENT_DETAILS_PRIMARY_BG,
-    paddingHorizontal: 22,
+    paddingHorizontal: 18,
     ...(Platform.OS === 'web' && {
       boxShadow: '0 2px 12px rgba(133,196,242,0.45)',
     }),
@@ -17643,10 +17800,10 @@ const styles = StyleSheet.create({
   },
   footerPrimaryActionText: {
     color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '800',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   primaryButton: {
@@ -17656,9 +17813,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     alignSelf: 'flex-end',
-    backgroundColor: '#10B981',
+    backgroundColor: '#6BB3E8',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(16,185,129,0.28)',
+      boxShadow: '0 2px 6px rgba(107,179,232,0.35)',
       cursor: 'pointer',
     }),
     ...(Platform.OS !== 'web' && { elevation: 2 }),
@@ -17712,6 +17869,80 @@ const styles = StyleSheet.create({
   previewSummarySecondary: {
     fontSize: 12,
     color: MUTED,
+  },
+  previewSuggestionContainer: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+    borderRadius: 12,
+    backgroundColor: '#F8FAFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  previewSuggestionTopLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  previewSuggestionGapPill: {
+    minWidth: 110,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#B91C1C',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    lineHeight: 18,
+  },
+  previewSuggestionPaceWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  previewSuggestionPaceArrow: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '400',
+    lineHeight: 18,
+  },
+  previewSuggestionPaceText: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#475569',
+    lineHeight: 18,
+  },
+  previewSuggestionLineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  previewSuggestionLine: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '400',
+    lineHeight: 18,
+    flexShrink: 1,
+  },
+  previewSuggestionApplyButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  previewSuggestionApplyButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#3730A3',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   previewStepPlaceholderCard: {
     borderWidth: 1,

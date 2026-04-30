@@ -18,7 +18,7 @@ import {
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
-import { X, Plus, Trash2, ChevronUp, ChevronDown, Save, List } from 'lucide-react';
+import { X, Plus, Trash2, ChevronUp, ChevronDown, Sparkles, List } from 'lucide-react';
 import { STRINGS } from '../lib/i18n/strings';
 import { commitManualDraft } from '../lib/services/curriculumClient';
 import { useToast } from './Toast';
@@ -364,7 +364,7 @@ export default function ManualCurriculumBuilderModal({
               {saving ? (
                 <><ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} /><Text style={styles.primaryButtonText}>{s('courseStructure.manualBuilder.saving')}</Text></>
               ) : (
-                <><Save size={18} color="#fff" style={{ marginRight: 8 }} /><Text style={styles.primaryButtonText}>{s('courseStructure.manualBuilder.saveCurriculum')}</Text></>
+                <><Sparkles size={16} color="#fff" style={{ marginRight: 8 }} /><Text style={styles.primaryButtonText}>{s('courseStructure.manualBuilder.saveCurriculum')}</Text></>
               )}
             </TouchableOpacity>
           </View>
@@ -407,9 +407,9 @@ const styles = StyleSheet.create({
   chipTextSelected: { color: '#0369a1', fontWeight: '500' },
   miniChip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#f3f4f6' },
   miniChipText: { fontSize: 12, color: '#374151' },
-  primaryButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0ea5e9', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
-  primaryButtonDisabled: { opacity: 0.7 },
-  primaryButtonText: { fontSize: 15, fontWeight: '600', color: '#fff' },
+  primaryButton: { minHeight: 50, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#6BB3E8', paddingHorizontal: 18, borderRadius: 16 },
+  primaryButtonDisabled: { backgroundColor: '#B7BFCD' },
+  primaryButtonText: { fontSize: 16, fontWeight: '800', color: '#fff' },
   secondaryButton: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db', alignSelf: 'flex-start', marginBottom: 12 },
   secondaryButtonText: { fontSize: 14, fontWeight: '500', color: '#374151' },
   addUnitButton: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: '#bae6fd', borderStyle: 'dashed', marginBottom: 16 },

@@ -590,7 +590,7 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   switchLabel: { fontSize: 14, color: '#374151' },
   actions: { marginTop: 8 },
-  primaryButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0ea5e9', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
+  primaryButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#6BB3E8', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
   primaryButtonDisabled: { opacity: 0.7 },
   primaryButtonText: { fontSize: 15, fontWeight: '600', color: '#fff' },
   secondaryButton: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db' },

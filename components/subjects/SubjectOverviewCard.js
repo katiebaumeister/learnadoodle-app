@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
 import { Clock, AlertTriangle, ChevronRight, Plus, Package, ClipboardList, GraduationCap } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
@@ -30,6 +30,27 @@ function formatNaturalList(items = []) {
   if (list.length === 1) return list[0];
   if (list.length === 2) return `${list[0]} and ${list[1]}`;
   return `${list.slice(0, -1).join(', ')}, and ${list[list.length - 1]}`;
+}
+
+const AVATAR_SOURCES = {
+  prof1: require('../../assets/prof1.png'),
+  prof2: require('../../assets/prof2.png'),
+  prof3: require('../../assets/prof3.png'),
+  prof4: require('../../assets/prof4.png'),
+  prof5: require('../../assets/prof5.png'),
+  prof6: require('../../assets/prof6.png'),
+  prof7: require('../../assets/prof7.png'),
+  prof8: require('../../assets/prof8.png'),
+  prof9: require('../../assets/prof9.png'),
+  prof10: require('../../assets/prof10.png'),
+};
+
+function resolveAvatarSource(avatarValue) {
+  const raw = String(avatarValue || '').trim();
+  if (!raw) return AVATAR_SOURCES.prof1;
+  if (/^(https?:\/\/|data:)/i.test(raw)) return { uri: raw };
+  const key = raw.toLowerCase().replace(/\.(png|jpe?g|webp|gif)$/i, '');
+  return AVATAR_SOURCES[key] || AVATAR_SOURCES.prof1;
 }
 
 export default function SubjectOverviewCard({
@@ -212,8 +233,24 @@ export default function SubjectOverviewCard({
   const parentAssignmentAttentionCount = subject.parentAssignmentAttentionCount || 0;
   const parentNeedHelpCount = subject.parentNeedHelpCount || 0;
   const yearTermLine = buildYearTermLine(subject);
+  const assignedChildrenMeta = useMemo(
+    () =>
+      assignedChildren
+        .map((childId) => {
+          const child = getChildById(childId);
+          const name = getChildName(childId);
+          if (!name) return null;
+          return {
+            id: String(child?.id || childId),
+            name,
+            avatar: child?.avatar || child?.avatar_url || null,
+          };
+        })
+        .filter(Boolean),
+    [assignedChildren, children],
+  );
   const studentsMetaLine = formatNaturalList(childrenNames);
-  const headerMetaLine = [yearTermLine, studentsMetaLine].filter(Boolean).join(' · ');
+  const headerMetaLine = [yearTermLine].filter(Boolean).join(' · ');
 
   const openHomeReviewList = (e) => {
     if (e?.stopPropagation) e.stopPropagation();
@@ -509,6 +546,25 @@ export default function SubjectOverviewCard({
           {headerMetaLine ? (
             <Text style={styles.subjectMetaLine}>{headerMetaLine}</Text>
           ) : null}
+          {assignedChildrenMeta.length > 0 ? (
+            <View style={styles.subjectStudentsInlineRow}>
+              {assignedChildrenMeta.map((child, index) => (
+                <View key={`${child.id}-${index}`} style={styles.subjectStudentInlineItem}>
+                  <Image
+                    source={resolveAvatarSource(child.avatar)}
+                    style={styles.subjectStudentInlineAvatar}
+                    resizeMode="cover"
+                  />
+                  <Text style={styles.subjectStudentInlineName}>
+                    {child.name}
+                    {index < assignedChildrenMeta.length - 1 ? ' ·' : ''}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : studentsMetaLine ? (
+            <Text style={styles.subjectMetaLine}>{studentsMetaLine}</Text>
+          ) : null}
           {subjectIntent && (
             <Text style={styles.subjectIntent}>{subjectIntent}</Text>
           )}
@@ -788,6 +844,32 @@ const styles = StyleSheet.create({
     color: '#374151',
     lineHeight: 16,
     fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectStudentsInlineRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    rowGap: 4,
+    columnGap: 10,
+  },
+  subjectStudentInlineItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  subjectStudentInlineAvatar: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  subjectStudentInlineName: {
+    color: '#6B7280',
+    fontSize: 12,
+    fontWeight: '500',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

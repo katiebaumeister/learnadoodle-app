@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
+  Pressable,
   View,
   Text,
   TouchableOpacity,
@@ -23,7 +24,6 @@ import {
   Trash2,
   CheckCircle,
   XCircle,
-  Download,
   X,
   HelpCircle,
   ChevronRight,
@@ -52,6 +52,8 @@ import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import { createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../lib/services/recordsClient';
 import { updateEventStatus } from '../../lib/services/attendanceClient';
+import { applyToCalendar, getAcademicYear } from '../../lib/services/academicYearClient';
+import { getAcademicYearExclusions } from '../../lib/services/plannerSettingsClient';
 import {
   SubjectAttendanceYearHeatmap,
   SubjectAttendanceMonthDrilldown,
@@ -65,11 +67,15 @@ import { archiveMaterial } from '../../lib/services/materialsClient';
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_PROGRESS = false;
 const WEEKDAY_PLURALS = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const LEARNING_GOALS_METHOD_LABELS = {
   manual: 'Manual input',
   plain_text_parsed: 'Paste plain text',
   ai_generated: 'Generate curriculum',
+  upload: 'Upload material',
+  uploaded: 'Upload material',
+  link: 'Upload material',
 };
 function isAttendancePresentLike(status) {
   const normalized = String(status || '').toLowerCase();
@@ -117,6 +123,61 @@ function formatScheduleTime(startTime) {
   return `${hour}:${minute} ${period}`;
 }
 
+function formatDateDisplayYmd(ymd) {
+  const key = String(ymd || '').slice(0, 10);
+  const m = key.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const monthIdx = Number(m[2]) - 1;
+  const day = Number(m[3]);
+  const year = Number(m[1]);
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  if (monthIdx < 0 || monthIdx > 11 || !Number.isFinite(day) || !Number.isFinite(year)) return null;
+  return `${monthNames[monthIdx]} ${day}, ${year}`;
+}
+
+function fullYearRangeFromSchoolYearLabel(schoolYearLabel) {
+  const raw = String(schoolYearLabel || '').trim();
+  if (!raw) return null;
+  const m = raw.match(/(\d{4})\s*[/\-]\s*(\d{2,4})/);
+  if (!m) return null;
+  const startYear = Number(m[1]);
+  let endYear = Number(m[2]);
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return null;
+  if (endYear < 100) endYear = Math.floor(startYear / 100) * 100 + endYear;
+  return { start_date: `${startYear}-08-01`, end_date: `${endYear}-05-31` };
+}
+
+function addDaysToYmd(ymd, daysToAdd) {
+  const base = String(ymd || '').slice(0, 10);
+  if (!DATE_KEY_RE.test(base)) return null;
+  const d = new Date(`${base}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() + Number(daysToAdd || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+function listDatesForWeekdaysInRange(startYmd, endYmd, weekdayNums = []) {
+  const startKey = String(startYmd || '').slice(0, 10);
+  const endKey = String(endYmd || '').slice(0, 10);
+  if (!DATE_KEY_RE.test(startKey) || !DATE_KEY_RE.test(endKey) || startKey > endKey) return [];
+  const daySet = new Set(
+    (Array.isArray(weekdayNums) ? weekdayNums : [])
+      .map((day) => Number(day))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+  );
+  if (daySet.size === 0) return [];
+  const out = [];
+  const cursor = new Date(`${startKey}T12:00:00`);
+  const end = new Date(`${endKey}T12:00:00`);
+  while (cursor.getTime() <= end.getTime()) {
+    if (daySet.has(cursor.getDay())) {
+      out.push(cursor.toISOString().slice(0, 10));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}
+
 function getSubjectPlanBlocksForSubject(planData, subjectId) {
   if (!planData?.plan || !subjectId) return [];
   const sid = String(subjectId);
@@ -154,6 +215,30 @@ function isDateWithinPlanBlockRange(dateKey, block) {
   if (startKey && key < startKey) return false;
   if (endKey && key > endKey) return false;
   return true;
+}
+
+function normalizeSubjectTerm(scopeId) {
+  const raw = String(scopeId || '').trim().toLowerCase();
+  if (!raw) return 'full_year';
+  if (raw === 'fall_term' || raw === 'spring_term' || raw === 'full_year') return raw;
+  if (raw.includes('fall')) return 'fall_term';
+  if (raw.includes('spring')) return 'spring_term';
+  return 'full_year';
+}
+
+function countOccurrencesInRange(startYmd, endYmd, weekdays = []) {
+  if (!startYmd || !endYmd || !Array.isArray(weekdays) || weekdays.length === 0) return 0;
+  const start = new Date(`${startYmd}T12:00:00`);
+  const end = new Date(`${endYmd}T12:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return 0;
+  const target = new Set(weekdays.map((d) => Number(d)));
+  let n = 0;
+  const d = new Date(start);
+  while (d <= end) {
+    if (target.has(d.getDay())) n += 1;
+    d.setDate(d.getDate() + 1);
+  }
+  return n;
 }
 
 function buildClassScheduleSummary(planData, subjectId) {
@@ -280,6 +365,16 @@ function parsePositiveFloat(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+function getClientTimezone() {
+  try {
+    if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz && typeof tz === 'string') return tz.trim();
+    }
+  } catch (_) {}
+  return 'America/New_York';
+}
+
 export default function SubjectDetailPage({
   subjectId,
   familyId,
@@ -317,6 +412,10 @@ export default function SubjectDetailPage({
   const [subjectPlanYearId, setSubjectPlanYearId] = useState(null);
   const [subjectPlanData, setSubjectPlanData] = useState(null);
   const [attendanceViewMode, setAttendanceViewMode] = useState('list');
+  const [showAttendanceGapSuggestion, setShowAttendanceGapSuggestion] = useState(false);
+  const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
+  const [applyingAttendanceSuggestion, setApplyingAttendanceSuggestion] = useState(false);
+  const [showLearningGoalsMethodModal, setShowLearningGoalsMethodModal] = useState(false);
   const [learningGoalsUnits, setLearningGoalsUnits] = useState([]);
   const [learningGoalsSource, setLearningGoalsSource] = useState(null);
   const [learningGoalsLoading, setLearningGoalsLoading] = useState(false);
@@ -605,11 +704,19 @@ export default function SubjectDetailPage({
     () => (learningGoalsUnits || []).reduce((sum, unit) => sum + ((unit?.lessons || []).length || 0), 0),
     [learningGoalsUnits]
   );
-  const hasLearningGoalsContent = totalLearningGoalLessons > 0;
-  const learningGoalsSourceLabel = useMemo(() => {
+  const totalLearningGoalUnits = useMemo(
+    () => (Array.isArray(learningGoalsUnits) ? learningGoalsUnits.length : 0),
+    [learningGoalsUnits]
+  );
+  const hasLearningGoalsContent = totalLearningGoalUnits > 0 || totalLearningGoalLessons > 0;
+  const learningGoalsMethodTitle = useMemo(() => {
     const key = String(learningGoalsSource || '').trim().toLowerCase();
-    return LEARNING_GOALS_METHOD_LABELS[key] || (key ? key.replace(/_/g, ' ') : null);
+    const label = LEARNING_GOALS_METHOD_LABELS[key] || (key ? key.replace(/_/g, ' ') : 'Manual input');
+    return String(label || 'Manual input').toUpperCase();
   }, [learningGoalsSource]);
+  const learningGoalsBuildSummaryLine = useMemo(() => (
+    `${totalLearningGoalUnits} ${totalLearningGoalUnits === 1 ? 'unit' : 'units'} · ${totalLearningGoalLessons} ${totalLearningGoalLessons === 1 ? 'lesson' : 'lessons'} built`
+  ), [totalLearningGoalUnits, totalLearningGoalLessons]);
   const openSubjectUnitsEditorForMethod = useCallback(
     (method) => {
       const requestedMethod = String(method || '').trim().toLowerCase();
@@ -618,20 +725,15 @@ export default function SubjectDetailPage({
         ? mappedMethod
         : null;
       if (Platform.OS === 'web' && typeof window !== 'undefined' && subjectData?.subject?.id) {
-        const resolvedPlanYearId = subjectPlanYearId || subjectPlanYearIdFromEvents || null;
         window.dispatchEvent(
           new CustomEvent('openPlanYearModal', {
             detail: {
               from: 'subject_detail',
               subjectId: subjectData.subject.id,
               subjectName: subjectData.subject.name || null,
-              schoolYear: subjectData.subject.school_year || null,
-              schoolTerm: subjectData.subject.school_term || null,
               childIds: assignedChildren,
-              academicYearId: resolvedPlanYearId,
               openAsModal: true,
-              openToEditList: false,
-              skipPlanSummary: !!resolvedPlanYearId,
+              skipPlanSummary: true,
               openDirectlyToScope: true,
               initialUnitStructureMethod: safeMethod,
             },
@@ -641,7 +743,7 @@ export default function SubjectDetailPage({
       }
       if (onEditSubject && subjectData?.subject) onEditSubject(subjectData.subject);
     },
-    [subjectData, subjectPlanYearId, subjectPlanYearIdFromEvents, assignedChildren, onEditSubject]
+    [subjectData, assignedChildren, onEditSubject]
   );
   const openSubjectUnitsEditor = useCallback(() => {
     const sourceToMethod = {
@@ -654,6 +756,16 @@ export default function SubjectDetailPage({
     const inferredMethod = sourceToMethod[String(learningGoalsSource || '').trim().toLowerCase()] || 'manual';
     openSubjectUnitsEditorForMethod(inferredMethod);
   }, [learningGoalsSource, openSubjectUnitsEditorForMethod]);
+  const closeLearningGoalsMethodModal = useCallback(() => {
+    setShowLearningGoalsMethodModal(false);
+  }, []);
+  const openLearningGoalsMethodModal = useCallback(() => {
+    setShowLearningGoalsMethodModal(true);
+  }, []);
+  const selectLearningGoalsMethod = useCallback((method) => {
+    setShowLearningGoalsMethodModal(false);
+    openSubjectUnitsEditorForMethod(method);
+  }, [openSubjectUnitsEditorForMethod]);
 
   useEffect(() => {
     if (!initialOpenMaterialId) return;
@@ -962,7 +1074,10 @@ export default function SubjectDetailPage({
       openingPlanBuilderRef.current = false;
     }
   }, [subject?.id, subject?.name, assignedChildren, subjectPlanYearId, subjectPlanYearIdFromEvents, familyId]);
-  const planButtonLabel = subjectPlanYearId ? 'Edit plan' : 'Create Plan';
+  const subjectNameForPlanLabel = String(subject?.name || 'Subject').trim() || 'Subject';
+  const planButtonLabel = subjectPlanYearId
+    ? `Edit ${subjectNameForPlanLabel} plan`
+    : `Create ${subjectNameForPlanLabel} plan`;
 
   const attendanceRecordsForUI = useMemo(() => {
     const base = Array.isArray(attendanceRecords) ? attendanceRecords : [];
@@ -1136,14 +1251,50 @@ export default function SubjectDetailPage({
         .filter((ymd) => /^\d{4}-\d{2}-\d{2}$/.test(String(ymd || '')))
     );
     const scheduledDays = scheduledDaySet.size;
+    const schoolYearRange = fullYearRangeFromSchoolYearLabel(subject?.school_year);
+    const subjectTermId = normalizeSubjectTerm(subject?.school_term || 'full_year');
+    const weekdaysByScope = {};
+    (subjectPlanBlocks || []).forEach((block) => {
+      const scopeId = normalizeSubjectTerm(block?.scopeId || block?.scope_id || block?.school_term || subjectTermId || 'full_year');
+      if (!weekdaysByScope[scopeId]) weekdaysByScope[scopeId] = new Set();
+      parseWeekdaysFromPlanBlock(block).forEach((day) => {
+        const asInt = Number(day);
+        if (Number.isInteger(asInt) && asInt >= 0 && asInt <= 6) weekdaysByScope[scopeId].add(asInt);
+      });
+    });
+    const schoolStartYear = schoolYearRange ? Number(String(schoolYearRange.start_date).slice(0, 4)) : NaN;
+    const schoolEndYear = schoolYearRange ? Number(String(schoolYearRange.end_date).slice(0, 4)) : NaN;
+    const scopeRangeById = {
+      full_year: schoolYearRange || null,
+      fall_term: Number.isFinite(schoolStartYear)
+        ? { start_date: `${schoolStartYear}-08-01`, end_date: `${schoolStartYear}-12-31` }
+        : null,
+      spring_term: Number.isFinite(schoolEndYear)
+        ? { start_date: `${schoolEndYear}-01-01`, end_date: `${schoolEndYear}-05-31` }
+        : null,
+    };
+    const plannedCapacityDays = Object.entries(weekdaysByScope).reduce((sum, [scopeId, weekdays]) => {
+      const range = scopeRangeById[scopeId] || scopeRangeById.full_year;
+      if (!range?.start_date || !range?.end_date) return sum;
+      return sum + countOccurrencesInRange(range.start_date, range.end_date, [...weekdays]);
+    }, 0);
+    const unattendedScheduledDateKeys = [];
     let unattendedScheduledDays = 0;
     scheduledDaySet.forEach((dayKey) => {
-      if (!presentDaySet.has(dayKey)) unattendedScheduledDays += 1;
+      if (!presentDaySet.has(dayKey)) {
+        unattendedScheduledDays += 1;
+        unattendedScheduledDateKeys.push(dayKey);
+      }
     });
+    unattendedScheduledDateKeys.sort((a, b) => (a < b ? -1 : 1));
 
     const actual = target.mode === 'days' ? actualDays : actualHours;
+    const projected = target.mode === 'days'
+      ? Math.max(actualDays, Number(plannedCapacityDays || 0))
+      : actualHours;
     const delta = Number((actual - target.value).toFixed(1));
     const remaining = Math.max(0, Number((target.value - actual).toFixed(1)));
+    const projectedRemaining = Math.max(0, Number((target.value - projected).toFixed(1)));
     const percent = Math.min(999, Math.round((actual / target.value) * 100));
     const met = actual >= target.value;
     const sourceLabel = target.source === 'subject_plan_target'
@@ -1164,9 +1315,12 @@ export default function SubjectDetailPage({
       sourceLabel,
       attendedDays: actualDays,
       scheduledDays,
+      projectedDays: target.mode === 'days' ? Number(projected) : null,
+      projectedRemainingDays: target.mode === 'days' ? Number(projectedRemaining) : null,
       unattendedScheduledDays,
+      unattendedScheduledDateKeys,
     };
-  }, [subject, subjectPlanData, attendanceRecordsForUI, subjectEvents]);
+  }, [subject, subjectPlanData, attendanceRecordsForUI, subjectEvents, subjectPlanBlocks]);
 
   // Process graded items
   const gradedItems = useMemo(() => {
@@ -1266,41 +1420,352 @@ export default function SubjectDetailPage({
     return { markPrevious, addDays };
   }, [attendanceTargetProgress]);
 
+  const attendanceGapAmount = useMemo(() => {
+    if (!attendanceTargetProgress) return 0;
+    if (attendanceTargetProgress.mode === 'days') {
+      const projectedGap = Math.max(0, Number(attendanceTargetProgress.projectedRemainingDays) || 0);
+      if (projectedGap > 0) return projectedGap;
+    }
+    return Math.max(0, Number(attendanceTargetProgress.remaining) || 0);
+  }, [attendanceTargetProgress]);
+  const showAttendanceGapChip = Boolean(
+    attendanceTargetProgress
+    && !attendanceTargetProgress.met
+    && attendanceGapAmount > 0
+  );
+
+  const attendanceCatchUpSuggestion = useMemo(() => {
+    if (!attendanceTargetProgress || attendanceTargetProgress.mode !== 'days' || attendanceGapAmount <= 0) return null;
+    const schoolYearRange = fullYearRangeFromSchoolYearLabel(subject?.school_year);
+    const planStartYmd = String(schoolYearRange?.start_date || subjectPlanData?.plan?.start_date || '').slice(0, 10);
+    const planEndYmd = String(schoolYearRange?.end_date || subjectPlanData?.plan?.end_date || '').slice(0, 10);
+    if (!DATE_KEY_RE.test(planEndYmd)) return null;
+    const cadenceDayNums = [...new Set(
+      (subjectPlanBlocks || [])
+        .flatMap((block) => parseWeekdaysFromPlanBlock(block))
+        .map((day) => Number(day))
+        .filter((day) => Number.isInteger(day) && day >= 1 && day <= 5)
+    )].sort((a, b) => a - b);
+    const planningWeeks = (() => {
+      if (!DATE_KEY_RE.test(planStartYmd) || !DATE_KEY_RE.test(planEndYmd)) return 40;
+      const startMs = new Date(`${planStartYmd}T12:00:00`).getTime();
+      const endMs = new Date(`${planEndYmd}T12:00:00`).getTime();
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 40;
+      return Math.max(1, Math.ceil(((endMs - startMs) / (24 * 60 * 60 * 1000) + 1) / 7));
+    })();
+    const raw = attendanceGapAmount / planningWeeks;
+    const low = raw > 0 ? Math.min(7, Math.max(1, Math.floor(raw))) : 0;
+    const high = raw > 0 ? Math.min(7, Math.max(low, Math.ceil(raw))) : 0;
+    const missingWeekdays = [1, 2, 3, 4, 5].filter((day) => !cadenceDayNums.includes(day));
+    const suggestedAddedDayNums = (() => {
+      if (high <= 0) return [];
+      const pool = missingWeekdays.length > 0 ? missingWeekdays : [1, 2, 3, 4, 5];
+      return pool.slice(0, Math.min(pool.length, high));
+    })();
+    const suggestedAddedDaysLabel = suggestedAddedDayNums
+      .map((day) => WEEKDAY_SHORT[day])
+      .filter(Boolean)
+      .join(', ');
+    const daysForExtensionRange = cadenceDayNums.length > 0 ? cadenceDayNums : suggestedAddedDayNums;
+    const baselineSessionsPerWeek = Number(attendanceTargetProgress?.scheduledDays || 0) > 0
+      ? (Number(attendanceTargetProgress.scheduledDays || 0) / Math.max(1, planningWeeks))
+      : Math.max(1, cadenceDayNums.length);
+    const extendWeeks = raw > 0
+      ? Math.min(52, Math.max(1, Math.ceil(attendanceGapAmount / Math.max(1, baselineSessionsPerWeek))))
+      : 0;
+    const suggestedEndYmd = extendWeeks > 0 ? addDaysToYmd(planEndYmd, extendWeeks * 7) : null;
+    const extensionStartYmd = suggestedEndYmd ? addDaysToYmd(planEndYmd, 1) : null;
+    const extensionAddedDates = extensionStartYmd && suggestedEndYmd
+      ? listDatesForWeekdaysInRange(extensionStartYmd, suggestedEndYmd, daysForExtensionRange)
+      : [];
+    const extensionAddedDatesLabel = (() => {
+      if (!cadenceDayNums.length && suggestedAddedDaysLabel) return suggestedAddedDaysLabel;
+      if (!Array.isArray(extensionAddedDates) || extensionAddedDates.length === 0) return '';
+      const shown = extensionAddedDates.slice(0, 8).map((ymd) => formatDateDisplayYmd(ymd)).filter(Boolean);
+      if (shown.length === 0) return '';
+      const remaining = extensionAddedDates.length - shown.length;
+      return remaining > 0 ? `${shown.join(', ')} (+${remaining} more)` : shown.join(', ');
+    })();
+    const planStartLabel = formatDateDisplayYmd(planStartYmd) || planStartYmd;
+    const planEndLabel = formatDateDisplayYmd(planEndYmd) || planEndYmd;
+    const suggestionSummaryText = (suggestedEndYmd && cadenceDayNums.length > 0)
+      ? 'Extend term length and add multiple class days a week.'
+      : (!cadenceDayNums.length && planStartLabel && planEndLabel && suggestedAddedDaysLabel)
+        ? `Create plan from ${planStartLabel} to ${planEndLabel} on ${suggestedAddedDaysLabel}.`
+      : (suggestedEndYmd
+        ? 'Extend term length or add class days per week.'
+        : (cadenceDayNums.length > 0 ? 'Add class days per week.' : ''));
+    return {
+      low,
+      high,
+      suggestedEndYmd,
+      suggestionSummaryText,
+      extensionAddedDatesLabel,
+    };
+  }, [attendanceTargetProgress, attendanceGapAmount, subject?.school_year, subjectPlanData?.plan?.start_date, subjectPlanData?.plan?.end_date, subjectPlanBlocks]);
+
+  useEffect(() => {
+    if (!showAttendanceGapChip) {
+      setShowAttendanceGapSuggestion(false);
+    }
+  }, [showAttendanceGapChip]);
+
+  const openAttendanceSuggestionConfirmModal = useCallback(() => {
+    if (!attendanceCatchUpSuggestion?.suggestedEndYmd) return;
+    setShowAttendanceSuggestionConfirmModal(true);
+  }, [attendanceCatchUpSuggestion?.suggestedEndYmd]);
+
+  const closeAttendanceSuggestionConfirmModal = useCallback(() => {
+    if (applyingAttendanceSuggestion) return;
+    setShowAttendanceSuggestionConfirmModal(false);
+  }, [applyingAttendanceSuggestion]);
+
+  const confirmApplyAttendanceSuggestion = useCallback(async () => {
+    const suggestedEndYmd = String(attendanceCatchUpSuggestion?.suggestedEndYmd || '').slice(0, 10);
+    if (!suggestedEndYmd) return;
+    if (!familyId) {
+      toast?.push?.('Missing family context.', 'error');
+      return;
+    }
+    setApplyingAttendanceSuggestion(true);
+    try {
+      let academicYearId = subjectPlanYearId || subjectPlanYearIdFromEvents || null;
+      if (!academicYearId && subject?.id) {
+        const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
+        academicYearId = fetched?.academicYearId || fetched?.id || null;
+      }
+      if (!academicYearId) {
+        toast?.push?.('No saved plan found. Create a plan first.', 'info');
+        return;
+      }
+      const { data: yearDetail, error: yearError } = await getAcademicYear(academicYearId);
+      if (yearError) throw yearError;
+      const plan = yearDetail?.plan || {};
+      const startDate = String(plan?.start_date || yearDetail?.start_date || '').slice(0, 10);
+      const currentEndDate = String(plan?.end_date || yearDetail?.end_date || '').slice(0, 10);
+      if (!startDate) throw new Error('Plan start date is missing.');
+      const nextEndDate = suggestedEndYmd > currentEndDate ? suggestedEndYmd : currentEndDate;
+      if (!nextEndDate) throw new Error('Suggested end date is missing.');
+      const holidaySettings = yearDetail?.holiday_settings || {};
+      const holidayRegion = holidaySettings.holiday_region
+        || (holidaySettings.holiday_country_code
+          ? `${holidaySettings.holiday_country_code}${holidaySettings.holiday_region ? `:${holidaySettings.holiday_region}` : ''}`
+          : 'US');
+      const customHolidays = Array.isArray(yearDetail?.holidays)
+        ? yearDetail.holidays
+            .filter((h) => (h?.type || 'CUSTOM_HOLIDAY') === 'CUSTOM_HOLIDAY')
+            .map((h) => ({
+              date: typeof h?.date === 'string' ? h.date.slice(0, 10) : String(h?.date || '').slice(0, 10),
+              name: h?.name || '',
+              type: h?.type || 'CUSTOM_HOLIDAY',
+            }))
+        : [];
+      const { data: exclusions } = await getAcademicYearExclusions(academicYearId);
+      const customBreaks = Array.isArray(exclusions)
+        ? exclusions
+            .filter((entry) => entry?.exclusion_type === 'break')
+            .map((entry) => ({
+              start: typeof entry?.start_date === 'string' ? entry.start_date.slice(0, 10) : String(entry?.start_date || '').slice(0, 10),
+              end: typeof entry?.end_date === 'string' ? entry.end_date.slice(0, 10) : String(entry?.end_date || '').slice(0, 10),
+              name: entry?.label || 'Break',
+            }))
+        : [];
+      const blocks = Array.isArray(plan?.blocks)
+        ? plan.blocks.map((block) => ({
+            block_id: block?.block_id || undefined,
+            subject_id: block?.subject_id ?? null,
+            placeholder_label: block?.placeholder_label || undefined,
+            child_ids: Array.isArray(block?.child_ids) ? block.child_ids : [],
+            weekdays: Array.isArray(block?.weekdays) ? block.weekdays : [],
+            start_time: block?.start_time || '09:00',
+            end_time: block?.end_time || '10:00',
+            all_day: !!block?.all_day,
+          }))
+        : [];
+      const payload = {
+        academic_year_id: academicYearId,
+        family_id: familyId,
+        start_date: startDate,
+        end_date: nextEndDate,
+        follow_public_holidays: holidaySettings.follow_global_holidays !== false,
+        holiday_region: holidayRegion,
+        excluded_holiday_dates: holidaySettings.excluded_holiday_dates || [],
+        custom_holidays: customHolidays,
+        custom_breaks: customBreaks,
+        target_instructional_days: (plan?.constraint_mode === 'days' ? plan?.target_days : null) ?? 180,
+        subjects: [...new Set(blocks.map((b) => b?.subject_id).filter(Boolean))],
+        constraint_mode: plan?.constraint_mode || 'none',
+        target_days: plan?.target_days ?? null,
+        target_hours: plan?.target_hours ?? null,
+        replace_placeholders: true,
+        blocks,
+        year_name: yearDetail?.year_name || undefined,
+        timezone: getClientTimezone(),
+      };
+      const { error } = await applyToCalendar(payload);
+      if (error) throw error;
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
+      }
+      setShowAttendanceSuggestionConfirmModal(false);
+      await loadSubjectDetail({ silent: true });
+      toast?.push?.(
+        `Applied suggestion: extended term to ${formatDateDisplayYmd(nextEndDate)}.`,
+        'success'
+      );
+    } catch (err) {
+      toast?.push?.(err?.message || 'Failed to apply suggestion.', 'error');
+    } finally {
+      setApplyingAttendanceSuggestion(false);
+    }
+  }, [attendanceCatchUpSuggestion?.suggestedEndYmd, familyId, subjectPlanYearId, subjectPlanYearIdFromEvents, subject?.id, toast, loadSubjectDetail]);
+
   const attendanceTargetCard = attendanceTargetProgress ? (
     <View style={styles.attendanceTargetCard}>
-      <Text style={styles.attendanceTargetTitle}>
-        {subject?.name || 'This subject'}
-        {' '}
-        target is saved as {attendanceTargetProgress.target}
-        {attendanceTargetProgress.mode === 'days' ? ' class day(s).' : ' hour(s).'}
+      <View style={styles.attendanceTargetTopLine}>
+        {!attendanceTargetProgress.met ? (
+          <Text style={styles.attendanceTargetGapPill}>
+            {attendanceGapAmount}
+            {attendanceTargetProgress.mode === 'days' ? ' days short' : ' hours short'}
+          </Text>
+        ) : (
+          <Text style={styles.attendanceTargetMetPill}>
+            On target
+          </Text>
+        )}
+        {attendanceCatchUpSuggestion && attendanceCatchUpSuggestion.low > 0 ? (
+          <View style={styles.attendanceTargetPaceWrap}>
+            <Text style={styles.attendanceTargetPaceArrow}>→</Text>
+            <Text style={styles.attendanceTargetPaceText}>
+              {`+${attendanceCatchUpSuggestion.low}${attendanceCatchUpSuggestion.high > attendanceCatchUpSuggestion.low ? `-${attendanceCatchUpSuggestion.high}` : ''}/week`}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+      <Text style={styles.attendanceTargetSuggestionLine}>
+        {`Suggestion: ${attendanceCatchUpSuggestion?.suggestionSummaryText || 'Extend term length or add class days per week.'}`}
       </Text>
-      <Text style={styles.attendanceTargetValue}>
-        {attendanceChildrenLabel}
-        {' '}
-        have attended {attendanceTargetProgress.mode === 'days' ? attendanceTargetProgress.attendedDays : attendanceTargetProgress.actual}
-        {' '}
-        {attendanceTargetProgress.mode === 'days' ? 'class day(s).' : 'hour(s).'}
-      </Text>
-      <Text style={styles.attendanceTargetHelper}>
-        You have {attendanceTargetProgress.remaining}
-        {attendanceTargetProgress.mode === 'days' ? ' day(s)' : ' hour(s)'} remaining to meet target.
-        {attendanceTargetProgress.mode === 'days'
-          ? ` ${attendanceTargetProgress.scheduledDays} day(s) are scheduled. ${attendanceTargetProgress.unattendedScheduledDays} day(s) are unattended.`
-          : ''}
-      </Text>
-      {attendanceTargetGuidance ? (
-        <Text style={styles.attendanceTargetHelper}>
-          Either mark {attendanceTargetGuidance.markPrevious} previous class day(s) attended, or add {attendanceTargetGuidance.addDays} class day(s) to meet target.
+      <View style={styles.attendanceTargetSuggestionLineRow}>
+        <Text style={styles.attendanceTargetSuggestionLine}>
+          {`Suggested days: ${attendanceCatchUpSuggestion?.extensionAddedDatesLabel || 'Add class days per week'}.`}
         </Text>
-      ) : (
-        <Text style={styles.attendanceTargetHelper}>
-          {attendanceTargetProgress.met
-            ? `Met target by ${Math.abs(attendanceTargetProgress.delta)}${attendanceTargetProgress.mode === 'days' ? ' day(s)' : ' hour(s)'}.`
-            : ''}
-        </Text>
-      )}
+        {attendanceGapAmount > 0 && attendanceCatchUpSuggestion?.suggestedEndYmd ? (
+          <TouchableOpacity
+            style={styles.attendanceTargetApplyButton}
+            onPress={openAttendanceSuggestionConfirmModal}
+            activeOpacity={0.85}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={styles.attendanceTargetApplyButtonText}>Apply</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
     </View>
   ) : null;
+
+  const attendanceViewModeControls = (
+    <View style={styles.attendanceViewsShell}>
+      <View style={styles.attendanceViewsContainer}>
+        <Text style={styles.attendanceViewsLabel}>Views</Text>
+        <View style={styles.attendanceViewsChipsGroup}>
+          <TouchableOpacity
+            style={[styles.attendanceViewChip, attendanceViewMode === 'list' && styles.attendanceViewChipActive]}
+            onPress={() => setAttendanceViewMode('list')}
+            activeOpacity={0.8}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <View style={styles.attendanceViewChipInner}>
+              <List size={12} color={attendanceViewMode === 'list' ? '#6BB3E8' : '#6B7280'} />
+              <Text style={[styles.attendanceViewChipText, attendanceViewMode === 'list' && styles.attendanceViewChipTextActive]}>
+                List
+              </Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.attendanceViewChip, attendanceViewMode === 'year' && styles.attendanceViewChipActive]}
+            onPress={() => setAttendanceViewMode('year')}
+            activeOpacity={0.8}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <View style={styles.attendanceViewChipInner}>
+              <BarChart3 size={12} color={attendanceViewMode === 'year' ? '#6BB3E8' : '#6B7280'} />
+              <Text style={[styles.attendanceViewChipText, attendanceViewMode === 'year' && styles.attendanceViewChipTextActive]}>
+                Year
+              </Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.attendanceViewChip, attendanceViewMode === 'month' && styles.attendanceViewChipActive]}
+            onPress={() => setAttendanceViewMode('month')}
+            activeOpacity={0.8}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <View style={styles.attendanceViewChipInner}>
+              <Calendar size={12} color={attendanceViewMode === 'month' ? '#6BB3E8' : '#6B7280'} />
+              <Text style={[styles.attendanceViewChipText, attendanceViewMode === 'month' && styles.attendanceViewChipTextActive]}>
+                Month
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+
+  const attendanceSummaryChips = (
+    <>
+      <View style={styles.attendanceSummaryWrap}>
+        <View style={styles.attendanceToolbarRow}>
+          {attendanceViewModeControls}
+          <View style={styles.attendanceCountShell}>
+            <View style={styles.attendanceCountContainer}>
+              <Text style={styles.attendanceCountLabel}>Count</Text>
+              <View style={styles.attendanceChips}>
+                <View style={styles.attendanceChip}>
+                  <CheckCircle size={14} color="#10B981" />
+                  <Text style={styles.attendanceChipText}>
+                    {attendance30Days.present} Present
+                  </Text>
+                </View>
+                <View style={styles.attendanceChip}>
+                  <XCircle size={14} color="#EF4444" />
+                  <Text style={styles.attendanceChipText}>
+                    {attendance30Days.absent} Absent
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+          {showAttendanceGapChip ? (
+            <View style={styles.attendanceGapShell}>
+              <View style={styles.attendanceGapContainer}>
+                <Text style={styles.attendanceGapLabel}>Gap</Text>
+                <Pressable
+                  style={({ hovered }) => [
+                    styles.attendanceGapChipButton,
+                    hovered && styles.attendanceGapChipButtonHover,
+                    hovered && styles.attendanceGapChipButtonNegativeHover,
+                  ]}
+                  onPress={() => setShowAttendanceGapSuggestion((prev) => !prev)}
+                >
+                  <Text style={styles.attendanceGapChipText}>
+                    {`-${attendanceGapAmount} ${attendanceTargetProgress?.mode === 'days' ? 'days' : 'hours'}`}
+                  </Text>
+                  <Text style={styles.attendanceGapChipChevron}>
+                    {showAttendanceGapSuggestion ? '▴' : '▾'}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+        </View>
+      </View>
+      {showAttendanceGapChip && showAttendanceGapSuggestion ? attendanceTargetCard : null}
+    </>
+  );
 
   const openAssignedWorkItem = useCallback((a) => {
     if (!a) return;
@@ -1922,24 +2387,17 @@ export default function SubjectDetailPage({
             )}
             <View style={styles.headerTitleSection}>
               <Text style={styles.title}>{subject.name}</Text>
-              {headerMetaLine ? (
-                <Text style={styles.subtext}>{headerMetaLine}</Text>
-              ) : null}
               {childrenNames.length > 0 && (
                 <Text style={styles.subtext}>Students: {childrenNames.join(', ')}</Text>
               )}
+              {headerMetaLine ? (
+                <Text style={styles.subtext}>{headerMetaLine}</Text>
+              ) : null}
               {classScheduleSummary ? (
                 <Text style={styles.subtext}>Schedule: {classScheduleSummary}</Text>
               ) : (
                 <Text style={styles.subtext}>
-                  Schedule:{' '}
-                  <Text
-                    style={styles.subtextInlineLink}
-                    onPress={handleOpenPlanBuilder}
-                    accessibilityRole="link"
-                  >
-                    Create a plan
-                  </Text>
+                  {`Schedule: No saved weekly cadence yet. Create a new plan for ${subject?.name || 'this subject'}.`}
                 </Text>
               )}
               {logisticsHeaderLine ? (
@@ -1971,113 +2429,6 @@ export default function SubjectDetailPage({
               </TouchableOpacity>
             </View>
           </View>
-        </View>
-
-        {/* Top Summary Panel */}
-        <View style={styles.summaryPanel}>
-          {SHOW_SUBJECT_PROGRESS ? (
-            <TouchableOpacity
-              style={styles.summaryTile}
-              onPress={() => scrollToSection('progress-section')}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.summaryTileLabel}>Progress</Text>
-              <Text style={styles.summaryTileValue}>
-                {subjectPlanYearId ? 'Plan linked' : 'No plan yet'}
-              </Text>
-              <Text style={styles.summaryTileCaption}>Plan lessons breakdown</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          {/* Attendance Tile */}
-          <TouchableOpacity
-            style={styles.summaryTile}
-            onPress={() => {
-              if (attendanceRate30 !== null && attendanceRate30 !== undefined && !isNaN(attendanceRate30)) {
-                scrollToSection('attendance-section');
-              } else {
-                scrollToSection('attendance-section');
-              }
-            }}
-          >
-            <Text style={styles.summaryTileLabel}>Attendance</Text>
-            {attendanceRate30Display !== null && attendanceRate30Display !== undefined && !isNaN(attendanceRate30Display) ? (
-              <>
-                <Text style={styles.summaryTileValue}>{attendanceRate30Display}% present</Text>
-                <Text style={styles.summaryTileCaption}>last 30 days</Text>
-              </>
-            ) : (
-              <>
-                <Text style={styles.summaryTileValue}>None attended</Text>
-                <Text style={styles.summaryTileEmptyAttendanceDetail}>
-                  No events related to {subject?.name || 'this subject'} have been marked as attended.
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          {/* Grades Tile */}
-          <TouchableOpacity
-            style={styles.summaryTile}
-            onPress={() => scrollToSection('grades-section')}
-          >
-            <Text style={styles.summaryTileLabel}>Grades</Text>
-            {displayGradeAveragePercent != null ? (
-              <>
-                <Text style={styles.summaryTileValue}>{displayGradeAveragePercent}%</Text>
-                <Text style={styles.summaryTileCaption}>current average</Text>
-              </>
-            ) : gradedItems.length > 0 ? (
-              <>
-                <Text style={styles.summaryTileValue}>
-                  {gradedItems.length} recorded
-                </Text>
-                <Text style={styles.summaryTileSubtext} numberOfLines={2}>
-                  Add numeric scores to see an average percentage.
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text style={styles.summaryTileValue}>No grades yet</Text>
-                <Text style={styles.summaryTileSubtext} numberOfLines={2}>
-                  Add assignments or assessments for {subject?.name || 'this subject'}.
-                </Text>
-              </>
-            )}
-            {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
-              <Text style={styles.summaryTileSubtext} numberOfLines={2}>
-                {assignmentsAssignedToStudent.length} assignment
-                {assignmentsAssignedToStudent.length !== 1 ? 's' : ''} assigned to student
-                {assignmentsAssignedToStudent.length !== 1 ? 's' : ''} — see Grades below.
-              </Text>
-            ) : null}
-          </TouchableOpacity>
-
-          {/* Learning Goals Tile */}
-          <TouchableOpacity
-            style={styles.summaryTile}
-            onPress={() => scrollToSection('learning-goals-section')}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.summaryTileLabel}>Learning Goals</Text>
-            {hasLearningGoalsContent ? (
-              <>
-                <Text style={styles.summaryTileValue}>
-                  {totalLearningGoalLessons} lesson{totalLearningGoalLessons === 1 ? '' : 's'}
-                </Text>
-                <Text style={styles.summaryTileSubtext} numberOfLines={2}>
-                  Across {learningGoalsUnits.length} unit{learningGoalsUnits.length === 1 ? '' : 's'} for {subject?.name || 'this subject'}.
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text style={styles.summaryTileValue}>No goals yet</Text>
-                <Text style={styles.summaryTileSubtext} numberOfLines={2}>
-                  Add lessons or units for {subject?.name || 'this subject'}.
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
         </View>
 
         {isParentViewer && assignmentsNeedingHelp.length > 0 ? (
@@ -2129,6 +2480,17 @@ export default function SubjectDetailPage({
         <View id="materials-section" style={styles.section}>
           <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials</Text>
+            <TouchableOpacity
+              style={styles.emptyStateButton}
+              onPress={openAddMaterialModal}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Add new material"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={16} color="#6B7280" />
+              <Text style={styles.emptyStateButtonText}>Add new material</Text>
+            </TouchableOpacity>
           </View>
           {materials.length > 0 ? (
             <>
@@ -2206,38 +2568,12 @@ export default function SubjectDetailPage({
                   );
                 })}
               </View>
-              <View style={styles.materialsActionsRow}>
-                <TouchableOpacity
-                  style={styles.materialsAddCta}
-                  onPress={openAddMaterialModal}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Add new material"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={16} color="#6BB3E8" />
-                  <Text style={styles.materialsAddCtaText}>Add new material</Text>
-                </TouchableOpacity>
-              </View>
             </>
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.materialsEmptyText}>
                 No materials added yet for {subject?.name || 'this subject'}.
               </Text>
-              <View style={styles.materialsEmptyActionsRow}>
-                <TouchableOpacity
-                  style={styles.materialsAddCta}
-                  onPress={openAddMaterialModal}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Add material"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={16} color="#6BB3E8" />
-                  <Text style={styles.materialsAddCtaText}>Add material</Text>
-                </TouchableOpacity>
-              </View>
             </View>
           )}
         </View>
@@ -2263,104 +2599,23 @@ export default function SubjectDetailPage({
         <View id="attendance-section" style={styles.section}>
           <View style={styles.attendanceSectionHeader}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
-            {Platform.OS === 'web' && (
-              <TouchableOpacity
-                style={styles.exportIconButton}
-                onPress={() => {
-                  if (typeof onOpenExportModalForSection === 'function') {
-                    onOpenExportModalForSection('attendance');
-                    return;
-                  }
-                  if (typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openExportPlannerModal', { detail: { subjectId, subjectName: subject?.name || '' } }));
-                  }
-                }}
-                activeOpacity={0.7}
-                accessibilityRole="button"
-                accessibilityLabel="Export attendance"
-                accessibilityHint="Download"
-                {...(Platform.OS === 'web' && {
-                  cursor: 'pointer',
-                  onMouseEnter: (e) => handleExportHover('attendance', true, e),
-                  onMouseLeave: (e) => handleExportHover('attendance', false, e),
-                })}
-              >
-                <Download size={18} color="#6B7280" />
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+              onPress={() => setShowPastEventsAttendanceModal(true)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Edit attendance"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Edit2 size={14} color="#6B7280" />
+              <Text style={styles.emptyStateButtonText}>Edit attendance</Text>
+            </TouchableOpacity>
           </View>
           {attendanceRecordsForUI.length > 0 ? (
             <View style={styles.emptyStateBox}>
-              <View style={styles.attendanceModePillsRow}>
-                <View style={styles.attendanceModePillsGroup}>
-                  <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceViewMode === 'list' && styles.sectionModePillActive]}
-                    onPress={() => setAttendanceViewMode('list')}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.sectionModePillInner}>
-                      <List size={14} color={attendanceViewMode === 'list' ? '#6BB3E8' : '#6B7280'} />
-                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'list' && styles.sectionModePillTextActive]}>
-                        List
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceViewMode === 'year' && styles.sectionModePillActive]}
-                    onPress={() => setAttendanceViewMode('year')}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.sectionModePillInner}>
-                      <BarChart3 size={14} color={attendanceViewMode === 'year' ? '#6BB3E8' : '#6B7280'} />
-                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'year' && styles.sectionModePillTextActive]}>
-                        Year
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceViewMode === 'month' && styles.sectionModePillActive]}
-                    onPress={() => setAttendanceViewMode('month')}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.sectionModePillInner}>
-                      <Calendar size={14} color={attendanceViewMode === 'month' ? '#6BB3E8' : '#6B7280'} />
-                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'month' && styles.sectionModePillTextActive]}>
-                        Month
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-                <TouchableOpacity
-                  style={[styles.emptyStateButton, styles.attendanceTopRowPastLessonsButton]}
-                  onPress={() => setShowPastEventsAttendanceModal(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open attendance bulk actions"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <SlidersHorizontal size={14} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Bulk actions</Text>
-                </TouchableOpacity>
-              </View>
+              {attendanceSummaryChips}
               {attendanceViewMode === 'list' ? (
                 <>
-                  <View style={styles.attendanceChips}>
-                    <View style={styles.attendanceChip}>
-                      <CheckCircle size={14} color="#10B981" />
-                      <Text style={styles.attendanceChipText}>
-                        {attendance30Days.present} Present
-                      </Text>
-                    </View>
-                    <View style={styles.attendanceChip}>
-                      <XCircle size={14} color="#EF4444" />
-                      <Text style={styles.attendanceChipText}>
-                        {attendance30Days.absent} Absent
-                      </Text>
-                    </View>
-                  </View>
                   <View style={styles.attendanceList}>
                     {(showAttendanceExpanded ? attendanceRecordsListUI : attendanceRecordsListUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
                       const event = (subjectData?.events || []).find(e => e.id === record.event_id);
@@ -2397,71 +2652,18 @@ export default function SubjectDetailPage({
                   )}
                 </>
               ) : (
-                attendanceInsightsPanel
+                <>
+                  {attendanceInsightsPanel}
+                </>
               )}
-              {attendanceTargetCard}
             </View>
           ) : (
             <View style={styles.emptyStateBox}>
+              {attendanceSummaryChips}
+              {attendanceViewMode === 'list' ? null : attendanceInsightsPanel}
               <Text style={styles.emptyStateText}>
                 Attendance appears once you complete an event attached to this subject.
               </Text>
-              <View style={styles.attendanceModePillsRow}>
-                <View style={styles.attendanceModePillsGroup}>
-                  <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceViewMode === 'list' && styles.sectionModePillActive]}
-                    onPress={() => setAttendanceViewMode('list')}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.sectionModePillInner}>
-                      <List size={14} color={attendanceViewMode === 'list' ? '#6BB3E8' : '#6B7280'} />
-                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'list' && styles.sectionModePillTextActive]}>
-                        List
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceViewMode === 'year' && styles.sectionModePillActive]}
-                    onPress={() => setAttendanceViewMode('year')}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.sectionModePillInner}>
-                      <BarChart3 size={14} color={attendanceViewMode === 'year' ? '#6BB3E8' : '#6B7280'} />
-                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'year' && styles.sectionModePillTextActive]}>
-                        Year
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.sectionModePill, attendanceViewMode === 'month' && styles.sectionModePillActive]}
-                    onPress={() => setAttendanceViewMode('month')}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.sectionModePillInner}>
-                      <Calendar size={14} color={attendanceViewMode === 'month' ? '#6BB3E8' : '#6B7280'} />
-                      <Text style={[styles.sectionModePillText, attendanceViewMode === 'month' && styles.sectionModePillTextActive]}>
-                        Month
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-                <TouchableOpacity
-                  style={[styles.emptyStateButton, styles.attendanceTopRowPastLessonsButton]}
-                  onPress={() => setShowPastEventsAttendanceModal(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open attendance bulk actions"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <SlidersHorizontal size={14} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Bulk actions</Text>
-                </TouchableOpacity>
-              </View>
-              {attendanceViewMode === 'list' ? null : attendanceInsightsPanel}
-              {attendanceTargetCard}
             </View>
           )}
         </View>
@@ -2471,27 +2673,19 @@ export default function SubjectDetailPage({
           <View style={styles.gradesSectionHeader}>
             <View style={styles.gradesSectionTitleRow}>
               <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
-              <TouchableOpacity
-                style={styles.exportIconButton}
-                onPress={() => {
-                  if (typeof onOpenExportModalForSection === 'function') {
-                    onOpenExportModalForSection('report_card');
-                    return;
-                  }
-                  setShowExportComingSoonModal(true);
-                }}
-                activeOpacity={0.7}
-                accessibilityRole="button"
-                accessibilityLabel="Export grades"
-                accessibilityHint="Download"
-                {...(Platform.OS === 'web' && {
-                  cursor: 'pointer',
-                  onMouseEnter: (e) => handleExportHover('grades', true, e),
-                  onMouseLeave: (e) => handleExportHover('grades', false, e),
-                })}
-              >
-                <Download size={18} color="#6B7280" />
-              </TouchableOpacity>
+              {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
+                <TouchableOpacity
+                  style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
+                  onPress={() => setShowPastEventsGradesModal(true)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add grades"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={16} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>Add grades</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
             {hasGradesAttention && isParentViewer ? (
               <Text style={styles.attentionHintText} accessibilityRole="text">
@@ -2587,19 +2781,6 @@ export default function SubjectDetailPage({
                   );
                 })}
               </View>
-              {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
-                <TouchableOpacity
-                  style={[styles.emptyStateButton, styles.gradesBulkActionsButton]}
-                  onPress={() => setShowPastEventsGradesModal(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open grades bulk actions"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <SlidersHorizontal size={18} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Bulk actions</Text>
-                </TouchableOpacity>
-              ) : null}
               {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
                 <TouchableOpacity
                   style={[styles.emptyStateButton, styles.gradesAssignedToStudentButton]}
@@ -2619,19 +2800,6 @@ export default function SubjectDetailPage({
               <Text style={styles.emptyStateText}>
                 Grades appear once you add grades to assignments or assessments for this subject.
               </Text>
-              {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
-                <TouchableOpacity
-                  style={[styles.emptyStateButton, styles.gradesBulkActionsButton]}
-                  onPress={() => setShowPastEventsGradesModal(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open grades bulk actions"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <SlidersHorizontal size={18} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Bulk actions</Text>
-                </TouchableOpacity>
-              ) : null}
               {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
                 <TouchableOpacity
                   style={styles.emptyStateButton}
@@ -2653,27 +2821,34 @@ export default function SubjectDetailPage({
         <View id="learning-goals-section" style={styles.section}>
           <View style={styles.attendanceSectionHeader}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Learning Goals</Text>
-            <TouchableOpacity
-              style={styles.exportIconButton}
-              onPress={() => {
-                if (typeof onOpenExportModalForSection === 'function') {
-                  onOpenExportModalForSection('units_lessons');
-                  return;
-                }
-                setShowExportComingSoonModal(true);
-              }}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Export learning goals"
-              accessibilityHint="Download"
-              {...(Platform.OS === 'web' && {
-                cursor: 'pointer',
-                onMouseEnter: (e) => handleExportHover('learningGoals', true, e),
-                onMouseLeave: (e) => handleExportHover('learningGoals', false, e),
-              })}
-            >
-              <Download size={18} color="#6B7280" />
-            </TouchableOpacity>
+            {onEditSubject ? (
+              <View style={styles.learningGoalsHeaderActions}>
+                <TouchableOpacity
+                  style={styles.emptyStateButton}
+                  onPress={openLearningGoalsMethodModal}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.learningGoalsActionInner}>
+                    <Plus size={14} color="#6B7280" />
+                    <Text style={styles.emptyStateButtonText}>Add new units</Text>
+                  </View>
+                </TouchableOpacity>
+                {hasLearningGoalsContent ? (
+                  <TouchableOpacity
+                    style={styles.learningGoalsEditCurrentButton}
+                    onPress={openSubjectUnitsEditor}
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.learningGoalsActionInner}>
+                      <Edit2 size={14} color="#5E6C84" />
+                      <Text style={styles.learningGoalsEditCurrentText}>Edit current units</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
           </View>
           <View style={styles.emptyStateBox}>
             {!hasLearningGoalsContent ? (
@@ -2686,16 +2861,13 @@ export default function SubjectDetailPage({
             ) : null}
             {hasLearningGoalsContent ? (
               <>
-                <View style={styles.learningGoalsSummaryRow}>
-                  <Text style={styles.learningGoalsSummaryText}>
-                    {learningGoalsUnits.length} units • {totalLearningGoalLessons} lessons
+                <View style={styles.learningGoalsMethodHeader}>
+                  <Text style={styles.learningGoalsMethodHeaderTitle}>{learningGoalsMethodTitle}</Text>
+                  <Text style={styles.learningGoalsMethodHeaderSubtitle}>
+                    {learningGoalsBuildSummaryLine}
                   </Text>
-                  {learningGoalsSourceLabel ? (
-                    <View style={styles.learningGoalsSourceBadge}>
-                      <Text style={styles.learningGoalsSourceBadgeText}>Built via {learningGoalsSourceLabel}</Text>
-                    </View>
-                  ) : null}
                 </View>
+                <View style={styles.learningGoalsMethodHeaderDivider} />
                 <View style={styles.learningGoalsList}>
                   {learningGoalsUnits.map((unit, unitIndex) => {
                     const lessonTitles = (unit?.lessons || [])
@@ -2721,75 +2893,143 @@ export default function SubjectDetailPage({
                 </View>
               </>
             ) : null}
-            {onEditSubject ? (
-              <View style={styles.learningGoalsActionsWrap}>
-                {hasLearningGoalsContent ? (
-                  <TouchableOpacity
-                    style={styles.learningGoalsEditCurrentButton}
-                    onPress={openSubjectUnitsEditor}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.learningGoalsActionInner}>
-                      <Edit2 size={14} color="#5E6C84" />
-                      <Text style={styles.learningGoalsEditCurrentText}>Edit current units</Text>
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
-                {hasLearningGoalsContent ? (
-                  <Text style={styles.learningGoalsMethodsLabel}>Add or update with another method:</Text>
-                ) : null}
-                <View style={styles.learningGoalsActionsRow}>
-                <TouchableOpacity
-                  style={styles.learningGoalsActionPill}
-                  onPress={() => openSubjectUnitsEditorForMethod('manual')}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.learningGoalsActionInner}>
-                    <Plus size={14} color="#5E6C84" />
-                    <Text style={styles.learningGoalsActionText}>Add units</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.learningGoalsActionPill}
-                  onPress={() => openSubjectUnitsEditorForMethod('generate')}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.learningGoalsActionInner}>
-                    <Sparkles size={14} color="#5E6C84" />
-                    <Text style={styles.learningGoalsActionText}>Generate curriculum</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.learningGoalsActionPill}
-                  onPress={() => openSubjectUnitsEditorForMethod('upload')}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.learningGoalsActionInner}>
-                    <Upload size={14} color="#5E6C84" />
-                    <Text style={styles.learningGoalsActionText}>Upload material</Text>
-                  </View>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.learningGoalsActionPill}
-                  onPress={() => openSubjectUnitsEditorForMethod('paste')}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.learningGoalsActionInner}>
-                    <Pencil size={14} color="#5E6C84" />
-                    <Text style={styles.learningGoalsActionText}>Paste plain text</Text>
-                  </View>
-                </TouchableOpacity>
-                </View>
-              </View>
-            ) : null}
           </View>
         </View>
       </ScrollView>
+      <Modal
+        visible={showLearningGoalsMethodModal}
+        transparent
+        animationType="fade"
+        onRequestClose={closeLearningGoalsMethodModal}
+      >
+        <TouchableOpacity
+          style={styles.learningGoalsMethodModalOverlay}
+          activeOpacity={1}
+          onPress={closeLearningGoalsMethodModal}
+        >
+          <TouchableOpacity style={styles.learningGoalsMethodModal} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.learningGoalsMethodModalHeader}>
+              <Text style={styles.learningGoalsMethodModalTitle}>Select method</Text>
+              <TouchableOpacity
+                onPress={closeLearningGoalsMethodModal}
+                style={styles.learningGoalsMethodModalClose}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <X size={18} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.learningGoalsMethodModalBody}>
+              Choose how you want to add new units.
+            </Text>
+            {hasLearningGoalsContent ? (
+              <View style={styles.learningGoalsMethodWarningBox}>
+                <Text style={styles.learningGoalsMethodWarningText}>
+                  You previously saved units and lessons for this subject. Open that method to edit your previous inputs,
+                  or build a new unit structure below. Your calendar stays as-is until you save.
+                </Text>
+              </View>
+            ) : null}
+            <View style={styles.learningGoalsMethodOptions}>
+              <TouchableOpacity
+                style={styles.learningGoalsMethodOption}
+                onPress={() => selectLearningGoalsMethod('manual')}
+                activeOpacity={0.85}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Plus size={15} color="#5E6C84" />
+                <Text style={styles.learningGoalsMethodOptionText}>Manual input</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.learningGoalsMethodOption}
+                onPress={() => selectLearningGoalsMethod('generate')}
+                activeOpacity={0.85}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Sparkles size={15} color="#5E6C84" />
+                <Text style={styles.learningGoalsMethodOptionText}>Generate curriculum</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.learningGoalsMethodOption}
+                onPress={() => selectLearningGoalsMethod('upload')}
+                activeOpacity={0.85}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Upload size={15} color="#5E6C84" />
+                <Text style={styles.learningGoalsMethodOptionText}>Upload material</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.learningGoalsMethodOption}
+                onPress={() => selectLearningGoalsMethod('paste')}
+                activeOpacity={0.85}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Pencil size={15} color="#5E6C84" />
+                <Text style={styles.learningGoalsMethodOptionText}>Paste plain text</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+      <Modal
+        visible={showAttendanceSuggestionConfirmModal}
+        transparent
+        animationType="fade"
+        onRequestClose={closeAttendanceSuggestionConfirmModal}
+      >
+        <TouchableOpacity
+          style={styles.attendanceSuggestionConfirmOverlay}
+          activeOpacity={1}
+          onPress={closeAttendanceSuggestionConfirmModal}
+        >
+          <TouchableOpacity style={styles.attendanceSuggestionConfirmModal} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.attendanceSuggestionConfirmHeader}>
+              <Text style={styles.attendanceSuggestionConfirmTitle}>Apply suggestion</Text>
+              <TouchableOpacity
+                onPress={closeAttendanceSuggestionConfirmModal}
+                style={styles.attendanceSuggestionConfirmClose}
+                disabled={applyingAttendanceSuggestion}
+                {...(Platform.OS === 'web' && { cursor: applyingAttendanceSuggestion ? 'default' : 'pointer' })}
+              >
+                <X size={18} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.attendanceSuggestionConfirmBody}>
+              {`Suggestion: ${attendanceCatchUpSuggestion?.suggestionSummaryText || 'Extend term length or add class days per week.'}`}
+            </Text>
+            <Text style={styles.attendanceSuggestionConfirmBody}>
+              {attendanceCatchUpSuggestion?.extensionAddedDatesLabel
+                ? `Suggested days: ${attendanceCatchUpSuggestion.extensionAddedDatesLabel}.`
+                : 'Suggested days are not available for this plan.'}
+            </Text>
+            <Text style={styles.attendanceSuggestionConfirmBody}>
+              {`This will update the plan end date to ${formatDateDisplayYmd(attendanceCatchUpSuggestion?.suggestedEndYmd || '') || 'the suggested date'} and regenerate calendar events.`}
+            </Text>
+            <View style={styles.attendanceSuggestionConfirmActions}>
+              <TouchableOpacity
+                style={styles.attendanceSuggestionConfirmCancelButton}
+                onPress={closeAttendanceSuggestionConfirmModal}
+                disabled={applyingAttendanceSuggestion}
+                {...(Platform.OS === 'web' && { cursor: applyingAttendanceSuggestion ? 'default' : 'pointer' })}
+              >
+                <Text style={styles.attendanceSuggestionConfirmCancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.attendanceSuggestionConfirmApplyButton,
+                  applyingAttendanceSuggestion && styles.attendanceSuggestionConfirmApplyButtonDisabled,
+                ]}
+                onPress={confirmApplyAttendanceSuggestion}
+                disabled={applyingAttendanceSuggestion}
+                {...(Platform.OS === 'web' && { cursor: applyingAttendanceSuggestion ? 'default' : 'pointer' })}
+              >
+                <Text style={styles.attendanceSuggestionConfirmApplyButtonText}>
+                  {applyingAttendanceSuggestion ? 'Applying...' : 'Confirm'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
       <SubjectPastEventsAttendanceModal
         visible={showPastEventsAttendanceModal}
         onClose={() => setShowPastEventsAttendanceModal(false)}
@@ -2798,6 +3038,7 @@ export default function SubjectDetailPage({
         events={subjectData?.events || []}
         getChildName={getChildName}
         onOpenEvent={handleOpenEventDetails}
+        onCreatePlan={handleOpenPlanBuilder}
         onCompleted={() => loadSubjectDetail({ silent: true })}
       />
       <SubjectPastEventsGradesModal
@@ -3028,13 +3269,6 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  subtextInlineLink: {
-    color: '#4F46E5',
-    textDecorationLine: 'underline',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
   headerActions: {
     flexDirection: 'column',
     gap: 8,
@@ -3148,6 +3382,9 @@ const styles = StyleSheet.create({
     }),
   },
   /** Grades: spacing for Assigned to student below the list (same idea as attendance past-lessons CTA) */
+  gradesHeaderAddButton: {
+    marginLeft: 'auto',
+  },
   gradesBulkActionsButton: {
     marginTop: 8,
   },
@@ -3251,6 +3488,7 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: 40,
+    paddingHorizontal: 14,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -3260,6 +3498,7 @@ const styles = StyleSheet.create({
   },
   materialsSectionHeader: {
     marginBottom: 10,
+    justifyContent: 'space-between',
   },
   materialsActionsRow: {
     marginTop: 20,
@@ -3296,7 +3535,7 @@ const styles = StyleSheet.create({
   },
   materialsListWithBorder: {
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.2)',
+    borderColor: '#E2E8F0',
     borderRadius: 10,
     overflow: 'hidden',
     backgroundColor: '#FFFFFF',
@@ -3305,26 +3544,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    minHeight: 46,
+    paddingHorizontal: 20,
+    paddingVertical: 6,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(148, 163, 184, 0.2)',
+    borderBottomColor: '#E2E8F0',
     backgroundColor: '#F8FAFC',
   },
   materialsListHeaderTitle: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 0.5,
-    color: '#64748B',
+    letterSpacing: 0.3,
+    color: '#334155',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   materialsListHeaderDate: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 0.5,
-    color: '#64748B',
+    letterSpacing: 0.3,
+    color: '#334155',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -3334,10 +3574,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    minHeight: 56,
+    paddingHorizontal: 20,
+    paddingVertical: 9,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(148, 163, 184, 0.14)',
+    borderBottomColor: '#E2E8F0',
   },
   materialListItemHighlighted: {
     backgroundColor: 'rgba(133, 196, 242, 0.14)',
@@ -3362,12 +3603,12 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   materialListItemTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
     color: '#334155',
     flexShrink: 1,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   materialListItemTitleRow: {
@@ -3398,12 +3639,13 @@ const styles = StyleSheet.create({
     }),
   },
   materialListItemDate: {
-    fontSize: 12,
+    fontSize: 13,
+    fontWeight: '500',
     color: '#64748B',
-    minWidth: 96,
+    minWidth: 110,
     textAlign: 'right',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   materialsEmptyText: {
@@ -3416,7 +3658,7 @@ const styles = StyleSheet.create({
   },
   attendanceSectionHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     gap: 8,
     marginBottom: 10,
   },
@@ -3461,6 +3703,124 @@ const styles = StyleSheet.create({
   attendanceInsightsPanelWrap: {
     marginTop: 12,
   },
+  attendanceSummaryWrap: {
+    marginBottom: 8,
+  },
+  attendanceToolbarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 8,
+    flexWrap: 'wrap',
+    marginBottom: 10,
+  },
+  attendanceViewsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  attendanceViewsShell: {
+    borderWidth: 1,
+    borderColor: '#DDE6F1',
+    borderRadius: 999,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  attendanceCountShell: {
+    borderWidth: 1,
+    borderColor: '#DDE6F1',
+    borderRadius: 999,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  attendanceCountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  attendanceCountLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: '#94A3B8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceGapShell: {
+    borderWidth: 1,
+    borderColor: '#F3D4D4',
+    borderRadius: 999,
+    backgroundColor: '#FFF7F7',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  attendanceGapContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  attendanceGapLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: '#B45353',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceViewsLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: '#94A3B8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceViewsChipsGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  attendanceViewChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    backgroundColor: '#F9FAFB',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  attendanceViewChipInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  attendanceViewChipActive: {
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
+  },
+  attendanceViewChipText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceViewChipTextActive: {
+    color: '#6BB3E8',
+  },
   sectionModePill: {
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -3492,12 +3852,19 @@ const styles = StyleSheet.create({
   },
   gradesSectionTitleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     gap: 8,
   },
   /** Past lessons CTA when attendance list is non-empty: spacing below list / show more */
   attendancePastLessonsButton: {
     marginTop: 0,
+  },
+  attendanceHeaderEditButton: {
+    minHeight: 34,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    marginLeft: 'auto',
   },
   exportIconButton: {
     padding: 4,
@@ -3752,6 +4119,43 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  learningGoalsMethodHeader: {
+    flex: 1,
+    minWidth: 180,
+    marginBottom: 10,
+  },
+  learningGoalsHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginLeft: 'auto',
+    flexWrap: 'wrap',
+  },
+  learningGoalsMethodHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsMethodHeaderSubtitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsMethodHeaderDivider: {
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginBottom: 12,
+  },
   learningGoalsList: {
     gap: 8,
     marginBottom: 14,
@@ -3800,23 +4204,36 @@ const styles = StyleSheet.create({
   learningGoalsActionsWrap: {
     gap: 8,
   },
+  learningGoalsAddNewButton: {
+    minHeight: 36,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(133, 196, 242, 0.8)',
+    borderStyle: 'dashed',
+    backgroundColor: '#F4FAFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+  },
   learningGoalsEditCurrentButton: {
     minHeight: 36,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#CFE2F6',
-    backgroundColor: '#F2F8FF',
+    borderColor: '#D9E0EA',
+    backgroundColor: '#F8FAFD',
     paddingHorizontal: 13,
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'flex-start',
   },
   learningGoalsEditCurrentText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#3F5E86',
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   learningGoalsMethodsLabel: {
@@ -3851,6 +4268,107 @@ const styles = StyleSheet.create({
   learningGoalsActionText: {
     fontSize: 14,
     fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsAddNewText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6BB3E8',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsMethodModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.52)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  learningGoalsMethodModal: {
+    width: '100%',
+    maxWidth: 520,
+    borderRadius: 18,
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.2)',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 22px 52px rgba(15, 23, 42, 0.24)',
+    }),
+  },
+  learningGoalsMethodModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 8,
+  },
+  learningGoalsMethodModalTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsMethodModalClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  learningGoalsMethodModalBody: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsMethodWarningBox: {
+    borderWidth: 1,
+    borderColor: '#C9D7EE',
+    backgroundColor: '#EEF3FB',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
+  },
+  learningGoalsMethodWarningText: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsMethodOptions: {
+    gap: 8,
+  },
+  learningGoalsMethodOption: {
+    minHeight: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D9E0EA',
+    backgroundColor: '#F8FAFD',
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  learningGoalsMethodOptionText: {
+    fontSize: 15,
+    fontWeight: '600',
     color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -3892,7 +4410,6 @@ const styles = StyleSheet.create({
   attendanceChips: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 16,
     flexWrap: 'wrap',
   },
   attendanceChip: {
@@ -3914,39 +4431,240 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  attendanceGapChipButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  attendanceGapChipButtonHover: {
+    transform: [{ translateY: -1 }],
+  },
+  attendanceGapChipButtonNegativeHover: {
+    backgroundColor: '#FEE2E2',
+  },
+  attendanceGapChipText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#B91C1C',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceGapChipChevron: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#B91C1C',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   attendanceTargetCard: {
     borderWidth: 1,
-    borderColor: 'rgba(107, 179, 232, 0.35)',
-    borderRadius: 10,
-    backgroundColor: 'rgba(133, 196, 242, 0.12)',
-    paddingHorizontal: 12,
+    borderColor: '#DBEAFE',
+    borderRadius: 12,
+    backgroundColor: '#F8FAFF',
+    paddingHorizontal: 20,
     paddingVertical: 10,
-    marginTop: 12,
+    marginTop: 6,
     marginBottom: 10,
+    gap: 6,
   },
-  attendanceTargetTitle: {
-    fontSize: 12,
+  attendanceTargetTopLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  attendanceTargetGapPill: {
+    minWidth: 110,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#334155',
+    color: '#B91C1C',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    lineHeight: 18,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  attendanceTargetValue: {
-    marginTop: 4,
-    fontSize: 14,
+  attendanceTargetMetPill: {
+    minWidth: 84,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#0f172a',
+    color: '#047857',
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    lineHeight: 18,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  attendanceTargetHelper: {
-    marginTop: 3,
+  attendanceTargetPaceWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  attendanceTargetPaceArrow: {
     fontSize: 12,
     color: '#475569',
+    fontWeight: '400',
+    lineHeight: 18,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceTargetPaceText: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '400',
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceTargetSuggestionLine: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '400',
+    lineHeight: 18,
+    flexShrink: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceTargetSuggestionLineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  attendanceTargetApplyButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  attendanceTargetApplyButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#3730A3',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceSuggestionConfirmOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  attendanceSuggestionConfirmModal: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    padding: 24,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
+    }),
+  },
+  attendanceSuggestionConfirmHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 8,
+  },
+  attendanceSuggestionConfirmTitle: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceSuggestionConfirmClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  attendanceSuggestionConfirmBody: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#475569',
+    marginTop: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceSuggestionConfirmActions: {
+    marginTop: 16,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
+  },
+  attendanceSuggestionConfirmCancelButton: {
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  attendanceSuggestionConfirmCancelButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  attendanceSuggestionConfirmApplyButton: {
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#9ECFFB',
+    backgroundColor: '#9ECFFB',
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  attendanceSuggestionConfirmApplyButtonDisabled: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F1F5F9',
+  },
+  attendanceSuggestionConfirmApplyButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   attendanceList: {
