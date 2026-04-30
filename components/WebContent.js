@@ -5009,15 +5009,23 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     return () => window.removeEventListener('plannerEventContextMenu', handlePlannerEventContextMenu);
   }, [familyId, propChildren]);
 
-  // Load month data when showing planner tab so grid and events show on first open or after login
+  // Load month data when showing planner tab so grid and events show on first open or after login.
+  // Also prefetch adjacent months because month grid includes spillover days from previous/next month.
   useEffect(() => {
     if (activeTab !== 'planner' && activeTab !== 'ai-planner') return;
     if (!familyId) return;
     const monthKey = `${plannerDate.getFullYear()}-${plannerDate.getMonth()}`;
     const hasCache = !!calendarDataCache[monthKey];
-    refreshCalendarData(plannerDate, { background: hasCache }).catch((err) =>
-      console.error('[WebContent] Initial planner load failed:', err)
-    );
+    const prevMonth = new Date(plannerDate.getFullYear(), plannerDate.getMonth() - 1, 1);
+    const nextMonth = new Date(plannerDate.getFullYear(), plannerDate.getMonth() + 1, 1);
+    refreshCalendarData(plannerDate, { background: hasCache })
+      .then(() =>
+        Promise.all([
+          refreshCalendarData(prevMonth, { background: true }),
+          refreshCalendarData(nextMonth, { background: true }),
+        ]).catch(() => {})
+      )
+      .catch((err) => console.error('[WebContent] Initial planner load failed:', err));
   }, [activeTab, familyId, plannerDate, refreshCalendarData]);
 
   // Optimistically add newly created calendar events so they appear on the planner immediately
@@ -8353,17 +8361,40 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     setShowSyllabusModal(false)
   }
 
-  // Build events array for planner: use calendarDataCache for visible month, overlay calendarEvents (optimistic), add holidays
+  // Build events array for planner month grid using the full rendered range (6x7 cells),
+  // not just the header month, so spillover week columns show/edit correctly.
   const plannerEventsForMonth = useMemo(() => {
     const year = plannerDate.getFullYear();
     const month = plannerDate.getMonth();
-    const monthKey = `${year}-${month}`;
-    const cacheMonth = calendarDataCache[monthKey] || {};
-    const merged = { ...cacheMonth };
-    const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+    const firstOfMonth = new Date(year, month, 1);
+    const rangeStart = new Date(firstOfMonth);
+    rangeStart.setDate(rangeStart.getDate() - rangeStart.getDay()); // Sunday
+    const rangeEnd = new Date(rangeStart);
+    rangeEnd.setDate(rangeStart.getDate() + 41); // 6 weeks x 7 days
+    const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const rangeStartKey = toYmd(rangeStart);
+    const rangeEndKey = toYmd(rangeEnd);
+    const isInVisibleRange = (dateKey) => dateKey >= rangeStartKey && dateKey <= rangeEndKey;
+
+    const monthsInRange = new Set();
+    const cursor = new Date(rangeStart);
+    while (cursor <= rangeEnd) {
+      monthsInRange.add(`${cursor.getFullYear()}-${cursor.getMonth()}`);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    const merged = {};
+    monthsInRange.forEach((mk) => {
+      const cacheMonth = calendarDataCache[mk] || {};
+      Object.keys(cacheMonth).forEach((dateKey) => {
+        if (!isInVisibleRange(dateKey)) return;
+        const dayEvents = cacheMonth[dateKey];
+        if (Array.isArray(dayEvents)) merged[dateKey] = dayEvents;
+      });
+    });
     const eventIdsInCalendarEvents = new Set();
     Object.keys(calendarEvents).forEach((dateKey) => {
-      if (!dateKey.startsWith(monthPrefix)) return;
+      if (!isInVisibleRange(dateKey)) return;
       const fromState = calendarEvents[dateKey];
       // Include [] so a day cleared by merge (event moved away) does not fall back to stale cache.
       if (Array.isArray(fromState)) {
@@ -8386,7 +8417,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     // One row per id at the date calendar state assigns (avoids MonthGrid first-wins dedupe keeping a stale cell)
     const idAuthoritativeDate = new Map();
     Object.keys(calendarEvents).forEach((dk) => {
-      if (!dk.startsWith(monthPrefix)) return;
+      if (!isInVisibleRange(dk)) return;
       const st = calendarEvents[dk];
       if (!Array.isArray(st)) return;
       st.forEach((e) => {
@@ -8403,15 +8434,19 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         return String(dateKey) === String(auth);
       });
     });
-    const holidays = plannerHolidaysCache[monthKey] || [];
-    const holidayEvents = holidays.map((h) => ({
-      id: `holiday-${h.date}-${(h.name || '').replace(/\s+/g, '-').slice(0, 30)}`,
-      date_local: h.date,
-      title: h.name,
-      type: 'holiday',
-      event_type: 'holiday',
-      status: null,
-    }));
+    const holidayEvents = Array.from(monthsInRange).flatMap((mk) => {
+      const holidays = plannerHolidaysCache[mk] || [];
+      return holidays
+        .filter((h) => h?.date && isInVisibleRange(String(h.date).slice(0, 10)))
+        .map((h) => ({
+          id: `holiday-${h.date}-${(h.name || '').replace(/\s+/g, '-').slice(0, 30)}`,
+          date_local: h.date,
+          title: h.name,
+          type: 'holiday',
+          event_type: 'holiday',
+          status: null,
+        }));
+    });
     return [...calendarEventList, ...holidayEvents];
   }, [plannerDate, calendarDataCache, calendarEvents, plannerHolidaysCache]);
 
