@@ -35,6 +35,7 @@ import SubjectDetailPage from './SubjectDetailPage';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
 import ProgressTab from './ProgressTab';
+import { useToast } from '../Toast';
 import HelpPopover from '../planner/HelpPopover';
 import PlannerSettingsContent from '../settings/PlannerSettingsContent';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
@@ -109,6 +110,17 @@ function getCurrentSchoolYear() {
   return `${startYear}/${String(startYear + 1).slice(-2)}`;
 }
 
+function shiftSchoolYearLabel(schoolYearLabel, direction) {
+  const raw = String(schoolYearLabel || '').trim();
+  const m = raw.match(/^(\d{4})\/(\d{2})$/);
+  const safeDirection = direction < 0 ? -1 : 1;
+  if (!m) return getCurrentSchoolYear();
+  const startYear = Number(m[1]);
+  if (!Number.isFinite(startYear)) return getCurrentSchoolYear();
+  const nextStart = startYear + safeDirection;
+  return `${nextStart}/${String(nextStart + 1).slice(-2)}`;
+}
+
 const ALL_YEARS_FILTER = 'all_years';
 const ALL_TERMS_FILTER = 'all_terms';
 
@@ -175,6 +187,7 @@ export default function SubjectsPage({
   userRole = 'parent',
   accessibleChildren = [],
 }) {
+  const toast = useToast();
   // Get session context for role-based filtering
   const session = useSession();
   const safeChildren = Array.isArray(children) ? children : [];
@@ -694,9 +707,16 @@ export default function SubjectsPage({
     let nextIndex = currentIndex;
     if (direction < 0 && currentIndex > 0) nextIndex = currentIndex - 1;
     if (direction > 0 && currentIndex < yearNavYears.length - 1) nextIndex = currentIndex + 1;
-    if (nextIndex === currentIndex) return;
+    if (nextIndex === currentIndex) {
+      const targetLabel = shiftSchoolYearLabel(selectedCoursesYear, direction);
+      const directionLabel = direction < 0 ? 'previous' : 'next';
+      const message = `Add a subject for ${targetLabel} (the ${directionLabel} school year) to navigate there.`;
+      if (toast?.push) toast.push(message, 'info');
+      else Alert.alert('No subjects in that year', message);
+      return;
+    }
     setSelectedYearFilter(yearNavYears[nextIndex]);
-  }, [yearNavYears, selectedCoursesYearIndex]);
+  }, [yearNavYears, selectedCoursesYearIndex, selectedCoursesYear, toast]);
   const isAtCurrentCoursesYear = String(selectedCoursesYear) === String(currentCoursesYear);
   const jumpToCurrentCoursesYear = useCallback(() => {
     if (isAtCurrentCoursesYear) return;
@@ -1889,7 +1909,6 @@ export default function SubjectsPage({
               <TouchableOpacity
                 style={[styles.headerYearNavBtn, !canNavigatePrevCoursesYear && styles.headerYearNavBtnDisabled]}
                 onPress={() => shiftCoursesYear(-1)}
-                disabled={!canNavigatePrevCoursesYear}
               >
                 <ChevronLeft size={22} color="#A6AFBF" />
               </TouchableOpacity>
@@ -1908,7 +1927,6 @@ export default function SubjectsPage({
               <TouchableOpacity
                 style={[styles.headerYearNavBtn, !canNavigateNextCoursesYear && styles.headerYearNavBtnDisabled]}
                 onPress={() => shiftCoursesYear(1)}
-                disabled={!canNavigateNextCoursesYear}
               >
                 <ChevronRight size={22} color="#A6AFBF" />
               </TouchableOpacity>
