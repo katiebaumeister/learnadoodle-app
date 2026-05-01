@@ -109,6 +109,23 @@ function formatNeedsSentence(needs) {
   return `${cap(list[0])}, ${list.slice(1, -1).join(', ')}, and ${list[list.length - 1]}`;
 }
 
+function formatProfileGradeLabel(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase();
+  if (lower.includes('grade')) return raw;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    const rounded = Math.round(numeric);
+    const mod100 = rounded % 100;
+    const suffix = (mod100 >= 11 && mod100 <= 13)
+      ? 'th'
+      : (rounded % 10 === 1 ? 'st' : (rounded % 10 === 2 ? 'nd' : (rounded % 10 === 3 ? 'rd' : 'th')));
+    return `${rounded}${suffix} grade`;
+  }
+  return raw;
+}
+
 export default function ProgressTab({
   familyId = null,
   children = [],
@@ -198,12 +215,16 @@ export default function ProgressTab({
   const [subjectPickerAction, setSubjectPickerAction] = useState(null);
   const [attendanceModalSubjectId, setAttendanceModalSubjectId] = useState(null);
   const [gradesModalSubjectId, setGradesModalSubjectId] = useState(null);
+  const [familyTargetScope, setFamilyTargetScope] = useState('overall');
   const [familyDefaultTargetDays, setFamilyDefaultTargetDays] = useState(null);
+  const [familyOverallTargetDays, setFamilyOverallTargetDays] = useState(null);
   const hasSubjectOptions = subjectOptions.length > 0;
   useEffect(() => {
     let cancelled = false;
     if (!familyId) {
+      setFamilyTargetScope('overall');
       setFamilyDefaultTargetDays(null);
+      setFamilyOverallTargetDays(null);
       return () => { cancelled = true; };
     }
     supabase
@@ -217,11 +238,19 @@ export default function ProgressTab({
         const scope = String(data?.target_scope || 'overall').trim().toLowerCase();
         const mode = String(data?.default_constraint_mode || '').trim().toLowerCase();
         const defaultDays = parsePositiveInt(data?.default_target_days);
-        const canUseOverallDays = scope === 'overall' && (mode === 'days' || (!mode && defaultDays != null));
-        setFamilyDefaultTargetDays(canUseOverallDays ? defaultDays : null);
+        const normalizedScope = scope === 'per_subject' ? 'per_subject' : 'overall';
+        setFamilyTargetScope(normalizedScope);
+        const canUseOverallDays = normalizedScope === 'overall' && (mode === 'days' || (!mode && defaultDays != null));
+        const canUsePerSubjectDays = normalizedScope === 'per_subject' && (mode === 'days' || (!mode && defaultDays != null));
+        setFamilyOverallTargetDays(canUseOverallDays ? defaultDays : null);
+        setFamilyDefaultTargetDays(canUsePerSubjectDays ? defaultDays : null);
       })
       .catch(() => {
-        if (!cancelled) setFamilyDefaultTargetDays(null);
+        if (!cancelled) {
+          setFamilyTargetScope('overall');
+          setFamilyDefaultTargetDays(null);
+          setFamilyOverallTargetDays(null);
+        }
       });
     return () => { cancelled = true; };
   }, [familyId]);
@@ -324,6 +353,10 @@ export default function ProgressTab({
     if (action === 'plan_attendance_gap') {
       setAttendanceModalSubjectId(sid);
       onRefreshSubjectDetail?.(sid);
+      return;
+    }
+    if (action === 'plan_overall_gap') {
+      openSubjectPicker('attendance_edit');
       return;
     }
     if (action === 'add_units') {
@@ -795,29 +828,32 @@ export default function ProgressTab({
       byDay.forEach((bucket) => {
         if (bucket.present) doneDays += 1;
       });
-      const targetDays = parsePositiveInt(
-        detail?.settings?.default_target_days
-        ?? detail?.settings?.defaultTargetDays
-        ?? detail?.settings?.target_days
-        ?? detail?.settings?.targetDays
-        ?? detail?.settings?.target_instructional_days
-        ?? detail?.settings?.targetInstructionalDays
-        ?? detail?.plan?.target_days
-        ?? detail?.plan?.targetDays
-        ?? detail?.subject?.default_target_days
-        ?? detail?.subject?.defaultTargetDays
-        ?? detail?.subject?.target_days
-        ?? detail?.subject?.targetDays
-        ?? detail?.subject?.target_instructional_days
-        ?? detail?.subject?.targetInstructionalDays
-        ?? subject?.default_target_days
-        ?? subject?.defaultTargetDays
-        ?? subject?.target_days
-        ?? subject?.targetDays
-        ?? subject?.target_instructional_days
-        ?? subject?.targetInstructionalDays
-        ?? familyDefaultTargetDays
-      );
+      const useOverallTargetMode = familyTargetScope === 'overall' && familyOverallTargetDays != null;
+      const targetDays = useOverallTargetMode
+        ? null
+        : parsePositiveInt(
+          detail?.settings?.default_target_days
+          ?? detail?.settings?.defaultTargetDays
+          ?? detail?.settings?.target_days
+          ?? detail?.settings?.targetDays
+          ?? detail?.settings?.target_instructional_days
+          ?? detail?.settings?.targetInstructionalDays
+          ?? detail?.plan?.target_days
+          ?? detail?.plan?.targetDays
+          ?? detail?.subject?.default_target_days
+          ?? detail?.subject?.defaultTargetDays
+          ?? detail?.subject?.target_days
+          ?? detail?.subject?.targetDays
+          ?? detail?.subject?.target_instructional_days
+          ?? detail?.subject?.targetInstructionalDays
+          ?? subject?.default_target_days
+          ?? subject?.defaultTargetDays
+          ?? subject?.target_days
+          ?? subject?.targetDays
+          ?? subject?.target_instructional_days
+          ?? subject?.targetInstructionalDays
+          ?? familyDefaultTargetDays
+        );
       const shortfallDays = targetDays != null ? Math.max(0, targetDays - projectedDays) : 0;
       const paceLabel = targetDays == null
         ? (subjectPlannedDays > 0 ? 'On track' : 'Not planned')
@@ -857,7 +893,7 @@ export default function ProgressTab({
       if (!hasPlan) statusNeeds.push('needs a plan');
       if (ungradedPastEvents > 0) statusNeeds.push('needs grading');
       if (paceLabel === 'Behind') statusNeeds.push('is behind pace');
-      if (shortfallDays > 0) statusNeeds.push("won't complete saved target by end of term with current plan");
+      if (!useOverallTargetMode && shortfallDays > 0) statusNeeds.push("won't complete saved target by end of term with current plan");
       if (units.length === 0) statusNeeds.push('needs units');
       if (avgPercent != null && avgPercent < 75) statusNeeds.push('has a low grade trend');
       const statusLabel = statusNeeds.length > 0 ? 'Needs attention' : 'On track';
@@ -885,9 +921,24 @@ export default function ProgressTab({
         paceLabel,
       };
     }).filter((row) => row.id);
-  }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays]);
+  }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays, familyTargetScope, familyOverallTargetDays]);
   const needsAttention = useMemo(() => {
     const candidates = [];
+    const overallProjectedDays = subjectProgressRows.reduce((sum, row) => sum + Math.max(0, Number(row?.plannedDays || 0)), 0);
+    const overallMissingDays = (familyTargetScope === 'overall' && familyOverallTargetDays != null)
+      ? Math.max(0, familyOverallTargetDays - overallProjectedDays)
+      : 0;
+    if (overallMissingDays > 0) {
+      const weeksNeeded = Math.max(1, Math.ceil(overallMissingDays / 2));
+      candidates.push({
+        id: 'overall-gap',
+        subjectId: String(subjectProgressRows?.[0]?.id || 'overall'),
+        actionType: 'plan_overall_gap',
+        priority: 95,
+        title: `Overall attendance gap: ${overallMissingDays} day${overallMissingDays === 1 ? '' : 's'}`,
+        fixText: `Add class days across subjects or extend term about ${weeksNeeded} week${weeksNeeded === 1 ? '' : 's'}.`,
+      });
+    }
     subjectProgressRows.forEach((row) => {
       if (!row.hasPlan) {
         candidates.push({
@@ -899,7 +950,7 @@ export default function ProgressTab({
           fixText: 'Add plan cadence.',
         });
       }
-      if (row.missingDays > 0) {
+      if (familyTargetScope !== 'overall' && row.missingDays > 0) {
         const weeksNeeded = Math.max(1, Math.ceil(row.missingDays / Math.max(1, row.classDaysPerWeek)));
         candidates.push({
           id: `gap-${row.id}`,
@@ -940,11 +991,28 @@ export default function ProgressTab({
     }
     return candidates
       .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
-  }, [subjectProgressRows]);
-  const topGradeLetter = useMemo(
-    () => (overviewStats.gradeAverage == null ? '—' : percentToLetter(overviewStats.gradeAverage)),
-    [overviewStats.gradeAverage]
+  }, [subjectProgressRows, familyTargetScope, familyOverallTargetDays]);
+  const savedProfileGrade = useMemo(() => {
+    const raw = selectedStudentRecord?.grade
+      ?? selectedStudentRecord?.grade_level
+      ?? selectedStudentRecord?.gradeLevel
+      ?? selectedStudentRecord?.grade_label
+      ?? null;
+    const normalized = String(raw || '').trim();
+    return normalized || null;
+  }, [selectedStudentRecord]);
+  const savedProfileGradeLabel = useMemo(
+    () => formatProfileGradeLabel(savedProfileGrade),
+    [savedProfileGrade]
   );
+  const subjectsForYearLabel = useMemo(() => {
+    const names = [...new Set(
+      (subjectProgressRows || [])
+        .map((row) => String(row?.subject || '').trim())
+        .filter(Boolean)
+    )];
+    return names.length ? names.join(', ') : 'No subjects for this school year';
+  }, [subjectProgressRows]);
   const learningHighlights = useMemo(() => {
     const now = Date.now();
     const futureUnits = new Set();
@@ -1121,11 +1189,8 @@ export default function ProgressTab({
                 />
                 <Text style={styles.childProgressTitle}>{`${selectedStudent?.name || 'Student'}'s Progress`}</Text>
               </View>
-              <Text style={styles.childProgressLine}>
-                Attendance consistency: {overviewStats.attendanceRate == null ? 'No data' : `${overviewStats.attendanceRate}%`}
-              </Text>
-              <Text style={styles.childProgressLine}>Grade average: {topGradeLetter}</Text>
-              <Text style={styles.childProgressLine}>Learning completed: {overviewStats.totalUnits} units</Text>
+              <Text style={styles.childProgressLine}>{savedProfileGradeLabel || 'No saved grade'}</Text>
+              <Text style={styles.childProgressLine}>{subjectsForYearLabel}</Text>
             </View>
             <View style={[styles.progressActionsStack, !isWeb && styles.progressActionsStackStacked]}>
               <Text style={[styles.progressActionsTitle, !isWeb && styles.progressActionsTitleStacked]}>Actions</Text>
