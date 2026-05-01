@@ -2558,6 +2558,10 @@ export default function SubjectsPlanBuilder({
     });
     return out;
   }, [yearTargetSummary]);
+  const hasAnySubjectPlans = useMemo(
+    () => (termSections || []).some((section) => Array.isArray(section?.subjectPlans) && section.subjectPlans.length > 0),
+    [termSections]
+  );
 
   const getYearTargetChevronAnim = useCallback((subjectId) => {
     const key = String(subjectId || '').trim();
@@ -2630,7 +2634,13 @@ export default function SubjectsPlanBuilder({
                     <Text style={styles.termHeaderCompactTitle}>{termSection.title}</Text>
                   </View>
                   <View style={styles.termHeaderDivider} />
-
+                  {termSection.subjectPlans.length === 0 ? (
+                    <View style={styles.scheduleEmptyCard}>
+                      <Text style={styles.scheduleEmptyText}>
+                        No subjects for this school year yet. Add a subject, then create a plan to build weekly cadence.
+                      </Text>
+                    </View>
+                  ) : (
                     <>
                       <View style={styles.subjectSection}>
                         <View style={styles.cadenceStatusTable}>
@@ -2802,10 +2812,23 @@ export default function SubjectsPlanBuilder({
                         </View>
                       </View>
                     </>
+                  )}
                 </View>
               );
             })}
-            {yearTargetSummary ? (
+            {!hasAnySubjectPlans ? (
+              <View style={styles.yearTargetsSection}>
+                <View style={styles.yearTargetsSectionHeaderRow}>
+                  <Text style={styles.termHeaderCompactTitle}>Year Targets</Text>
+                </View>
+                <View style={styles.termHeaderDivider} />
+                <View style={styles.scheduleEmptyCard}>
+                  <Text style={styles.scheduleEmptyText}>
+                    No plan targets yet. Add a subject and create a plan to see year target progress.
+                  </Text>
+                </View>
+              </View>
+            ) : yearTargetSummary ? (
               <View style={styles.yearTargetsSection}>
                 <View style={styles.yearTargetsSectionHeaderRow}>
                   <Text style={styles.termHeaderCompactTitle}>Year Targets</Text>
@@ -3851,6 +3874,23 @@ const styles = StyleSheet.create({
   emptyScheduleSection: {
     marginBottom: 14,
     gap: 0,
+  },
+  scheduleEmptyCard: {
+    borderWidth: 1,
+    borderColor: '#E3E8EF',
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    paddingVertical: 16,
+    paddingHorizontal: 14,
+    marginTop: 4,
+  },
+  scheduleEmptyText: {
+    fontSize: 14,
+    color: '#4B5563',
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   yearTargetsSection: {
     marginTop: 12,
