@@ -3965,6 +3965,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [plannerHolidaysCache, setPlannerHolidaysCache] = useState({}) // monthKey -> [{ date, name, type }]
   const plannerHolidaysCacheRef = useRef({})
   useEffect(() => { plannerHolidaysCacheRef.current = plannerHolidaysCache; }, [plannerHolidaysCache])
+  const [plannerSpilloverEventsByDate, setPlannerSpilloverEventsByDate] = useState({})
   const [isCalendarDataLoaded, setIsCalendarDataLoaded] = useState(false)
   // Pre-fetched planner tasks + attendance (null = not yet loaded for this family)
   const [plannerPreloadedBacklog, setPlannerPreloadedBacklog] = useState(null)
@@ -3975,17 +3976,20 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   useEffect(() => { plannerDateRef.current = plannerDate; }, [plannerDate]);
   // Preload planner current month once when familyId is available so planner opens with data.
   // Report to parent so initial app load overlay stays until planner data is ready.
-  const plannerPreloadedForFamilyRef = useRef(null);
+  const plannerPreloadedForKeyRef = useRef(null);
   useEffect(() => {
     if (!familyId) {
       setPlannerPreloadedBacklog(null);
       setPlannerPreloadedTrash(null);
       setPlannerAttendanceSnapshot(null);
-      plannerPreloadedForFamilyRef.current = null;
+      plannerPreloadedForKeyRef.current = null;
       return;
     }
-    if (plannerPreloadedForFamilyRef.current === familyId) return;
-    plannerPreloadedForFamilyRef.current = familyId;
+    // Always warm current month bundle first so initial Planner open is instant and consistent.
+    const preloadAnchorDate = new Date();
+    const preloadKey = `${familyId}:${preloadAnchorDate.getFullYear()}-${preloadAnchorDate.getMonth()}`;
+    if (plannerPreloadedForKeyRef.current === preloadKey) return;
+    plannerPreloadedForKeyRef.current = preloadKey;
     setPlannerPreloadedBacklog(null);
     setPlannerPreloadedTrash(null);
     setPlannerAttendanceSnapshot(null);
@@ -4000,24 +4004,30 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           console.warn('[WebContent] Error pre-loading materials:', err);
         }
       });
-    const now = new Date();
-    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const prevMonth = new Date(preloadAnchorDate.getFullYear(), preloadAnchorDate.getMonth() - 1, 1);
+    const nextMonth = new Date(preloadAnchorDate.getFullYear(), preloadAnchorDate.getMonth() + 1, 1);
     prefetchPlanEditListForFamily(familyId).catch(() => {});
-    refreshCalendarData(now)
-      .then(() => {
-        Promise.all([
-          refreshCalendarData(prevMonth, { background: true }),
-          refreshCalendarData(nextMonth, { background: true }),
-          prefetchWeekViewIntoOffline(familyId, now),
+    Promise.allSettled([
+      // Warm current month + neighbors first so spillover cells populate quickly.
+      refreshCalendarData(preloadAnchorDate, { background: true }),
+      refreshCalendarData(prevMonth, { background: true }),
+      refreshCalendarData(nextMonth, { background: true }),
+    ])
+      .then((results) => {
+        const monthWarmFailed = results.every((result) => result.status === 'rejected');
+        if (monthWarmFailed) {
+          console.warn('[WebContent] Planner preload month warm failed for key:', preloadKey);
+        }
+      })
+      .finally(() => {
+        // Non-grid prefetches run after month bundle to avoid delaying visible + spillover events.
+        Promise.allSettled([
+          prefetchWeekViewIntoOffline(familyId, preloadAnchorDate),
           prefetchBacklogAndTrash(familyId).then(({ backlog, trash }) => {
             setPlannerPreloadedBacklog(backlog);
             setPlannerPreloadedTrash(trash);
           }),
         ]).catch(() => {});
-      })
-      .catch((err) => {
-        console.error('[WebContent] Planner preload failed:', err);
       });
   }, [familyId, refreshCalendarData, propSession]);
 
@@ -4033,6 +4043,74 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     });
     return () => { cancelled = true; };
   }, [familyId, plannerChildrenKey]);
+
+  // Fast-path spillover fetch for visible month grid edges (previous/next month cells).
+  // This avoids waiting on full adjacent-month RPC payloads to populate the 30th/1st cells.
+  useEffect(() => {
+    if (!familyId) {
+      setPlannerSpilloverEventsByDate({});
+      return;
+    }
+    let cancelled = false;
+    const year = plannerDate.getFullYear();
+    const month = plannerDate.getMonth();
+    const firstOfMonth = new Date(year, month, 1);
+    const lastOfMonth = new Date(year, month + 1, 0);
+    const rangeStart = new Date(firstOfMonth);
+    rangeStart.setDate(rangeStart.getDate() - rangeStart.getDay()); // Sunday
+    rangeStart.setHours(0, 0, 0, 0);
+    const rangeEnd = new Date(rangeStart);
+    rangeEnd.setDate(rangeStart.getDate() + 41); // 6x7 matrix
+    rangeEnd.setHours(23, 59, 59, 999);
+    const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const monthStartKey = toYmd(firstOfMonth);
+    const monthEndKey = toYmd(lastOfMonth);
+    const toLocalDateKey = (event) => {
+      const raw = event?.start_ts || event?.start_local || null;
+      const dt = raw ? new Date(raw) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return null;
+      return toYmd(dt);
+    };
+    supabase
+      .from('events')
+      .select('*')
+      .eq('family_id', familyId)
+      .gte('start_ts', rangeStart.toISOString())
+      .lte('start_ts', rangeEnd.toISOString())
+      .neq('status', 'canceled')
+      .is('deleted_at', null)
+      .order('start_ts', { ascending: true })
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        const grouped = {};
+        (data || []).forEach((e) => {
+          const dateKey = toLocalDateKey(e);
+          if (!dateKey) return;
+          if (!(dateKey < monthStartKey || dateKey > monthEndKey)) return;
+          if (!grouped[dateKey]) grouped[dateKey] = [];
+          grouped[dateKey].push({
+            ...e,
+            id: e.id,
+            title: e.title || e.subject_name || e.event_type || 'Lesson',
+            time: e.start_local || e.time,
+            start_local: e.start_local,
+            date_local: dateKey,
+            child_id: e.child_id,
+            child_ids: Array.isArray(e.child_ids) ? e.child_ids : undefined,
+            childId: e.child_id,
+            subject_name: e.subject_name,
+            subjectName: e.subject_name,
+            status: e.status,
+            source: e.source,
+          });
+        });
+        setPlannerSpilloverEventsByDate(grouped);
+      })
+      .catch(() => {
+        if (!cancelled) setPlannerSpilloverEventsByDate({});
+      });
+    return () => { cancelled = true; };
+  }, [familyId, plannerDate]);
 
   // Add child form state
   const [addChildName, setAddChildName] = useState('')
@@ -5015,17 +5093,24 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     if (activeTab !== 'planner' && activeTab !== 'ai-planner') return;
     if (!familyId) return;
     const monthKey = `${plannerDate.getFullYear()}-${plannerDate.getMonth()}`;
-    const hasCache = !!calendarDataCache[monthKey];
     const prevMonth = new Date(plannerDate.getFullYear(), plannerDate.getMonth() - 1, 1);
     const nextMonth = new Date(plannerDate.getFullYear(), plannerDate.getMonth() + 1, 1);
-    refreshCalendarData(plannerDate, { background: hasCache })
-      .then(() =>
-        Promise.all([
-          refreshCalendarData(prevMonth, { background: true }),
-          refreshCalendarData(nextMonth, { background: true }),
-        ]).catch(() => {})
-      )
-      .catch((err) => console.error('[WebContent] Initial planner load failed:', err));
+    const prevMonthKey = `${prevMonth.getFullYear()}-${prevMonth.getMonth()}`;
+    const nextMonthKey = `${nextMonth.getFullYear()}-${nextMonth.getMonth()}`;
+    const hasCache = !!calendarDataCache[monthKey];
+    const hasPrevCache = !!calendarDataCache[prevMonthKey];
+    const hasNextCache = !!calendarDataCache[nextMonthKey];
+    // If bundle is already warm, avoid extra network work on tab open.
+    if (hasCache && hasPrevCache && hasNextCache) return;
+    Promise.allSettled([
+      ...(hasCache ? [] : [refreshCalendarData(plannerDate, { background: false })]),
+      ...(hasPrevCache ? [] : [refreshCalendarData(prevMonth, { background: true })]),
+      ...(hasNextCache ? [] : [refreshCalendarData(nextMonth, { background: true })]),
+    ]).then((results) => {
+      if (!hasCache && results[0]?.status === 'rejected') {
+        console.error('[WebContent] Initial planner load failed:', results[0].reason);
+      }
+    });
   }, [activeTab, familyId, plannerDate, refreshCalendarData]);
 
   // Optimistically add newly created calendar events so they appear on the planner immediately
@@ -8392,6 +8477,15 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         if (Array.isArray(dayEvents)) merged[dateKey] = dayEvents;
       });
     });
+    Object.keys(plannerSpilloverEventsByDate || {}).forEach((dateKey) => {
+      if (!isInVisibleRange(dateKey)) return;
+      const spill = plannerSpilloverEventsByDate[dateKey];
+      if (!Array.isArray(spill) || spill.length === 0) return;
+      // Use fast spillover result when cache for that edge day is still missing.
+      if (!Array.isArray(merged[dateKey]) || merged[dateKey].length === 0) {
+        merged[dateKey] = spill;
+      }
+    });
     const eventIdsInCalendarEvents = new Set();
     Object.keys(calendarEvents).forEach((dateKey) => {
       if (!isInVisibleRange(dateKey)) return;
@@ -8448,7 +8542,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }));
     });
     return [...calendarEventList, ...holidayEvents];
-  }, [plannerDate, calendarDataCache, calendarEvents, plannerHolidaysCache]);
+  }, [plannerDate, calendarDataCache, calendarEvents, plannerHolidaysCache, plannerSpilloverEventsByDate]);
 
   const renderPlannerContent = () => {
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();

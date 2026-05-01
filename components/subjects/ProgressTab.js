@@ -19,6 +19,7 @@ import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import { supabase } from '../../lib/supabase';
 
 const WEB_HEADING_FONT = Platform.OS === 'web'
   ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
@@ -93,6 +94,19 @@ function parsePositiveInt(value) {
   if (!Number.isFinite(n)) return null;
   const rounded = Math.round(n);
   return rounded > 0 ? rounded : null;
+}
+
+function formatNeedsSentence(needs) {
+  const list = Array.isArray(needs) ? needs.filter(Boolean) : [];
+  if (!list.length) return '';
+  const cap = (txt) => {
+    const raw = String(txt || '');
+    if (!raw) return '';
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  };
+  if (list.length === 1) return cap(list[0]);
+  if (list.length === 2) return `${cap(list[0])} and ${list[1]}`;
+  return `${cap(list[0])}, ${list.slice(1, -1).join(', ')}, and ${list[list.length - 1]}`;
 }
 
 export default function ProgressTab({
@@ -184,7 +198,33 @@ export default function ProgressTab({
   const [subjectPickerAction, setSubjectPickerAction] = useState(null);
   const [attendanceModalSubjectId, setAttendanceModalSubjectId] = useState(null);
   const [gradesModalSubjectId, setGradesModalSubjectId] = useState(null);
+  const [familyDefaultTargetDays, setFamilyDefaultTargetDays] = useState(null);
   const hasSubjectOptions = subjectOptions.length > 0;
+  useEffect(() => {
+    let cancelled = false;
+    if (!familyId) {
+      setFamilyDefaultTargetDays(null);
+      return () => { cancelled = true; };
+    }
+    supabase
+      .from('family_planner_settings')
+      .select('target_scope, default_constraint_mode, default_target_days')
+      .eq('family_id', familyId)
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const scope = String(data?.target_scope || 'overall').trim().toLowerCase();
+        const mode = String(data?.default_constraint_mode || '').trim().toLowerCase();
+        const defaultDays = parsePositiveInt(data?.default_target_days);
+        const canUseOverallDays = scope === 'overall' && (mode === 'days' || (!mode && defaultDays != null));
+        setFamilyDefaultTargetDays(canUseOverallDays ? defaultDays : null);
+      })
+      .catch(() => {
+        if (!cancelled) setFamilyDefaultTargetDays(null);
+      });
+    return () => { cancelled = true; };
+  }, [familyId]);
   const subjectPickerPrompt = useMemo(() => {
     const byAction = {
       attendance_edit: 'Select a subject to edit attendance',
@@ -756,8 +796,26 @@ export default function ProgressTab({
       });
       const targetDays = parsePositiveInt(
         detail?.settings?.default_target_days
+        ?? detail?.settings?.defaultTargetDays
+        ?? detail?.settings?.target_days
+        ?? detail?.settings?.targetDays
+        ?? detail?.settings?.target_instructional_days
+        ?? detail?.settings?.targetInstructionalDays
+        ?? detail?.plan?.target_days
+        ?? detail?.plan?.targetDays
+        ?? detail?.subject?.default_target_days
+        ?? detail?.subject?.defaultTargetDays
+        ?? detail?.subject?.target_days
+        ?? detail?.subject?.targetDays
+        ?? detail?.subject?.target_instructional_days
+        ?? detail?.subject?.targetInstructionalDays
         ?? subject?.default_target_days
+        ?? subject?.defaultTargetDays
         ?? subject?.target_days
+        ?? subject?.targetDays
+        ?? subject?.target_instructional_days
+        ?? subject?.targetInstructionalDays
+        ?? familyDefaultTargetDays
       );
       const shortfallDays = targetDays != null ? Math.max(0, targetDays - projectedDays) : 0;
       const paceLabel = targetDays == null
@@ -794,20 +852,16 @@ export default function ProgressTab({
         return count + 1;
       }, 0);
       const hasPlan = subjectPlannedDays > 0;
-      const statusLabel = (
-        !hasPlan
-        || shortfallDays > 0
-        || (avgPercent != null && avgPercent < 75)
-        || units.length === 0
-        || ungradedPastEvents > 0
-      ) ? 'Needs attention' : 'On track';
+      const statusNeeds = [];
+      if (!hasPlan) statusNeeds.push('needs a plan');
+      if (ungradedPastEvents > 0) statusNeeds.push('needs grading');
+      if (paceLabel === 'Behind') statusNeeds.push('is behind pace');
+      if (shortfallDays > 0) statusNeeds.push("won't complete saved target by end of term with current plan");
+      if (units.length === 0) statusNeeds.push('needs units');
+      if (avgPercent != null && avgPercent < 75) statusNeeds.push('has a low grade trend');
+      const statusLabel = statusNeeds.length > 0 ? 'Needs attention' : 'On track';
       const statusDetail = (() => {
-        if (!hasPlan) return 'Needs a plan';
-        if (shortfallDays > 0) return 'Not enough class days';
-        if (paceLabel === 'Behind') return 'Behind pace';
-        if (ungradedPastEvents > 0) return 'Needs grading';
-        if (units.length === 0) return 'Needs units';
-        if (avgPercent != null && avgPercent < 75) return 'Low grade trend';
+        if (statusNeeds.length > 0) return formatNeedsSentence(statusNeeds);
         if (paceLabel === 'Ahead') return `Give ${encouragementName} free time, ${encouragementName} is ahead of schedule`;
         return `Let ${encouragementName} know they're doing great`;
       })();
@@ -830,7 +884,7 @@ export default function ProgressTab({
         paceLabel,
       };
     }).filter((row) => row.id);
-  }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate]);
+  }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays]);
   const needsAttention = useMemo(() => {
     const candidates = [];
     subjectProgressRows.forEach((row) => {
@@ -883,13 +937,7 @@ export default function ProgressTab({
         fixText: 'Everything is looking steady.',
       }];
     }
-    const bestPerSubject = new Map();
-    candidates.forEach((item) => {
-      const key = String(item.subjectId || item.id);
-      const prev = bestPerSubject.get(key);
-      if (!prev || Number(item.priority) > Number(prev.priority)) bestPerSubject.set(key, item);
-    });
-    return Array.from(bestPerSubject.values())
+    return candidates
       .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
   }, [subjectProgressRows]);
   const topGradeLetter = useMemo(
