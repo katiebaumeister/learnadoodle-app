@@ -2959,6 +2959,21 @@ export default function SubjectsPlanBuilder({
                                   </Text>
                                 </View>
                               </View>
+                              <View style={styles.yearTargetsSavedTargetRow}>
+                                <Text style={styles.yearTargetsSavedTargetText}>
+                                  {`Gap is based on saved subject planning preferences: ${row.targetDays} days.`}
+                                </Text>
+                                <TouchableOpacity
+                                  onPress={openPlanningPreferences}
+                                  style={styles.yearTargetsSavedTargetButton}
+                                  activeOpacity={0.85}
+                                  accessibilityRole="button"
+                                  accessibilityLabel="Change saved target"
+                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                >
+                                  <Text style={styles.yearTargetsSavedTargetButtonText}>Change saved target</Text>
+                                </TouchableOpacity>
+                              </View>
                               {suggestionSummary ? (
                                 <View style={styles.yearTargetsExpandedSuggestionLineRow}>
                                   <Text style={styles.yearTargetsPredictiveSuggestionLine}>
@@ -4488,6 +4503,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     flexWrap: 'wrap',
+  },
+  yearTargetsSavedTargetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  yearTargetsSavedTargetText: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '400',
+    lineHeight: 18,
+    flexShrink: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsSavedTargetButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearTargetsSavedTargetButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#3730A3',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   yearTargetsPredictiveSuggestionButton: {
     borderRadius: 999,
