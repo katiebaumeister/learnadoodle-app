@@ -836,7 +836,13 @@ export default function AddSubjectModal({
       toast.show('All events deleted successfully', 'success');
       setSubjectEvents([]);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        // Keep Subject Detail / Progress attendance sections in sync after bulk event delete.
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshSubjectDetail', {
+          detail: { subjectId: effectiveSubjectId },
+        }));
         window.dispatchEvent(new CustomEvent('refreshEvents'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
         window.dispatchEvent(new CustomEvent('subjectUpdated'));
       }
     } catch (error) {

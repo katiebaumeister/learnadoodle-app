@@ -4141,6 +4141,18 @@ export default function PlanYearModal({
     }
   }, [visible, openForNewPlan, initialAcademicYearId]);
 
+  // Force true "create new plan" entry when callers explicitly open new-plan flow
+  // (e.g. Progress > Needs attention no-plan). Without this reset, stale picker state
+  // from a prior Edit-plan session can reopen the YOUR PLANS list modal.
+  useEffect(() => {
+    if (!visible) return;
+    if (!openForNewPlan) return;
+    if (openToEditPlanList) return;
+    if (initialAcademicYearId) return;
+    setShowPlanManagerView(false);
+    setStartCreatingNew(true);
+  }, [visible, openForNewPlan, openToEditPlanList, initialAcademicYearId]);
+
   // When opening from banner (Edit plan), sync passed academic year id and clear stale form fields before cache/network hydrate
   useEffect(() => {
     if (visible && initialAcademicYearId) {

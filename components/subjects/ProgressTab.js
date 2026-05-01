@@ -322,7 +322,8 @@ export default function ProgressTab({
       return;
     }
     if (action === 'plan_attendance_gap') {
-      openSubjectPlanBuilder(sid, { attendanceFocus: true });
+      setAttendanceModalSubjectId(sid);
+      onRefreshSubjectDetail?.(sid);
       return;
     }
     if (action === 'add_units') {
@@ -1153,24 +1154,32 @@ export default function ProgressTab({
           </View>
         </View>
         <View style={styles.subjectRowsCard}>
-          {subjectProgressRows.map((row) => (
-            <TouchableOpacity
-              key={`subject-row-${row.id}`}
-              style={styles.subjectRowItem}
-              onPress={() => onOpenSubject?.(row.id)}
-              activeOpacity={0.8}
-              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-            >
-              <Text style={styles.subjectRowTitle}>{row.subject}</Text>
-              <Text style={styles.subjectRowLine}>Attendance: {row.attendedDays} attended</Text>
-              <Text style={styles.subjectRowLine}>Grades: {row.gradeAverageLetter} average</Text>
-              <Text style={styles.subjectRowLine}>Units achieved: {row.unitsCompleted} completed</Text>
-              <Text style={styles.subjectRowLine}>Latest unit: {row.latestUnit}</Text>
-              <Text style={[styles.subjectRowStatus, row.statusLabel === 'Needs attention' && styles.subjectRowStatusAlert]}>
-                Status: {row.statusDetail}
+          {subjectProgressRows.length === 0 ? (
+            <View style={styles.emptyStateBox}>
+              <Text style={styles.emptyStateText}>
+                {`No subjects found for ${selectedStudent?.name || 'this student'} in ${selectedAcademicYearLabel}. Add a subject for this school year to see progress details here.`}
               </Text>
-            </TouchableOpacity>
-          ))}
+            </View>
+          ) : (
+            subjectProgressRows.map((row) => (
+              <TouchableOpacity
+                key={`subject-row-${row.id}`}
+                style={styles.subjectRowItem}
+                onPress={() => onOpenSubject?.(row.id)}
+                activeOpacity={0.8}
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <Text style={styles.subjectRowTitle}>{row.subject}</Text>
+                <Text style={styles.subjectRowLine}>Attendance: {row.attendedDays} attended</Text>
+                <Text style={styles.subjectRowLine}>Grades: {row.gradeAverageLetter} average</Text>
+                <Text style={styles.subjectRowLine}>Units achieved: {row.unitsCompleted} completed</Text>
+                <Text style={styles.subjectRowLine}>Latest unit: {row.latestUnit}</Text>
+                <Text style={[styles.subjectRowStatus, row.statusLabel === 'Needs attention' && styles.subjectRowStatusAlert]}>
+                  Status: {row.statusDetail}
+                </Text>
+              </TouchableOpacity>
+            ))
+          )}
         </View>
 
 
