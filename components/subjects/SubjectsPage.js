@@ -2445,7 +2445,7 @@ const styles = StyleSheet.create({
   },
   exportModalCard: {
     width: '100%',
-    maxWidth: 560,
+    maxWidth: 700,
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
     borderWidth: 1,

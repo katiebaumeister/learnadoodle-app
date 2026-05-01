@@ -2793,15 +2793,6 @@ export default function SubjectsPlanBuilder({
                                     >
                                       <Text style={styles.subjectRowActionLinkText}>Edit subject</Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity
-                                      style={styles.subjectRowActionLink}
-                                      onPress={openPlanningPreferences}
-                                      accessibilityLabel={`Change target for ${row.name || 'subject'}`}
-                                      activeOpacity={0.8}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      <Text style={styles.subjectRowActionLinkText}>Change target</Text>
-                                    </TouchableOpacity>
                                   </View>
 
                                 </View>
