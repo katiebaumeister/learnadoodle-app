@@ -217,6 +217,63 @@ export default function ProgressTab({
     }
     onOpenSubject?.(subject.id);
   };
+  const openSubjectPlanBuilder = (subjectId, opts = {}) => {
+    const scoped = subjectById.get(String(subjectId));
+    const subject = scoped?.subject || null;
+    if (!subject?.id) return;
+    const childIds = Array.isArray(subject?.assignedChildren) && subject.assignedChildren.length > 0
+      ? subject.assignedChildren
+      : (selectedStudentId ? [selectedStudentId] : []);
+    const yearPlanId = (() => {
+      if (opts.forceNewBuild) return null;
+      const fromEvents = (scoped?.detail?.events || [])
+        .map((event) => event?.year_plan_id || event?.yearPlanId || null)
+        .find(Boolean);
+      return fromEvents || null;
+    })();
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('openPlanYearModal', {
+          detail: {
+            from: opts.attendanceFocus ? 'subject_detail_attendance' : 'subject_detail',
+            subjectId: subject.id,
+            subjectName: subject.name || null,
+            schoolYear: subject.school_year || null,
+            schoolTerm: subject.school_term || null,
+            childIds,
+            academicYearId: yearPlanId,
+            openAsModal: true,
+            openToEditList: false,
+            skipPlanSummary: true,
+            openDirectlyToScope: true,
+          },
+        })
+      );
+      return;
+    }
+    onOpenSubject?.(subject.id);
+  };
+  const handleNeedsAttentionPress = (item) => {
+    const sid = String(item?.subjectId || '').trim();
+    if (!sid) return;
+    const action = String(item?.actionType || '').trim().toLowerCase();
+    if (action === 'plan_no_plan') {
+      openSubjectPlanBuilder(sid, { attendanceFocus: false, forceNewBuild: true });
+      return;
+    }
+    if (action === 'plan_attendance_gap') {
+      openSubjectPlanBuilder(sid, { attendanceFocus: true, forceNewBuild: true });
+      return;
+    }
+    if (action === 'add_units') {
+      openLearningGoalsPlanner(sid, 'manual');
+      return;
+    }
+    if (action === 'add_grades') {
+      setGradesModalSubjectId(sid);
+      onRefreshSubjectDetail?.(sid);
+    }
+  };
   const handleSubjectPickerSelect = (subjectId) => {
     const action = subjectPickerAction;
     setSubjectPickerAction(null);
@@ -724,6 +781,7 @@ export default function ProgressTab({
         candidates.push({
           id: `no-plan-${row.id}`,
           subjectId: row.id,
+          actionType: 'plan_no_plan',
           priority: 100,
           title: `${row.subject} has no plan`,
           fixText: `Add plan cadence (${row.classDaysPerWeek} class day${row.classDaysPerWeek === 1 ? '' : 's'}/week).`,
@@ -734,6 +792,7 @@ export default function ProgressTab({
         candidates.push({
           id: `gap-${row.id}`,
           subjectId: row.id,
+          actionType: 'plan_attendance_gap',
           priority: 90,
           title: `${row.subject} attendance gap: ${row.missingDays} day${row.missingDays === 1 ? '' : 's'}`,
           fixText: `Add ${row.missingDays} class day${row.missingDays === 1 ? '' : 's'} or extend term about ${weeksNeeded} week${weeksNeeded === 1 ? '' : 's'}.`,
@@ -743,6 +802,7 @@ export default function ProgressTab({
         candidates.push({
           id: `no-units-${row.id}`,
           subjectId: row.id,
+          actionType: 'add_units',
           priority: 70,
           title: `${row.subject} has no units`,
           fixText: 'Add at least 1 unit with lessons.',
@@ -752,6 +812,7 @@ export default function ProgressTab({
         candidates.push({
           id: `ungraded-${row.id}`,
           subjectId: row.id,
+          actionType: 'add_grades',
           priority: 60,
           title: `${row.subject} has ${row.ungradedPastEvents} ungraded event${row.ungradedPastEvents === 1 ? '' : 's'}`,
           fixText: 'Add grades for past events that are missing scores.',
@@ -895,13 +956,19 @@ export default function ProgressTab({
         showsVerticalScrollIndicator={isWeb}
       >
         {needsAttention.map((item) => (
-          <View key={item.id} style={styles.needsAttentionRow}>
+          <TouchableOpacity
+            key={item.id}
+            style={styles.needsAttentionRow}
+            onPress={() => handleNeedsAttentionPress(item)}
+            activeOpacity={0.75}
+            {...(Platform.OS === 'web' ? { cursor: item?.actionType ? 'pointer' : 'default' } : {})}
+          >
             <View style={styles.needsAttentionDot} />
             <View style={styles.needsAttentionBody}>
               <Text style={styles.needsAttentionRowTitle}>{item.title}</Text>
               <Text style={styles.needsAttentionRowText}>{item.fixText}</Text>
             </View>
-          </View>
+          </TouchableOpacity>
         ))}
       </ScrollView>
     </View>
