@@ -15,7 +15,7 @@ import {
   Platform,
   Modal,
 } from 'react-native';
-import { Plus, Trash2, Pencil, Check, X, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, ChevronDown, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import {
   getFamilyPlannerSettings,
   saveFamilyPlannerSettings,
@@ -53,6 +53,67 @@ const parsePositiveFloatOrNull = (value) => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
+const DEFAULT_LEARNING_START_TIME = '08:00:00';
+const DEFAULT_LEARNING_END_TIME = '15:00:00';
+
+const minutesToSqlTime = (totalMinutes) => {
+  const clamped = Math.max(0, Math.min(23 * 60 + 59, Number(totalMinutes) || 0));
+  const hours = Math.floor(clamped / 60);
+  const minutes = clamped % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+};
+
+const minutesToDisplayTime = (totalMinutes) => {
+  const clamped = Math.max(0, Math.min(23 * 60 + 59, Number(totalMinutes) || 0));
+  const hours24 = Math.floor(clamped / 60);
+  const minutes = clamped % 60;
+  const suffix = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = (hours24 % 12) || 12;
+  return `${hours12}:${String(minutes).padStart(2, '0')} ${suffix}`;
+};
+
+const parseTimeToMinutesOrNull = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+  const normalized = raw.replace(/\s+/g, '');
+  const ampmMatch = normalized.match(/^(\d{1,2})(?::(\d{1,2}))?(am|pm)$/);
+  if (ampmMatch) {
+    const hourRaw = Number(ampmMatch[1]);
+    const minuteRaw = ampmMatch[2] != null ? Number(ampmMatch[2]) : 0;
+    if (!Number.isFinite(hourRaw) || !Number.isFinite(minuteRaw) || hourRaw < 1 || hourRaw > 12 || minuteRaw < 0 || minuteRaw > 59) {
+      return null;
+    }
+    const hour24 = (hourRaw % 12) + (ampmMatch[3] === 'pm' ? 12 : 0);
+    return (hour24 * 60) + minuteRaw;
+  }
+  const hhmmMatch = normalized.match(/^(\d{1,2}):(\d{1,2})(?::\d{1,2})?$/);
+  if (hhmmMatch) {
+    const hourRaw = Number(hhmmMatch[1]);
+    const minuteRaw = Number(hhmmMatch[2]);
+    if (!Number.isFinite(hourRaw) || !Number.isFinite(minuteRaw) || hourRaw < 0 || hourRaw > 23 || minuteRaw < 0 || minuteRaw > 59) {
+      return null;
+    }
+    return (hourRaw * 60) + minuteRaw;
+  }
+  const hourOnly = Number(normalized);
+  if (!Number.isFinite(hourOnly) || hourOnly < 0 || hourOnly > 23) return null;
+  return hourOnly * 60;
+};
+
+const normalizeLearningTimeDisplay = (value, fallbackSqlTime) => {
+  const fallbackMinutes = parseTimeToMinutesOrNull(fallbackSqlTime);
+  const minutes = parseTimeToMinutesOrNull(value);
+  const effective = minutes != null ? minutes : (fallbackMinutes != null ? fallbackMinutes : 0);
+  return minutesToDisplayTime(effective);
+};
+
+const normalizeLearningTimeSql = (value, fallbackSqlTime) => {
+  const fallbackMinutes = parseTimeToMinutesOrNull(fallbackSqlTime);
+  const minutes = parseTimeToMinutesOrNull(value);
+  const effective = minutes != null ? minutes : (fallbackMinutes != null ? fallbackMinutes : 0);
+  return minutesToSqlTime(effective);
+};
+
 const normalizeTargetMode = (mode) => (typeof mode === 'string' ? mode.toLowerCase() : '');
 const formatSchoolYearLabel = (startYear) => `${startYear}/${String(startYear + 1).slice(-2)}`;
 const normalizeSchoolYearLabel = (label) => {
@@ -82,6 +143,33 @@ const withinYmdRange = (ymd, minYmd, maxYmd) => {
   const v = String(ymd || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
   return (!minYmd || v >= minYmd) && (!maxYmd || v <= maxYmd);
+};
+
+const normalizeYmd = (value) => {
+  const v = String(value || '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '';
+};
+
+const schoolYearRangeDefaults = (schoolYearLabel) => {
+  const parsed = parseSchoolYearLabel(schoolYearLabel);
+  if (!parsed) {
+    return {
+      yearStart: '',
+      yearEnd: '',
+      fallStart: '',
+      fallEnd: '',
+      springStart: '',
+      springEnd: '',
+    };
+  }
+  return {
+    yearStart: `${parsed.start}-08-01`,
+    yearEnd: `${parsed.end}-05-31`,
+    fallStart: `${parsed.start}-08-01`,
+    fallEnd: `${parsed.start}-12-31`,
+    springStart: `${parsed.end}-01-01`,
+    springEnd: `${parsed.end}-05-01`,
+  };
 };
 
 const deriveSubjectTargetState = (subjectsList) => {
@@ -137,7 +225,8 @@ export default function PlannerSettingsContent({
   const [goalMode, setGoalMode] = useState('none');
   const [targetDays, setTargetDays] = useState('180');
   const [targetHours, setTargetHours] = useState('1000');
-  const [hoursPerDay, setHoursPerDay] = useState('5');
+  const [learningStartTime, setLearningStartTime] = useState('8:00 AM');
+  const [learningEndTime, setLearningEndTime] = useState('3:00 PM');
 
   // Public holidays
   const [followGlobalHolidays, setFollowGlobalHolidays] = useState(true);
@@ -162,6 +251,12 @@ export default function PlannerSettingsContent({
   const [editingHolidayDraft, setEditingHolidayDraft] = useState({ date: '', name: '' });
   const [editingBreakIndex, setEditingBreakIndex] = useState(null);
   const [editingBreakDraft, setEditingBreakDraft] = useState({ start: '', end: '', name: '' });
+  const [defaultYearStartDate, setDefaultYearStartDate] = useState('');
+  const [defaultYearEndDate, setDefaultYearEndDate] = useState('');
+  const [defaultFallStartDate, setDefaultFallStartDate] = useState('');
+  const [defaultFallEndDate, setDefaultFallEndDate] = useState('');
+  const [defaultSpringStartDate, setDefaultSpringStartDate] = useState('');
+  const [defaultSpringEndDate, setDefaultSpringEndDate] = useState('');
 
   // Subject targets (per-subject defaults)
   const [subjects, setSubjects] = useState([]);
@@ -199,11 +294,18 @@ export default function PlannerSettingsContent({
     setGoalMode(cached.goalMode || 'none');
     setTargetDays(cached.targetDays ?? '180');
     setTargetHours(cached.targetHours ?? '1000');
-    setHoursPerDay(cached.hoursPerDay ?? '5');
+    setLearningStartTime(normalizeLearningTimeDisplay(cached.learningStartTime, DEFAULT_LEARNING_START_TIME));
+    setLearningEndTime(normalizeLearningTimeDisplay(cached.learningEndTime, DEFAULT_LEARNING_END_TIME));
     setFollowGlobalHolidays(cached.followGlobalHolidays !== false);
     setExcludedPublicHolidayDates(Array.isArray(cached.excludedPublicHolidayDates) ? cached.excludedPublicHolidayDates : []);
     setCustomHolidays(Array.isArray(cached.customHolidays) ? cached.customHolidays : []);
     setCustomBreaks(Array.isArray(cached.customBreaks) ? cached.customBreaks : []);
+    setDefaultYearStartDate(cached.defaultYearStartDate || '');
+    setDefaultYearEndDate(cached.defaultYearEndDate || '');
+    setDefaultFallStartDate(cached.defaultFallStartDate || '');
+    setDefaultFallEndDate(cached.defaultFallEndDate || '');
+    setDefaultSpringStartDate(cached.defaultSpringStartDate || '');
+    setDefaultSpringEndDate(cached.defaultSpringEndDate || '');
     setSubjects(Array.isArray(cached.subjects) ? cached.subjects : []);
     setSubjectTargets(cached.subjectTargets && typeof cached.subjectTargets === 'object' ? cached.subjectTargets : {});
     if (!isSchoolYearLocked && cached.selectedSchoolYearLabel) {
@@ -213,7 +315,26 @@ export default function PlannerSettingsContent({
   }, [embeddedInModal, snapshotCacheKey, isSchoolYearLocked]);
 
   useEffect(() => {
-    stateRef.current = { targetScope, goalMode, targetDays, targetHours, hoursPerDay, followGlobalHolidays, countryCode, regionCode, customHolidays, customBreaks, subjectTargets };
+    stateRef.current = {
+      targetScope,
+      goalMode,
+      targetDays,
+      targetHours,
+      learningStartTime,
+      learningEndTime,
+      followGlobalHolidays,
+      countryCode,
+      regionCode,
+      customHolidays,
+      customBreaks,
+      subjectTargets,
+      defaultYearStartDate,
+      defaultYearEndDate,
+      defaultFallStartDate,
+      defaultFallEndDate,
+      defaultSpringStartDate,
+      defaultSpringEndDate,
+    };
   });
 
   useEffect(() => {
@@ -223,11 +344,18 @@ export default function PlannerSettingsContent({
       goalMode,
       targetDays,
       targetHours,
-      hoursPerDay,
+      learningStartTime,
+      learningEndTime,
       followGlobalHolidays,
       excludedPublicHolidayDates: Array.isArray(excludedPublicHolidayDates) ? [...excludedPublicHolidayDates] : [],
       customHolidays: Array.isArray(customHolidays) ? [...customHolidays] : [],
       customBreaks: Array.isArray(customBreaks) ? [...customBreaks] : [],
+      defaultYearStartDate,
+      defaultYearEndDate,
+      defaultFallStartDate,
+      defaultFallEndDate,
+      defaultSpringStartDate,
+      defaultSpringEndDate,
       subjects: Array.isArray(subjects) ? [...subjects] : [],
       subjectTargets: subjectTargets && typeof subjectTargets === 'object' ? { ...subjectTargets } : {},
       selectedSchoolYearLabel,
@@ -239,11 +367,18 @@ export default function PlannerSettingsContent({
     goalMode,
     targetDays,
     targetHours,
-    hoursPerDay,
+    learningStartTime,
+    learningEndTime,
     followGlobalHolidays,
     excludedPublicHolidayDates,
     customHolidays,
     customBreaks,
+    defaultYearStartDate,
+    defaultYearEndDate,
+    defaultFallStartDate,
+    defaultFallEndDate,
+    defaultSpringStartDate,
+    defaultSpringEndDate,
     subjects,
     subjectTargets,
     selectedSchoolYearLabel,
@@ -263,6 +398,16 @@ export default function PlannerSettingsContent({
   }, []);
   const yearRangeMinYmd = `${selectedYearMeta.start}-01-01`;
   const yearRangeMaxYmd = `${selectedYearMeta.end}-12-31`;
+
+  useEffect(() => {
+    const seeded = schoolYearRangeDefaults(selectedSchoolYearLabel);
+    setDefaultYearStartDate((prev) => prev || seeded.yearStart);
+    setDefaultYearEndDate((prev) => prev || seeded.yearEnd);
+    setDefaultFallStartDate((prev) => prev || seeded.fallStart);
+    setDefaultFallEndDate((prev) => prev || seeded.fallEnd);
+    setDefaultSpringStartDate((prev) => prev || seeded.springStart);
+    setDefaultSpringEndDate((prev) => prev || seeded.springEnd);
+  }, [selectedSchoolYearLabel]);
 
   const visibleSubjects = useMemo(
     () => {
@@ -304,15 +449,27 @@ export default function PlannerSettingsContent({
   useEffect(() => {
     if (!initialData) return;
     const s = initialData.settings || {};
+    const rangeDefaults = schoolYearRangeDefaults(
+      isSchoolYearLocked
+        ? normalizedLockedSchoolYearLabel
+        : (s.default_school_year || selectedSchoolYearLabel)
+    );
     setTargetScope(s.target_scope || 'overall');
     setGoalMode(s.default_constraint_mode || 'none');
     setTargetDays(s.default_target_days != null ? String(s.default_target_days) : '180');
     setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
-    setHoursPerDay(s.default_planned_hours_per_day != null ? String(s.default_planned_hours_per_day) : '5');
+    setLearningStartTime(normalizeLearningTimeDisplay(s.default_day_start_time, DEFAULT_LEARNING_START_TIME));
+    setLearningEndTime(normalizeLearningTimeDisplay(s.default_day_end_time, DEFAULT_LEARNING_END_TIME));
     setFollowGlobalHolidays(s.follow_public_holidays !== false);
     if (s.default_school_year && !isSchoolYearLocked) {
       setSelectedSchoolYearLabel(normalizeSchoolYearLabel(String(s.default_school_year)));
     }
+    setDefaultYearStartDate(normalizeYmd(s.default_year_start_date) || rangeDefaults.yearStart);
+    setDefaultYearEndDate(normalizeYmd(s.default_year_end_date) || rangeDefaults.yearEnd);
+    setDefaultFallStartDate(normalizeYmd(s.default_fall_term_start_date) || rangeDefaults.fallStart);
+    setDefaultFallEndDate(normalizeYmd(s.default_fall_term_end_date) || rangeDefaults.fallEnd);
+    setDefaultSpringStartDate(normalizeYmd(s.default_spring_term_start_date) || rangeDefaults.springStart);
+    setDefaultSpringEndDate(normalizeYmd(s.default_spring_term_end_date) || rangeDefaults.springEnd);
     const ex = initialData.exclusions || [];
     const holidays = ex.filter((e) => e.exclusion_type === 'holiday').map((e) => ({
       id: e.id,
@@ -339,7 +496,7 @@ export default function PlannerSettingsContent({
       if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
     }
     setLoading(false);
-  }, [initialData, isSchoolYearLocked]);
+  }, [initialData, isSchoolYearLocked, normalizedLockedSchoolYearLabel, selectedSchoolYearLabel]);
 
   useEffect(() => {
     let cancelled = false;
@@ -395,15 +552,26 @@ export default function PlannerSettingsContent({
       );
       if (planErr) throw planErr;
       if (s) {
+        const fallbackYearLabel = isSchoolYearLocked
+          ? normalizedLockedSchoolYearLabel
+          : (s.default_school_year || selectedSchoolYearLabel);
+        const rangeDefaults = schoolYearRangeDefaults(fallbackYearLabel);
         setTargetScope(s.target_scope || 'overall');
         setGoalMode(s.default_constraint_mode || 'none');
         setTargetDays(s.default_target_days != null ? String(s.default_target_days) : '180');
         setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
-        setHoursPerDay(s.default_planned_hours_per_day != null ? String(s.default_planned_hours_per_day) : '5');
+        setLearningStartTime(normalizeLearningTimeDisplay(s.default_day_start_time, DEFAULT_LEARNING_START_TIME));
+        setLearningEndTime(normalizeLearningTimeDisplay(s.default_day_end_time, DEFAULT_LEARNING_END_TIME));
         setFollowGlobalHolidays(s.follow_public_holidays !== false);
         if (s.default_school_year && !isSchoolYearLocked) {
           setSelectedSchoolYearLabel(normalizeSchoolYearLabel(String(s.default_school_year)));
         }
+        setDefaultYearStartDate(normalizeYmd(s.default_year_start_date) || rangeDefaults.yearStart);
+        setDefaultYearEndDate(normalizeYmd(s.default_year_end_date) || rangeDefaults.yearEnd);
+        setDefaultFallStartDate(normalizeYmd(s.default_fall_term_start_date) || rangeDefaults.fallStart);
+        setDefaultFallEndDate(normalizeYmd(s.default_fall_term_end_date) || rangeDefaults.fallEnd);
+        setDefaultSpringStartDate(normalizeYmd(s.default_spring_term_start_date) || rangeDefaults.springStart);
+        setDefaultSpringEndDate(normalizeYmd(s.default_spring_term_end_date) || rangeDefaults.springEnd);
       }
       setExcludedPublicHolidayDates(Array.isArray(excludedDates) ? excludedDates : []);
       const holidays = (ex || []).filter((e) => e.exclusion_type === 'holiday').map((e) => ({
@@ -511,16 +679,64 @@ export default function PlannerSettingsContent({
       setSaving(true);
       setError(null);
       try {
+        const parsedTargetDays = parsePositiveIntOrNull(s.targetDays);
+        const parsedTargetHours = parsePositiveFloatOrNull(s.targetHours);
+        const normalizedTargetDays = parsedTargetDays ?? 180;
+        const normalizedTargetHours = parsedTargetHours ?? 1000;
+        const learningStartSql = normalizeLearningTimeSql(s.learningStartTime, DEFAULT_LEARNING_START_TIME);
+        const learningEndSql = normalizeLearningTimeSql(s.learningEndTime, DEFAULT_LEARNING_END_TIME);
+        const learningStartMinutes = parseTimeToMinutesOrNull(learningStartSql);
+        const learningEndMinutes = parseTimeToMinutesOrNull(learningEndSql);
+        if (
+          learningStartMinutes == null
+          || learningEndMinutes == null
+          || learningEndMinutes <= learningStartMinutes
+        ) {
+          throw new Error('Learning end time must be after learning start time.');
+        }
+        const normalizedHoursPerDay = Number(((learningEndMinutes - learningStartMinutes) / 60).toFixed(2));
+        const yearStart = normalizeYmd(s.defaultYearStartDate);
+        const yearEnd = normalizeYmd(s.defaultYearEndDate);
+        const fallStart = normalizeYmd(s.defaultFallStartDate);
+        const fallEnd = normalizeYmd(s.defaultFallEndDate);
+        const springStart = normalizeYmd(s.defaultSpringStartDate);
+        const springEnd = normalizeYmd(s.defaultSpringEndDate);
+        if ((yearStart && !yearEnd) || (!yearStart && yearEnd)) {
+          throw new Error('Set both year start and year end (or clear both).');
+        }
+        if ((fallStart && !fallEnd) || (!fallStart && fallEnd)) {
+          throw new Error('Set both fall term start and end (or clear both).');
+        }
+        if ((springStart && !springEnd) || (!springStart && springEnd)) {
+          throw new Error('Set both spring term start and end (or clear both).');
+        }
+        if (yearStart && yearEnd && yearStart > yearEnd) {
+          throw new Error('Year end must be on or after year start.');
+        }
+        if (fallStart && fallEnd && fallStart > fallEnd) {
+          throw new Error('Fall term end must be on or after fall term start.');
+        }
+        if (springStart && springEnd && springStart > springEnd) {
+          throw new Error('Spring term end must be on or after spring term start.');
+        }
         const settingsPayload = {
           target_scope: s.targetScope || 'overall',
           default_school_year: selectedSchoolYearLabel || null,
           default_constraint_mode: s.goalMode,
-          default_target_days: s.goalMode === 'days' ? parseInt(s.targetDays, 10) : null,
-          default_target_hours: s.goalMode === 'hours' ? parseInt(s.targetHours, 10) : null,
-          default_planned_hours_per_day: s.goalMode === 'hours' ? parseFloat(s.hoursPerDay) : null,
+          default_target_days: s.goalMode === 'days' ? normalizedTargetDays : null,
+          default_target_hours: s.goalMode === 'hours' ? normalizedTargetHours : null,
+          default_planned_hours_per_day: normalizedHoursPerDay,
+          default_day_start_time: learningStartSql,
+          default_day_end_time: learningEndSql,
           follow_public_holidays: s.followGlobalHolidays,
           holiday_country: s.countryCode,
           holiday_region: s.regionCode ?? null,
+          default_year_start_date: yearStart || null,
+          default_year_end_date: yearEnd || null,
+          default_fall_term_start_date: fallStart || null,
+          default_fall_term_end_date: fallEnd || null,
+          default_spring_term_start_date: springStart || null,
+          default_spring_term_end_date: springEnd || null,
           ...updates,
         };
         const { error: settingsErr } = await saveFamilyPlannerSettings(familyId, settingsPayload, selectedSchoolYearLabel);
@@ -596,6 +812,12 @@ export default function PlannerSettingsContent({
   };
 
   const handleGoalChange = (mode) => {
+    if (mode === 'days' && !parsePositiveIntOrNull(stateRef.current?.targetDays)) {
+      setTargetDays('180');
+    }
+    if (mode === 'hours') {
+      if (!parsePositiveFloatOrNull(stateRef.current?.targetHours)) setTargetHours('1000');
+    }
     setGoalMode(mode);
     setTimeout(debouncedPersist, 300);
   };
@@ -607,12 +829,55 @@ export default function PlannerSettingsContent({
     setTargetHours(v);
     setTimeout(debouncedPersist, 400);
   };
-  const handleHoursPerDayChange = (v) => {
-    setHoursPerDay(v);
-    setTimeout(debouncedPersist, 400);
-  };
+  const persistLearningTimes = useCallback((startDisplayInput, endDisplayInput) => {
+    const startDisplay = normalizeLearningTimeDisplay(startDisplayInput, DEFAULT_LEARNING_START_TIME);
+    const endDisplay = normalizeLearningTimeDisplay(endDisplayInput, DEFAULT_LEARNING_END_TIME);
+    const startSql = normalizeLearningTimeSql(startDisplay, DEFAULT_LEARNING_START_TIME);
+    const endSql = normalizeLearningTimeSql(endDisplay, DEFAULT_LEARNING_END_TIME);
+    const startMinutes = parseTimeToMinutesOrNull(startSql);
+    const endMinutes = parseTimeToMinutesOrNull(endSql);
+    if (
+      startMinutes == null
+      || endMinutes == null
+      || endMinutes <= startMinutes
+    ) {
+      toast.push('Learning end time must be after learning start time.', 'error');
+      return false;
+    }
+    setLearningStartTime(startDisplay);
+    setLearningEndTime(endDisplay);
+    const hoursPerDay = Number(((endMinutes - startMinutes) / 60).toFixed(2));
+    persist({
+      default_day_start_time: startSql,
+      default_day_end_time: endSql,
+      default_planned_hours_per_day: hoursPerDay,
+    });
+    return true;
+  }, [persist, toast]);
+  const handleLearningStartTimeWebChange = useCallback((value) => {
+    const parts = String(value || '').split(':').map((n) => Number(n));
+    if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return;
+    const sql = `${String(parts[0]).padStart(2, '0')}:${String(parts[1]).padStart(2, '0')}:00`;
+    const display = normalizeLearningTimeDisplay(sql, DEFAULT_LEARNING_START_TIME);
+    setLearningStartTime(display);
+    persistLearningTimes(display, stateRef.current?.learningEndTime);
+  }, [persistLearningTimes]);
+  const handleLearningEndTimeWebChange = useCallback((value) => {
+    const parts = String(value || '').split(':').map((n) => Number(n));
+    if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return;
+    const sql = `${String(parts[0]).padStart(2, '0')}:${String(parts[1]).padStart(2, '0')}:00`;
+    const display = normalizeLearningTimeDisplay(sql, DEFAULT_LEARNING_END_TIME);
+    setLearningEndTime(display);
+    persistLearningTimes(stateRef.current?.learningStartTime, display);
+  }, [persistLearningTimes]);
+  const learningStartTimeWebValue = normalizeLearningTimeSql(learningStartTime, DEFAULT_LEARNING_START_TIME).slice(0, 5);
+  const learningEndTimeWebValue = normalizeLearningTimeSql(learningEndTime, DEFAULT_LEARNING_END_TIME).slice(0, 5);
   const handleFollowChange = (v) => {
     setFollowGlobalHolidays(v);
+    setTimeout(debouncedPersist, 300);
+  };
+  const handleRangeDefaultChange = (setter) => (value) => {
+    setter(normalizeYmd(value));
     setTimeout(debouncedPersist, 300);
   };
   const openAddSubjectModal = useCallback(() => {
@@ -756,16 +1021,18 @@ export default function PlannerSettingsContent({
           .eq('id', subjectId);
         if (error) throw error;
         if (mode === 'days' || mode === 'hours') {
+          const normalizedDays = mode === 'days' ? (parsePositiveIntOrNull(days) ?? 180) : null;
+          const normalizedHours = mode === 'hours' ? (parsePositiveFloatOrNull(hours) ?? 1000) : null;
           await saveFamilyPlannerSettings(familyId, {
             target_scope: 'per_subject',
             default_constraint_mode: mode,
-            default_target_days: mode === 'days' ? days : null,
-            default_target_hours: mode === 'hours' ? hours : null,
+            default_target_days: normalizedDays,
+            default_target_hours: normalizedHours,
           }, selectedSchoolYearLabel);
           setTargetScope('per_subject');
           setGoalMode(mode);
-          if (mode === 'days') setTargetDays(days != null ? String(days) : '');
-          if (mode === 'hours') setTargetHours(hours != null ? String(hours) : '');
+          if (mode === 'days') setTargetDays(normalizedDays != null ? String(normalizedDays) : '');
+          if (mode === 'hours') setTargetHours(normalizedHours != null ? String(normalizedHours) : '');
         }
         showSaved();
         if (typeof window !== 'undefined') {
@@ -1134,16 +1401,6 @@ export default function PlannerSettingsContent({
                     placeholderTextColor="rgba(15,23,42,0.4)"
                   />
                   <Text style={{ fontSize: 14, color: TEXT_BLACK }}>hours</Text>
-                  <Text style={{ fontSize: 14, color: TEXT_BLACK, marginLeft: 4 }}>·</Text>
-                  <TextInput
-                    value={hoursPerDay}
-                    onChangeText={handleHoursPerDayChange}
-                    keyboardType="decimal-pad"
-                    style={[inputStyle, { width: 48 }]}
-                    placeholder="5"
-                    placeholderTextColor="rgba(15,23,42,0.4)"
-                  />
-                  <Text style={{ fontSize: 14, color: TEXT_BLACK }}>/day</Text>
                 </View>
               )}
             </View>
@@ -1219,6 +1476,289 @@ export default function PlannerSettingsContent({
             )}
           </View>
         )}
+
+        <View style={sectionStyle}>
+          <Text style={sectionTitleStyle}>Plan range defaults</Text>
+          <View style={sectionDividerStyle} />
+          <View style={{ marginBottom: 10 }}>
+            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>School year</Text>
+            <View
+              style={{
+                borderWidth: 1,
+                borderColor: '#DCE3EE',
+                borderRadius: 24,
+                backgroundColor: '#FFFFFF',
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                maxWidth: 350,
+                alignSelf: 'flex-start',
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <ChevronLeft size={20} color="#1E293B" />
+                <PlannerPreferenceDateField
+                  value={defaultYearStartDate}
+                  onChange={handleRangeDefaultChange(setDefaultYearStartDate)}
+                  placeholder="Start"
+                  borderColor="transparent"
+                  textColor={TEXT_BLACK}
+                  mutedColor="rgba(15,23,42,0.4)"
+                  style={{
+                    borderWidth: 0,
+                    backgroundColor: 'transparent',
+                    paddingVertical: 8,
+                    paddingHorizontal: 0,
+                    fontSize: 18,
+                    fontWeight: '600',
+                    color: '#111827',
+                    alignItems: 'center',
+                  }}
+                  minDate={yearRangeMinYmd}
+                  maxDate={yearRangeMaxYmd}
+                />
+              </View>
+              <ArrowRight size={18} color="#94A3B8" />
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
+                <PlannerPreferenceDateField
+                  value={defaultYearEndDate}
+                  onChange={handleRangeDefaultChange(setDefaultYearEndDate)}
+                  placeholder="End"
+                  borderColor="transparent"
+                  textColor={TEXT_BLACK}
+                  mutedColor="rgba(15,23,42,0.4)"
+                  style={{
+                    borderWidth: 0,
+                    backgroundColor: 'transparent',
+                    paddingVertical: 8,
+                    paddingHorizontal: 0,
+                    fontSize: 18,
+                    fontWeight: '600',
+                    color: '#111827',
+                    alignItems: 'center',
+                  }}
+                  minDate={yearRangeMinYmd}
+                  maxDate={yearRangeMaxYmd}
+                />
+                <ChevronRight size={20} color="#1E293B" />
+              </View>
+            </View>
+          </View>
+          <View style={{ marginBottom: 10 }}>
+            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Fall term</Text>
+            <View
+              style={{
+                borderWidth: 1,
+                borderColor: '#DCE3EE',
+                borderRadius: 24,
+                backgroundColor: '#FFFFFF',
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                maxWidth: 350,
+                alignSelf: 'flex-start',
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <ChevronLeft size={20} color="#1E293B" />
+                <PlannerPreferenceDateField
+                  value={defaultFallStartDate}
+                  onChange={handleRangeDefaultChange(setDefaultFallStartDate)}
+                  placeholder="Start"
+                  borderColor="transparent"
+                  textColor={TEXT_BLACK}
+                  mutedColor="rgba(15,23,42,0.4)"
+                  style={{
+                    borderWidth: 0,
+                    backgroundColor: 'transparent',
+                    paddingVertical: 8,
+                    paddingHorizontal: 0,
+                    fontSize: 18,
+                    fontWeight: '600',
+                    color: '#111827',
+                    alignItems: 'center',
+                  }}
+                  minDate={yearRangeMinYmd}
+                  maxDate={yearRangeMaxYmd}
+                />
+              </View>
+              <ArrowRight size={18} color="#94A3B8" />
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
+                <PlannerPreferenceDateField
+                  value={defaultFallEndDate}
+                  onChange={handleRangeDefaultChange(setDefaultFallEndDate)}
+                  placeholder="End"
+                  borderColor="transparent"
+                  textColor={TEXT_BLACK}
+                  mutedColor="rgba(15,23,42,0.4)"
+                  style={{
+                    borderWidth: 0,
+                    backgroundColor: 'transparent',
+                    paddingVertical: 8,
+                    paddingHorizontal: 0,
+                    fontSize: 18,
+                    fontWeight: '600',
+                    color: '#111827',
+                    alignItems: 'center',
+                  }}
+                  minDate={yearRangeMinYmd}
+                  maxDate={yearRangeMaxYmd}
+                />
+                <ChevronRight size={20} color="#1E293B" />
+              </View>
+            </View>
+          </View>
+          <View>
+            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Spring term</Text>
+            <View
+              style={{
+                borderWidth: 1,
+                borderColor: '#DCE3EE',
+                borderRadius: 24,
+                backgroundColor: '#FFFFFF',
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                maxWidth: 350,
+                alignSelf: 'flex-start',
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                <ChevronLeft size={20} color="#1E293B" />
+                <PlannerPreferenceDateField
+                  value={defaultSpringStartDate}
+                  onChange={handleRangeDefaultChange(setDefaultSpringStartDate)}
+                  placeholder="Start"
+                  borderColor="transparent"
+                  textColor={TEXT_BLACK}
+                  mutedColor="rgba(15,23,42,0.4)"
+                  style={{
+                    borderWidth: 0,
+                    backgroundColor: 'transparent',
+                    paddingVertical: 8,
+                    paddingHorizontal: 0,
+                    fontSize: 18,
+                    fontWeight: '600',
+                    color: '#111827',
+                    alignItems: 'center',
+                  }}
+                  minDate={yearRangeMinYmd}
+                  maxDate={yearRangeMaxYmd}
+                />
+              </View>
+              <ArrowRight size={18} color="#94A3B8" />
+              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
+                <PlannerPreferenceDateField
+                  value={defaultSpringEndDate}
+                  onChange={handleRangeDefaultChange(setDefaultSpringEndDate)}
+                  placeholder="End"
+                  borderColor="transparent"
+                  textColor={TEXT_BLACK}
+                  mutedColor="rgba(15,23,42,0.4)"
+                  style={{
+                    borderWidth: 0,
+                    backgroundColor: 'transparent',
+                    paddingVertical: 8,
+                    paddingHorizontal: 0,
+                    fontSize: 18,
+                    fontWeight: '600',
+                    color: '#111827',
+                    alignItems: 'center',
+                  }}
+                  minDate={yearRangeMinYmd}
+                  maxDate={yearRangeMaxYmd}
+                />
+                <ChevronRight size={20} color="#1E293B" />
+              </View>
+            </View>
+          </View>
+          <View style={{ marginTop: 10 }}>
+            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Learning times</Text>
+            <View
+              style={{
+                borderWidth: 1,
+                borderColor: '#DCE3EE',
+                borderRadius: 24,
+                backgroundColor: '#FFFFFF',
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                maxWidth: 350,
+                alignSelf: 'flex-start',
+              }}
+            >
+              <View style={{ flex: 1, alignItems: 'center' }}>
+                {Platform.OS === 'web' ? (
+                  <input
+                    type="time"
+                    value={learningStartTimeWebValue}
+                    onChange={(e) => handleLearningStartTimeWebChange(e.target.value)}
+                    style={{
+                      backgroundColor: 'transparent',
+                      borderWidth: 0,
+                      borderStyle: 'none',
+                      fontSize: 14,
+                      color: '#111827',
+                      width: 110,
+                      outline: 'none',
+                      textAlign: 'center',
+                    }}
+                  />
+                ) : (
+                  <TextInput
+                    value={learningStartTime}
+                    onChangeText={setLearningStartTime}
+                    onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
+                    placeholder="8:00 AM"
+                    placeholderTextColor={MUTED}
+                    style={[inputStyle, { borderWidth: 0, backgroundColor: 'transparent', textAlign: 'center', width: 110 }]}
+                  />
+                )}
+              </View>
+              <ArrowRight size={18} color="#94A3B8" />
+              <View style={{ flex: 1, alignItems: 'center' }}>
+                {Platform.OS === 'web' ? (
+                  <input
+                    type="time"
+                    value={learningEndTimeWebValue}
+                    onChange={(e) => handleLearningEndTimeWebChange(e.target.value)}
+                    style={{
+                      backgroundColor: 'transparent',
+                      borderWidth: 0,
+                      borderStyle: 'none',
+                      fontSize: 14,
+                      color: '#111827',
+                      width: 110,
+                      outline: 'none',
+                      textAlign: 'center',
+                    }}
+                  />
+                ) : (
+                  <TextInput
+                    value={learningEndTime}
+                    onChangeText={setLearningEndTime}
+                    onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
+                    placeholder="3:00 PM"
+                    placeholderTextColor={MUTED}
+                    style={[inputStyle, { borderWidth: 0, backgroundColor: 'transparent', textAlign: 'center', width: 110 }]}
+                  />
+                )}
+              </View>
+            </View>
+          </View>
+        </View>
 
         {/* Public holidays */}
         <View style={sectionStyle}>

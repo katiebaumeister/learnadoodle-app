@@ -1011,6 +1011,67 @@ function buildStaticSchoolYearOptions(startYear = 2025, years = 12) {
   return out;
 }
 
+function normalizeYmd(value) {
+  const v = String(value || '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '';
+}
+
+function resolveSchoolYearStartYear(yearOption) {
+  const startYmd = normalizeYmd(yearOption?.start_date);
+  if (startYmd) return Number(startYmd.slice(0, 4));
+  const label = String(yearOption?.label || '').trim();
+  const labelMatch = label.match(/^(\d{4})\/\d{2}$/);
+  if (labelMatch) return Number(labelMatch[1]);
+  return null;
+}
+
+function resolveRangeDefaultsForSchoolYear(yearOption, plannerSettings = null) {
+  const startYear = resolveSchoolYearStartYear(yearOption);
+  if (!Number.isFinite(startYear)) {
+    const fallbackStart = normalizeYmd(yearOption?.start_date);
+    const fallbackEnd = normalizeYmd(yearOption?.end_date);
+    return {
+      full_year: { start: fallbackStart, end: fallbackEnd },
+      fall_term: { start: fallbackStart, end: fallbackEnd },
+      spring_term: { start: fallbackStart, end: fallbackEnd },
+    };
+  }
+  const fallback = {
+    full_year: { start: `${startYear}-08-01`, end: `${startYear + 1}-05-31` },
+    fall_term: { start: `${startYear}-08-01`, end: `${startYear}-12-31` },
+    spring_term: { start: `${startYear + 1}-01-01`, end: `${startYear + 1}-05-01` },
+  };
+  const settings = plannerSettings && typeof plannerSettings === 'object' ? plannerSettings : {};
+  const settingsRanges = {
+    full_year: {
+      start: normalizeYmd(settings.default_year_start_date),
+      end: normalizeYmd(settings.default_year_end_date),
+    },
+    fall_term: {
+      start: normalizeYmd(settings.default_fall_term_start_date),
+      end: normalizeYmd(settings.default_fall_term_end_date),
+    },
+    spring_term: {
+      start: normalizeYmd(settings.default_spring_term_start_date),
+      end: normalizeYmd(settings.default_spring_term_end_date),
+    },
+  };
+  return {
+    full_year:
+      settingsRanges.full_year.start && settingsRanges.full_year.end && settingsRanges.full_year.start <= settingsRanges.full_year.end
+        ? settingsRanges.full_year
+        : fallback.full_year,
+    fall_term:
+      settingsRanges.fall_term.start && settingsRanges.fall_term.end && settingsRanges.fall_term.start <= settingsRanges.fall_term.end
+        ? settingsRanges.fall_term
+        : fallback.fall_term,
+    spring_term:
+      settingsRanges.spring_term.start && settingsRanges.spring_term.end && settingsRanges.spring_term.start <= settingsRanges.spring_term.end
+        ? settingsRanges.spring_term
+        : fallback.spring_term,
+  };
+}
+
 function deepMergeObjects(base, override) {
   if (!base || typeof base !== 'object') return override ?? base;
   if (!override || typeof override !== 'object') return base;
@@ -1861,6 +1922,7 @@ export default function PlanYearModal({
   /** Snapshot of cadence per subject id (synced from `blocks` when multi-subject flag is on). */
   const [perSubjectCadenceDraft, setPerSubjectCadenceDraft] = useState({});
   const [targetScopeFromSettings, setTargetScopeFromSettings] = useState('per_subject'); // forced per-subject in this modal
+  const [plannerRangeDefaultsSettings, setPlannerRangeDefaultsSettings] = useState(null);
   const [planningDefaultsData, setPlanningDefaultsData] = useState(null); // { settings, exclusions } for Planning defaults summary
   const [planningDefaultsLoading, setPlanningDefaultsLoading] = useState(false);
   const [loadedPlanCurriculumSubjectIds, setLoadedPlanCurriculumSubjectIds] = useState([]);
@@ -3996,12 +4058,20 @@ export default function PlanYearModal({
   );
 
   const step3CurriculumCards = useMemo(() => {
+    const scopedSubjectId = (
+      fromSubjectDetail
+      && initialSubjectId != null
+      && String(initialSubjectId).trim() !== ''
+    )
+      ? String(initialSubjectId).trim()
+      : null;
     const subjectById = new Map((baseSubjectList || []).map((subject) => [String(subject.id), subject]));
     const seen = new Set();
     const cards = [];
     (blocks || []).forEach((block) => {
       if (!block?.subject_id) return;
       const sid = String(block.subject_id);
+      if (scopedSubjectId && sid !== scopedSubjectId) return;
       if (seen.has(sid)) return;
       seen.add(sid);
       const subject = subjectById.get(sid);
@@ -4029,6 +4099,8 @@ export default function PlanYearModal({
   }, [
     blocks,
     baseSubjectList,
+    fromSubjectDetail,
+    initialSubjectId,
     planSummaryCurriculumBySubjectId,
     savedCurriculumStatsBySubjectId,
     cadenceShowChangeUnitsForSubject,
@@ -4253,25 +4325,13 @@ export default function PlanYearModal({
         (opt) => String(opt?.label || '').trim() === incomingSchoolYear
       );
       if (matchedIncomingYear) {
-        const preferredStartYmd = String(matchedIncomingYear.start_date || '');
-        const preferredStartYear =
-          /^\d{4}-\d{2}-\d{2}$/.test(preferredStartYmd) ? Number(preferredStartYmd.slice(0, 4)) : null;
         setSelectedSchoolYearTemplateId(matchedIncomingYear.id);
-        if (preferredStartYear != null && Number.isFinite(preferredStartYear)) {
-          if (incomingSchoolTerm === 'fall_term') {
-            setStartDate(`${preferredStartYear}-08-01`);
-            setEndDate(`${preferredStartYear}-12-31`);
-          } else if (incomingSchoolTerm === 'spring_term') {
-            setStartDate(`${preferredStartYear + 1}-01-01`);
-            setEndDate(`${preferredStartYear + 1}-05-01`);
-          } else {
-            if (matchedIncomingYear.start_date) setStartDate(matchedIncomingYear.start_date);
-            if (matchedIncomingYear.end_date) setEndDate(matchedIncomingYear.end_date);
-          }
-        } else {
-          if (matchedIncomingYear.start_date) setStartDate(matchedIncomingYear.start_date);
-          if (matchedIncomingYear.end_date) setEndDate(matchedIncomingYear.end_date);
-        }
+        const ranges = resolveRangeDefaultsForSchoolYear(matchedIncomingYear, plannerRangeDefaultsSettings);
+        const scopedRange = incomingSchoolTerm === 'fall_term'
+          ? ranges.fall_term
+          : (incomingSchoolTerm === 'spring_term' ? ranges.spring_term : ranges.full_year);
+        setStartDate(scopedRange.start || '');
+        setEndDate(scopedRange.end || '');
         setSelectedTermId(null);
         setSchoolDurationScope(incomingSchoolTerm || 'full_year');
         return;
@@ -4294,25 +4354,13 @@ export default function PlanYearModal({
       predefinedSchoolYearOptions.find((opt) => String(opt.label || '').startsWith(`${targetStartYear}/`)) ||
       predefinedSchoolYearOptions[0];
     if (!preferred) return;
-    const preferredStartYmd = String(preferred.start_date || '');
-    const preferredStartYear =
-      /^\d{4}-\d{2}-\d{2}$/.test(preferredStartYmd) ? Number(preferredStartYmd.slice(0, 4)) : null;
     setSelectedSchoolYearTemplateId(preferred.id);
-    if (preferredStartYear != null && Number.isFinite(preferredStartYear)) {
-      if (defaultScope === 'fall_term') {
-        setStartDate(`${preferredStartYear}-08-01`);
-        setEndDate(`${preferredStartYear}-12-31`);
-      } else if (defaultScope === 'spring_term') {
-        setStartDate(`${preferredStartYear + 1}-01-01`);
-        setEndDate(`${preferredStartYear + 1}-05-01`);
-      } else {
-        if (preferred.start_date) setStartDate(preferred.start_date);
-        if (preferred.end_date) setEndDate(preferred.end_date);
-      }
-    } else {
-      if (preferred.start_date) setStartDate(preferred.start_date);
-      if (preferred.end_date) setEndDate(preferred.end_date);
-    }
+    const preferredRanges = resolveRangeDefaultsForSchoolYear(preferred, plannerRangeDefaultsSettings);
+    const defaultRange = defaultScope === 'fall_term'
+      ? preferredRanges.fall_term
+      : (defaultScope === 'spring_term' ? preferredRanges.spring_term : preferredRanges.full_year);
+    setStartDate(defaultRange.start || '');
+    setEndDate(defaultRange.end || '');
     setSelectedTermId(null);
     setSchoolDurationScope(defaultScope);
     setFollowGlobalHolidays(true);
@@ -4328,6 +4376,7 @@ export default function PlanYearModal({
     openForNewPlan,
     startCreatingNew,
     academicYearId,
+    plannerRangeDefaultsSettings,
     fromSubjectDetail,
     initialSubjectSchoolYear,
     initialSubjectSchoolTerm,
@@ -4429,28 +4478,42 @@ export default function PlanYearModal({
     },
     [schoolYearOptions, selectedSchoolYearTemplateId, academicYearId],
   );
+  const applyDurationRangeForOption = useCallback((yearOption, scope = schoolDurationScope) => {
+    if (!yearOption) return;
+    const ranges = resolveRangeDefaultsForSchoolYear(yearOption, plannerRangeDefaultsSettings);
+    const selected =
+      scope === 'fall_term'
+        ? ranges.fall_term
+        : (scope === 'spring_term' ? ranges.spring_term : ranges.full_year);
+    if (scope === 'custom_duration') {
+      setStartDate(normalizeYmd(yearOption.start_date) || selected.start || '');
+      setEndDate(normalizeYmd(yearOption.end_date) || selected.end || '');
+      return;
+    }
+    setStartDate(selected.start || '');
+    setEndDate(selected.end || '');
+  }, [schoolDurationScope, plannerRangeDefaultsSettings]);
+
+  useEffect(() => {
+    if (!visible || !familyId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await getFamilyPlannerSettings(familyId, selectedSchoolYearOption?.label || null);
+      if (cancelled) return;
+      if (!error) {
+        setPlannerRangeDefaultsSettings(data || null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, familyId, selectedSchoolYearOption?.label]);
+
   useEffect(() => {
     if (!selectedSchoolYearOption) return;
     if (schoolDurationScope === 'custom_duration') return;
-    const startYmd = selectedSchoolYearOption.start_date || '';
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(startYmd)) return;
-    const startYear = Number(startYmd.slice(0, 4));
-    if (!Number.isFinite(startYear)) return;
-    if (schoolDurationScope === 'full_year') {
-      setStartDate(`${startYear}-08-01`);
-      setEndDate(`${startYear + 1}-05-31`);
-      return;
-    }
-    if (schoolDurationScope === 'fall_term') {
-      setStartDate(`${startYear}-08-01`);
-      setEndDate(`${startYear}-12-31`);
-      return;
-    }
-    if (schoolDurationScope === 'spring_term') {
-      setStartDate(`${startYear + 1}-01-01`);
-      setEndDate(`${startYear + 1}-05-01`);
-    }
-  }, [selectedSchoolYearOption, schoolDurationScope]);
+    applyDurationRangeForOption(selectedSchoolYearOption, schoolDurationScope);
+  }, [selectedSchoolYearOption, schoolDurationScope, applyDurationRangeForOption]);
   const selectedTermOption = useMemo(
     () => schoolTermOptions.find((opt) => String(opt.id) === String(selectedTermId || '')) || null,
     [schoolTermOptions, selectedTermId],
@@ -5587,6 +5650,16 @@ export default function PlanYearModal({
           setPlanSubjectTargetsOverride(overrides);
         }
         const planBlocks = Array.isArray(p.blocks) ? p.blocks : [];
+        const scopedSubjectId = (
+          fromSubjectDetail
+          && initialSubjectId != null
+          && String(initialSubjectId).trim() !== ''
+        )
+          ? String(initialSubjectId).trim()
+          : null;
+        const scopedPlanBlocks = scopedSubjectId
+          ? planBlocks.filter((block) => String(block?.subject_id || '').trim() === scopedSubjectId)
+          : planBlocks;
         const planCurriculumSubjectIds = [
           ...new Set(
             (Array.isArray(p.plan_slot_labels) ? p.plan_slot_labels : [])
@@ -5597,10 +5670,10 @@ export default function PlanYearModal({
           ),
         ];
         setLoadedPlanCurriculumSubjectIds(planCurriculumSubjectIds);
-        if (planBlocks.length > 0) {
+        if (scopedPlanBlocks.length > 0) {
           const subjectIdsFromPlan = Array.from(
             new Set(
-              planBlocks
+              scopedPlanBlocks
                 .map((b) => b.subject_id)
                 .filter(Boolean)
             )
@@ -5610,16 +5683,38 @@ export default function PlanYearModal({
             setSelectedSubjectIds(subjectIdsFromPlan);
           }
         }
-        if (planBlocks.length > 0) {
-          const mappedBlocks = planBlocks.map((b) => ({
-            block_id: b.block_id || (crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}-${b.subject_id}`),
-            subject_id: b.subject_id,
-            child_ids: Array.isArray(b.child_ids) ? b.child_ids : [],
-            weekdays: Array.isArray(b.weekdays) ? b.weekdays : [],
-            start_time: b.start_time || '09:00',
-            end_time: b.end_time || '10:00',
-            all_day: !!b.all_day,
-          }));
+        if (scopedPlanBlocks.length > 0) {
+          const mappedBlocks = (() => {
+            if (!scopedSubjectId) {
+              return scopedPlanBlocks.map((b) => ({
+                block_id: b.block_id || (crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}-${b.subject_id}`),
+                subject_id: b.subject_id,
+                child_ids: Array.isArray(b.child_ids) ? b.child_ids : [],
+                weekdays: Array.isArray(b.weekdays) ? b.weekdays : [],
+                start_time: b.start_time || '09:00',
+                end_time: b.end_time || '10:00',
+                all_day: !!b.all_day,
+              }));
+            }
+            // Subject-scoped editing should show one merged learning-days block.
+            const sorted = [...scopedPlanBlocks].sort((a, b) => String(a?.start_time || '').localeCompare(String(b?.start_time || '')));
+            const primary = sorted[0] || {};
+            const mergedWeekdays = [...new Set(
+              sorted.flatMap((b) => (Array.isArray(b?.weekdays) ? b.weekdays : []))
+            )].map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort((a, b) => a - b);
+            const mergedChildIds = [...new Set(
+              sorted.flatMap((b) => (Array.isArray(b?.child_ids) ? b.child_ids : []))
+            )].filter(Boolean);
+            return [{
+              block_id: primary.block_id || (crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}-${scopedSubjectId}`),
+              subject_id: primary.subject_id || scopedSubjectId,
+              child_ids: mergedChildIds,
+              weekdays: mergedWeekdays,
+              start_time: primary.start_time || '09:00',
+              end_time: primary.end_time || '10:00',
+              all_day: !!primary.all_day,
+            }];
+          })();
           setBlocks(mappedBlocks);
           setCadenceBaselineKey(serializeCadenceSnapshot(mappedBlocks));
         }
@@ -9127,26 +9222,7 @@ export default function PlanYearModal({
                     setStartCreatingNew(true);
                     setShowPlanManagerView(false);
                     setPlanSummaryYearId(null);
-                    const startYmd = yearOption.start_date || '';
-                    const startYear = /^\d{4}-\d{2}-\d{2}$/.test(startYmd) ? Number(startYmd.slice(0, 4)) : null;
-                    if (startYear != null && Number.isFinite(startYear)) {
-                      if (schoolDurationScope === 'full_year') {
-                        setStartDate(`${startYear}-08-01`);
-                        setEndDate(`${startYear + 1}-05-31`);
-                      } else if (schoolDurationScope === 'fall_term') {
-                        setStartDate(`${startYear}-08-01`);
-                        setEndDate(`${startYear}-12-31`);
-                      } else if (schoolDurationScope === 'spring_term') {
-                        setStartDate(`${startYear + 1}-01-01`);
-                        setEndDate(`${startYear + 1}-05-01`);
-                      } else {
-                        setStartDate(yearOption.start_date || '');
-                        setEndDate(yearOption.end_date || '');
-                      }
-                    } else {
-                      setStartDate(yearOption.start_date || '');
-                      setEndDate(yearOption.end_date || '');
-                    }
+                    applyDurationRangeForOption(yearOption, schoolDurationScope);
                     setFollowGlobalHolidays(true);
                     setCountryCode('US');
                     setRegionCode(null);
@@ -12489,26 +12565,7 @@ export default function PlanYearModal({
                               setStartCreatingNew(true);
                               setShowPlanManagerView(false);
                               setPlanSummaryYearId(null);
-                              const startYmd = yearOption.start_date || '';
-                              const startYear = /^\d{4}-\d{2}-\d{2}$/.test(startYmd) ? Number(startYmd.slice(0, 4)) : null;
-                              if (startYear != null && Number.isFinite(startYear)) {
-                                if (schoolDurationScope === 'full_year') {
-                                  setStartDate(`${startYear}-08-01`);
-                                  setEndDate(`${startYear + 1}-05-31`);
-                                } else if (schoolDurationScope === 'fall_term') {
-                                  setStartDate(`${startYear}-08-01`);
-                                  setEndDate(`${startYear}-12-31`);
-                                } else if (schoolDurationScope === 'spring_term') {
-                                  setStartDate(`${startYear + 1}-01-01`);
-                                  setEndDate(`${startYear + 1}-05-01`);
-                                } else {
-                                  setStartDate(yearOption.start_date || '');
-                                  setEndDate(yearOption.end_date || '');
-                                }
-                              } else {
-                                setStartDate(yearOption.start_date || '');
-                                setEndDate(yearOption.end_date || '');
-                              }
+                              applyDurationRangeForOption(yearOption, schoolDurationScope);
                               setFollowGlobalHolidays(true);
                               setCountryCode('US');
                               setRegionCode(null);
@@ -13584,9 +13641,7 @@ export default function PlanYearModal({
                         </View>
                       );
                     })}
-                    {showPlanEditingModeBanner && academicYearId && blocks.length > 0 && cadenceDirty
-                      ? renderApplyFromScopeCadenceInline()
-                      : null}
+                    {null}
                       </View>
                     </View>
                     {isPlaceholderOnlyScope && (
@@ -15458,7 +15513,7 @@ export default function PlanYearModal({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <Modal visible={visible} transparent animationType="none">
       <TouchableOpacity ref={overlayRef} style={styles.overlay} activeOpacity={1} onPress={onClose}>
         {modalContent}
       </TouchableOpacity>
@@ -17902,10 +17957,10 @@ const styles = StyleSheet.create({
   footerPrimaryActionButton: {
     minHeight: 50,
     borderRadius: 16,
-    backgroundColor: EVENT_DETAILS_PRIMARY_BG,
+    backgroundColor: '#10B981',
     paddingHorizontal: 18,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 12px rgba(133,196,242,0.45)',
+      boxShadow: '0 2px 12px rgba(16,185,129,0.35)',
     }),
   },
   footerPrimaryActionButtonDisabled: {
@@ -18294,6 +18349,10 @@ const styles = StyleSheet.create({
   },
   planYearGenerateCtaFooter: {
     alignSelf: 'center',
+    backgroundColor: '#10B981',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 10px rgba(16,185,129,0.35)',
+    }),
   },
   buttonDisabled: {
     backgroundColor: '#9CA3AF',

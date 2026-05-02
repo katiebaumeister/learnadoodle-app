@@ -1265,7 +1265,7 @@ export default function AddSubjectModal({
     <RNModal
       visible={visible}
       transparent={true}
-      animationType="fade"
+      animationType="none"
       onRequestClose={handleCloseWithDraftCleanup}
     >
       <View ref={overlayRef} style={styles.overlay}>
