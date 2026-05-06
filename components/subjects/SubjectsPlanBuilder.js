@@ -3446,6 +3446,8 @@ export default function SubjectsPlanBuilder({
       toast?.push?.('Missing family context.', 'error');
       return;
     }
+    fixGapInFlightByRowRef.current.add(rowId);
+    setFixingGapRowId(rowId);
     const selectedStartYear = Number(displaySchoolYear?.start_year);
     const preferredScope = normalizeSubjectTerm(row?.schoolTermId || 'full_year');
     const eligibleCores = (planCores || []).filter((core) => (
@@ -3508,6 +3510,10 @@ export default function SubjectsPlanBuilder({
         ? { start_date: requestedRangeStartYmd, end_date: requestedRangeEndYmd }
         : fullYearRange;
       if (!fallbackRange?.start_date || !fallbackRange?.end_date || fallbackBlocks.length === 0) {
+        try {
+          fixGapInFlightByRowRef.current.delete(rowId);
+        } catch (_) {}
+        setFixingGapRowId(null);
         toast?.push?.('No saved plan found. Unable to auto-create plan: missing subjects or school year range.', 'error');
         return;
       }
@@ -3533,6 +3539,10 @@ export default function SubjectsPlanBuilder({
       academicYearId = String(bootstrapData?.academic_year_id || '').trim();
       setOverviewReloadKey((k) => k + 1);
       if (!academicYearId) {
+        try {
+          fixGapInFlightByRowRef.current.delete(rowId);
+        } catch (_) {}
+        setFixingGapRowId(null);
         toast?.push?.('No saved plan found. Auto-create did not return a plan id.', 'error');
         return;
       }
@@ -3561,12 +3571,6 @@ export default function SubjectsPlanBuilder({
       strict_range: true,
       enforce_conflict_checks: true,
     };
-    if (fixGapInFlightByRowRef.current.has(rowId)) {
-      toast?.push?.('Fix gap is already running for this row.', 'info');
-      return;
-    }
-    fixGapInFlightByRowRef.current.add(rowId);
-    setFixingGapRowId(rowId);
     let dryRunPreview = null;
     if (daysNeeded > 0) {
       try {

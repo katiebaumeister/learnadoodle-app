@@ -2574,7 +2574,9 @@ async def fix_target_gap(
             assignment_requests: List[Dict[str, Any]] = []
             available_dates_count = 0
             if effective_scope == "overall":
-                eligible_days = [d for d in learning_dates if d not in existing_overall_dates]
+                # Do not drop whole dates just because a counted event already exists on that date.
+                # Slot-level overlap probing is the source of truth for capacity.
+                eligible_days = list(learning_dates)
                 available_dates_count = len(eligible_days)
                 selected_days = _evenly_pick_days(eligible_days, max(0, before_gap_days))
                 for idx, day_key in enumerate(selected_days):
@@ -2595,7 +2597,9 @@ async def fix_target_gap(
                     gap_sid = max(0, int(per_subject_gaps.get(sid, 0)))
                     if gap_sid <= 0:
                         continue
-                    eligible_days_sid = [d for d in learning_dates if d not in (existing_by_subject.get(sid) or set())]
+                    # Keep all preferred/excluded-filtered learning dates; per-slot conflict checks
+                    # handle whether each date can accept an additional event.
+                    eligible_days_sid = list(learning_dates)
                     available_dates_count += len(eligible_days_sid)
                     selected_days_sid = _evenly_pick_days(eligible_days_sid, gap_sid)
                     st, et = slot_templates_by_subject.get(
