@@ -293,6 +293,7 @@ class FixTargetGapOutput(BaseModel):
     partialFixPossible: Optional[bool] = None
     availableDates: Optional[int] = None
     remainingUnfixableGap: Optional[int] = None
+    maxAchievableDays: Optional[int] = None
     message: Optional[str] = None
 
 
@@ -2421,6 +2422,7 @@ async def fix_target_gap(
                     partialFixPossible=True,
                     availableDates=0,
                     remainingUnfixableGap=0,
+                    maxAchievableDays=0,
                     debugFailureReason="saved_range_already_ended",
                     message="Saved planning range has already ended. Extend planning preferences to add days.",
                 )
@@ -2553,6 +2555,7 @@ async def fix_target_gap(
                     partialFixPossible=False,
                     availableDates=0,
                     remainingUnfixableGap=0,
+                    maxAchievableDays=before_projected_days,
                     debugDaysNeeded=max(0, before_gap_days),
                     debugCandidateDatesCount=0,
                     debugSelectedDatesCount=0,
@@ -2893,6 +2896,7 @@ async def fix_target_gap(
 
             selected_assignments: List[Dict[str, Any]] = []
             used_overall_dates: set = set()
+            used_subject_dates: Dict[str, set] = defaultdict(set)
             generated_child_days: Dict[str, set] = defaultdict(set)
             assigned_count_by_week: Dict[str, int] = defaultdict(int)
             skipped_no_slot = 0
@@ -2960,7 +2964,17 @@ async def fix_target_gap(
 
                 def _try_assign_on_dates(date_list: List[str], allow_same_child_day: bool) -> Optional[Dict[str, Any]]:
                     for day_key in date_list:
+                        # Day-target accounting: never place a new event on a day that's
+                        # already counted for this scope before the run.
+                        if effective_scope == "overall":
+                            if day_key in existing_overall_dates:
+                                continue
+                        else:
+                            if day_key in (existing_by_subject.get(sid) or set()):
+                                continue
                         if effective_scope == "overall" and day_key in used_overall_dates:
+                            continue
+                        if day_key in (used_subject_dates.get(sid) or set()):
                             continue
                         if (not allow_same_child_day) and any(day_key in (generated_child_days.get(cid) or set()) for cid in child_ids):
                             continue
@@ -3050,6 +3064,7 @@ async def fix_target_gap(
                             )
                             if effective_scope == "overall":
                                 used_overall_dates.add(day_key)
+                            used_subject_dates[sid].add(day_key)
                             for cid in child_ids:
                                 generated_child_days[cid].add(day_key)
                             assigned_count_by_week[_week_start_ymd(day_key)] += 1
@@ -3403,10 +3418,31 @@ async def fix_target_gap(
                         )
 
             events_created_count = successful_insert_count
-            projected_after_days = before_projected_days + events_created_count
+            inserted_day_keys_by_subject: Dict[str, set] = defaultdict(set)
+            for ev in inserted_rows:
+                sid = str(ev.get("subject_id") or "").strip()
+                day_key = _day_from_ts(ev.get("start_ts"))
+                if sid and day_key:
+                    inserted_day_keys_by_subject[sid].add(day_key)
+
+            if effective_scope == "overall":
+                done_overall = set().union(*done_by_subject.values()) if done_by_subject else set()
+                upcoming_overall = set().union(*upcoming_by_subject.values()) if upcoming_by_subject else set()
+                before_projected_set = done_overall.union(upcoming_overall)
+                inserted_overall_days = set().union(*inserted_day_keys_by_subject.values()) if inserted_day_keys_by_subject else set()
+                after_projected_set = before_projected_set.union(inserted_overall_days)
+                projected_after_days = len(after_projected_set)
+            else:
+                projected_after_days = 0
+                for sid in per_subject_gaps.keys():
+                    projected_before_sid = (done_by_subject.get(sid) or set()).union(upcoming_by_subject.get(sid) or set())
+                    projected_after_sid = projected_before_sid.union(inserted_day_keys_by_subject.get(sid) or set())
+                    projected_after_days += len(projected_after_sid)
+
             after_gap_days = int(target_days_effective - projected_after_days)
-            remaining_unfixable_gap = max(0, int(before_gap_days - events_created_count))
-            partial_fix_possible = remaining_unfixable_gap > 0
+            remaining_unfixable_gap = max(0, after_gap_days)
+            partial_fix_possible = after_gap_days > 0
+            progress_days = max(0, int(projected_after_days - before_projected_days))
 
             print(
                 "[FixGapV3] result",
@@ -3428,6 +3464,7 @@ async def fix_target_gap(
                     "duplicateSuppressedCount": len(duplicate_suppressed_failures),
                     "assignmentStrategy": "even_spread_conflict_aware",
                     "assignmentDebug": assignment_debug,
+                    "progressDays": progress_days,
                     "projectedAfter": projected_after_days,
                     "gapAfter": after_gap_days,
                 },
@@ -3437,7 +3474,7 @@ async def fix_target_gap(
             message = None
             if partial_fix_possible:
                 message = (
-                    f"Only {events_created_count} of {before_gap_days} missing day{'s' if before_gap_days != 1 else ''} could be scheduled. "
+                    f"Only {progress_days} of {before_gap_days} missing day{'s' if before_gap_days != 1 else ''} could be scheduled. "
                     f"Extend planning range or add more preferred learning days to close the remaining {remaining_unfixable_gap}-day gap."
                 )
 
@@ -3482,6 +3519,7 @@ async def fix_target_gap(
                 partialFixPossible=partial_fix_possible,
                 availableDates=available_dates_count,
                 remainingUnfixableGap=remaining_unfixable_gap,
+                maxAchievableDays=projected_after_days,
                 message=message,
             )
 
