@@ -108,6 +108,29 @@ function isUuidLike(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized);
 }
 
+function parseSchoolYearLabel(label) {
+  const match = String(label || '').trim().match(/^(\d{4})\/(\d{2,4})$/);
+  if (!match) return null;
+  const startYear = Number(match[1]);
+  if (!Number.isFinite(startYear)) return null;
+  const rawEnd = String(match[2] || '').trim();
+  const endYear = rawEnd.length === 2 ? Number(`${String(startYear).slice(0, 2)}${rawEnd}`) : Number(rawEnd);
+  if (!Number.isFinite(endYear)) return null;
+  return { startYear, endYear };
+}
+
+function groupSubjectIdsByYear(subjects = []) {
+  const groupedByYear = {};
+  (Array.isArray(subjects) ? subjects : []).forEach((subject) => {
+    const label = String(subject?.school_year || '').trim();
+    const subjectId = String(subject?.id || '').trim();
+    if (!label || !subjectId) return;
+    if (!groupedByYear[label]) groupedByYear[label] = new Set();
+    groupedByYear[label].add(subjectId);
+  });
+  return groupedByYear;
+}
+
 /** Avatar column may be prof1–10 or a real URL — same rules as children fetch. */
 function validateChildAvatarUrl(url) {
   if (!url || typeof url !== 'string') return null;
@@ -251,44 +274,56 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Subjects page then hydrates immediately from cache when opened.
   useEffect(() => {
     if (!familyId) return;
-    preloadSubjectsPlanOverview(familyId).catch(() => {});
+    preloadSubjectsPlanOverview(familyId, { force: true }).catch(() => {});
   }, [familyId]);
 
-  // Warm schedule supplemental data (settings + target defaults + attendance/projection events)
-  // across all known subject years so year/term switching in Subjects > Schedule stays instant.
-  useEffect(() => {
+  const warmSubjectsScheduleCaches = useCallback(({ force = true } = {}) => {
     if (!familyId || !Array.isArray(subjects) || subjects.length === 0) return;
-    const groupedByYear = {};
-    (subjects || []).forEach((subject) => {
-      const label = String(subject?.school_year || '').trim();
-      const subjectId = String(subject?.id || '').trim();
-      if (!label || !subjectId) return;
-      if (!groupedByYear[label]) groupedByYear[label] = new Set();
-      groupedByYear[label].add(subjectId);
-    });
-
-    const parseSchoolYear = (label) => {
-      const match = String(label || '').trim().match(/^(\d{4})\/(\d{2,4})$/);
-      if (!match) return null;
-      const startYear = Number(match[1]);
-      if (!Number.isFinite(startYear)) return null;
-      const rawEnd = String(match[2] || '').trim();
-      const endYear = rawEnd.length === 2 ? Number(`${String(startYear).slice(0, 2)}${rawEnd}`) : Number(rawEnd);
-      if (!Number.isFinite(endYear)) return null;
-      return { startYear, endYear };
-    };
-
+    const groupedByYear = groupSubjectIdsByYear(subjects);
     Object.entries(groupedByYear).forEach(([schoolYearLabel, subjectIdSet]) => {
-      const parsed = parseSchoolYear(schoolYearLabel);
+      const parsed = parseSchoolYearLabel(schoolYearLabel);
       if (!parsed) return;
       preloadSubjectsScheduleData(familyId, {
         schoolYearLabel,
         startYear: parsed.startYear,
         endYear: parsed.endYear,
         subjectIds: [...subjectIdSet],
+        force,
       }).catch(() => {});
     });
   }, [familyId, subjects]);
+
+  // Warm schedule supplemental data (settings + target defaults + attendance/projection events)
+  // across all known subject years so year/term switching in Subjects > Schedule stays instant.
+  useEffect(() => {
+    warmSubjectsScheduleCaches({ force: true });
+  }, [warmSubjectsScheduleCaches]);
+
+  // Keep subjects schedule cache warm after event mutations so Schedule numbers stay current
+  // before the user navigates into the tab.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return undefined;
+    let timerId = null;
+    const queueWarm = () => {
+      if (timerId != null) return;
+      timerId = setTimeout(() => {
+        timerId = null;
+        preloadSubjectsPlanOverview(familyId, { force: true }).catch(() => {});
+        warmSubjectsScheduleCaches({ force: true });
+      }, 500);
+    };
+    window.addEventListener('eventCreated', queueWarm);
+    window.addEventListener('eventUpdated', queueWarm);
+    window.addEventListener('eventDeleted', queueWarm);
+    window.addEventListener('refreshSubjects', queueWarm);
+    return () => {
+      if (timerId != null) clearTimeout(timerId);
+      window.removeEventListener('eventCreated', queueWarm);
+      window.removeEventListener('eventUpdated', queueWarm);
+      window.removeEventListener('eventDeleted', queueWarm);
+      window.removeEventListener('refreshSubjects', queueWarm);
+    };
+  }, [familyId, warmSubjectsScheduleCaches]);
 
   // Warm subject progress/unit-structure cache once subjects are known, so Edit Subject can render stable units actions immediately.
   useEffect(() => {

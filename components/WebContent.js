@@ -2805,6 +2805,16 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       // Update data in place: refetch target month and merge into cache (no full cache clear to avoid loading flash)
       const skipCacheClear = event?.detail?.skipCacheClear === true;
       const dropStartTime = event?.detail?.dropStartTime;
+      const cachedMonthDates = Object.keys(calendarDataCacheRef.current || {})
+        .map((monthKey) => {
+          const match = String(monthKey || '').match(/^(\d{4})-(\d{1,2})$/);
+          if (!match) return null;
+          const yearNum = Number(match[1]);
+          const monthNum = Number(match[2]);
+          if (!Number.isFinite(yearNum) || !Number.isFinite(monthNum) || monthNum < 0 || monthNum > 11) return null;
+          return new Date(yearNum, monthNum, 1);
+        })
+        .filter((d) => d instanceof Date && !Number.isNaN(d.getTime()));
       if (forceInvalidate && familyId) {
         invalidateHolidaysForRangeCache(familyId);
       }
@@ -2832,6 +2842,22 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         if (isTargetedRefresh && eventIdFromDetail) opts.background = true; // post-drag: refetch in background, no loading state
         if (forceInvalidate) opts.force = true;
         refreshCalendarData(refreshDate, opts).catch(err => console.error('[WebContent] Calendar refresh failed:', err));
+        // Keep planner cache warm across app usage: when Schedule/other pages emit a broad
+        // force invalidation, refresh all already-cached planner months in background too.
+        if (!isTargetedRefresh && forceInvalidate && cachedMonthDates.length > 0) {
+          cachedMonthDates.forEach((monthDate) => {
+            if (
+              refreshDate instanceof Date
+              && !Number.isNaN(refreshDate.getTime())
+              && monthDate.getFullYear() === refreshDate.getFullYear()
+              && monthDate.getMonth() === refreshDate.getMonth()
+            ) {
+              return;
+            }
+            refreshCalendarData(monthDate, { background: true, force: true })
+              .catch((err) => console.error('[WebContent] Cached month refresh failed:', err));
+          });
+        }
       };
       if (forceInvalidate) {
         setTimeout(doRefetch, 0);

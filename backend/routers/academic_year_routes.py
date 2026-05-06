@@ -245,6 +245,7 @@ class FixTargetGapInput(BaseModel):
     mode: str = "fill_to_zero"
     strict_range: bool = False
     enforce_conflict_checks: bool = False
+    timezone: Optional[str] = None  # IANA timezone from client (e.g. America/New_York)
     dry_run: bool = False
 
 
@@ -1777,6 +1778,37 @@ async def fix_target_gap(
             raise HTTPException(status_code=403, detail="Forbidden: Family access missing")
         require_onboarding_complete(family_id)
         supabase = get_admin_client()
+        fix_gap_timezone_name = None
+        if getattr(body, "timezone", None) and (body.timezone or "").strip():
+            fix_gap_timezone_name = (body.timezone or "").strip()
+        if not fix_gap_timezone_name:
+            try:
+                tz_resp = supabase.table("family").select("timezone").eq("id", family_id).maybe_single().execute()
+                if getattr(tz_resp, "data", None) and (tz_resp.data.get("timezone") or "").strip():
+                    fix_gap_timezone_name = (tz_resp.data.get("timezone") or "").strip()
+            except Exception:
+                pass
+        if not fix_gap_timezone_name:
+            fix_gap_timezone_name = "UTC"
+        try:
+            fix_gap_timezone = ZoneInfo(fix_gap_timezone_name)
+        except Exception:
+            fix_gap_timezone_name = "UTC"
+            fix_gap_timezone = ZoneInfo("UTC")
+
+        def _slot_dt_utc(day_key: str, hhmm: str) -> datetime:
+            safe_day = str(day_key or "").strip()[:10]
+            safe_hm = str(hhmm or "09:00").strip()[:5]
+            if len(safe_day) != 10:
+                raise ValueError(f"Invalid day key: {day_key}")
+            if len(safe_hm) < 4:
+                safe_hm = "09:00"
+            local_naive = datetime.fromisoformat(f"{safe_day}T{safe_hm}:00")
+            local_dt = local_naive.replace(tzinfo=fix_gap_timezone)
+            return local_dt.astimezone(timezone.utc)
+
+        def _slot_iso_utc(day_key: str, hhmm: str) -> str:
+            return _slot_dt_utc(day_key, hhmm).isoformat()
 
         year_resp = (
             supabase.table("academic_years")
@@ -2991,8 +3023,8 @@ async def fix_target_gap(
                             end_min = start_min + duration_min
                             if end_min > learning_window_end_min:
                                 continue
-                            candidate_start_dt = datetime.fromisoformat(f"{day_key}T{_minutes_to_hhmm_simple(start_min)}:00+00:00")
-                            candidate_end_dt = datetime.fromisoformat(f"{day_key}T{_minutes_to_hhmm_simple(end_min)}:00+00:00")
+                            candidate_start_dt = _slot_dt_utc(day_key, _minutes_to_hhmm_simple(start_min))
+                            candidate_end_dt = _slot_dt_utc(day_key, _minutes_to_hhmm_simple(end_min))
                             conflicting_ev = _find_conflicting_event(
                                 day_events=day_events,
                                 candidate_start_dt=candidate_start_dt,
@@ -3047,8 +3079,8 @@ async def fix_target_gap(
                                 "id": None,
                                 "start_dt": candidate_start_dt,
                                 "end_dt": candidate_end_dt,
-                                "start_ts": f"{day_key}T{_minutes_to_hhmm_simple(start_min)}:00+00:00",
-                                "end_ts": f"{day_key}T{_minutes_to_hhmm_simple(end_min)}:00+00:00",
+                                "start_ts": _slot_iso_utc(day_key, _minutes_to_hhmm_simple(start_min)),
+                                "end_ts": _slot_iso_utc(day_key, _minutes_to_hhmm_simple(end_min)),
                                 "child_ids": list(child_ids),
                             })
                             print(
@@ -3179,8 +3211,8 @@ async def fix_target_gap(
                         end_min = _to_minutes_or_none(str(slot.get("end_time") or "")) or (start_min + 60)
                         if end_min <= start_min:
                             end_min = start_min + 60
-                        candidate_start_dt = datetime.fromisoformat(f"{day_key}T{_minutes_to_hhmm_simple(start_min)}:00+00:00")
-                        candidate_end_dt = datetime.fromisoformat(f"{day_key}T{_minutes_to_hhmm_simple(end_min)}:00+00:00")
+                        candidate_start_dt = _slot_dt_utc(day_key, _minutes_to_hhmm_simple(start_min))
+                        candidate_end_dt = _slot_dt_utc(day_key, _minutes_to_hhmm_simple(end_min))
                         day_events = refreshed_events_by_date.setdefault(day_key, [])
                         conflicting_ev = _find_conflicting_event(
                             day_events=day_events,
@@ -3229,8 +3261,8 @@ async def fix_target_gap(
                             "id": None,
                             "start_dt": candidate_start_dt,
                             "end_dt": candidate_end_dt,
-                            "start_ts": f"{day_key}T{_minutes_to_hhmm_simple(start_min)}:00+00:00",
-                            "end_ts": f"{day_key}T{_minutes_to_hhmm_simple(end_min)}:00+00:00",
+                            "start_ts": _slot_iso_utc(day_key, _minutes_to_hhmm_simple(start_min)),
+                            "end_ts": _slot_iso_utc(day_key, _minutes_to_hhmm_simple(end_min)),
                             "child_ids": list(child_ids),
                         })
                     if preinsert_conflict_failures:
@@ -3265,8 +3297,8 @@ async def fix_target_gap(
                     "event_type": "Lesson",
                     "status": "scheduled",
                     "source": "system",
-                    "start_ts": f"{slot['date']}T{st}:00+00:00",
-                    "end_ts": f"{slot['date']}T{et}:00+00:00",
+                    "start_ts": _slot_iso_utc(slot["date"], st),
+                    "end_ts": _slot_iso_utc(slot["date"], et),
                     "counts_toward_plan": True,
                     "instructional_status": "PLAN_PLACEHOLDER",
                     "is_placeholder": True,
@@ -4372,8 +4404,8 @@ async def fix_target_gap(
                         "event_type": "Lesson",
                         "status": "scheduled",
                         "source": "year_plan_seed",
-                        "start_ts": f"{slot['date']}T{st}:00+00:00",
-                        "end_ts": f"{slot['date']}T{et}:00+00:00",
+                        "start_ts": _slot_iso_utc(slot["date"], st),
+                        "end_ts": _slot_iso_utc(slot["date"], et),
                         "counts_toward_plan": True,
                         "instructional_minutes": allocated_minutes if target_kind == "hours" else None,
                         "instructional_status": "PLAN_PLACEHOLDER",
@@ -4421,8 +4453,8 @@ async def fix_target_gap(
                             probe_end_hhmm = _minutes_to_hhmm_simple(probe_end)
                             candidate_row = {
                                 **row_payload,
-                                "start_ts": f"{day_key}T{probe_start_hhmm}:00+00:00",
-                                "end_ts": f"{day_key}T{probe_end_hhmm}:00+00:00",
+                                "start_ts": _slot_iso_utc(day_key, probe_start_hhmm),
+                                "end_ts": _slot_iso_utc(day_key, probe_end_hhmm),
                             }
                             try:
                                 one = supabase.table("events").insert(candidate_row).execute()
@@ -4480,7 +4512,7 @@ async def fix_target_gap(
                 created_event_ids = [str(i) for i in range(len(selected_slots))]
                 created_events = [{
                     "id": f"dry-run-{idx}",
-                    "start_ts": f"{slot['date']}T{str(slot.get('start_time') or learning_window_start_hhmm)}:00+00:00",
+                    "start_ts": _slot_iso_utc(slot["date"], str(slot.get("start_time") or learning_window_start_hhmm)),
                     "subject_id": slot.get("subject_id"),
                     "counts_toward_plan": True,
                 } for idx, slot in enumerate(selected_slots)]
@@ -4516,8 +4548,8 @@ async def fix_target_gap(
             synthetic_created = created_rows if created_rows else [{
                 "id": f"dry-run-{idx}",
                 "subject_id": slot.get("subject_id"),
-                "start_ts": f"{slot['date']}T{str(slot.get('start_time') or learning_window_start_hhmm)}:00+00:00",
-                "end_ts": f"{slot['date']}T{str(slot.get('end_time') or learning_window_end_hhmm)}:00+00:00",
+                "start_ts": _slot_iso_utc(slot["date"], str(slot.get("start_time") or learning_window_start_hhmm)),
+                "end_ts": _slot_iso_utc(slot["date"], str(slot.get("end_time") or learning_window_end_hhmm)),
                 "counts_toward_plan": True,
                 "instructional_minutes": _slot_duration_minutes(slot) if target_kind == "hours" else None,
                 "instructional_status": "PLAN_PLACEHOLDER",

@@ -1252,6 +1252,7 @@ export default function SubjectsPlanBuilder({
     schoolTermId: 'full_year',
   });
   const [eventsRefreshKey, setEventsRefreshKey] = useState(0);
+  const scheduleSupplementSyncedKeysRef = useRef(new Set());
   const [familyPlannerSettings, setFamilyPlannerSettings] = useState({
     target_scope: 'overall',
     default_constraint_mode: 'none',
@@ -1378,10 +1379,20 @@ export default function SubjectsPlanBuilder({
   }, [displaySchoolYear?.label]);
 
   useEffect(() => {
+    scheduleSupplementSyncedKeysRef.current = new Set();
+  }, [familyId]);
+
+  useEffect(() => {
     let cancelled = false;
     const schoolYearLabel = String(displaySchoolYear?.label || '').trim();
     const subjectIds = (baseSubjects || []).map((s) => String(s?.id || '').trim()).filter(Boolean);
     const subjectIdsSignature = [...new Set(subjectIds)].sort().join(',');
+    const scheduleSyncKey = [
+      normalizeFamilyKey(familyId),
+      schoolYearLabel,
+      String(activeScheduleCore?.row?.id || '').trim(),
+      subjectIdsSignature,
+    ].join('|');
 
     const hydrateFromCache = () => {
       const cached = getCachedScheduleSupplement(familyId, schoolYearLabel);
@@ -1461,9 +1472,13 @@ export default function SubjectsPlanBuilder({
         return;
       }
       const cacheMatchesSubjects = hydrateFromCache();
-      const mustForce = overviewReloadKey > 0 || eventsRefreshKey > 0 || !cacheMatchesSubjects;
+      const hasSyncedCurrentContext = scheduleSupplementSyncedKeysRef.current.has(scheduleSyncKey);
+      const mustForce = overviewReloadKey > 0 || eventsRefreshKey > 0 || !cacheMatchesSubjects || !hasSyncedCurrentContext;
       try {
         await sync({ force: mustForce });
+        if (!cancelled) {
+          scheduleSupplementSyncedKeysRef.current.add(scheduleSyncKey);
+        }
       } catch (_) {
         if (!cancelled && !cacheMatchesSubjects) {
           setSubjectTargetSettingsById({});
@@ -3586,6 +3601,7 @@ export default function SubjectsPlanBuilder({
       mode: 'fill_to_zero',
       strict_range: true,
       enforce_conflict_checks: true,
+      timezone: getClientTimezone(),
     };
     let dryRunPreview = null;
     if (daysNeeded > 0) {
