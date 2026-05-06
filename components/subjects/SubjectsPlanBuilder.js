@@ -3331,58 +3331,52 @@ export default function SubjectsPlanBuilder({
     );
     const confirmDisabled = assignedCount <= 0;
     const title = confirmDisabled
-      ? 'No open learning slots'
+      ? 'No open days left'
       : (
         targetKind === 'hours'
           ? `Add ${toOneDecimal(assignedCount)} learning hours?`
           : `Add ${assignedCount} learning day${assignedCount === 1 ? '' : 's'}?`
       );
-    const bodyLines = [
-      targetKind === 'hours'
-        ? `We found ${toOneDecimal(assignedCount)} available hours across your saved planning window.`
-        : (
-          assignedCount > 0
-            ? `We found ${assignedCount} available slots across your saved planning window.`
-            : (
-              totalDaysInWindow > 0
-                ? `${totalDaysInWindow} days are in your planning range, but all are fully scheduled.`
-                : 'No available time slots to add learning days.'
-            )
-        ),
-      ...(partialFixPossible
-        ? [
-          targetKind === 'days' && maxAchievableDays > 0
-            ? `We scheduled all available learning days (${Math.round(maxAchievableDays)}).`
-            : null,
-          targetKind === 'days' && maxAchievableDays > 0
-            ? `Your target is ${Math.round(Number(targetDays || 0))}, but your current planning window supports ${Math.round(maxAchievableDays)} days.`
-            : null,
-          targetKind === 'hours'
-            ? `${toOneDecimal(remainingUnfixableGap)} hours could not fit without changing planning preferences.`
-            : `${remainingUnfixableGap} days could not fit without changing planning preferences.`,
-          targetKind === 'hours'
-            ? `After adding these, you'll still be ${toOneDecimal(remainingUnfixableGap)} hours short.`
-            : `After adding these, you'll still be ${remainingUnfixableGap} day${remainingUnfixableGap === 1 ? '' : 's'} short.`,
-          '1. Extend planning window (end date / weekdays).',
-          targetKind === 'days' && maxAchievableDays > 0
-            ? `2. Adjust target to ${Math.round(maxAchievableDays)} days.`
-            : '2. Adjust target to max achievable.',
-          '3. Increase daily capacity (allow multiple sessions per day).',
-        ]
-        : []),
-      `Current: ${toOneDecimal(projectedDays)}/${toOneDecimal(targetDays)} ${targetKind === 'hours' ? 'hours' : 'days'}.`,
-      requestedGap > 0 && assignedCount === 0
-        ? (targetKind === 'hours'
-          ? 'No available time slots to add learning hours in this dry run.'
-          : 'No available time slots to add learning days in this dry run.')
-        : '',
-      assignedCount === 0
-        ? '1. Change planning preferences to extend school year.'
-        : '',
-      assignedCount === 0
-        ? '2. Lower target to max achievable.'
-        : '',
-    ].filter(Boolean);
+    const bodyLines = confirmDisabled
+      ? [
+        `You are ${remainingUnfixableGap} day${remainingUnfixableGap === 1 ? '' : 's'} short. We could not add more learning days without changing your planning preferences.`,
+        'Try extending the school year, adding more preferred learning days, or allowing multiple sessions per day.',
+      ]
+      : [
+        targetKind === 'hours'
+          ? `We found ${toOneDecimal(assignedCount)} available hours across your saved planning window.`
+          : (
+            assignedCount > 0
+              ? `We found ${assignedCount} available slots across your saved planning window.`
+              : (
+                totalDaysInWindow > 0
+                  ? `${totalDaysInWindow} days are in your planning range, but all are fully scheduled.`
+                  : 'No available time slots to add learning days.'
+              )
+          ),
+        ...(partialFixPossible
+          ? [
+            targetKind === 'days' && maxAchievableDays > 0
+              ? `We scheduled all available learning days (${Math.round(maxAchievableDays)}).`
+              : null,
+            targetKind === 'days' && maxAchievableDays > 0
+              ? `Your target is ${Math.round(Number(targetDays || 0))}, but your current planning window supports ${Math.round(maxAchievableDays)} days.`
+              : null,
+            targetKind === 'hours'
+              ? `${toOneDecimal(remainingUnfixableGap)} hours could not fit without changing planning preferences.`
+              : `${remainingUnfixableGap} days could not fit without changing planning preferences.`,
+            targetKind === 'hours'
+              ? `After adding these, you'll still be ${toOneDecimal(remainingUnfixableGap)} hours short.`
+              : `After adding these, you'll still be ${remainingUnfixableGap} day${remainingUnfixableGap === 1 ? '' : 's'} short.`,
+            '1. Extend planning window (end date / weekdays).',
+            targetKind === 'days' && maxAchievableDays > 0
+              ? `2. Adjust target to ${Math.round(maxAchievableDays)} days.`
+              : '2. Adjust target to max achievable.',
+            '3. Increase daily capacity (allow multiple sessions per day).',
+          ]
+          : []),
+        `Current: ${toOneDecimal(projectedDays)}/${toOneDecimal(targetDays)} ${targetKind === 'hours' ? 'hours' : 'days'}.`,
+      ].filter(Boolean);
     const previewLines = [];
     return await new Promise((resolve) => {
       fixGapConfirmResolverRef.current = resolve;
