@@ -95,6 +95,7 @@ const EXPLORER_PARENT_STEPS = [
 ];
 
 const EXPORT_CALENDAR_WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY = 'ld_pending_subject_schedule_plan_open';
 function toLocalYYYYMMDD(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -2330,6 +2331,30 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const openToEditListBase = detail.openToEditList === true;
       const openAsModal = detail.openAsModal === true;
       const skipPlanSummary = detail.skipPlanSummary === true;
+      const openInSubjectsSchedule = detail.openInSubjectsSchedule === true;
+      if (openInSubjectsSchedule) {
+        const pendingPayload = {
+          from: 'event_details',
+          subjectId: subjectId != null ? String(subjectId) : null,
+          subjectName: subjectName != null ? String(subjectName) : null,
+          academicYearId: yearIdFromEvent || null,
+          schoolYear: subjectSchoolYear != null ? String(subjectSchoolYear) : null,
+          schoolTerm: subjectSchoolTerm != null ? String(subjectSchoolTerm) : null,
+          openToEditList: openToEditListBase || !yearIdFromEvent,
+          skipPlanSummary,
+        };
+        try {
+          window.sessionStorage.setItem(
+            SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY,
+            JSON.stringify(pendingPayload)
+          );
+        } catch (_) {
+          // no-op
+        }
+        handleTabChange('subjects');
+        window.history.pushState({}, '', '/subjects');
+        return;
+      }
       const fromEventDetails = from === 'event_details';
       const onPlannerLikeShell =
         activeTabRef.current === 'planner' || activeTabRef.current === 'calendar';

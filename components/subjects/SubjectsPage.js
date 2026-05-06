@@ -123,6 +123,7 @@ function shiftSchoolYearLabel(schoolYearLabel, direction) {
 
 const ALL_YEARS_FILTER = 'all_years';
 const ALL_TERMS_FILTER = 'all_terms';
+const SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY = 'ld_pending_subject_schedule_plan_open';
 
 const SUBJECTS_MODE_STORAGE_PREFIX = 'subjects:selected-mode';
 
@@ -210,6 +211,10 @@ export default function SubjectsPage({
     if (safeChildren.length > 0) return safeChildren[0].id;
     return 'all';
   });
+  const [selectedCourseChildIds, setSelectedCourseChildIds] = useState(() => {
+    if (isChildView && childId) return [String(childId)];
+    return (safeChildren || []).map((child) => String(child?.id || '')).filter(Boolean);
+  });
   const [selectedModeFilter, setSelectedModeFilter] = useState(() => readStoredSubjectsMode(modeStorageKey) || 'view');
   const [selectedYearFilter, setSelectedYearFilter] = useState(() => getCurrentSchoolYear());
   const [selectedTermFilter, setSelectedTermFilter] = useState(ALL_TERMS_FILTER);
@@ -240,6 +245,21 @@ export default function SubjectsPage({
   const [subjectsExportEndDate, setSubjectsExportEndDate] = useState('');
   const [subjectsExportChildIds, setSubjectsExportChildIds] = useState([]);
   const [subjectsExportBusy, setSubjectsExportBusy] = useState(false);
+  const allCourseChildIds = useMemo(
+    () => (safeChildren || []).map((child) => String(child?.id || '')).filter(Boolean),
+    [safeChildren]
+  );
+  const effectiveCoursesChildIds = useMemo(() => {
+    if (isChildView && childId) return [String(childId)];
+    if (!allCourseChildIds.length) return [];
+    const selectedSet = new Set(
+      (Array.isArray(selectedCourseChildIds) ? selectedCourseChildIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)
+    );
+    const validSelected = allCourseChildIds.filter((id) => selectedSet.has(id));
+    return validSelected.length > 0 ? validSelected : allCourseChildIds;
+  }, [isChildView, childId, allCourseChildIds, selectedCourseChildIds]);
 
   useEffect(() => {
     if ((subjectsExportType === 'schedule' || subjectsExportType === 'schedule_tables') && subjectsExportFormat !== 'excel' && subjectsExportFormat !== 'pdf') {
@@ -320,9 +340,13 @@ export default function SubjectsPage({
     setError(null);
 
     try {
-      const childId = selectedChildFilter === 'all' ? null : selectedChildFilter;
+      const requestedChildId = isChildView
+        ? (childId || null)
+        : (selectedModeFilter === 'view'
+          ? null
+          : (selectedChildFilter === 'all' ? null : selectedChildFilter));
       // Pass session for role-based filtering (preferred) or fallback to childId
-      const data = await getSubjectsWithOverview(familyId, childId, session);
+      const data = await getSubjectsWithOverview(familyId, requestedChildId, session);
       setSubjects(data);
       const idSet = new Set((data || []).map((s) => s.id));
       setSelectedSubjectId((prev) => (prev && idSet.has(prev) ? prev : null));
@@ -376,7 +400,7 @@ export default function SubjectsPage({
     } finally {
       loadingRef.current = false;
     }
-  }, [familyId, selectedChildFilter, onSubjectsUpdate]);
+  }, [familyId, selectedChildFilter, selectedModeFilter, isChildView, childId, onSubjectsUpdate]);
 
   const refreshSubjectDetailById = useCallback(async (subjectId) => {
     const sid = String(subjectId || '').trim();
@@ -410,6 +434,23 @@ export default function SubjectsPage({
     }
   }, [isChildView, childId, selectedChildFilter]);
   useEffect(() => {
+    if (isChildView && childId) {
+      setSelectedCourseChildIds([String(childId)]);
+      return;
+    }
+    if (!allCourseChildIds.length) {
+      setSelectedCourseChildIds([]);
+      return;
+    }
+    setSelectedCourseChildIds((prev) => {
+      const selectedSet = new Set(
+        (Array.isArray(prev) ? prev : []).map((id) => String(id || '').trim()).filter(Boolean)
+      );
+      const validSelected = allCourseChildIds.filter((id) => selectedSet.has(id));
+      return validSelected.length > 0 ? validSelected : allCourseChildIds;
+    });
+  }, [isChildView, childId, allCourseChildIds]);
+  useEffect(() => {
     if (isChildView) return;
     if (!Array.isArray(safeChildren) || safeChildren.length === 0) return;
     const currentIsValid = safeChildren.some((child) => String(child?.id) === String(selectedChildFilter));
@@ -422,7 +463,7 @@ export default function SubjectsPage({
     if (!preloadedSubjects) {
       loadSubjects();
     }
-  }, [familyId, selectedChildFilter]);
+  }, [familyId, selectedChildFilter, selectedModeFilter]);
 
   // Listen for subject updates
   useEffect(() => {
@@ -458,6 +499,54 @@ export default function SubjectsPage({
   useEffect(() => {
     writeStoredSubjectsMode(modeStorageKey, selectedModeFilter);
   }, [modeStorageKey, selectedModeFilter]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    let rawPending = null;
+    try {
+      rawPending = window.sessionStorage.getItem(SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY);
+    } catch (_) {
+      rawPending = null;
+    }
+    if (!rawPending) return;
+    let pending = null;
+    try {
+      pending = JSON.parse(rawPending);
+    } catch (_) {
+      pending = null;
+    }
+    try {
+      window.sessionStorage.removeItem(SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY);
+    } catch (_) {
+      // no-op
+    }
+    const subjectId = String(pending?.subjectId || '').trim();
+    if (!subjectId) return;
+    const academicYearId = pending?.academicYearId || null;
+    const schoolYear = String(pending?.schoolYear || '').trim() || null;
+    const schoolTerm = String(pending?.schoolTerm || '').trim() || null;
+    const subjectName = String(pending?.subjectName || '').trim() || null;
+    if (schoolYear) setSelectedYearFilter(schoolYear);
+    if (schoolTerm) setSelectedTermFilter(normalizeSubjectTerm(schoolTerm));
+    setSelectedModeFilter('plan');
+    window.requestAnimationFrame(() => {
+      window.dispatchEvent(
+        new CustomEvent('openPlanYearModal', {
+          detail: {
+            from: 'subject_detail',
+            openAsModal: true,
+            skipPlanSummary: true,
+            subjectId,
+            subjectName,
+            schoolYear,
+            schoolTerm,
+            academicYearId,
+            openToEditList: pending?.openToEditList === true || !academicYearId,
+          },
+        })
+      );
+    });
+  }, [familyId]);
 
   const searchQueryNormalized = useMemo(() => String(searchQuery || '').toLowerCase().trim(), [searchQuery]);
   const searchTokens = useMemo(() => tokenizeSearchQuery(searchQuery), [searchQuery]);
@@ -631,7 +720,16 @@ export default function SubjectsPage({
     }
 
     // Filter by child
-    if (selectedChildFilter !== 'all') {
+    if (selectedModeFilter === 'view' && !isChildView) {
+      if (effectiveCoursesChildIds.length > 0 && effectiveCoursesChildIds.length < allCourseChildIds.length) {
+        filteredEntries = filteredEntries.filter(({ subject }) => {
+          if (!subject.assignedChildren || subject.assignedChildren.length === 0) {
+            return true; // Subjects with no assigned children show for all
+          }
+          return subject.assignedChildren.some((id) => effectiveCoursesChildIds.includes(String(id)));
+        });
+      }
+    } else if (selectedChildFilter !== 'all') {
       filteredEntries = filteredEntries.filter(({ subject }) => {
         if (!subject.assignedChildren || subject.assignedChildren.length === 0) {
           return true; // Subjects with no assigned children show for all
@@ -658,11 +756,30 @@ export default function SubjectsPage({
     searchTokens,
     nonSectionSearchTokens,
     detectedSectionFromSearch,
+    selectedModeFilter,
+    isChildView,
+    effectiveCoursesChildIds,
+    allCourseChildIds,
     selectedChildFilter,
     selectedYearFilter,
     selectedTermFilter,
     searchQueryNormalized,
   ]);
+
+  const toggleCourseChildFilter = useCallback((nextChildId) => {
+    const safeId = String(nextChildId || '').trim();
+    if (!safeId || isChildView) return;
+    setSelectedCourseChildIds((prev) => {
+      const current = Array.isArray(prev)
+        ? prev.map((id) => String(id || '').trim()).filter(Boolean)
+        : [];
+      const exists = current.includes(safeId);
+      if (exists) {
+        return current.length <= 1 ? current : current.filter((id) => id !== safeId);
+      }
+      return [...current, safeId];
+    });
+  }, [isChildView]);
 
   const handleSubjectClick = useCallback((subject, sectionOverride = null, materialId = null, progressAction = null) => {
     if (!subject?.id) return;
@@ -1199,7 +1316,10 @@ export default function SubjectsPage({
             <View style={styles.filterChecklist}>
               {safeChildren.map((child) => {
                 const childColor = getChildColorFromAvatar(child.avatar);
-                const isActive = String(selectedChildFilter) === String(child.id);
+                const childIdString = String(child.id);
+                const isActive = selectedModeFilter === 'view'
+                  ? effectiveCoursesChildIds.includes(childIdString)
+                  : String(selectedChildFilter) === childIdString;
                 return (
                   <TouchableOpacity
                     key={child.id}
@@ -1207,7 +1327,13 @@ export default function SubjectsPage({
                       styles.filterOptionChip,
                       isActive && styles.filterOptionChipActive,
                     ]}
-                    onPress={() => setSelectedChildFilter(child.id)}
+                    onPress={() => {
+                      if (selectedModeFilter === 'view') {
+                        toggleCourseChildFilter(child.id);
+                        return;
+                      }
+                      setSelectedChildFilter(child.id);
+                    }}
                   >
                     <Text
                       style={[
@@ -1285,11 +1411,20 @@ export default function SubjectsPage({
   );
   }, [
     showInlineChildrenFilters,
+    selectedModeFilter,
+    effectiveCoursesChildIds,
+    toggleCourseChildFilter,
     selectedChildFilter,
     safeChildren,
     registeredTerms,
     selectedTermFilter,
   ]);
+
+  const selectedChildFilterForCards = useMemo(() => {
+    if (selectedModeFilter !== 'view') return selectedChildFilter;
+    if (effectiveCoursesChildIds.length === 1) return effectiveCoursesChildIds[0];
+    return 'all';
+  }, [selectedModeFilter, selectedChildFilter, effectiveCoursesChildIds]);
 
   // Overall averages across filtered subjects (for compact summary card)
   const overallSummary = useMemo(() => {
@@ -2214,7 +2349,7 @@ export default function SubjectsPage({
                 key={subject.id}
                 subject={subject}
                 children={safeChildren}
-                selectedChildFilter={selectedChildFilter}
+                selectedChildFilter={selectedChildFilterForCards}
                 onCardClick={handleSubjectClick}
                 onNeedsHelpPress={(s) => openSubjectToSection(s.id, 'needs-help-section')}
                 onNavigateToPlanner={handleNavigateToPlanner}

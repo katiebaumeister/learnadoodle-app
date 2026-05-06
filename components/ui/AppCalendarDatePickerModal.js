@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, Modal, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, Platform, StyleSheet } from 'react-native';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 /** Match TaskCreateModal mini calendar (tan selected day, month/year nav). */
@@ -315,6 +315,7 @@ export function PlannerPreferenceDateField({
   maxDate = null,
 }) {
   const [open, setOpen] = useState(false);
+  const flattenedFieldStyle = useMemo(() => StyleSheet.flatten(style) || {}, [style]);
   const selectedDate = useMemo(() => parseLocalYyyyMmDd(value), [value]);
   const minDateObj = useMemo(
     () => (minDate instanceof Date ? minDate : parseLocalYyyyMmDd(String(minDate || ''))),
@@ -340,11 +341,20 @@ export function PlannerPreferenceDateField({
     ...(width != null ? { width } : { minWidth: 108 }),
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   };
+  const resolvedTextSize = Number(flattenedFieldStyle?.fontSize);
+  const fieldTextStyle = {
+    fontSize: Number.isFinite(resolvedTextSize) ? resolvedTextSize : 12,
+    color: label ? textColor : mutedColor,
+    ...(flattenedFieldStyle?.fontWeight ? { fontWeight: flattenedFieldStyle.fontWeight } : {}),
+    ...(flattenedFieldStyle?.fontFamily ? { fontFamily: flattenedFieldStyle.fontFamily } : {}),
+    ...(flattenedFieldStyle?.lineHeight ? { lineHeight: flattenedFieldStyle.lineHeight } : {}),
+    ...(flattenedFieldStyle?.letterSpacing != null ? { letterSpacing: flattenedFieldStyle.letterSpacing } : {}),
+  };
 
   return (
     <>
       <TouchableOpacity onPress={() => setOpen(true)} style={[baseField, style]} activeOpacity={0.85}>
-        <Text style={{ fontSize: 12, color: label ? textColor : mutedColor }} numberOfLines={1}>
+        <Text style={fieldTextStyle} numberOfLines={1}>
           {label || placeholder}
         </Text>
       </TouchableOpacity>

@@ -4248,6 +4248,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       new CustomEvent('openPlanYearModal', {
                         detail: {
                           from: 'event_details',
+                          openInSubjectsSchedule: true,
                       academicYearId:
                         academicYearId ||
                         event?.academic_year_id ||
@@ -4981,6 +4982,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   new CustomEvent('openPlanYearModal', {
                     detail: {
                       from: 'event_details',
+                      openInSubjectsSchedule: true,
                       academicYearId:
                         academicYearId ||
                         event?.academic_year_id ||

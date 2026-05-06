@@ -372,34 +372,16 @@ export default function AddSubjectModal({
   useEffect(() => {
     if (!visible || !familyId) return;
     let cancelled = false;
-    getFamilyPlannerSettings(familyId, schoolYear).then(async ({ data: s }) => {
+    getFamilyPlannerSettings(familyId, schoolYear).then(({ data: s }) => {
       if (cancelled) return;
       if (!s) {
         setFamilyPlannerContext({ targetScope: 'overall', mode: 'none', days: '', hours: '' });
         return;
       }
-      let scope = s.target_scope || 'overall';
-      let mode = s.default_constraint_mode || 'none';
-      let days = s.default_target_days != null ? String(s.default_target_days) : '';
-      let hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
-      if (scope !== 'per_subject') {
-        const { data: subjectRows } = await supabase
-          .from('subject')
-          .select('default_constraint_mode, default_target_days, default_target_hours')
-          .eq('family_id', familyId)
-          .order('updated_at', { ascending: false });
-        const firstActive = (subjectRows || []).find((row) => {
-          const m = String(row?.default_constraint_mode || '').toLowerCase();
-          return (m === 'days' && parsePositiveIntOrNull(row?.default_target_days) != null) ||
-            (m === 'hours' && parsePositiveFloatOrNull(row?.default_target_hours) != null);
-        });
-        if (firstActive) {
-          scope = 'per_subject';
-          mode = String(firstActive.default_constraint_mode).toLowerCase();
-          days = mode === 'days' ? String(parsePositiveIntOrNull(firstActive.default_target_days) || '') : '';
-          hours = mode === 'hours' ? String(parsePositiveFloatOrNull(firstActive.default_target_hours) || '') : '';
-        }
-      }
+      const scope = s.target_scope || 'overall';
+      const mode = s.default_constraint_mode || 'none';
+      const days = s.default_target_days != null ? String(s.default_target_days) : '';
+      const hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
       setFamilyPlannerContext({ targetScope: scope, mode, days, hours });
     });
     return () => { cancelled = true; };
@@ -410,28 +392,10 @@ export default function AddSubjectModal({
     if (!familyId) return;
     const { data: s } = await getFamilyPlannerSettings(familyId, schoolYear);
     if (s) {
-      let scope = s.target_scope || 'overall';
-      let mode = s.default_constraint_mode || 'none';
-      let days = s.default_target_days != null ? String(s.default_target_days) : '';
-      let hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
-      if (scope !== 'per_subject') {
-        const { data: subjectRows } = await supabase
-          .from('subject')
-          .select('default_constraint_mode, default_target_days, default_target_hours')
-          .eq('family_id', familyId)
-          .order('updated_at', { ascending: false });
-        const firstActive = (subjectRows || []).find((row) => {
-          const m = String(row?.default_constraint_mode || '').toLowerCase();
-          return (m === 'days' && parsePositiveIntOrNull(row?.default_target_days) != null) ||
-            (m === 'hours' && parsePositiveFloatOrNull(row?.default_target_hours) != null);
-        });
-        if (firstActive) {
-          scope = 'per_subject';
-          mode = String(firstActive.default_constraint_mode).toLowerCase();
-          days = mode === 'days' ? String(parsePositiveIntOrNull(firstActive.default_target_days) || '') : '';
-          hours = mode === 'hours' ? String(parsePositiveFloatOrNull(firstActive.default_target_hours) || '') : '';
-        }
-      }
+      const scope = s.target_scope || 'overall';
+      const mode = s.default_constraint_mode || 'none';
+      const days = s.default_target_days != null ? String(s.default_target_days) : '';
+      const hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
       setFamilyPlannerContext({ targetScope: scope, mode, days, hours });
     } else {
       setFamilyPlannerContext({ targetScope: 'overall', mode: 'none', days: '', hours: '' });
@@ -1289,9 +1253,7 @@ export default function AddSubjectModal({
               <ModalFooter
                 mode={subject ? 'edit' : 'add'}
                 primaryLabel={isSubmitting ? 'Saving...' : (subject ? 'Save changes' : 'Save Subject')}
-                destructiveLabel={subject ? 'Delete Subject' : undefined}
                 onCancel={handleCloseWithDraftCleanup}
-                onDelete={subject ? () => setShowDangerZone(true) : undefined}
                 onPrimary={handleSubmit}
                 accent="#5A92D6"
                 disabled={!canSubmit || isSubmitting}

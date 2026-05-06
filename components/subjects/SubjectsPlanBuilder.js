@@ -13,11 +13,12 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Plus, Sparkles, Upload, X } from 'lucide-react';
+import { Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 import { applyToCalendar, fixTargetGap, getAcademicYear, getPlanHealth } from '../../lib/services/academicYearClient';
+import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import { supabase } from '../../lib/supabase';
-import { getAcademicYearExclusions, getFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
+import { getAcademicYearExclusions, getFamilyPlannerSettings, saveFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
 import { useToast } from '../Toast';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
@@ -316,6 +317,48 @@ function isInstructionalEvent(eventRow) {
   return eventRow.counts_toward_plan === true;
 }
 
+function buildDayProjectionBySubjectFromEvents(rows = [], subjectIds = []) {
+  const normalizedSubjectIds = [...new Set((Array.isArray(subjectIds) ? subjectIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  const doneSets = {};
+  const upcomingSets = {};
+  normalizedSubjectIds.forEach((sid) => {
+    doneSets[sid] = new Set();
+    upcomingSets[sid] = new Set();
+  });
+  const todayYmd = new Date().toISOString().slice(0, 10);
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const sid = String(row?.subject_id || '').trim();
+    if (!sid || (normalizedSubjectIds.length > 0 && !normalizedSubjectIds.includes(sid))) return;
+    const dayKey = String(row?.start_ts || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
+    if (!doneSets[sid]) doneSets[sid] = new Set();
+    if (!upcomingSets[sid]) upcomingSets[sid] = new Set();
+    const status = String(row?.status || '').trim().toLowerCase();
+    if (status === 'done' && dayKey <= todayYmd) {
+      doneSets[sid].add(dayKey);
+    } else if (dayKey > todayYmd) {
+      upcomingSets[sid].add(dayKey);
+    }
+  });
+  const bySubject = {};
+  Object.keys(doneSets).forEach((sid) => {
+    const doneSet = doneSets[sid] || new Set();
+    const upcomingSet = upcomingSets[sid] || new Set();
+    const projectedSet = new Set([
+      ...doneSet,
+      ...[...upcomingSet].filter((dayKey) => !doneSet.has(dayKey)),
+    ]);
+    bySubject[sid] = {
+      doneDays: doneSet.size,
+      upcomingDays: Math.max(0, [...upcomingSet].filter((dayKey) => !doneSet.has(dayKey)).length),
+      projectedDays: projectedSet.size,
+      doneDayKeys: [...doneSet].sort(),
+      upcomingDayKeys: [...upcomingSet].filter((dayKey) => !doneSet.has(dayKey)).sort(),
+    };
+  });
+  return bySubject;
+}
+
 function normalizeFamilyKey(familyId) {
   return String(familyId || '').trim();
 }
@@ -335,6 +378,13 @@ function getCachedScheduleSupplement(familyId, schoolYearLabel, { allowStale = t
   if (allowStale) return cached;
   if (Date.now() - Number(cached.updatedAt || 0) > SCHEDULE_SUPPLEMENT_TTL_MS) return null;
   return cached;
+}
+
+function invalidateScheduleSupplementCache(familyId, schoolYearLabel) {
+  const key = buildScheduleSupplementKey(familyId, schoolYearLabel);
+  if (!key) return;
+  scheduleSupplementCacheByKey.delete(key);
+  scheduleSupplementInflightByKey.delete(key);
 }
 
 function isUuidLike(value) {
@@ -744,6 +794,7 @@ async function fetchAndCacheScheduleSupplement({
   schoolYearLabel,
   startYear,
   endYear,
+  academicYearId = null,
   rangeStartYmd = null,
   rangeEndYmd = null,
   subjectIds = [],
@@ -757,18 +808,31 @@ async function fetchAndCacheScheduleSupplement({
         default_constraint_mode: 'none',
         default_target_days: null,
         default_target_hours: null,
+        allowed_weekdays: [1, 2, 3, 4, 5],
       },
       subjectTargetSettingsById: {},
       instructionalEventsBySubject: {},
       attendedDayKeysBySubject: {},
+      yearTargetProjectionBySubject: {},
+      academicYearId: String(academicYearId || '').trim() || null,
       updatedAt: Date.now(),
     };
   }
   const normalizedSubjectIds = [...new Set((subjectIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  const normalizedAcademicYearId = String(academicYearId || '').trim();
   const subjectIdsSignature = normalizedSubjectIds.slice().sort().join(',');
+  if (force) {
+    invalidateScheduleSupplementCache(familyId, schoolYearLabel);
+  }
   if (!force) {
     const fresh = getCachedScheduleSupplement(familyId, schoolYearLabel, { allowStale: false });
-    if (fresh && String(fresh.subjectIdsSignature || '') === subjectIdsSignature) return fresh;
+    if (
+      fresh
+      && String(fresh.subjectIdsSignature || '') === subjectIdsSignature
+      && String(fresh.academicYearId || '') === normalizedAcademicYearId
+    ) {
+      return fresh;
+    }
   }
   const inflight = scheduleSupplementInflightByKey.get(key);
   if (inflight && !force) return inflight;
@@ -779,6 +843,7 @@ async function fetchAndCacheScheduleSupplement({
       schoolYearLabel,
       startYear,
       endYear,
+      academicYearId: normalizedAcademicYearId || null,
       rangeStartYmd: rangeStartYmd || null,
       rangeEndYmd: rangeEndYmd || null,
       force,
@@ -793,14 +858,19 @@ async function fetchAndCacheScheduleSupplement({
         default_target_hours: parsePositiveFloat(data?.default_target_hours),
         default_year_start_date: String(data?.default_year_start_date || '').slice(0, 10) || null,
         default_year_end_date: String(data?.default_year_end_date || '').slice(0, 10) || null,
+        allowed_weekdays: Array.isArray(data?.allowed_weekdays)
+          ? data.allowed_weekdays.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+          : [1, 2, 3, 4, 5],
       }))
       .catch(() => ({
         target_scope: 'overall',
         default_constraint_mode: 'none',
         default_target_days: null,
         default_target_hours: null,
+        allowed_weekdays: [1, 2, 3, 4, 5],
         default_year_start_date: null,
         default_year_end_date: null,
+        allowed_weekdays: [1, 2, 3, 4, 5],
       }));
 
     const subjectTargetsPromise = (!schoolYearLabel
@@ -943,6 +1013,43 @@ async function fetchAndCacheScheduleSupplement({
     ]);
     const instructionalEventsBySubject = instructional.instructionalEventsBySubject || {};
     const attendedDayKeysBySubject = instructional.attendedDayKeysBySubject || {};
+    let yearTargetProjectionBySubject = {};
+    const explicitStart = String(rangeStartYmd || '').slice(0, 10);
+    const explicitEnd = String(rangeEndYmd || '').slice(0, 10);
+    const defaultRangeStart = String(familyPlannerSettings?.default_year_start_date || '').slice(0, 10);
+    const defaultRangeEnd = String(familyPlannerSettings?.default_year_end_date || '').slice(0, 10);
+    const fallbackRange = formatYmdFromTemplateYear(startYear, endYear, 'full_year') || {};
+    const savedRangeStart = /^\d{4}-\d{2}-\d{2}$/.test(defaultRangeStart)
+      ? defaultRangeStart
+      : (/^\d{4}-\d{2}-\d{2}$/.test(explicitStart) ? explicitStart : String(fallbackRange?.start_date || '').slice(0, 10));
+    const savedRangeEnd = /^\d{4}-\d{2}-\d{2}$/.test(defaultRangeEnd)
+      ? defaultRangeEnd
+      : (/^\d{4}-\d{2}-\d{2}$/.test(explicitEnd) ? explicitEnd : String(fallbackRange?.end_date || '').slice(0, 10));
+    if (
+      normalizedAcademicYearId
+      && normalizedSubjectIds.length > 0
+      && /^\d{4}-\d{2}-\d{2}$/.test(savedRangeStart)
+      && /^\d{4}-\d{2}-\d{2}$/.test(savedRangeEnd)
+      && savedRangeEnd >= savedRangeStart
+    ) {
+      try {
+        const { data: targetRows, error: targetRowsError } = await supabase
+          .from('events')
+          .select('subject_id, start_ts, status')
+          .eq('family_id', familyId)
+          .eq('academic_year_id', normalizedAcademicYearId)
+          .eq('counts_toward_plan', true)
+          .is('deleted_at', null)
+          .neq('status', 'canceled')
+          .in('subject_id', normalizedSubjectIds)
+          .gte('start_ts', `${savedRangeStart}T00:00:00`)
+          .lte('start_ts', `${savedRangeEnd}T23:59:59`);
+        if (targetRowsError) throw targetRowsError;
+        yearTargetProjectionBySubject = buildDayProjectionBySubjectFromEvents(targetRows || [], normalizedSubjectIds);
+      } catch (_) {
+        yearTargetProjectionBySubject = {};
+      }
+    }
     const eventSummaryBySubject = Object.fromEntries(
       Object.entries(instructionalEventsBySubject).map(([sid, events]) => [
         sid,
@@ -961,6 +1068,8 @@ async function fetchAndCacheScheduleSupplement({
       subjectTargetSettingsById,
       instructionalEventsBySubject,
       attendedDayKeysBySubject,
+      yearTargetProjectionBySubject,
+      academicYearId: normalizedAcademicYearId || null,
       subjectIdsSignature,
       updatedAt: Date.now(),
     };
@@ -1056,6 +1165,7 @@ export default function SubjectsPlanBuilder({
   const [blocksBySubject, setBlocksBySubject] = useState({});
   const [instructionalEventsBySubject, setInstructionalEventsBySubject] = useState({});
   const [attendedDayKeysBySubject, setAttendedDayKeysBySubject] = useState({});
+  const [yearTargetProjectionBySubject, setYearTargetProjectionBySubject] = useState({});
   const [showSubjectEventsModal, setShowSubjectEventsModal] = useState(false);
   const [subjectEventsModalData, setSubjectEventsModalData] = useState({
     subjectName: '',
@@ -1076,16 +1186,63 @@ export default function SubjectsPlanBuilder({
     bodyLines: [],
     previewLines: [],
     confirmLabel: 'Fix gap',
+    confirmDisabled: false,
+    showLowerTargetOption: false,
+    lowerTargetLabel: '',
+  });
+  const [fixGapConfirmSelections, setFixGapConfirmSelections] = useState({
+    lowerTarget: false,
   });
   const fixGapConfirmResolverRef = useRef(null);
+  const fixGapInFlightByRowRef = useRef(new Set());
   const [pendingSuggestionToApply, setPendingSuggestionToApply] = useState(null);
   const [fixingGapRowId, setFixingGapRowId] = useState(null);
+  const [fixGapActionRecommendationsByRowId, setFixGapActionRecommendationsByRowId] = useState({});
+  const fixGapFailureToastIdsRef = useRef([]);
+  const fixGapLastFailureToastMessageRef = useRef('');
   const scheduleSupplementRangeOverrideRef = useRef({
     schoolYearLabel: null,
     rangeStartYmd: null,
     rangeEndYmd: null,
   });
+  const rememberFixGapFailureToast = useCallback((message) => {
+    const normalizedMessage = String(message || '').trim();
+    if (!normalizedMessage) return;
+    // Keep only the newest failure toast visible so older "still short" values
+    // cannot linger after retries.
+    const idsToClear = [...(fixGapFailureToastIdsRef.current || [])];
+    fixGapFailureToastIdsRef.current = [];
+    idsToClear.forEach((id) => {
+      try {
+        toast?.remove?.(id);
+      } catch (_) {
+        // no-op
+      }
+    });
+    if (fixGapLastFailureToastMessageRef.current === normalizedMessage) return;
+    fixGapLastFailureToastMessageRef.current = normalizedMessage;
+    const id = toast?.push?.(normalizedMessage, 'info');
+    if (id) {
+      fixGapFailureToastIdsRef.current.push(id);
+      if (fixGapFailureToastIdsRef.current.length > 5) {
+        fixGapFailureToastIdsRef.current = fixGapFailureToastIdsRef.current.slice(-5);
+      }
+    }
+  }, [toast]);
+  const clearFixGapFailureToasts = useCallback(() => {
+    const ids = [...(fixGapFailureToastIdsRef.current || [])];
+    fixGapFailureToastIdsRef.current = [];
+    fixGapLastFailureToastMessageRef.current = '';
+    ids.forEach((id) => {
+      try {
+        toast?.remove?.(id);
+      } catch (_) {
+        // no-op
+      }
+    });
+  }, [toast]);
   const [markingAttendanceEventId, setMarkingAttendanceEventId] = useState(null);
+  const [deletingAllEvents, setDeletingAllEvents] = useState(false);
   const [upcomingEventsModalData, setUpcomingEventsModalData] = useState({
     subjectId: null,
     subjectName: '',
@@ -1100,6 +1257,7 @@ export default function SubjectsPlanBuilder({
     default_constraint_mode: 'none',
     default_target_days: null,
     default_target_hours: null,
+    allowed_weekdays: [1, 2, 3, 4, 5],
   });
   const [subjectTargetSettingsById, setSubjectTargetSettingsById] = useState({});
 
@@ -1233,11 +1391,16 @@ export default function SubjectsPlanBuilder({
         default_constraint_mode: 'none',
         default_target_days: null,
         default_target_hours: null,
+        allowed_weekdays: [1, 2, 3, 4, 5],
       });
       setSubjectTargetSettingsById(cached.subjectTargetSettingsById || {});
       setInstructionalEventsBySubject(cached.instructionalEventsBySubject || {});
       setAttendedDayKeysBySubject(cached.attendedDayKeysBySubject || {});
-      return String(cached.subjectIdsSignature || '') === subjectIdsSignature;
+      setYearTargetProjectionBySubject(cached.yearTargetProjectionBySubject || {});
+      return (
+        String(cached.subjectIdsSignature || '') === subjectIdsSignature
+        && String(cached.academicYearId || '') === String(activeScheduleCore?.row?.id || '').trim()
+      );
     };
 
     const sync = async ({ force = false } = {}) => {
@@ -1262,6 +1425,7 @@ export default function SubjectsPlanBuilder({
         schoolYearLabel,
         startYear: displaySchoolYear?.start_year,
         endYear: displaySchoolYear?.end_year,
+        academicYearId: String(activeScheduleCore?.row?.id || '').trim() || null,
         rangeStartYmd,
         rangeEndYmd,
         subjectIds,
@@ -1273,10 +1437,12 @@ export default function SubjectsPlanBuilder({
         default_constraint_mode: 'none',
         default_target_days: null,
         default_target_hours: null,
+        allowed_weekdays: [1, 2, 3, 4, 5],
       });
       setSubjectTargetSettingsById(payload.subjectTargetSettingsById || {});
       setInstructionalEventsBySubject(payload.instructionalEventsBySubject || {});
       setAttendedDayKeysBySubject(payload.attendedDayKeysBySubject || {});
+      setYearTargetProjectionBySubject(payload.yearTargetProjectionBySubject || {});
     };
 
     (async () => {
@@ -1286,10 +1452,12 @@ export default function SubjectsPlanBuilder({
           default_constraint_mode: 'none',
           default_target_days: null,
           default_target_hours: null,
+          allowed_weekdays: [1, 2, 3, 4, 5],
         });
         setSubjectTargetSettingsById({});
         setInstructionalEventsBySubject({});
         setAttendedDayKeysBySubject({});
+        setYearTargetProjectionBySubject({});
         return;
       }
       const cacheMatchesSubjects = hydrateFromCache();
@@ -1301,6 +1469,7 @@ export default function SubjectsPlanBuilder({
           setSubjectTargetSettingsById({});
           setInstructionalEventsBySubject({});
           setAttendedDayKeysBySubject({});
+          setYearTargetProjectionBySubject({});
         }
       }
     })();
@@ -1315,6 +1484,7 @@ export default function SubjectsPlanBuilder({
     baseSubjects,
     overviewReloadKey,
     eventsRefreshKey,
+    activeScheduleCore?.row?.id,
     activeScheduleCore?.row?.start_date,
     activeScheduleCore?.row?.end_date,
   ]);
@@ -1516,28 +1686,37 @@ export default function SubjectsPlanBuilder({
     };
     const settingsScope = String(familyPlannerSettings?.target_scope || 'overall').trim().toLowerCase();
     const isOverallTargetScope = settingsScope === 'overall';
+    const savedPlanningRange = (() => {
+      const start = String(familyPlannerSettings?.default_year_start_date || '').slice(0, 10);
+      const end = String(familyPlannerSettings?.default_year_end_date || '').slice(0, 10);
+      if (!start || !end || end < start) return null;
+      return { start_date: start, end_date: end };
+    })();
+    const clampToSavedRange = (range) => {
+      if (!range) return savedPlanningRange || null;
+      if (!savedPlanningRange) return range;
+      return intersectYmdRanges(range, savedPlanningRange);
+    };
     const activeCoreRange = (() => {
       const start = String(activeScheduleCore?.row?.start_date || '').slice(0, 10);
       const end = String(activeScheduleCore?.row?.end_date || '').slice(0, 10);
       if (!start || !end || end < start) return null;
       return { start_date: start, end_date: end };
     })();
-    const fullYearRange = scopeRangeById.full_year || yearRange || null;
+    const fullYearRange = clampToSavedRange(scopeRangeById.full_year || yearRange || null);
     const effectiveYearRange = isOverallTargetScope
       ? (
-        // In overall mode, always keep counting scoped to the selected school year.
-        // If an active plan was extended beyond the year, intersect it so Year Targets
-        // stays aligned with the school-year table context.
-        intersectYmdRanges(fullYearRange, activeCoreRange)
+        // Always clamp calculations to saved planning range defaults.
+        clampToSavedRange(intersectYmdRanges(fullYearRange, activeCoreRange))
         || fullYearRange
-        || activeCoreRange
+        || clampToSavedRange(activeCoreRange)
       )
       : (
-        intersectYmdRanges(scopeRangeById.full_year || yearRange, activeCoreRange)
-        || activeCoreRange
-        || scopeRangeById.full_year
-        || scopeRangeById[normalizeSubjectTerm(displayTerm || 'full_year')]
-        || yearRange
+        clampToSavedRange(intersectYmdRanges(scopeRangeById.full_year || yearRange, activeCoreRange))
+        || clampToSavedRange(activeCoreRange)
+        || clampToSavedRange(scopeRangeById.full_year)
+        || clampToSavedRange(scopeRangeById[normalizeSubjectTerm(displayTerm || 'full_year')])
+        || fullYearRange
       );
     scheduleCalcDebug('termSections:range_selection', {
       displayTerm: normalizeSubjectTerm(displayTerm || 'full_year'),
@@ -1678,13 +1857,14 @@ export default function SubjectsPlanBuilder({
           const fallbackKey = `${dayKey}|${String(eventItem?.start_ts || eventItem?.startTs || '')}|${String(eventItem?.title || '')}`;
           if (!yearEventItemsById.has(fallbackKey)) yearEventItemsById.set(fallbackKey, eventItem);
         }
-        projectedDaySet.add(dayKey);
         const isAttended = eventItem?.hasAttendancePresent === true
           || String(eventItem?.status || '').trim().toLowerCase() === 'done'
           || String(eventItem?.instructional_status || '').trim().toUpperCase() === 'MANUAL_COUNTS';
         if (isAttended) {
+          projectedDaySet.add(dayKey);
           completedDaySet.add(dayKey);
         } else if (eventMs >= nowMs) {
+          projectedDaySet.add(dayKey);
           upcomingDaySet.add(dayKey);
         }
       });
@@ -1835,7 +2015,11 @@ export default function SubjectsPlanBuilder({
       const schoolTermId = subjectTermId;
       const subjectRange = isOverallTargetScope
         ? (effectiveYearRange || yearRange)
-        : (scopeRangeById[schoolTermId] || yearRange);
+        : (
+          clampToSavedRange(scopeRangeById[schoolTermId] || yearRange)
+          || fullYearRange
+          || yearRange
+        );
       const schoolTermLabel = schoolTermId === 'full_year' ? '' : formatScheduleScopeLabel(schoolTermId);
       return {
         id: subjectId,
@@ -1857,7 +2041,7 @@ export default function SubjectsPlanBuilder({
         actualDays,
         projectedDays,
         projectedHours,
-        plannedCapacityDays: projectedDays,
+        plannedCapacityDays,
         shortfallDays,
         actualShortfallDays,
         currentPaceDaysPerWeek,
@@ -1892,15 +2076,19 @@ export default function SubjectsPlanBuilder({
   }, [familyPlannerSettings?.target_scope]);
 
   const yearTargetSummary = useMemo(() => {
+    const strictProjectionBySubject = yearTargetProjectionBySubject && typeof yearTargetProjectionBySubject === 'object'
+      ? yearTargetProjectionBySubject
+      : {};
     const perSubjectRows = (termSections || [])
       .flatMap((section) => section?.subjectPlans || [])
       .filter((row) => row?.targetUnit === 'days' && Number.isFinite(Number(row?.targetValue)) && Number(row?.targetValue) > 0)
       .map((row) => {
+        const subjectId = String(row?.id || '').trim();
+        const strictProjection = strictProjectionBySubject[subjectId] || {};
         const targetDays = Number(row.targetValue);
-        const completedDays = Math.max(0, Number(row.actualDays || 0));
-        const plannedProjectedDays = Math.max(0, Number(row.plannedCapacityDays || row.projectedDays || 0));
-        const projectedDays = Math.max(completedDays, plannedProjectedDays);
-        const upcomingDays = Math.max(0, projectedDays - completedDays);
+        const completedDays = Math.max(0, Number((strictProjection?.doneDays ?? row.actualDays) || 0));
+        const upcomingDays = Math.max(0, Number((strictProjection?.upcomingDays ?? row.upcomingDays) || 0));
+        const projectedDays = Math.max(0, Number((strictProjection?.projectedDays ?? row.projectedDays) || 0));
         const gapDays = targetDays - projectedDays;
         const requiredPace = Number(row.requiredPaceDaysPerWeek || 0);
         const currentPace = Number(row.currentPaceDaysPerWeek || 0);
@@ -1942,32 +2130,24 @@ export default function SubjectsPlanBuilder({
     const extendWeeks = additionalDaysPerWeekRaw > 0 ? Math.min(52, Math.max(1, Math.ceil(gapShortfallDays / Math.max(1, currentPaceDaysPerWeek || 1)))) : 0;
     const projectedCompletionPct = totalTargetDays > 0 ? Math.round((totalProjectedDays / totalTargetDays) * 100) : 0;
     const approxProjectedCompletionPct = Math.max(0, Math.round(projectedCompletionPct / 5) * 5);
-    const nowMs = Date.now();
-    const completedDaySet = new Set();
-    const upcomingDaySet = new Set();
-    const projectedDaySet = new Set();
+    const overallDoneDaySet = new Set();
+    const overallUpcomingDaySet = new Set();
     perSubjectRows.forEach((row) => {
-      (Array.isArray(row?.eventItems) ? row.eventItems : []).forEach((eventItem) => {
-        const eventMs = Number(eventItem?.startMs || new Date(eventItem?.startTs || '').getTime());
-        if (!Number.isFinite(eventMs)) return;
-        const dayKey = new Date(eventMs).toISOString().slice(0, 10);
-        projectedDaySet.add(dayKey);
-        const isAttended = eventItem?.hasAttendancePresent === true
-          || String(eventItem?.status || '').trim().toLowerCase() === 'done'
-          || String(eventItem?.instructional_status || '').trim().toUpperCase() === 'MANUAL_COUNTS';
-        if (isAttended) {
-          completedDaySet.add(dayKey);
-        } else if (eventMs >= nowMs) {
-          upcomingDaySet.add(dayKey);
-        }
+      const sid = String(row?.id || '').trim();
+      const subjectProjection = strictProjectionBySubject[sid] || {};
+      (Array.isArray(subjectProjection?.doneDayKeys) ? subjectProjection.doneDayKeys : []).forEach((dayKey) => {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) overallDoneDaySet.add(dayKey);
+      });
+      (Array.isArray(subjectProjection?.upcomingDayKeys) ? subjectProjection.upcomingDayKeys : []).forEach((dayKey) => {
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) overallUpcomingDaySet.add(dayKey);
       });
     });
-    const overallCompletedDays = completedDaySet.size;
-    const overallUpcomingDays = Math.max(
-      0,
-      [...upcomingDaySet].filter((dayKey) => !completedDaySet.has(dayKey)).length
-    );
-    const overallProjectedDays = projectedDaySet.size;
+    const overallCompletedDays = overallDoneDaySet.size;
+    const overallUpcomingDays = Math.max(0, [...overallUpcomingDaySet].filter((dayKey) => !overallDoneDaySet.has(dayKey)).length);
+    const overallProjectedDays = new Set([
+      ...overallDoneDaySet,
+      ...[...overallUpcomingDaySet].filter((dayKey) => !overallDoneDaySet.has(dayKey)),
+    ]).size;
     const overallTargetDays = overallTargetFromSettings != null ? overallTargetFromSettings : totalTargetDays;
     const overallGapDays = overallTargetDays - overallProjectedDays;
     const overallShortfallDays = Math.max(0, overallGapDays);
@@ -2130,7 +2310,7 @@ export default function SubjectsPlanBuilder({
       perSubjectCatchUp,
       progressPct: totalTargetDays > 0 ? Math.max(0, Math.min(100, Math.round((totalCompletedDays / totalTargetDays) * 100))) : 0,
     };
-  }, [termSections, familyPlannerSettings?.default_target_days, trackingMode]);
+  }, [termSections, familyPlannerSettings?.default_target_days, trackingMode, yearTargetProjectionBySubject]);
   const yearTargetsDisplayRows = useMemo(() => {
     if (!yearTargetSummary) {
       const fallbackMode = String(familyPlannerSettings?.default_constraint_mode || 'none').trim().toLowerCase();
@@ -3021,7 +3201,7 @@ export default function SubjectsPlanBuilder({
           createdEvents: Number(data?.created ?? 0),
         });
         if (gapAfter !== 0) {
-          console.warn('Fix gap failed', {
+          console.warn('Suggested plan left remaining gap', {
             expectedGap: 0,
             actualGap: gapAfter,
             createdEvents: Number(data?.created ?? 0),
@@ -3084,17 +3264,32 @@ export default function SubjectsPlanBuilder({
     await LEGACY_applySuggestedTermExtension(targetSuggestion);
   }, [pendingSuggestionToApply, LEGACY_applySuggestedTermExtension, LEGACY_applyOverallSuggestedPlanChanges]);
 
-  const resolveFixGapConfirmation = useCallback((confirmed) => {
+  const resolveFixGapConfirmation = useCallback((confirmedOrResult) => {
+    const normalizedResult = typeof confirmedOrResult === 'object' && confirmedOrResult !== null
+      ? {
+        confirmed: Boolean(confirmedOrResult.confirmed),
+        lowerTarget: Boolean(confirmedOrResult.lowerTarget),
+      }
+      : {
+        confirmed: Boolean(confirmedOrResult),
+        lowerTarget: false,
+      };
     if (typeof fixGapConfirmResolverRef.current === 'function') {
-      fixGapConfirmResolverRef.current(Boolean(confirmed));
+      fixGapConfirmResolverRef.current(normalizedResult);
     }
     fixGapConfirmResolverRef.current = null;
     setShowFixGapConfirmModal(false);
+    setFixGapConfirmSelections({
+      lowerTarget: false,
+    });
     setFixGapConfirmContent({
       title: '',
       bodyLines: [],
       previewLines: [],
       confirmLabel: 'Fix gap',
+      confirmDisabled: false,
+      showLowerTargetOption: false,
+      lowerTargetLabel: '',
     });
   }, []);
 
@@ -3112,45 +3307,93 @@ export default function SubjectsPlanBuilder({
     targetDays,
     projectedDays,
     gapDays,
-    cadenceSummaryLines = [],
-    previewSummary = '',
+    dryRunPreview = null,
   }) => {
     const absGap = Math.abs(Number(gapDays || 0));
     const isShort = Number(gapDays || 0) > 0;
-    const title = scope === 'overall' ? 'Auto-fill all target gaps?' : `Auto-fill ${rowName || 'subject'} gap?`;
+    const requestedGap = Math.max(0, Number(dryRunPreview?.requestedGap ?? absGap));
+    const assignedCount = Math.max(0, Number(dryRunPreview?.assignedCount ?? 0));
+    const datesWithCapacity = Math.max(0, Number(dryRunPreview?.datesWithCapacity ?? assignedCount));
+    const datesWithoutCapacity = Math.max(0, Number(dryRunPreview?.datesWithoutCapacity ?? 0));
+    const totalDaysInWindow = datesWithCapacity + datesWithoutCapacity;
+    const partialFixPossible = Boolean(dryRunPreview?.partialFixPossible);
+    const remainingUnfixableGap = Math.max(0, Number(dryRunPreview?.remainingUnfixableGap ?? 0));
+    const confirmDisabled = assignedCount <= 0;
+    const title = confirmDisabled
+      ? 'No open learning slots'
+      : (
+        targetKind === 'hours'
+          ? `Add ${toOneDecimal(assignedCount)} learning hours?`
+          : `Add ${assignedCount} learning day${assignedCount === 1 ? '' : 's'}?`
+      );
     const bodyLines = [
-      isShort
-        ? (
+      targetKind === 'hours'
+        ? `We found ${toOneDecimal(assignedCount)} available hours across your saved planning window.`
+        : (
+          assignedCount > 0
+            ? `We found ${assignedCount} available slots across your saved planning window.`
+            : (
+              totalDaysInWindow > 0
+                ? `${totalDaysInWindow} days are in your planning range, but all are fully scheduled.`
+                : 'No available time slots to add learning days.'
+            )
+        ),
+      ...(partialFixPossible
+        ? [
           targetKind === 'hours'
-            ? `We'll add about ${toOneDecimal(absGap)} learning hour${absGap === 1 ? '' : 's'} by extending class time on your saved weekday/time cadence within your saved school-year range.`
-            : `We'll add ${absGap} placeholder learning day${absGap === 1 ? '' : 's'} using your saved weekly cadence within your saved school-year range.`
-        )
-        : `We will remove up to ${absGap} future unlocked placeholder day${absGap === 1 ? '' : 's'}.`,
-      `Current: ${toOneDecimal(projectedDays)}/${toOneDecimal(targetDays)} ${targetKind === 'hours' ? 'hours' : 'days'}.`,
-      'Completed/manual-locked events will not be removed.',
-      ...(Array.isArray(cadenceSummaryLines) && cadenceSummaryLines.length > 0
-        ? ['Weekly cadence:', ...cadenceSummaryLines]
+            ? `${toOneDecimal(remainingUnfixableGap)} hours could not fit without changing planning preferences.`
+            : `${remainingUnfixableGap} days could not fit without changing planning preferences.`,
+          targetKind === 'hours'
+            ? `After adding these, you'll still be ${toOneDecimal(remainingUnfixableGap)} hours short.`
+            : `After adding these, you'll still be ${remainingUnfixableGap} day${remainingUnfixableGap === 1 ? '' : 's'} short.`,
+        ]
         : []),
-    ];
-    const previewLines = String(previewSummary || '')
-      .split('\n')
-      .map((line) => String(line || '').trimEnd())
-      .filter((line, index, arr) => line || (index > 0 && arr[index - 1]));
+      `Current: ${toOneDecimal(projectedDays)}/${toOneDecimal(targetDays)} ${targetKind === 'hours' ? 'hours' : 'days'}.`,
+      requestedGap > 0 && assignedCount === 0
+        ? (targetKind === 'hours'
+          ? 'No available time slots to add learning hours in this dry run.'
+          : 'No available time slots to add learning days in this dry run.')
+        : '',
+      assignedCount === 0
+        ? '1. Change planning preferences to extend school year.'
+        : '',
+      assignedCount === 0
+        ? '2. Lower target to max achievable.'
+        : '',
+    ].filter(Boolean);
+    const previewLines = [];
     return await new Promise((resolve) => {
       fixGapConfirmResolverRef.current = resolve;
+      setFixGapConfirmSelections({
+        lowerTarget: false,
+      });
       setFixGapConfirmContent({
         title,
         bodyLines,
         previewLines,
-        confirmLabel: scope === 'overall' ? 'Fix all gaps' : 'Fix gap',
+        confirmLabel: confirmDisabled
+          ? 'Change planning preferences'
+          : (targetKind === 'hours' ? 'Add hours' : 'Add days'),
+        confirmDisabled,
+        showLowerTargetOption: false,
+        lowerTargetLabel: '',
       });
       setShowFixGapConfirmModal(true);
     });
   }, []);
 
   const fixYearTargetGap = useCallback(async (row) => {
-    console.log('[FixGapV2] start', { row });
+    console.log('[FixGapV3] start', { row });
+    clearFixGapFailureToasts();
     const rowId = String(row?.id || '').trim();
+    if (!rowId) {
+      toast?.push?.('Missing target row id.', 'error');
+      return;
+    }
+    if (fixGapInFlightByRowRef.current.has(rowId)) {
+      toast?.push?.('Fix gap is already running for this row.', 'info');
+      return;
+    }
     const rowName = String(row?.name || 'Subject').trim() || 'Subject';
     const requestedTargetKind = String(row?.targetMode || 'days').trim().toLowerCase() === 'hours' ? 'hours' : 'days';
     const targetDays = requestedTargetKind === 'hours'
@@ -3161,7 +3404,7 @@ export default function SubjectsPlanBuilder({
       : Number(row?.projectedDays ?? row?.actualValue ?? 0);
     const gapDays = Number(targetDays - projectedDays);
     const daysNeeded = gapDays;
-    console.log('[FixGapV2] baseline', { targetKind: requestedTargetKind, targetDays, projectedDays, gapDays });
+    console.log('[FixGapV3] baseline', { targetKind: requestedTargetKind, targetDays, projectedDays, gapDays });
     const isOverallRow = rowId === 'overall' || row?.isOverall === true;
     const scope = isOverallRow ? 'overall' : 'per_subject';
     const schoolYearLabel = String(displaySchoolYear?.label || '').trim();
@@ -3176,13 +3419,6 @@ export default function SubjectsPlanBuilder({
           : (Array.isArray(row?.subjectIds) ? row.subjectIds.map((id) => String(id || '').trim()).filter(Boolean) : [])
       )]
       : [rowId];
-    const subjectNameById = Object.fromEntries(
-      (baseSubjects || []).map((subject) => [
-        String(subject?.id || '').trim(),
-        String(subject?.name || 'Subject').trim() || 'Subject',
-      ])
-    );
-    let cadenceSummaryLines = [];
     const fullYearRange = displaySchoolYear
       ? formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year')
       : null;
@@ -3224,6 +3460,28 @@ export default function SubjectsPlanBuilder({
       )
       : (eligibleCores[0] || activeScheduleCore || null);
     let academicYearId = String(matchedCore?.row?.id || activeScheduleCore?.row?.id || '').trim();
+    if (!academicYearId) {
+      // Fallback to an existing year plan for the same family/range before bootstrapping a new one.
+      try {
+        const fallbackStart = String(requestedRangeStartYmd || fullYearRange?.start_date || '').slice(0, 10);
+        const fallbackEnd = String(requestedRangeEndYmd || fullYearRange?.end_date || '').slice(0, 10);
+        if (fallbackStart && fallbackEnd) {
+          const { data: yearRows } = await supabase
+            .from('academic_years')
+            .select('id, start_date, end_date, updated_at')
+            .eq('family_id', familyId)
+            .lte('start_date', fallbackStart)
+            .gte('end_date', fallbackEnd)
+            .order('updated_at', { ascending: false })
+            .limit(1);
+          if (Array.isArray(yearRows) && yearRows.length > 0) {
+            academicYearId = String(yearRows[0]?.id || '').trim();
+          }
+        }
+      } catch (_) {
+        // continue to bootstrap fallback
+      }
+    }
     if (!academicYearId) {
       const allChildIds = (children || []).map((c) => c?.id).filter(Boolean);
       const selectedSubjectsForPlan = (baseSubjects || []).filter((subject) => (
@@ -3303,115 +3561,28 @@ export default function SubjectsPlanBuilder({
       strict_range: true,
       enforce_conflict_checks: true,
     };
-    let previewSummary = '';
+    if (fixGapInFlightByRowRef.current.has(rowId)) {
+      toast?.push?.('Fix gap is already running for this row.', 'info');
+      return;
+    }
+    fixGapInFlightByRowRef.current.add(rowId);
+    setFixingGapRowId(rowId);
+    let dryRunPreview = null;
     if (daysNeeded > 0) {
       try {
         const { data: dryRunData, error: dryRunError } = await fixTargetGap({
           ...payloadBase,
           dry_run: true,
         });
-        let previewData = (!dryRunError && dryRunData) ? dryRunData : null;
-        if (
-          previewData
-          && (previewData?.success === false || Number(previewData?.debugSelectedDatesCount ?? 0) < Number(daysNeeded || 0))
-          && String(previewData?.debugFailureReason || '').trim() === 'insufficient_eligible_dates_in_strict_range'
-        ) {
-          const { data: relaxedDryRunData, error: relaxedDryRunError } = await fixTargetGap({
-            ...payloadBase,
-            strict_range: false,
-            dry_run: true,
-          });
-          if (!relaxedDryRunError && relaxedDryRunData) {
-            previewData = relaxedDryRunData;
-          }
-        }
-        if (previewData) {
-          const previewSlots = Array.isArray(previewData?.debugSelectedSlots) ? previewData.debugSelectedSlots : [];
-          const proposedCadenceBySubjectId = previewSlots.reduce((acc, slot) => {
-            const sid = String(slot?.subject_id || '').trim();
-            const dateKey = String(slot?.date || '').slice(0, 10);
-            const start = String(slot?.start_time || '09:00');
-            const end = String(slot?.end_time || '10:00');
-            if (!sid || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return acc;
-            const dayDate = new Date(`${dateKey}T12:00:00`);
-            const dayName = Number.isNaN(dayDate.getTime())
-              ? dateKey
-              : dayDate.toLocaleDateString('en-US', { weekday: 'short' });
-            const cadenceToken = `${dayName} ${start}-${end}`;
-            if (!acc[sid]) acc[sid] = [];
-            if (!acc[sid].includes(cadenceToken)) acc[sid].push(cadenceToken);
-            return acc;
-          }, {});
-          const weekdayOrder = {
-            Sun: 0,
-            Mon: 1,
-            Tue: 2,
-            Wed: 3,
-            Thu: 4,
-            Fri: 5,
-            Sat: 6,
-          };
-          const sortCadenceTokens = (tokens = []) => (
-            [...tokens].sort((a, b) => {
-              const aToken = String(a || '');
-              const bToken = String(b || '');
-              const [, aDay = '', aStart = ''] = aToken.match(/^([A-Za-z]{3})\s+(\d{2}:\d{2})/) || [];
-              const [, bDay = '', bStart = ''] = bToken.match(/^([A-Za-z]{3})\s+(\d{2}:\d{2})/) || [];
-              const aDayRank = Number.isInteger(weekdayOrder[aDay]) ? weekdayOrder[aDay] : 99;
-              const bDayRank = Number.isInteger(weekdayOrder[bDay]) ? weekdayOrder[bDay] : 99;
-              if (aDayRank !== bDayRank) return aDayRank - bDayRank;
-              if (aStart !== bStart) return aStart.localeCompare(bStart);
-              return aToken.localeCompare(bToken);
-            })
-          );
-          cadenceSummaryLines = requestedSubjectIds.map((sid) => {
-            const subjectName = subjectNameById[sid] || 'Subject';
-            const cadenceTokens = Array.isArray(proposedCadenceBySubjectId?.[sid])
-              ? sortCadenceTokens(proposedCadenceBySubjectId[sid])
-              : [];
-            return `- ${subjectName}: ${cadenceTokens.length > 0 ? cadenceTokens.join(', ') : 'No proposed days'}`;
-          });
-          const previewBySubject = previewSlots.reduce((acc, slot) => {
-            const sid = String(slot?.subject_id || '').trim();
-            const dateKey = String(slot?.date || '').slice(0, 10);
-            if (!sid || !dateKey) return acc;
-            if (!acc[sid]) acc[sid] = [];
-            acc[sid].push({
-              date: dateKey,
-              start: String(slot?.start_time || '09:00'),
-              end: String(slot?.end_time || '10:00'),
-            });
-            return acc;
-          }, {});
-          const cadenceLines = requestedSubjectIds.map((sid) => (
-            `- ${subjectNameById[sid] || 'Subject'}: ${(
-              Array.isArray(proposedCadenceBySubjectId?.[sid]) && proposedCadenceBySubjectId[sid].length > 0
-                ? sortCadenceTokens(proposedCadenceBySubjectId[sid]).join(', ')
-                : 'No proposed days'
-            )}`
-          ));
-          const dayLines = requestedSubjectIds.flatMap((sid) => {
-            const subjectName = subjectNameById[sid] || 'Subject';
-            const rows = Array.isArray(previewBySubject[sid]) ? previewBySubject[sid] : [];
-            const sortedRows = [...rows].sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')));
-            if (!sortedRows.length) return [];
-            return sortedRows.map((entry) => (
-              `- ${formatDateDisplayYmd(entry.date)} · ${subjectName} · ${entry.start}-${entry.end}`
-            ));
-          });
-          const previewRangeStart = String(requestedRangeStartYmd || '').slice(0, 10) || requestedRangeStartYmd;
-          const previewRangeEnd = String(previewData?.debugFinalRangeEnd || requestedRangeEndYmd || '').slice(0, 10) || requestedRangeEndYmd;
-          const selectedCount = Number(previewData?.debugSelectedDatesCount ?? dayLines.length);
-          previewSummary = [
-            `Range: ${formatDateDisplayYmd(previewRangeStart)} to ${formatDateDisplayYmd(previewRangeEnd)}`,
-            `Classday cadence by subject:`,
-            ...(cadenceLines.length > 0 ? cadenceLines : ['- No saved weekly cadence']),
-            `New days to add (${selectedCount}):`,
-            ...(dayLines.length > 0 ? dayLines : ['- No eligible days found in preview']),
-          ].join('\n');
-        }
+        if (dryRunError) throw dryRunError;
+        dryRunPreview = dryRunData || null;
       } catch (_) {
-        // fallback to standard confirmation body
+        try {
+          fixGapInFlightByRowRef.current.delete(rowId);
+        } catch (_) {}
+        setFixingGapRowId(null);
+        toast?.push?.('Could not preview Fix gap right now. Please try again.', 'error');
+        return;
       }
     }
     const confirmed = await confirmFixGapAction({
@@ -3421,12 +3592,16 @@ export default function SubjectsPlanBuilder({
       targetDays,
       projectedDays,
       gapDays: daysNeeded,
-      cadenceSummaryLines,
-      previewSummary,
+      dryRunPreview,
     });
-    if (!confirmed) return;
+    if (!confirmed?.confirmed) {
+      try {
+        fixGapInFlightByRowRef.current.delete(rowId);
+      } catch (_) {}
+      setFixingGapRowId(null);
+      return;
+    }
 
-    setFixingGapRowId(rowId);
     try {
       const payload = { ...payloadBase, dry_run: false };
       scheduleCalcDebug('fixTargetGap:payload', {
@@ -3440,84 +3615,35 @@ export default function SubjectsPlanBuilder({
       });
       const { data, error } = await fixTargetGap(payload);
       if (error) throw error;
-      let fixResult = data;
-      if (
-        (fixResult?.success === false || Number(fixResult?.debugSelectedDatesCount ?? 0) <= 0)
-        && String(fixResult?.debugFailureReason || '').trim() === 'insufficient_eligible_dates_in_strict_range'
-      ) {
-        const relaxedPayload = {
-          ...payload,
-          strict_range: false,
-        };
-        scheduleCalcDebug('fixTargetGap:retry_relaxed_range', {
-          rowId,
-          rowName,
-          scope,
-          reason: fixResult?.debugFailureReason,
-          strictPayload: payload,
-          relaxedPayload,
-        });
-        const { data: relaxedData, error: relaxedError } = await fixTargetGap(relaxedPayload);
-        if (relaxedError) throw relaxedError;
-        if (relaxedData) {
-          fixResult = relaxedData;
-          if (fixResult?.success && Number(fixResult?.debugSelectedDatesCount ?? 0) > 0) {
-            toast?.push?.(
-              'Not enough room in the saved school-year range. Auto-extending into the next school-year window in the background.',
-              'info'
-            );
-          }
-        }
-      }
-      console.log('[FixGapV2] fixTargetGap API result', fixResult);
-      console.log('[FixGapV2] existingCountedDates', {
-        mode: scope,
-        beforeProjectedDays: fixResult?.beforeProjectedDays ?? null,
-      });
-      console.log('[FixGapV2] candidate generation', {
-        rangeStart: requestedRangeStartYmd,
-        initialRangeEnd: fixResult?.debugInitialRangeEnd ?? null,
-        finalRangeEnd: fixResult?.debugFinalRangeEnd ?? null,
-        daysNeeded,
-        candidateDatesCount: fixResult?.debugCandidateDatesCount ?? null,
-        selectedDatesCount: fixResult?.debugSelectedDatesCount ?? null,
-        potentialSelectedCount: fixResult?.debugPotentialSelectedCount ?? null,
-      });
-      console.log('[FixGapV2] insert payload sample', fixResult?.createdEventIds?.slice?.(0, 3) || []);
-      console.log('[FixGapV2] insert result', {
-        insertedCount: fixResult?.debugInsertedCount ?? null,
-        createdEvents: fixResult?.createdEvents ?? null,
-        error: null,
-      });
-      if (Number(fixResult?.debugSelectedDatesCount ?? 0) <= 0 || fixResult?.success === false) {
-        const noDatesMessage = fixResult?.message
-          || 'No eligible new dates are available in this range.';
-        console.warn('Fix gap failed', {
-          rowId,
-          rowName,
-          scope,
-          expectedGap: 0,
-          actualGap: Number(row?.gapDays ?? 0),
-          reason: fixResult?.debugFailureReason || 'insufficient_eligible_dates_after_extension',
-          result: fixResult,
-        });
-        toast?.push?.(noDatesMessage, 'info');
+      const fixResult = data;
+      console.log('[FixGapV3] fixTargetGap API result', fixResult);
+      if (fixResult?.success === false) {
+        rememberFixGapFailureToast(
+          String(fixResult?.message || 'Fix gap could not schedule events for this range.')
+        );
         return;
       }
+      setFixGapActionRecommendationsByRowId((prev) => {
+        const next = { ...(prev || {}) };
+        delete next[rowId];
+        return next;
+      });
 
       const subjectIds = (baseSubjects || []).map((s) => String(s?.id || '').trim()).filter(Boolean);
       const refreshRangeStartYmd = requestedRangeStartYmd || String(activeScheduleCore?.row?.start_date || '').slice(0, 10) || null;
-      const refreshRangeEndYmd = String(fixResult?.debugFinalRangeEnd || requestedRangeEndYmd || activeScheduleCore?.row?.end_date || '').slice(0, 10) || null;
+      const refreshRangeEndYmd = String(requestedRangeEndYmd || activeScheduleCore?.row?.end_date || '').slice(0, 10) || null;
       scheduleSupplementRangeOverrideRef.current = {
         schoolYearLabel: schoolYearLabel || null,
         rangeStartYmd: refreshRangeStartYmd,
         rangeEndYmd: refreshRangeEndYmd,
       };
+      invalidateScheduleSupplementCache(familyId, schoolYearLabel);
       const refreshed = await fetchAndCacheScheduleSupplement({
         familyId,
         schoolYearLabel,
         startYear: displaySchoolYear?.start_year,
         endYear: displaySchoolYear?.end_year,
+        academicYearId,
         rangeStartYmd: refreshRangeStartYmd,
         rangeEndYmd: refreshRangeEndYmd,
         subjectIds,
@@ -3528,148 +3654,83 @@ export default function SubjectsPlanBuilder({
         default_constraint_mode: 'none',
         default_target_days: null,
         default_target_hours: null,
+        allowed_weekdays: [1, 2, 3, 4, 5],
       });
       setSubjectTargetSettingsById(refreshed.subjectTargetSettingsById || {});
       setInstructionalEventsBySubject(refreshed.instructionalEventsBySubject || {});
       setAttendedDayKeysBySubject(refreshed.attendedDayKeysBySubject || {});
+      setYearTargetProjectionBySubject(refreshed.yearTargetProjectionBySubject || {});
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        await Promise.all([
+          Promise.resolve().then(() => window.dispatchEvent(new CustomEvent('refreshSubjects'))),
+          Promise.resolve().then(() => window.dispatchEvent(new CustomEvent('refreshPlanHealth'))),
+          Promise.resolve().then(() => window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }))),
+        ]);
       }
       setEventsRefreshKey((prev) => prev + 1);
       setOverviewReloadKey((prev) => prev + 1);
 
-      const uniqueDaysFor = (events = []) => new Set(
-        (Array.isArray(events) ? events : [])
-          .map((eventItem) => String(eventItem?.start_ts || eventItem?.startTs || '').slice(0, 10))
-          .filter((ymd) => /^\d{4}-\d{2}-\d{2}$/.test(ymd))
+      const requestedGapFromResult = Math.max(0, Number(fixResult?.requestedGap ?? Math.max(0, gapDays)));
+      const assignedCountFromResult = Math.max(0, Number(fixResult?.assignedCount ?? 0));
+      const successfulInsertCount = Math.max(
+        0,
+        Number(fixResult?.successfulInsertCount ?? fixResult?.insertedCount ?? fixResult?.createdEvents ?? 0)
       );
-      const projectedHoursFor = (events = []) => (
-        (Array.isArray(events) ? events : []).reduce((sum, eventItem) => {
-          const instructionalMinutes = Number(eventItem?.instructional_minutes);
-          if (Number.isFinite(instructionalMinutes) && instructionalMinutes > 0) {
-            return sum + instructionalMinutes;
-          }
-          const startTs = String(eventItem?.start_ts || eventItem?.startTs || '');
-          const endTs = String(eventItem?.end_ts || eventItem?.endTs || '');
-          const start = startTs ? new Date(startTs) : null;
-          const end = endTs ? new Date(endTs) : null;
-          if (start instanceof Date && !Number.isNaN(start.getTime()) && end instanceof Date && !Number.isNaN(end.getTime())) {
-            const diffMins = Math.round((end.getTime() - start.getTime()) / 60000);
-            if (diffMins > 0) return sum + diffMins;
-          }
-          return sum + 60;
-        }, 0) / 60
+      const failedInsertCount = Math.max(
+        0,
+        Number(fixResult?.failedInsertCount ?? Math.max(0, assignedCountFromResult - successfulInsertCount))
       );
-      const recomputedProjectedDays = scope === 'overall'
-        ? (() => {
-          const selectedIds = requestedSubjectIds.length > 0
-            ? requestedSubjectIds
-            : Object.keys(refreshed?.instructionalEventsBySubject || {});
-          const merged = selectedIds.flatMap((sid) => (
-            Array.isArray(refreshed?.instructionalEventsBySubject?.[sid]) ? refreshed.instructionalEventsBySubject[sid] : []
-          ));
-          return uniqueDaysFor(merged).size;
-        })()
-        : (() => {
-          const events = Array.isArray(refreshed?.instructionalEventsBySubject?.[rowId])
-            ? refreshed.instructionalEventsBySubject[rowId]
-            : [];
-          return uniqueDaysFor(events).size;
-        })();
-      const recomputedProjectedHours = scope === 'overall'
-        ? (() => {
-          const selectedIds = requestedSubjectIds.length > 0
-            ? requestedSubjectIds
-            : Object.keys(refreshed?.instructionalEventsBySubject || {});
-          const merged = selectedIds.flatMap((sid) => (
-            Array.isArray(refreshed?.instructionalEventsBySubject?.[sid]) ? refreshed.instructionalEventsBySubject[sid] : []
-          ));
-          return projectedHoursFor(merged);
-        })()
-        : (() => {
-          const events = Array.isArray(refreshed?.instructionalEventsBySubject?.[rowId])
-            ? refreshed.instructionalEventsBySubject[rowId]
-            : [];
-          return projectedHoursFor(events);
-        })();
-      const recomputedGapDays = requestedTargetKind === 'hours'
-        ? (targetDays - Number(recomputedProjectedHours || 0))
-        : (targetDays - Number(recomputedProjectedDays || 0));
-      const backendAfterGapDays = Number.isFinite(Number(fixResult?.afterGapDays))
-        ? Number(fixResult.afterGapDays)
-        : null;
-      const actualGapDays = recomputedGapDays;
-      const createdEvents = Number(fixResult?.createdEvents ?? fixResult?.created ?? 0);
-      const removedEvents = Number(fixResult?.removedEvents ?? fixResult?.removed ?? 0);
-      const beforeProjectedDays = Number(fixResult?.beforeProjectedDays ?? projectedDays ?? 0);
-      const beforeProjectedHours = Number(fixResult?.beforeProjectedHours ?? projectedDays ?? 0);
-      const afterProjectedDays = requestedTargetKind === 'hours'
-        ? Number(fixResult?.afterProjectedHours ?? recomputedProjectedHours ?? 0)
-        : Number(fixResult?.afterProjectedDays ?? recomputedProjectedDays ?? 0);
-      if (Number.isFinite(Number(fixResult?.beforeProjectedDays)) && beforeProjectedDays !== projectedDays) {
-        scheduleCalcDebug('fixTargetGap:baseline_mismatch', {
-          rowId,
-          rowName,
-          scope,
-          uiProjectedDays: projectedDays,
-          backendBeforeProjectedDays: beforeProjectedDays,
-          requestedRangeStartYmd,
-          requestedRangeEndYmd,
-          note: 'Proceeding with backend baseline because fix-gap generation now uses academic-year scope.',
-        });
-      }
+      const afterGapValue = requestedTargetKind === 'hours'
+        ? Math.max(0, Number(fixResult?.afterGapHours ?? 0))
+        : Math.max(0, Number(fixResult?.afterGapDays ?? 0));
+      const afterProjectedValue = requestedTargetKind === 'hours'
+        ? Number(fixResult?.afterProjectedHours ?? projectedDays)
+        : Number(fixResult?.afterProjectedDays ?? projectedDays);
       scheduleCalcDebug('fixTargetGap:result', {
         rowId,
         rowName,
         scope,
-        beforeProjectedDays,
-        beforeProjectedHours,
-        targetDays,
-        createdEvents,
-        removedEvents,
-        afterProjectedDays,
-        backendAfterGapDays,
-        actualGapDays,
         targetKind: requestedTargetKind,
+        requestedGap: requestedGapFromResult,
+        assignedCount: assignedCountFromResult,
+        successfulInsertCount,
+        failedInsertCount,
+        afterGap: afterGapValue,
       });
-      console.log('[FixGapV2] assertion', {
-        expectedGap: 0,
-        finalGapDays: actualGapDays,
-        finalProjectedDays: requestedTargetKind === 'hours' ? recomputedProjectedHours : recomputedProjectedDays,
-        targetDays,
-        targetKind: requestedTargetKind,
-      });
-      if (actualGapDays !== 0) {
-        console.warn('Fix gap failed', {
-          rowId,
-          rowName,
-          scope,
-          expectedGap: 0,
-          actualGap: actualGapDays,
-          createdEvents,
-          removedEvents,
-          targetDays,
-          beforeProjectedDays,
-          afterProjectedDays,
-          result: fixResult,
-        });
-        toast?.push?.(
-          `Could not fully fix gap. Still ${toOneDecimal(Math.abs(actualGapDays))} ${requestedTargetKind === 'hours' ? 'hours' : 'days'} short.`,
-          'info'
+      if (successfulInsertCount <= 0) {
+        rememberFixGapFailureToast(
+          String(
+            fixResult?.message
+            || `No available slots were inserted. Still ${toOneDecimal(afterGapValue)} ${requestedTargetKind === 'hours' ? 'hours' : 'days'} short.`
+          )
         );
         return;
       }
+      if (afterGapValue > 0 || failedInsertCount > 0) {
+        rememberFixGapFailureToast(
+          `Added ${successfulInsertCount} of ${requestedGapFromResult} ${requestedTargetKind === 'hours' ? 'hours' : 'days'}; ${toOneDecimal(afterGapValue)} still short.`
+        );
+        return;
+      }
+      clearFixGapFailureToasts();
       const gapLabel = `0 ${requestedTargetKind === 'hours' ? 'hours' : 'days'} gap`;
       const fixOutcomePrefix = 'Fixed';
+      if (requestedTargetKind === 'days' && requestedGapFromResult > 0 && successfulInsertCount >= requestedGapFromResult) {
+        toast?.push?.('Added all missing days.', 'success');
+        return;
+      }
       toast?.push?.(
-        `${fixOutcomePrefix} ${scope === 'overall' ? 'overall' : rowName} gap: ${toOneDecimal(afterProjectedDays)}/${toOneDecimal(targetDays)} ${requestedTargetKind === 'hours' ? 'hours' : 'days'} (${gapLabel}).`,
+        `${fixOutcomePrefix} ${scope === 'overall' ? 'overall' : rowName} gap: ${toOneDecimal(afterProjectedValue)}/${toOneDecimal(targetDays)} ${requestedTargetKind === 'hours' ? 'hours' : 'days'} (${gapLabel}).`,
         'success'
       );
     } catch (err) {
       toast?.push?.(err?.message || 'Failed to fix target gap.', 'error');
     } finally {
+      try {
+        fixGapInFlightByRowRef.current.delete(rowId);
+      } catch (_) {
+        // no-op
+      }
       setFixingGapRowId(null);
     }
   }, [
@@ -3887,6 +3948,46 @@ export default function SubjectsPlanBuilder({
     }
   }, [onOpenPlannerSettings, displaySchoolYear?.label]);
 
+  const applyLowerTargetToMaxAchievable = useCallback(async (rowId) => {
+    const rec = fixGapActionRecommendationsByRowId?.[rowId];
+    if (!rec || rec.scope !== 'overall') return;
+    if (!familyId) {
+      toast?.push?.('Missing family context.', 'error');
+      return;
+    }
+    const targetKind = String(rec?.targetKind || 'days').trim().toLowerCase();
+    const maxValue = Number(rec?.maxAchievableValue);
+    if (!Number.isFinite(maxValue) || maxValue <= 0) return;
+    const schoolYearLabel = String(displaySchoolYear?.label || '').trim() || null;
+    const payload = {
+      target_scope: 'overall',
+      default_constraint_mode: targetKind === 'hours' ? 'hours' : 'days',
+      default_target_days: targetKind === 'days' ? Math.max(1, Math.round(maxValue)) : null,
+      default_target_hours: targetKind === 'hours' ? Number(maxValue.toFixed(2)) : null,
+    };
+    const { error } = await saveFamilyPlannerSettings(familyId, payload, schoolYearLabel);
+    if (error) {
+      toast?.push?.(error?.message || 'Failed to lower target.', 'error');
+      return;
+    }
+    setFamilyPlannerSettings((prev) => ({
+      ...(prev || {}),
+      ...payload,
+    }));
+    setFixGapActionRecommendationsByRowId((prev) => {
+      const next = { ...(prev || {}) };
+      delete next[rowId];
+      return next;
+    });
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+      window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+    }
+    setOverviewReloadKey((k) => k + 1);
+    toast?.push?.(`Lowered saved target to max achievable (${targetKind === 'hours' ? toOneDecimal(maxValue) : Math.round(maxValue)} ${targetKind}). No new events were scheduled.`, 'success');
+  }, [displaySchoolYear?.label, familyId, fixGapActionRecommendationsByRowId, toast]);
+
   const openSubjectEditModal = useCallback((subjectId) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const safeId = String(subjectId || '').trim();
@@ -4089,6 +4190,71 @@ export default function SubjectsPlanBuilder({
     }
   }, [toast, upcomingEventsModalData]);
 
+  const deleteAllEventsFromAllEventsModal = useCallback(async () => {
+    const events = Array.isArray(upcomingEventsModalData?.events) ? upcomingEventsModalData.events : [];
+    const targetEventIds = events
+      .map((eventItem) => String(eventItem?.id || '').trim())
+      .filter(Boolean);
+    if (!targetEventIds.length) return;
+    if (!familyId) {
+      toast?.push?.('Missing family context.', 'error');
+      return;
+    }
+    const targetCount = targetEventIds.length;
+    const confirmMessage = `Delete all ${targetCount} event${targetCount === 1 ? '' : 's'} from this list?`;
+    const confirmed = await new Promise((resolve) => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        resolve(window.confirm(confirmMessage));
+        return;
+      }
+      Alert.alert(
+        'Delete all events',
+        confirmMessage,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Delete all', style: 'destructive', onPress: () => resolve(true) },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) }
+      );
+    });
+    if (!confirmed) return;
+    setDeletingAllEvents(true);
+    const succeededIds = [];
+    let failedCount = 0;
+    try {
+      for (const eventId of targetEventIds) {
+        try {
+          const { error } = await deletePlannerEvent(eventId, familyId);
+          if (error) throw error;
+          succeededIds.push(eventId);
+        } catch (_) {
+          failedCount += 1;
+        }
+      }
+      if (succeededIds.length > 0) {
+        const succeededIdSet = new Set(succeededIds);
+        setUpcomingEventsModalData((prev) => ({
+          ...prev,
+          events: (prev?.events || []).filter((entry) => !succeededIdSet.has(String(entry?.id || ''))),
+        }));
+        setEventsRefreshKey((prev) => prev + 1);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        }
+      }
+      if (succeededIds.length > 0 && failedCount === 0) {
+        toast?.push?.(`Deleted ${succeededIds.length} event${succeededIds.length === 1 ? '' : 's'}.`, 'success');
+      } else if (succeededIds.length > 0) {
+        toast?.push?.(`Deleted ${succeededIds.length} event${succeededIds.length === 1 ? '' : 's'}. ${failedCount} failed.`, 'success');
+      } else {
+        toast?.push?.('Could not delete events.', 'error');
+      }
+    } finally {
+      setDeletingAllEvents(false);
+    }
+  }, [familyId, toast, upcomingEventsModalData]);
+
   const yearTargetTotalsInteractionRow = useMemo(() => {
     if (!yearTargetSummary) return null;
     const mergedEvents = (yearTargetSummary.perSubjectRows || [])
@@ -4226,9 +4392,15 @@ export default function SubjectsPlanBuilder({
                                 ? Number(row.targetValue)
                                 : null;
                               const completedDays = Math.max(0, Number(row.actualDays || 0));
+                              const upcomingDays = Math.max(
+                                0,
+                                Number.isFinite(Number(row?.upcomingDays))
+                                  ? Number(row.upcomingDays)
+                                  : Math.max(0, Number(row?.projectedDays || 0) - completedDays)
+                              );
                               const progressSummary = targetDays != null
-                                ? `${completedDays} completed / ${targetDays} target`
-                                : `${completedDays} completed / ${Math.max(completedDays, Number(row.projectedDays || 0))} planned`;
+                                ? `${completedDays} completed / ${upcomingDays} upcoming / ${targetDays} target`
+                                : `${completedDays} completed / ${upcomingDays} upcoming / ${Math.max(completedDays + upcomingDays, Number(row.projectedDays || 0))} planned`;
                               const deltaDays = targetDays != null ? (completedDays - targetDays) : null;
                               const statusLabel = !hasCadence
                                 ? 'No plan'
@@ -4875,6 +5047,39 @@ export default function SubjectsPlanBuilder({
                             exactGapZero: bestProjected === targetOverallDays,
                           };
                         })();
+                        const templateFullYearRange = displaySchoolYear
+                          ? formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year')
+                          : null;
+                        const savedOverallRangeStartYmd = String(
+                          familyPlannerSettings?.default_year_start_date
+                          || templateFullYearRange?.start_date
+                          || overallRowBaseStartYmd
+                          || ''
+                        ).slice(0, 10);
+                        const savedOverallRangeEndYmd = String(
+                          familyPlannerSettings?.default_year_end_date
+                          || templateFullYearRange?.end_date
+                          || overallRowBaseEndYmd
+                          || ''
+                        ).slice(0, 10);
+                        const todayYmdForSavedRange = (() => {
+                          const now = new Date();
+                          const yyyy = now.getFullYear();
+                          const mm = String(now.getMonth() + 1).padStart(2, '0');
+                          const dd = String(now.getDate()).padStart(2, '0');
+                          return `${yyyy}-${mm}-${dd}`;
+                        })();
+                        const remainingDaysInSavedRange = (() => {
+                          if (!savedOverallRangeStartYmd || !savedOverallRangeEndYmd) return 0;
+                          if (savedOverallRangeEndYmd < todayYmdForSavedRange) return 0;
+                          const effectiveStart = todayYmdForSavedRange > savedOverallRangeStartYmd
+                            ? todayYmdForSavedRange
+                            : savedOverallRangeStartYmd;
+                          if (savedOverallRangeEndYmd < effectiveStart) return 0;
+                          return Math.max(0, Number(daysBetweenInclusive(effectiveStart, savedOverallRangeEndYmd) || 0));
+                        })();
+                        const remainingWeeksInSavedRange = Math.max(0, Math.ceil(remainingDaysInSavedRange / 7));
+                        const savedRangeEnded = remainingDaysInSavedRange <= 0;
                         const overallAdjustmentRow = (isOverallScopeTable && isOverallRow)
                           ? (
                             overallShortfallDays > 0
@@ -4882,45 +5087,26 @@ export default function SubjectsPlanBuilder({
                                 id: rowId || 'overall',
                                 mode: 'shortfall',
                                 shortDays: overallShortfallDays,
-                                lowSessionsPerWeek: Number(yearTargetSummary?.catchUpDaysPerWeek || 0),
-                                highSessionsPerWeek: Number(yearTargetSummary?.catchUpDaysPerWeekHigh || 0),
+                                lowSessionsPerWeek: savedRangeEnded ? 0 : Number(yearTargetSummary?.catchUpDaysPerWeek || 0),
+                                highSessionsPerWeek: savedRangeEnded ? 0 : Number(yearTargetSummary?.catchUpDaysPerWeekHigh || 0),
                                 extendWeeks: 0,
                                 suggestionSummaryText: (() => {
-                                  const remainingWeeks = Math.max(0, Number(yearTargetSummary?.remainingWeeks || 0));
-                                  if (remainingWeeks <= 6) {
-                                    return `Projected plan is ${overallShortfallDays} day${overallShortfallDays === 1 ? '' : 's'} short and there are only about ${remainingWeeks} week${remainingWeeks === 1 ? '' : 's'} left in this school year. Consider extending the school year or moving subjects to next school year. Fix gap can do this in the background when needed.`;
+                                  if (savedRangeEnded) {
+                                    return `${overallShortfallDays} days short. Your saved school-year range ended on ${formatDateDisplayYmd(savedOverallRangeEndYmd)}. Extend planning preferences to add more eligible days.`;
                                   }
-                                  return `Projected plan is ${overallShortfallDays} day${overallShortfallDays === 1 ? '' : 's'} short. Use Fix gap to add placeholder days within your saved school-year range.`;
+                                  const remainingWeeks = remainingWeeksInSavedRange;
+                                  if (remainingWeeks <= 6) {
+                                    return `${overallShortfallDays} days short. Based on your saved planning preferences, there are about ${remainingWeeks} week${remainingWeeks === 1 ? '' : 's'} left in this school year.`;
+                                  }
+                                  return `${overallShortfallDays} days short. Based on your saved planning preferences, this year is projected to finish ${overallShortfallDays} instructional day${overallShortfallDays === 1 ? '' : 's'} short.`;
                                 })(),
                                 extensionAddedDatesLabel: '',
                                 suggestedAddedDaysLabel: (
                                   (() => {
-                                    const templateFullYearRange = displaySchoolYear
-                                      ? formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year')
-                                      : null;
-                                    const rangeStart = String(
-                                      familyPlannerSettings?.default_year_start_date
-                                      || templateFullYearRange?.start_date
-                                      || overallRowBaseStartYmd
-                                      || ''
-                                    ).slice(0, 10);
-                                    const rangeEnd = String(
-                                      familyPlannerSettings?.default_year_end_date
-                                      || templateFullYearRange?.end_date
-                                      || overallRowBaseEndYmd
-                                      || ''
-                                    ).slice(0, 10);
-                                    if (!rangeStart || !rangeEnd) return '';
-                                    const nextSchoolYearLabel = (() => {
-                                      const startYear = Number(displaySchoolYear?.start_year);
-                                      if (!Number.isFinite(startYear)) return 'next';
-                                      const nextStart = startYear + 1;
-                                      return `${nextStart}/${String(nextStart + 1).slice(-2)}`;
-                                    })();
-                                    const nextStartYear = Number(displaySchoolYear?.start_year);
-                                    const nextRangeStart = Number.isFinite(nextStartYear) ? `${nextStartYear + 1}-08-01` : rangeStart;
-                                    const nextRangeEnd = Number.isFinite(nextStartYear) ? `${nextStartYear + 2}-05-31` : rangeEnd;
-                                    return `Move subjects to ${nextSchoolYearLabel} School Year with range ${formatDateDisplayYmd(nextRangeStart)} to ${formatDateDisplayYmd(nextRangeEnd)}.`;
+                                    if (savedRangeEnded) {
+                                      return 'No eligible learning days remain in this saved range. Change planning preferences to extend the range.';
+                                    }
+                                    return `Fix gap will add up to ${overallShortfallDays} placeholder learning day${overallShortfallDays === 1 ? '' : 's'} across the remaining school year while avoiding holidays and days that already count.`;
                                   })()
                                 ),
                                 suggestedPlanChanges: [],
@@ -4968,6 +5154,7 @@ export default function SubjectsPlanBuilder({
                           String(catchUpRowResolved?.suggestedAddedDaysLabel || '').trim(),
                           String(catchUpRowResolved?.extensionAddedDatesLabel || '').trim(),
                         ].filter(Boolean).join(' ');
+                        const fixGapActionRecommendation = fixGapActionRecommendationsByRowId?.[rowId] || null;
                         const canFixGap = Math.abs(Number(rowGapValue || 0)) > 0;
                         const hasApplyAction = Boolean(catchUpRowResolved?.suggestedEndYmd)
                           || (Array.isArray(catchUpRowResolved?.suggestedPlanChanges) && catchUpRowResolved.suggestedPlanChanges.length > 0);
@@ -5090,7 +5277,7 @@ export default function SubjectsPlanBuilder({
                                 >
                                   {`${toOneDecimal(catchUpRowResolved.shortDays)} ${rowTargetLabel} ${catchUpRowResolved?.mode === 'overload' ? 'over target' : 'short'}`}
                                 </Text>
-                                {catchUpRowResolved?.mode !== 'overload' ? (
+                                {catchUpRowResolved?.mode !== 'overload' && Number(catchUpRowResolved?.lowSessionsPerWeek || 0) > 0 ? (
                                   <View style={styles.yearTargetsPredictiveItemPaceWrap}>
                                     <Text style={styles.yearTargetsPredictiveItemArrow}>→</Text>
                                     <Text style={styles.yearTargetsPredictiveItemPace}>
@@ -5121,6 +5308,25 @@ export default function SubjectsPlanBuilder({
                                   <Text style={styles.yearTargetsPredictiveSuggestionLine}>
                                     {`Suggestion: ${suggestionSummary}`}
                                   </Text>
+                                </View>
+                              ) : null}
+                              {fixGapActionRecommendation ? (
+                                <View style={styles.yearTargetsRecommendationActionsRow}>
+                                  {isOverallRow ? (
+                                    <TouchableOpacity
+                                      onPress={() => applyLowerTargetToMaxAchievable(rowId)}
+                                      activeOpacity={0.85}
+                                      style={styles.yearTargetsRecommendationActionButton}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                    >
+                                      <Check size={14} color="#0F172A" strokeWidth={2.25} />
+                                      <Text style={styles.yearTargetsRecommendationActionText}>
+                                        {`Lower target to max achievable (${fixGapActionRecommendation?.targetKind === 'hours'
+                                          ? toOneDecimal(fixGapActionRecommendation?.maxAchievableValue || 0)
+                                          : Math.round(Number(fixGapActionRecommendation?.maxAchievableValue || 0))} ${fixGapActionRecommendation?.targetKind || 'days'}, no new events)`}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ) : null}
                                 </View>
                               ) : null}
                               <View style={styles.yearTargetsExpandedSuggestionLineRow}>
@@ -5203,6 +5409,31 @@ export default function SubjectsPlanBuilder({
                   </ScrollView>
                 </View>
               ) : null}
+              {fixGapConfirmContent.showLowerTargetOption ? (
+                <View style={styles.fixGapConfirmRecommendationWrap}>
+                  <Text style={styles.fixGapConfirmRecommendationTitle}>If needed, apply before fixing:</Text>
+                  {fixGapConfirmContent.showLowerTargetOption ? (
+                    <TouchableOpacity
+                      style={styles.fixGapConfirmRecommendationRow}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        setFixGapConfirmSelections((prev) => ({
+                          ...(prev || {}),
+                          lowerTarget: !prev?.lowerTarget,
+                        }));
+                      }}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <View style={[styles.planningModeCheckbox, fixGapConfirmSelections.lowerTarget && styles.planningModeCheckboxActive]}>
+                        {fixGapConfirmSelections.lowerTarget ? <Check size={12} color="#ffffff" strokeWidth={2.5} /> : null}
+                      </View>
+                      <Text style={styles.fixGapConfirmRecommendationText}>
+                        {fixGapConfirmContent.lowerTargetLabel || 'Lower target to max achievable'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              ) : null}
               <View style={styles.applySuggestionConfirmActions}>
                 <TouchableOpacity
                   style={styles.fixGapConfirmCancelBtn}
@@ -5213,12 +5444,30 @@ export default function SubjectsPlanBuilder({
                   <Text style={styles.fixGapConfirmCancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.applySuggestionConfirmActionBtn}
-                  onPress={() => resolveFixGapConfirmation(true)}
+                  style={[
+                    styles.applySuggestionConfirmActionBtn,
+                    fixGapConfirmContent.confirmDisabled && styles.applySuggestionConfirmActionBtnDisabled,
+                  ]}
+                  onPress={() => {
+                    if (fixGapConfirmContent.confirmDisabled) return;
+                    resolveFixGapConfirmation({
+                      confirmed: true,
+                      lowerTarget: Boolean(
+                        fixGapConfirmContent.showLowerTargetOption
+                        && fixGapConfirmSelections.lowerTarget
+                      ),
+                    });
+                  }}
+                  disabled={Boolean(fixGapConfirmContent.confirmDisabled)}
                   activeOpacity={0.9}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  {...(Platform.OS === 'web' && { cursor: fixGapConfirmContent.confirmDisabled ? 'default' : 'pointer' })}
                 >
-                  <Text style={styles.applySuggestionConfirmActionBtnText}>
+                  <Text
+                    style={[
+                      styles.applySuggestionConfirmActionBtnText,
+                      fixGapConfirmContent.confirmDisabled && styles.applySuggestionConfirmActionBtnTextDisabled,
+                    ]}
+                  >
                     {fixGapConfirmContent.confirmLabel || 'Fix gap'}
                   </Text>
                 </TouchableOpacity>
@@ -5527,6 +5776,7 @@ export default function SubjectsPlanBuilder({
                   return isPastEvent && !isAttended;
                 });
                 const isBulkMarking = markingAttendanceEventId === '__bulk_mark_all_past_attended__';
+                const hasAnyEvents = (upcomingEventsModalData.events || []).length > 0;
                 return (
                   <View style={styles.subjectEventsFooter}>
                     <View style={styles.subjectEventsFooterButtonsRow}>
@@ -5538,19 +5788,38 @@ export default function SubjectsPlanBuilder({
                         <Text style={styles.subjectEventsFooterCancelButtonText}>Cancel</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
+                        onPress={deleteAllEventsFromAllEventsModal}
+                        style={[
+                          styles.subjectEventsFooterDeleteButton,
+                          (!hasAnyEvents || deletingAllEvents) && styles.subjectEventsFooterDeleteButtonDisabled,
+                        ]}
+                        activeOpacity={0.85}
+                        disabled={!hasAnyEvents || deletingAllEvents}
+                      >
+                        <Trash2 size={18} color={!hasAnyEvents || deletingAllEvents ? '#94A3B8' : '#FFFFFF'} strokeWidth={2} />
+                        <Text
+                          style={[
+                            styles.subjectEventsFooterDeleteButtonText,
+                            (!hasAnyEvents || deletingAllEvents) && styles.subjectEventsFooterDeleteButtonTextDisabled,
+                          ]}
+                        >
+                          {deletingAllEvents ? 'Deleting...' : 'Delete all events'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
                         onPress={markAllPastEventsAsAttendedFromAllEventsModal}
                         style={[
                           styles.subjectEventsFooterActionButton,
-                          (!hasPendingPastEvents || isBulkMarking) && styles.subjectEventsFooterActionButtonDisabled,
+                          (!hasPendingPastEvents || isBulkMarking || deletingAllEvents) && styles.subjectEventsFooterActionButtonDisabled,
                         ]}
                         activeOpacity={0.85}
-                        disabled={!hasPendingPastEvents || isBulkMarking}
+                        disabled={!hasPendingPastEvents || isBulkMarking || deletingAllEvents}
                       >
-                        <CheckCircle2 size={18} color={!hasPendingPastEvents || isBulkMarking ? '#94A3B8' : '#FFFFFF'} strokeWidth={2} />
+                        <CheckCircle2 size={18} color={!hasPendingPastEvents || isBulkMarking || deletingAllEvents ? '#94A3B8' : '#FFFFFF'} strokeWidth={2} />
                         <Text
                           style={[
                             styles.subjectEventsFooterActionButtonText,
-                            (!hasPendingPastEvents || isBulkMarking) && styles.subjectEventsFooterActionButtonTextDisabled,
+                            (!hasPendingPastEvents || isBulkMarking || deletingAllEvents) && styles.subjectEventsFooterActionButtonTextDisabled,
                           ]}
                         >
                           {isBulkMarking ? 'Marking...' : 'Mark all as attended'}
@@ -6669,6 +6938,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     flexWrap: 'wrap',
+  },
+  yearTargetsRecommendationActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  yearTargetsRecommendationActionButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearTargetsRecommendationActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0F172A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   yearTargetsSavedTargetRow: {
     flexDirection: 'row',
@@ -8050,6 +8345,39 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  fixGapConfirmRecommendationWrap: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  fixGapConfirmRecommendationTitle: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  fixGapConfirmRecommendationRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  fixGapConfirmRecommendationText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   subjectPickerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -8318,6 +8646,35 @@ const styles = StyleSheet.create({
     }),
   },
   subjectEventsFooterActionButtonTextDisabled: {
+    color: '#94A3B8',
+  },
+  subjectEventsFooterDeleteButton: {
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#EF4444',
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  subjectEventsFooterDeleteButtonDisabled: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F1F5F9',
+    opacity: 0.58,
+  },
+  subjectEventsFooterDeleteButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectEventsFooterDeleteButtonTextDisabled: {
     color: '#94A3B8',
   },
   subjectEventsList: {

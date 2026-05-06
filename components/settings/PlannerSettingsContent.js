@@ -55,6 +55,26 @@ const parsePositiveFloatOrNull = (value) => {
 
 const DEFAULT_LEARNING_START_TIME = '08:00:00';
 const DEFAULT_LEARNING_END_TIME = '15:00:00';
+const DEFAULT_ALLOWED_WEEKDAYS = [1, 2, 3, 4, 5];
+const LEARNING_DAY_OPTIONS = [
+  { id: 1, label: 'Mon' },
+  { id: 2, label: 'Tue' },
+  { id: 3, label: 'Wed' },
+  { id: 4, label: 'Thu' },
+  { id: 5, label: 'Fri' },
+  { id: 6, label: 'Sat' },
+  { id: 0, label: 'Sun' },
+];
+
+const normalizeAllowedWeekdays = (input) => {
+  const source = Array.isArray(input) ? input : [];
+  const normalized = [...new Set(
+    source
+      .map((day) => Number(day))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+  )].sort((a, b) => a - b);
+  return normalized.length > 0 ? normalized : [...DEFAULT_ALLOWED_WEEKDAYS];
+};
 
 const minutesToSqlTime = (totalMinutes) => {
   const clamped = Math.max(0, Math.min(23 * 60 + 59, Number(totalMinutes) || 0));
@@ -227,6 +247,7 @@ export default function PlannerSettingsContent({
   const [targetHours, setTargetHours] = useState('1000');
   const [learningStartTime, setLearningStartTime] = useState('8:00 AM');
   const [learningEndTime, setLearningEndTime] = useState('3:00 PM');
+  const [preferredLearningDayNums, setPreferredLearningDayNums] = useState([...DEFAULT_ALLOWED_WEEKDAYS]);
 
   // Public holidays
   const [followGlobalHolidays, setFollowGlobalHolidays] = useState(true);
@@ -296,6 +317,7 @@ export default function PlannerSettingsContent({
     setTargetHours(cached.targetHours ?? '1000');
     setLearningStartTime(normalizeLearningTimeDisplay(cached.learningStartTime, DEFAULT_LEARNING_START_TIME));
     setLearningEndTime(normalizeLearningTimeDisplay(cached.learningEndTime, DEFAULT_LEARNING_END_TIME));
+    setPreferredLearningDayNums(normalizeAllowedWeekdays(cached.preferredLearningDayNums));
     setFollowGlobalHolidays(cached.followGlobalHolidays !== false);
     setExcludedPublicHolidayDates(Array.isArray(cached.excludedPublicHolidayDates) ? cached.excludedPublicHolidayDates : []);
     setCustomHolidays(Array.isArray(cached.customHolidays) ? cached.customHolidays : []);
@@ -322,6 +344,7 @@ export default function PlannerSettingsContent({
       targetHours,
       learningStartTime,
       learningEndTime,
+      preferredLearningDayNums,
       followGlobalHolidays,
       countryCode,
       regionCode,
@@ -346,6 +369,7 @@ export default function PlannerSettingsContent({
       targetHours,
       learningStartTime,
       learningEndTime,
+      preferredLearningDayNums,
       followGlobalHolidays,
       excludedPublicHolidayDates: Array.isArray(excludedPublicHolidayDates) ? [...excludedPublicHolidayDates] : [],
       customHolidays: Array.isArray(customHolidays) ? [...customHolidays] : [],
@@ -369,6 +393,7 @@ export default function PlannerSettingsContent({
     targetHours,
     learningStartTime,
     learningEndTime,
+    preferredLearningDayNums,
     followGlobalHolidays,
     excludedPublicHolidayDates,
     customHolidays,
@@ -460,6 +485,7 @@ export default function PlannerSettingsContent({
     setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
     setLearningStartTime(normalizeLearningTimeDisplay(s.default_day_start_time, DEFAULT_LEARNING_START_TIME));
     setLearningEndTime(normalizeLearningTimeDisplay(s.default_day_end_time, DEFAULT_LEARNING_END_TIME));
+    setPreferredLearningDayNums(normalizeAllowedWeekdays(s.allowed_weekdays));
     setFollowGlobalHolidays(s.follow_public_holidays !== false);
     if (s.default_school_year && !isSchoolYearLocked) {
       setSelectedSchoolYearLabel(normalizeSchoolYearLabel(String(s.default_school_year)));
@@ -562,6 +588,7 @@ export default function PlannerSettingsContent({
         setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
         setLearningStartTime(normalizeLearningTimeDisplay(s.default_day_start_time, DEFAULT_LEARNING_START_TIME));
         setLearningEndTime(normalizeLearningTimeDisplay(s.default_day_end_time, DEFAULT_LEARNING_END_TIME));
+        setPreferredLearningDayNums(normalizeAllowedWeekdays(s.allowed_weekdays));
         setFollowGlobalHolidays(s.follow_public_holidays !== false);
         if (s.default_school_year && !isSchoolYearLocked) {
           setSelectedSchoolYearLabel(normalizeSchoolYearLabel(String(s.default_school_year)));
@@ -731,6 +758,7 @@ export default function PlannerSettingsContent({
           follow_public_holidays: s.followGlobalHolidays,
           holiday_country: s.countryCode,
           holiday_region: s.regionCode ?? null,
+          allowed_weekdays: normalizeAllowedWeekdays(s.preferredLearningDayNums),
           default_year_start_date: yearStart || null,
           default_year_end_date: yearEnd || null,
           default_fall_term_start_date: fallStart || null,
@@ -880,6 +908,23 @@ export default function PlannerSettingsContent({
     setter(normalizeYmd(value));
     setTimeout(debouncedPersist, 300);
   };
+  const handlePreferredLearningDayToggle = useCallback((dayNum) => {
+    if (readOnly) {
+      toast.push('Your family admin has disabled changing planning preferences.', 'error');
+      return;
+    }
+    const normalizedDay = Number(dayNum);
+    if (!Number.isInteger(normalizedDay) || normalizedDay < 0 || normalizedDay > 6) return;
+    setPreferredLearningDayNums((prev) => {
+      const current = normalizeAllowedWeekdays(prev);
+      const next = current.includes(normalizedDay)
+        ? current.filter((day) => day !== normalizedDay)
+        : [...current, normalizedDay];
+      const normalizedNext = normalizeAllowedWeekdays(next);
+      setTimeout(debouncedPersist, 300);
+      return normalizedNext;
+    });
+  }, [debouncedPersist, readOnly, toast]);
   const openAddSubjectModal = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(
@@ -1512,7 +1557,7 @@ export default function PlannerSettingsContent({
                     backgroundColor: 'transparent',
                     paddingVertical: 8,
                     paddingHorizontal: 0,
-                    fontSize: 18,
+                    fontSize: 14,
                     fontWeight: '600',
                     color: '#111827',
                     alignItems: 'center',
@@ -1535,7 +1580,7 @@ export default function PlannerSettingsContent({
                     backgroundColor: 'transparent',
                     paddingVertical: 8,
                     paddingHorizontal: 0,
-                    fontSize: 18,
+                    fontSize: 14,
                     fontWeight: '600',
                     color: '#111827',
                     alignItems: 'center',
@@ -1579,7 +1624,7 @@ export default function PlannerSettingsContent({
                     backgroundColor: 'transparent',
                     paddingVertical: 8,
                     paddingHorizontal: 0,
-                    fontSize: 18,
+                    fontSize: 14,
                     fontWeight: '600',
                     color: '#111827',
                     alignItems: 'center',
@@ -1602,7 +1647,7 @@ export default function PlannerSettingsContent({
                     backgroundColor: 'transparent',
                     paddingVertical: 8,
                     paddingHorizontal: 0,
-                    fontSize: 18,
+                    fontSize: 14,
                     fontWeight: '600',
                     color: '#111827',
                     alignItems: 'center',
@@ -1646,7 +1691,7 @@ export default function PlannerSettingsContent({
                     backgroundColor: 'transparent',
                     paddingVertical: 8,
                     paddingHorizontal: 0,
-                    fontSize: 18,
+                    fontSize: 14,
                     fontWeight: '600',
                     color: '#111827',
                     alignItems: 'center',
@@ -1669,7 +1714,7 @@ export default function PlannerSettingsContent({
                     backgroundColor: 'transparent',
                     paddingVertical: 8,
                     paddingHorizontal: 0,
-                    fontSize: 18,
+                    fontSize: 14,
                     fontWeight: '600',
                     color: '#111827',
                     alignItems: 'center',
@@ -1679,6 +1724,24 @@ export default function PlannerSettingsContent({
                 />
                 <ChevronRight size={20} color="#1E293B" />
               </View>
+            </View>
+          </View>
+          <View style={{ marginTop: 10 }}>
+            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Preferred learning days</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 2 }}>
+              {LEARNING_DAY_OPTIONS.map((option) => {
+                const active = preferredLearningDayNums.includes(option.id);
+                return (
+                  <TouchableOpacity
+                    key={`learning-day-${option.id}`}
+                    style={chip(active)}
+                    onPress={() => handlePreferredLearningDayToggle(option.id)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={chipText(active)}>{option.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
           <View style={{ marginTop: 10 }}>

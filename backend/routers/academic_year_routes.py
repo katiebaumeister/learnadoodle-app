@@ -10,11 +10,12 @@ Supports:
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any, Tuple
-from datetime import date, datetime, timedelta, timezone
+from typing import List, Optional, Dict, Any, Tuple, Callable
+from datetime import date, datetime, timedelta, timezone, time
 from collections import defaultdict
 import math
 import json
+from dateutil import parser as date_parser
 
 try:
     from zoneinfo import ZoneInfo
@@ -275,6 +276,23 @@ class FixTargetGapOutput(BaseModel):
     debugFailureReason: Optional[str] = None
     debugInitialRangeEnd: Optional[str] = None
     debugFinalRangeEnd: Optional[str] = None
+    requestedGap: Optional[int] = None
+    assignedCount: Optional[int] = None
+    insertedCount: Optional[int] = None
+    attemptedInsertCount: Optional[int] = None
+    successfulInsertCount: Optional[int] = None
+    failedInsertCount: Optional[int] = None
+    failedInsertReasons: Optional[Dict[str, int]] = None
+    datesWithCapacity: Optional[int] = None
+    datesWithoutCapacity: Optional[int] = None
+    unassignedCount: Optional[int] = None
+    skippedBecauseNoSlot: Optional[int] = None
+    selectedAssignments: Optional[List[Dict[str, Any]]] = None
+    assignmentStrategy: Optional[str] = None
+    selectedDates: Optional[List[str]] = None
+    partialFixPossible: Optional[bool] = None
+    availableDates: Optional[int] = None
+    remainingUnfixableGap: Optional[int] = None
     message: Optional[str] = None
 
 
@@ -1809,13 +1827,29 @@ async def fix_target_gap(
         try:
             planner_settings_resp = (
                 supabase.table("family_planner_settings")
-                .select("default_planned_hours_per_day, default_day_start_time, default_day_end_time, updated_at")
+                .select("default_planned_hours_per_day, default_day_start_time, default_day_end_time, allowed_weekdays, updated_at")
                 .eq("family_id", family_id)
                 .order("updated_at", desc=True)
                 .limit(1)
                 .execute()
             )
             planner_settings_row = (planner_settings_resp.data or [None])[0] or {}
+            preferred_allowed_weekdays = []
+            try:
+                preferred_allowed_weekdays = sorted(
+                    {
+                        int(w)
+                        for w in (planner_settings_row.get("allowed_weekdays") or [])
+                        if isinstance(w, (int, float, str)) and str(w).strip().lstrip("-").isdigit()
+                    }
+                )
+            except Exception:
+                preferred_allowed_weekdays = []
+            preferred_allowed_weekdays = [
+                int(w)
+                for w in preferred_allowed_weekdays
+                if isinstance(w, int) and 0 <= int(w) <= 6
+            ] or [1, 2, 3, 4, 5]
             try:
                 raw_start = str(planner_settings_row.get("default_day_start_time") or "").strip()
                 raw_end = str(planner_settings_row.get("default_day_end_time") or "").strip()
@@ -1846,6 +1880,7 @@ async def fix_target_gap(
                 max_minutes_per_slot_for_hours = int(round(parsed_hours_cap * 60))
         except Exception:
             max_minutes_per_slot_for_hours = 300
+            preferred_allowed_weekdays = [1, 2, 3, 4, 5]
         learning_window_span_minutes = max(15, learning_window_end_min - learning_window_start_min)
         max_minutes_per_slot_for_hours = max(15, min(max_minutes_per_slot_for_hours, learning_window_span_minutes))
         filtered_blocks = []
@@ -1858,6 +1893,175 @@ async def fix_target_gap(
             if scope == "overall" and requested_subject_set and sid not in requested_subject_set:
                 continue
             filtered_blocks.append(block)
+
+        def _to_minutes_or_none(hm: str) -> Optional[int]:
+            try:
+                hh, mm = [int(x) for x in str(hm or "").strip()[:5].split(":")]
+                total = (hh * 60) + mm
+                if 0 <= total <= (24 * 60):
+                    return total
+            except Exception:
+                pass
+            return None
+
+        def _minutes_to_hhmm_simple(total_minutes: int) -> str:
+            total = max(0, min(int(total_minutes), 24 * 60))
+            hh = total // 60
+            mm = total % 60
+            return f"{hh:02d}:{mm:02d}"
+
+        def _default_end_for_start(start_hm: str) -> str:
+            start_min = _to_minutes_or_none(start_hm)
+            if start_min is None:
+                return learning_window_end_hhmm
+            desired_end = min(learning_window_end_min, start_min + 60)
+            if desired_end <= start_min:
+                desired_end = min(learning_window_end_min, start_min + 15)
+            return _minutes_to_hhmm_simple(desired_end)
+
+        def insertFixGapEventsWithObservability(
+            eventsToInsert: List[Dict[str, Any]],
+            assignedCount: int,
+            preinsertFailures: Optional[List[Dict[str, Any]]] = None,
+            dryRun: bool = False,
+            logPrefix: str = "[FixGapV3]",
+            recoverOnInsertError: Optional[Callable[[Dict[str, Any], Exception], Optional[Dict[str, Any]]]] = None,
+        ) -> Dict[str, Any]:
+            preinsert_failures = list(preinsertFailures or [])
+            inserted_rows: List[Dict[str, Any]] = []
+            inserted_ids: List[str] = []
+            failed_insert_details: List[Dict[str, Any]] = list(preinsert_failures)
+
+            attempted_from_parts = len(eventsToInsert) + len(preinsert_failures)
+            attempted_insert_count = int(max(0, assignedCount))
+            if attempted_insert_count != attempted_from_parts:
+                print(
+                    f"{logPrefix}[ERROR] assignment mismatch before insert",
+                    {
+                        "assignedCount": attempted_insert_count,
+                        "attemptedFromRowsAndDrops": attempted_from_parts,
+                        "preinsertDrops": len(preinsert_failures),
+                        "rowsToInsert": len(eventsToInsert),
+                    },
+                    flush=True,
+                )
+                attempted_insert_count = attempted_from_parts
+
+            def _classify_insert_error(msg: str) -> str:
+                m = (msg or "").lower()
+                if "duplicate key" in m or "unique constraint" in m:
+                    return "unique_conflict"
+                if "row-level security" in m or "rls" in m or "permission denied" in m:
+                    return "rls_denied"
+                if "overlap" in m or "conflict" in m:
+                    return "overlap_conflict"
+                return "insert_exception"
+
+            if dryRun:
+                inserted_rows = list(eventsToInsert)
+                inserted_ids = [str(row.get("id") or "").strip() for row in eventsToInsert if str(row.get("id") or "").strip()]
+            else:
+                for row in eventsToInsert:
+                    row_id = str(row.get("id") or "").strip()
+                    row_subject_id = str(row.get("subject_id") or "").strip() or None
+                    row_date = str(row.get("start_ts") or "")[:10] or None
+                    row_child_ids = [str(cid) for cid in (row.get("child_ids") or []) if str(cid).strip()]
+                    try:
+                        one = supabase.table("events").insert(row).execute()
+                        one_rows = list(one.data or [])
+                        if one_rows:
+                            inserted_rows.extend(one_rows)
+                            inserted_ids.append(str(one_rows[0].get("id") or row_id))
+                            continue
+                        verify = (
+                            supabase.table("events")
+                            .select("id, subject_id, start_ts, end_ts, child_id, child_ids")
+                            .eq("id", row_id)
+                            .limit(1)
+                            .execute()
+                        )
+                        verify_rows = list(verify.data or [])
+                        if verify_rows:
+                            inserted_rows.extend(verify_rows)
+                            inserted_ids.append(str(verify_rows[0].get("id") or row_id))
+                            continue
+                        fail_detail = {
+                            "date": row_date,
+                            "subject_id": row_subject_id,
+                            "child_ids": row_child_ids,
+                            "candidate_start": str(row.get("start_ts") or ""),
+                            "candidate_end": str(row.get("end_ts") or ""),
+                            "reason": "insert_returned_no_rows",
+                        }
+                        failed_insert_details.append(fail_detail)
+                        print(f"{logPrefix} insertFailure", fail_detail, flush=True)
+                    except Exception as insert_err:
+                        recovered_row = None
+                        if callable(recoverOnInsertError):
+                            try:
+                                recovered_row = recoverOnInsertError(row, insert_err)
+                            except Exception:
+                                recovered_row = None
+                        if recovered_row:
+                            inserted_rows.append(recovered_row)
+                            inserted_ids.append(str(recovered_row.get("id") or row_id))
+                            continue
+                        err_msg = str(insert_err)
+                        fail_detail = {
+                            "date": row_date,
+                            "subject_id": row_subject_id,
+                            "child_ids": row_child_ids,
+                            "candidate_start": str(row.get("start_ts") or ""),
+                            "candidate_end": str(row.get("end_ts") or ""),
+                            "reason": _classify_insert_error(err_msg),
+                            "db_error": err_msg[:400],
+                        }
+                        failed_insert_details.append(fail_detail)
+                        print(f"{logPrefix} insertFailure", fail_detail, flush=True)
+
+            successful_insert_count = len([rid for rid in inserted_ids if str(rid or "").strip()])
+            failed_insert_count = len(failed_insert_details)
+            failed_insert_reasons: Dict[str, int] = {}
+            for detail in failed_insert_details:
+                reason_key = str(detail.get("reason") or "unknown_insert_failure")
+                failed_insert_reasons[reason_key] = int(failed_insert_reasons.get(reason_key) or 0) + 1
+            if attempted_insert_count != (successful_insert_count + failed_insert_count):
+                mismatch = attempted_insert_count - (successful_insert_count + failed_insert_count)
+                if mismatch > 0:
+                    failed_insert_reasons["unclassified_insert_drop"] = int(
+                        failed_insert_reasons.get("unclassified_insert_drop") or 0
+                    ) + mismatch
+                    failed_insert_count += mismatch
+                print(
+                    f"{logPrefix}[ERROR] insert accounting mismatch",
+                    {
+                        "attemptedInsertCount": attempted_insert_count,
+                        "successfulInsertCount": successful_insert_count,
+                        "failedInsertCount": failed_insert_count,
+                    },
+                    flush=True,
+                )
+            if attempted_insert_count != successful_insert_count:
+                print(
+                    f"{logPrefix}[ERROR] insert drop detected",
+                    {
+                        "attemptedInsertCount": attempted_insert_count,
+                        "successfulInsertCount": successful_insert_count,
+                        "failedInsertCount": failed_insert_count,
+                        "failedInsertReasons": failed_insert_reasons,
+                    },
+                    flush=True,
+                )
+
+            return {
+                "insertedRows": inserted_rows,
+                "insertedIds": inserted_ids,
+                "attemptedInsertCount": attempted_insert_count,
+                "successfulInsertCount": successful_insert_count,
+                "failedInsertCount": failed_insert_count,
+                "failedInsertReasons": failed_insert_reasons,
+                "failedInsertDetails": failed_insert_details,
+            }
         if scope == "per_subject" and not filtered_blocks:
             raise HTTPException(status_code=400, detail="No blocks found for selected subject.")
         if scope == "overall" and not filtered_blocks:
@@ -1883,14 +2087,33 @@ async def fix_target_gap(
             if missing_requested_subjects:
                 template_blocks = [b for b in filtered_blocks if str(b.get("subject_id") or "").strip()]
                 for idx, sid in enumerate(missing_requested_subjects):
-                    for t_idx, tpl in enumerate(template_blocks):
+                    if template_blocks:
+                        tpl = template_blocks[idx % len(template_blocks)]
                         synth_block = dict(tpl)
-                        synth_block["subject_id"] = sid
-                        synth_block["block_id"] = (
-                            str(tpl.get("block_id") or f"template-{t_idx}")
-                            + f":synth:{sid}:{idx}:{t_idx}"
-                        )
-                        filtered_blocks.append(synth_block)
+                    else:
+                        synth_block = {}
+                    synth_block["subject_id"] = sid
+                    synth_block["weekdays"] = list(preferred_allowed_weekdays)
+                    synth_start = str(synth_block.get("start_time") or learning_window_start_hhmm)
+                    synth_end = str(synth_block.get("end_time") or _default_end_for_start(synth_start))
+                    synth_start_min = _to_minutes_or_none(synth_start)
+                    synth_end_min = _to_minutes_or_none(synth_end)
+                    if (
+                        synth_start_min is None
+                        or synth_end_min is None
+                        or synth_end_min <= synth_start_min
+                    ):
+                        synth_start = learning_window_start_hhmm
+                        synth_end = _default_end_for_start(synth_start)
+                    synth_block["start_time"] = synth_start
+                    synth_block["end_time"] = synth_end
+                    synth_block["all_day"] = False
+                    raw_block_id = str(synth_block.get("block_id") or "").strip()
+                    try:
+                        synth_block["block_id"] = str(uuid.UUID(raw_block_id)) if raw_block_id else str(uuid.uuid4())
+                    except Exception:
+                        synth_block["block_id"] = str(uuid.uuid4())
+                    filtered_blocks.append(synth_block)
                 print(
                     "[FixGapDebug] synthesized_subject_blocks",
                     {
@@ -1900,6 +2123,29 @@ async def fix_target_gap(
                     },
                     flush=True,
                 )
+
+        subject_name_by_id: Dict[str, str] = {}
+        try:
+            subject_ids_for_titles = sorted({
+                str(block.get("subject_id") or "").strip()
+                for block in filtered_blocks
+                if str(block.get("subject_id") or "").strip()
+            })
+            if subject_ids_for_titles:
+                subject_rows_resp = (
+                    supabase.table("subject")
+                    .select("id, name")
+                    .eq("family_id", family_id)
+                    .in_("id", subject_ids_for_titles)
+                    .execute()
+                )
+                for row in (subject_rows_resp.data or []):
+                    sid = str(row.get("id") or "").strip()
+                    if not sid:
+                        continue
+                    subject_name_by_id[sid] = str(row.get("name") or "").strip()
+        except Exception:
+            subject_name_by_id = {}
 
         range_start_ymd = str(body.range_start_ymd or "").strip()[:10]
         range_end_ymd = str(body.range_end_ymd or "").strip()[:10]
@@ -2057,6 +2303,1208 @@ async def fix_target_gap(
                 if str(ev.get("subject_id") or "").strip() in requested_subject_set
             ]
 
+        # -----------------------------------------------------------------------------
+        # Fix-gap V3 (day targets): source of truth is planning preferences + events table.
+        # -----------------------------------------------------------------------------
+        if target_kind == "days":
+            def _parse_positive_int(value: Any) -> Optional[int]:
+                try:
+                    parsed = int(round(float(value)))
+                    return parsed if parsed > 0 else None
+                except Exception:
+                    return None
+
+            def _parse_child_ids(raw_child_id: Any) -> List[str]:
+                raw = str(raw_child_id or "").strip()
+                if not raw:
+                    return []
+                parts = [p.strip() for p in raw.replace(",", ";").split(";")]
+                return [p for p in parts if p]
+
+            def _day_from_ts(ts_raw: Any) -> Optional[str]:
+                day = str(ts_raw or "")[:10]
+                return day if len(day) == 10 else None
+
+            def _normalize_slot_times_v3(start_hm: str, end_hm: str) -> Tuple[str, str]:
+                start_min = _to_minutes_or_none(start_hm)
+                end_min = _to_minutes_or_none(end_hm)
+                safe_start = start_min if start_min is not None else learning_window_start_min
+                safe_end = end_min if end_min is not None else (safe_start + 60)
+                safe_start = max(learning_window_start_min, min(safe_start, learning_window_end_min - 15))
+                safe_end = min(learning_window_end_min, safe_end)
+                if safe_end <= safe_start:
+                    safe_end = min(learning_window_end_min, safe_start + 60)
+                if safe_end <= safe_start:
+                    safe_end = min(learning_window_end_min, safe_start + 15)
+                return _minutes_to_hhmm_simple(safe_start), _minutes_to_hhmm_simple(safe_end)
+
+            def _evenly_pick_days(eligible_days: List[str], needed: int) -> List[str]:
+                if needed <= 0 or not eligible_days:
+                    return []
+                if needed >= len(eligible_days):
+                    return list(eligible_days)
+                spacing = len(eligible_days) / float(needed)
+                selected: List[str] = []
+                used_idx = set()
+                for i in range(needed):
+                    idx = int(math.floor(i * spacing))
+                    idx = max(0, min(len(eligible_days) - 1, idx))
+                    while idx in used_idx and idx + 1 < len(eligible_days):
+                        idx += 1
+                    if idx in used_idx:
+                        for back in range(idx - 1, -1, -1):
+                            if back not in used_idx:
+                                idx = back
+                                break
+                    used_idx.add(idx)
+                    selected.append(eligible_days[idx])
+                return selected
+
+            settings_scope = str(planner_settings_row.get("target_scope") or "overall").strip().lower()
+            effective_scope = settings_scope if settings_scope in {"overall", "per_subject"} else scope
+            selected_subject_ids = (
+                [target_subject_id] if effective_scope == "per_subject" and target_subject_id
+                else (requested_subject_ids if requested_subject_ids else sorted(requested_subject_set))
+            )
+            if not selected_subject_ids:
+                selected_subject_ids = sorted({
+                    str(block.get("subject_id") or "").strip()
+                    for block in filtered_blocks
+                    if str(block.get("subject_id") or "").strip()
+                })
+            selected_subject_ids = [sid for sid in selected_subject_ids if sid]
+            if not selected_subject_ids:
+                raise HTTPException(status_code=400, detail="No subjects available for fix-gap.")
+
+            subjects_resp = (
+                supabase.table("subject")
+                .select("id, name, child_id, default_constraint_mode, default_target_days, default_target_hours")
+                .eq("family_id", family_id)
+                .in_("id", selected_subject_ids)
+                .execute()
+            )
+            subject_rows = list(subjects_resp.data or [])
+            subject_by_id: Dict[str, Dict[str, Any]] = {
+                str(row.get("id")): row
+                for row in subject_rows
+                if str(row.get("id") or "").strip()
+            }
+            selected_subject_ids = [sid for sid in selected_subject_ids if sid in subject_by_id]
+            if not selected_subject_ids:
+                raise HTTPException(status_code=400, detail="Selected subjects are invalid for this family.")
+
+            saved_range_start = str(planner_settings_row.get("default_year_start_date") or plan_start)[:10]
+            saved_range_end = str(planner_settings_row.get("default_year_end_date") or plan_end)[:10]
+            if len(saved_range_start) != 10:
+                saved_range_start = plan_start
+            if len(saved_range_end) != 10:
+                saved_range_end = plan_end
+            if saved_range_end < saved_range_start:
+                saved_range_start = plan_start
+                saved_range_end = plan_end
+            today_ymd = datetime.now(timezone.utc).date().isoformat()
+            range_start_for_fix = max(saved_range_start, today_ymd)
+            if saved_range_end < range_start_for_fix:
+                return FixTargetGapOutput(
+                    success=False,
+                    academic_year_id=body.academic_year_id,
+                    scope=effective_scope,
+                    subject_id=target_subject_id,
+                    target_kind="days",
+                    target_value=float(target_value_num),
+                    beforeProjectedDays=0,
+                    afterProjectedDays=0,
+                    beforeGapDays=0,
+                    afterGapDays=0,
+                    createdEvents=0,
+                    selectedDates=[],
+                    partialFixPossible=True,
+                    availableDates=0,
+                    remainingUnfixableGap=0,
+                    debugFailureReason="saved_range_already_ended",
+                    message="Saved planning range has already ended. Extend planning preferences to add days.",
+                )
+            start_obj = date.fromisoformat(range_start_for_fix)
+            end_obj = date.fromisoformat(saved_range_end)
+
+            holiday_settings_resp = (
+                supabase.table("academic_year_holiday_settings")
+                .select("*")
+                .eq("academic_year_id", body.academic_year_id)
+                .limit(1)
+                .execute()
+            )
+            holiday_settings = (holiday_settings_resp.data or [None])[0] or {}
+            follow_global = bool(holiday_settings.get("follow_global_holidays"))
+            holiday_region = holiday_settings.get("holiday_region") or holiday_settings.get("holiday_country_code") or "US"
+            excluded_holiday_dates = holiday_settings.get("excluded_holiday_dates") if isinstance(holiday_settings.get("excluded_holiday_dates"), list) else []
+            holiday_dates = _build_holiday_dates_for_apply(
+                start_obj,
+                end_obj,
+                follow_global,
+                str(holiday_region) if holiday_region else "US",
+                [],
+                [],
+                supabase,
+                excluded_holiday_dates=excluded_holiday_dates,
+            )
+            exclusions_resp = (
+                supabase.table("academic_year_exclusions")
+                .select("start_date, end_date")
+                .eq("academic_year_id", body.academic_year_id)
+                .execute()
+            )
+            exclusion_rows = list(exclusions_resp.data or [])
+            excluded_dates = {d.isoformat() for d in holiday_dates}
+            for row in exclusion_rows:
+                st = str(row.get("start_date") or "")[:10]
+                en = str(row.get("end_date") or "")[:10]
+                if len(st) != 10 or len(en) != 10 or en < st:
+                    continue
+                cursor = date.fromisoformat(st)
+                end_cursor = date.fromisoformat(en)
+                while cursor <= end_cursor:
+                    excluded_dates.add(cursor.isoformat())
+                    cursor += timedelta(days=1)
+
+            learning_dates: List[str] = []
+            cursor = start_obj
+            preferred_weekday_set = set(preferred_allowed_weekdays or [1, 2, 3, 4, 5])
+            while cursor <= end_obj:
+                weekday_num = int((cursor.weekday() + 1) % 7)
+                day_key = cursor.isoformat()
+                if weekday_num in preferred_weekday_set and day_key not in excluded_dates:
+                    learning_dates.append(day_key)
+                cursor += timedelta(days=1)
+
+            events_for_count_resp = (
+                supabase.table("events")
+                .select("id, subject_id, start_ts, status")
+                .eq("family_id", family_id)
+                .eq("academic_year_id", body.academic_year_id)
+                .eq("counts_toward_plan", True)
+                .is_("deleted_at", None)
+                .neq("status", "canceled")
+                .gte("start_ts", f"{saved_range_start}T00:00:00")
+                .lte("start_ts", f"{saved_range_end}T23:59:59")
+                .execute()
+            )
+            events_for_count = [
+                ev for ev in (events_for_count_resp.data or [])
+                if str(ev.get("subject_id") or "").strip() in set(selected_subject_ids)
+            ]
+            done_by_subject: Dict[str, set] = defaultdict(set)
+            upcoming_by_subject: Dict[str, set] = defaultdict(set)
+            existing_by_subject: Dict[str, set] = defaultdict(set)
+            existing_overall_dates: set = set()
+            for ev in events_for_count:
+                sid = str(ev.get("subject_id") or "").strip()
+                day_key = _day_from_ts(ev.get("start_ts"))
+                if not sid or not day_key:
+                    continue
+                existing_by_subject[sid].add(day_key)
+                existing_overall_dates.add(day_key)
+                status_raw = str(ev.get("status") or "").strip().lower()
+                if status_raw == "done" and day_key <= today_ymd:
+                    done_by_subject[sid].add(day_key)
+                elif day_key > today_ymd:
+                    upcoming_by_subject[sid].add(day_key)
+
+            before_projected_days = 0
+            before_gap_days = 0
+            target_days_effective = _parse_positive_int(planner_settings_row.get("default_target_days")) or target_days
+            per_subject_gaps: Dict[str, int] = {}
+            if effective_scope == "overall":
+                done_overall = set().union(*done_by_subject.values()) if done_by_subject else set()
+                upcoming_overall = set().union(*upcoming_by_subject.values()) if upcoming_by_subject else set()
+                before_projected_days = len(done_overall.union(upcoming_overall))
+                before_gap_days = int(target_days_effective - before_projected_days)
+            else:
+                for sid in selected_subject_ids:
+                    subject_row = subject_by_id.get(sid) or {}
+                    subject_target_days = _parse_positive_int(subject_row.get("default_target_days"))
+                    if subject_target_days is None:
+                        continue
+                    projected_sid = len((done_by_subject.get(sid) or set()).union(upcoming_by_subject.get(sid) or set()))
+                    gap_sid = int(subject_target_days - projected_sid)
+                    per_subject_gaps[sid] = gap_sid
+                before_projected_days = sum(
+                    len((done_by_subject.get(sid) or set()).union(upcoming_by_subject.get(sid) or set()))
+                    for sid in per_subject_gaps.keys()
+                )
+                before_gap_days = sum(max(0, gap) for gap in per_subject_gaps.values())
+                target_days_effective = before_projected_days + before_gap_days
+
+            if before_gap_days <= 0:
+                return FixTargetGapOutput(
+                    success=True,
+                    academic_year_id=body.academic_year_id,
+                    scope=effective_scope,
+                    subject_id=target_subject_id,
+                    target_kind="days",
+                    target_value=float(target_days_effective),
+                    beforeProjectedDays=before_projected_days,
+                    afterProjectedDays=before_projected_days,
+                    beforeGapDays=before_gap_days,
+                    afterGapDays=before_gap_days,
+                    createdEvents=0,
+                    removedEvents=0,
+                    selectedDates=[],
+                    partialFixPossible=False,
+                    availableDates=0,
+                    remainingUnfixableGap=0,
+                    debugDaysNeeded=max(0, before_gap_days),
+                    debugCandidateDatesCount=0,
+                    debugSelectedDatesCount=0,
+                    debugPotentialSelectedCount=0,
+                    message="Already on target.",
+                )
+
+            slot_templates_by_subject: Dict[str, Tuple[str, str]] = {}
+            for block in filtered_blocks:
+                sid = str(block.get("subject_id") or "").strip()
+                if not sid or sid in slot_templates_by_subject:
+                    continue
+                st, et = _normalize_slot_times_v3(
+                    str(block.get("start_time") or learning_window_start_hhmm),
+                    str(block.get("end_time") or learning_window_end_hhmm),
+                )
+                slot_templates_by_subject[sid] = (st, et)
+
+            assignment_requests: List[Dict[str, Any]] = []
+            available_dates_count = 0
+            if effective_scope == "overall":
+                eligible_days = [d for d in learning_dates if d not in existing_overall_dates]
+                available_dates_count = len(eligible_days)
+                selected_days = _evenly_pick_days(eligible_days, max(0, before_gap_days))
+                for idx, day_key in enumerate(selected_days):
+                    sid = selected_subject_ids[idx % len(selected_subject_ids)]
+                    st, et = slot_templates_by_subject.get(
+                        sid,
+                        (learning_window_start_hhmm, _default_end_for_start(learning_window_start_hhmm)),
+                    )
+                    assignment_requests.append({
+                        "subject_id": sid,
+                        "preferred_date": day_key,
+                        "preferred_start": st,
+                        "preferred_end": et,
+                        "candidate_dates": [day_key] + [d for d in eligible_days if d != day_key],
+                    })
+            else:
+                for sid in selected_subject_ids:
+                    gap_sid = max(0, int(per_subject_gaps.get(sid, 0)))
+                    if gap_sid <= 0:
+                        continue
+                    eligible_days_sid = [d for d in learning_dates if d not in (existing_by_subject.get(sid) or set())]
+                    available_dates_count += len(eligible_days_sid)
+                    selected_days_sid = _evenly_pick_days(eligible_days_sid, gap_sid)
+                    st, et = slot_templates_by_subject.get(
+                        sid,
+                        (learning_window_start_hhmm, _default_end_for_start(learning_window_start_hhmm)),
+                    )
+                    for day_key in selected_days_sid:
+                        assignment_requests.append({
+                            "subject_id": sid,
+                            "preferred_date": day_key,
+                            "preferred_start": st,
+                            "preferred_end": et,
+                            "candidate_dates": [day_key] + [d for d in eligible_days_sid if d != day_key],
+                        })
+
+            affected_child_ids = set()
+            for sid in selected_subject_ids:
+                row = subject_by_id.get(sid) or {}
+                for cid in _parse_child_ids(row.get("child_id")):
+                    affected_child_ids.add(cid)
+            if not affected_child_ids:
+                try:
+                    children_resp = (
+                        supabase.table("child")
+                        .select("id")
+                        .eq("family_id", family_id)
+                        .execute()
+                    )
+                    affected_child_ids = {
+                        str(row.get("id") or "").strip()
+                        for row in (children_resp.data or [])
+                        if str(row.get("id") or "").strip()
+                    }
+                except Exception:
+                    affected_child_ids = set()
+            # Build conflict scope from all family children so pre-check never underfetches
+            # compared to DB overlap guards.
+            try:
+                family_children_resp = (
+                    supabase.table("child")
+                    .select("id")
+                    .eq("family_id", family_id)
+                    .execute()
+                )
+                for row in (family_children_resp.data or []):
+                    cid = str(row.get("id") or "").strip()
+                    if cid:
+                        affected_child_ids.add(cid)
+            except Exception:
+                pass
+
+            selected_child_ids_for_conflict = sorted({
+                str(cid).strip()
+                for cid in affected_child_ids
+                if str(cid).strip()
+            })
+            events_by_date: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+            def _normalize_uuid_str(raw: Any) -> Optional[str]:
+                value = str(raw or "").strip().strip('"').strip("'").strip()
+                if not value:
+                    return None
+                return value.lower()
+
+            def _coerce_child_ids(raw_child_ids: Any) -> List[str]:
+                values: List[Any] = []
+                if isinstance(raw_child_ids, (list, tuple, set)):
+                    values = list(raw_child_ids)
+                elif isinstance(raw_child_ids, str):
+                    s = raw_child_ids.strip()
+                    if not s:
+                        values = []
+                    elif s.startswith("["):
+                        try:
+                            parsed = json.loads(s)
+                            values = parsed if isinstance(parsed, list) else [parsed]
+                        except Exception:
+                            values = [s]
+                    elif s.startswith("{") and s.endswith("}"):
+                        inner = s[1:-1].strip()
+                        values = [p.strip() for p in inner.split(",")] if inner else []
+                    else:
+                        values = [s]
+                elif raw_child_ids is None:
+                    values = []
+                else:
+                    values = [raw_child_ids]
+                out: List[str] = []
+                for item in values:
+                    norm = _normalize_uuid_str(item)
+                    if norm:
+                        out.append(norm)
+                return out
+
+            def _normalized_child_set(child_id_raw: Any, child_ids_raw: Any) -> set:
+                normalized = set(_coerce_child_ids(child_ids_raw))
+                one = _normalize_uuid_str(child_id_raw)
+                if one:
+                    normalized.add(one)
+                return normalized
+
+            def _event_child_ids(ev: Dict[str, Any]) -> List[str]:
+                return sorted(_normalized_child_set(ev.get("child_id"), ev.get("child_ids")))
+
+            def _shares_child(new_child_ids: List[str], existing_child_ids: List[str]) -> bool:
+                new_set = {_normalize_uuid_str(cid) for cid in (new_child_ids or []) if _normalize_uuid_str(cid)}
+                existing_set = {_normalize_uuid_str(cid) for cid in (existing_child_ids or []) if _normalize_uuid_str(cid)}
+                # Align to DB overlap scope requested by fix-gap: only events whose child
+                # membership intersects selected children are considered conflicts.
+                if not existing_set or not new_set:
+                    return False
+                return bool(new_set.intersection(existing_set))
+
+            def _minutes_from_ts(ts_raw: Any, fallback_min: int) -> int:
+                hm = str(ts_raw or "")[11:16]
+                parsed = _to_minutes_or_none(hm)
+                return parsed if parsed is not None else fallback_min
+
+            def _overlaps(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
+                return a_start < b_end and a_end > b_start
+
+            def _parse_ts_utc(ts_raw: Any) -> Optional[datetime]:
+                raw = str(ts_raw or "").strip()
+                if not raw:
+                    return None
+                try:
+                    dt = date_parser.isoparse(raw)
+                    return _ensure_utc_dt(dt)
+                except Exception:
+                    return None
+
+            def _ensure_utc_dt(dt: datetime) -> datetime:
+                if dt.tzinfo is None:
+                    return dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(timezone.utc)
+
+            def _normalize_event_window(ev: Dict[str, Any]) -> Optional[Tuple[datetime, datetime]]:
+                start_dt = _parse_ts_utc(ev.get("start_ts"))
+                if not start_dt:
+                    return None
+                end_dt = _parse_ts_utc(ev.get("end_ts"))
+                if bool(ev.get("all_day")):
+                    start_day = datetime.combine(start_dt.date(), time.min, tzinfo=timezone.utc)
+                    # all-day covers the full start date in overlap checks
+                    return start_day, start_day + timedelta(days=1)
+                if not end_dt or end_dt <= start_dt:
+                    end_dt = start_dt + timedelta(minutes=60)
+                return start_dt, end_dt
+
+            def _find_conflicting_event(
+                day_events: List[Dict[str, Any]],
+                candidate_start_dt: datetime,
+                candidate_end_dt: datetime,
+                candidate_child_ids: List[str],
+                candidate_day_key: Optional[str] = None,
+            ) -> Optional[Dict[str, Any]]:
+                debug_day = "2026-05-06"
+                candidate_start_utc = _ensure_utc_dt(candidate_start_dt)
+                candidate_end_utc = _ensure_utc_dt(candidate_end_dt)
+                candidate_child_set = {
+                    _normalize_uuid_str(cid)
+                    for cid in (candidate_child_ids or [])
+                    if _normalize_uuid_str(cid)
+                }
+                for ev in day_events:
+                    ev_start_dt = ev.get("start_dt")
+                    ev_end_dt = ev.get("end_dt")
+                    if not isinstance(ev_start_dt, datetime) or not isinstance(ev_end_dt, datetime):
+                        continue
+                    ev_start_utc = _ensure_utc_dt(ev_start_dt)
+                    ev_end_utc = _ensure_utc_dt(ev_end_dt)
+                    existing_child_set = {
+                        _normalize_uuid_str(cid)
+                        for cid in (ev.get("child_ids") or [])
+                        if _normalize_uuid_str(cid)
+                    }
+                    children_overlap = bool(candidate_child_set.intersection(existing_child_set))
+                    time_overlap = candidate_start_utc < ev_end_utc and candidate_end_utc > ev_start_utc
+                    conflict = children_overlap and time_overlap
+                    if candidate_day_key == debug_day:
+                        print(
+                            "[FixGapV3] conflictDiagnostic",
+                            {
+                                "existing_id": ev.get("id"),
+                                "existing_start_ts": str(ev.get("start_ts") or ""),
+                                "existing_end_ts": str(ev.get("end_ts") or ""),
+                                "existing_deleted_at": ev.get("deleted_at"),
+                                "existing_status": ev.get("status"),
+                                "existing_generated_by": ev.get("generated_by"),
+                                "existing_is_placeholder": ev.get("is_placeholder"),
+                                "existing_child_id": ev.get("child_id"),
+                                "existing_child_ids": ev.get("child_ids_raw"),
+                                "normalized_existing_child_set": sorted(existing_child_set),
+                                "candidate_child_set": sorted(candidate_child_set),
+                                "child_intersection_result": children_overlap,
+                                "candidate_start_utc": candidate_start_utc.isoformat(),
+                                "existing_start_utc": ev_start_utc.isoformat(),
+                                "existing_end_utc": ev_end_utc.isoformat(),
+                                "time_overlap_result": time_overlap,
+                                "final_conflict_result": conflict,
+                            },
+                            flush=True,
+                        )
+                    if not children_overlap:
+                        continue
+                    # Must match DB overlap semantics: touching endpoints are allowed.
+                    if time_overlap:
+                        return ev
+                return None
+
+            def _fetch_conflict_events_for_selected_children() -> List[Dict[str, Any]]:
+                if not selected_child_ids_for_conflict:
+                    return []
+                # Mirror DB-trigger visibility with full-scope pagination (no date/year/type filters).
+                page_size = 1000
+
+                def _fetch_rows(*, active_only: bool) -> List[Dict[str, Any]]:
+                    fetched_rows: List[Dict[str, Any]] = []
+                    offset = 0
+                    while True:
+                        query = (
+                            supabase.table("events")
+                            .select("id, start_ts, end_ts, child_id, child_ids, status, deleted_at, generated_by, is_placeholder")
+                            .eq("family_id", family_id)
+                            .neq("status", "canceled")
+                        )
+                        if active_only:
+                            query = query.is_("deleted_at", None)
+                        events_resp = query.range(offset, offset + page_size - 1).execute()
+                        page_rows = list(events_resp.data or [])
+                        if not page_rows:
+                            break
+                        fetched_rows.extend(page_rows)
+                        if len(page_rows) < page_size:
+                            break
+                        offset += page_size
+                    return fetched_rows
+
+                all_rows = _fetch_rows(active_only=False)
+                active_all_rows = _fetch_rows(active_only=True)
+                selected_set = set(selected_child_ids_for_conflict)
+                intersecting_including_deleted: List[Dict[str, Any]] = []
+                for ev in all_rows:
+                    ev_child_set = set(_event_child_ids(ev))
+                    if ev_child_set.intersection(selected_set):
+                        intersecting_including_deleted.append(ev)
+                active_rows: List[Dict[str, Any]] = []
+                for ev in active_all_rows:
+                    ev_child_set = set(_event_child_ids(ev))
+                    if ev_child_set.intersection(selected_set):
+                        active_rows.append(ev)
+                out: List[Dict[str, Any]] = []
+                for ev in active_rows:
+                    out.append(ev)
+                print(
+                    "[FixGapV3] conflictEventScope",
+                    {
+                        "selectedChildIdsCount": len(selected_child_ids_for_conflict),
+                        "fetchedRowsCount": len(all_rows),
+                        "fetchedConflictRowsIncludingDeleted": len(intersecting_including_deleted),
+                        "fetchedConflictRowsActiveOnly": len(active_rows),
+                        "ignoredDeletedConflictRows": max(0, len(intersecting_including_deleted) - len(active_rows)),
+                        "filteredConflictRowsCount": len(out),
+                    },
+                    flush=True,
+                )
+                return out
+
+            for ev in _fetch_conflict_events_for_selected_children():
+                win = _normalize_event_window(ev)
+                if not win:
+                    continue
+                start_dt, end_dt = win
+                child_ids = _event_child_ids(ev)
+                span_start = start_dt.date()
+                span_end = (end_dt - timedelta(microseconds=1)).date()
+                day_cursor = span_start
+                while day_cursor <= span_end:
+                    day_key = day_cursor.isoformat()
+                    events_by_date[day_key].append({
+                        "id": str(ev.get("id") or "").strip() or None,
+                        "start_dt": start_dt,
+                        "end_dt": end_dt,
+                        "start_ts": str(ev.get("start_ts") or ""),
+                        "end_ts": str(ev.get("end_ts") or ""),
+                        "child_id": ev.get("child_id"),
+                        "child_ids_raw": ev.get("child_ids"),
+                        "child_ids": child_ids,
+                    })
+                    day_cursor += timedelta(days=1)
+
+            selected_assignments: List[Dict[str, Any]] = []
+            used_overall_dates: set = set()
+            generated_child_days: Dict[str, set] = defaultdict(set)
+            assigned_count_by_week: Dict[str, int] = defaultdict(int)
+            skipped_no_slot = 0
+
+            def _week_start_ymd(day_key: str) -> str:
+                try:
+                    d = date.fromisoformat(day_key)
+                    return (d - timedelta(days=d.weekday())).isoformat()
+                except Exception:
+                    return day_key
+
+            def _nearest_balanced_fallback_dates(
+                preferred_day: str,
+                candidate_dates: List[str],
+            ) -> List[str]:
+                try:
+                    pref_ord = date.fromisoformat(preferred_day).toordinal()
+                except Exception:
+                    pref_ord = 0
+                def _ord_or_zero(day_key: str) -> int:
+                    try:
+                        return date.fromisoformat(day_key).toordinal()
+                    except Exception:
+                        return 0
+                deduped = []
+                seen = set()
+                for d in candidate_dates:
+                    if d in seen:
+                        continue
+                    seen.add(d)
+                    deduped.append(d)
+                return sorted(
+                    deduped,
+                    key=lambda d: (
+                        abs(_ord_or_zero(d) - pref_ord),
+                        assigned_count_by_week[_week_start_ymd(d)],
+                        d,
+                    ),
+                )
+
+            assignment_debug: List[Dict[str, Any]] = []
+            for req in assignment_requests:
+                sid = str(req.get("subject_id") or "").strip()
+                subject_row = subject_by_id.get(sid) or {}
+                child_ids = _parse_child_ids(subject_row.get("child_id"))
+                if not child_ids:
+                    child_ids = sorted(affected_child_ids)
+                preferred_start, preferred_end = _normalize_slot_times_v3(
+                    str(req.get("preferred_start") or learning_window_start_hhmm),
+                    str(req.get("preferred_end") or _default_end_for_start(str(req.get("preferred_start") or learning_window_start_hhmm))),
+                )
+                preferred_start_min = _to_minutes_or_none(preferred_start) or learning_window_start_min
+                preferred_end_min = _to_minutes_or_none(preferred_end) or (preferred_start_min + 60)
+                duration_min = max(15, preferred_end_min - preferred_start_min)
+                duration_min = min(duration_min, max(15, learning_window_end_min - learning_window_start_min))
+                latest_start_min = learning_window_end_min - duration_min
+                preferred_start_min = max(learning_window_start_min, min(preferred_start_min, latest_start_min))
+
+                assigned = None
+                candidate_dates = [d for d in (req.get("candidate_dates") or []) if isinstance(d, str) and len(d) == 10]
+                preferred_day = str(req.get("preferred_date") or "").strip()[:10]
+                fallback_used = False
+                fallback_reason = ""
+                on_selected_date_attempted = False
+
+                def _try_assign_on_dates(date_list: List[str], allow_same_child_day: bool) -> Optional[Dict[str, Any]]:
+                    for day_key in date_list:
+                        if effective_scope == "overall" and day_key in used_overall_dates:
+                            continue
+                        if (not allow_same_child_day) and any(day_key in (generated_child_days.get(cid) or set()) for cid in child_ids):
+                            continue
+                        day_events = events_by_date.setdefault(day_key, [])
+                        candidate_starts = [
+                            minute for minute in range(learning_window_start_min, latest_start_min + 1, 30)
+                        ]
+                        if preferred_start_min in candidate_starts:
+                            candidate_starts = [preferred_start_min] + [m for m in candidate_starts if m != preferred_start_min]
+                        rejected_slot_count = 0
+                        first_rejected_reason: Optional[Dict[str, Any]] = None
+                        selected_slot_log: Optional[Dict[str, Any]] = None
+                        for start_min in candidate_starts:
+                            end_min = start_min + duration_min
+                            if end_min > learning_window_end_min:
+                                continue
+                            candidate_start_dt = datetime.fromisoformat(f"{day_key}T{_minutes_to_hhmm_simple(start_min)}:00+00:00")
+                            candidate_end_dt = datetime.fromisoformat(f"{day_key}T{_minutes_to_hhmm_simple(end_min)}:00+00:00")
+                            conflicting_ev = _find_conflicting_event(
+                                day_events=day_events,
+                                candidate_start_dt=candidate_start_dt,
+                                candidate_end_dt=candidate_end_dt,
+                                candidate_child_ids=child_ids,
+                                candidate_day_key=day_key,
+                            )
+                            if conflicting_ev is not None:
+                                rejected_slot_count += 1
+                                if first_rejected_reason is None:
+                                    first_rejected_reason = {
+                                        "reason": "overlap_conflict",
+                                        "conflicting_event_id": conflicting_ev.get("id"),
+                                        "conflicting_start": str(conflicting_ev.get("start_ts") or ""),
+                                        "conflicting_end": str(conflicting_ev.get("end_ts") or ""),
+                                        "conflicting_child_ids": list(conflicting_ev.get("child_ids") or []),
+                                        "deleted_at": conflicting_ev.get("deleted_at"),
+                                        "status": conflicting_ev.get("status"),
+                                        "generated_by": conflicting_ev.get("generated_by"),
+                                        "is_placeholder": conflicting_ev.get("is_placeholder"),
+                                    }
+                                print(
+                                    "[FixGapV3] conflictCheckFail",
+                                    {
+                                        "candidate_start": candidate_start_dt.isoformat(),
+                                        "candidate_end": candidate_end_dt.isoformat(),
+                                        "candidate_child_ids": list(child_ids),
+                                        "conflicting_event_id": conflicting_ev.get("id"),
+                                        "conflicting_start": str(conflicting_ev.get("start_ts") or ""),
+                                        "conflicting_end": str(conflicting_ev.get("end_ts") or ""),
+                                        "conflicting_child_ids": list(conflicting_ev.get("child_ids") or []),
+                                        "deleted_at": conflicting_ev.get("deleted_at"),
+                                        "status": conflicting_ev.get("status"),
+                                        "generated_by": conflicting_ev.get("generated_by"),
+                                        "is_placeholder": conflicting_ev.get("is_placeholder"),
+                                    },
+                                    flush=True,
+                                )
+                                continue
+                            selected_slot_log = {
+                                "start": candidate_start_dt.isoformat(),
+                                "end": candidate_end_dt.isoformat(),
+                            }
+                            assigned_local = {
+                                "date": day_key,
+                                "subject_id": sid,
+                                "start_time": _minutes_to_hhmm_simple(start_min),
+                                "end_time": _minutes_to_hhmm_simple(end_min),
+                                "child_ids": child_ids,
+                            }
+                            day_events.append({
+                                "id": None,
+                                "start_dt": candidate_start_dt,
+                                "end_dt": candidate_end_dt,
+                                "start_ts": f"{day_key}T{_minutes_to_hhmm_simple(start_min)}:00+00:00",
+                                "end_ts": f"{day_key}T{_minutes_to_hhmm_simple(end_min)}:00+00:00",
+                                "child_ids": list(child_ids),
+                            })
+                            print(
+                                "[FixGapV3] slotSelection",
+                                {
+                                    "date": day_key,
+                                    "slotCount": len(candidate_starts),
+                                    "rejectedSlotCount": rejected_slot_count,
+                                    "firstRejectedReason": first_rejected_reason,
+                                    "selectedSlot": selected_slot_log,
+                                },
+                                flush=True,
+                            )
+                            if effective_scope == "overall":
+                                used_overall_dates.add(day_key)
+                            for cid in child_ids:
+                                generated_child_days[cid].add(day_key)
+                            assigned_count_by_week[_week_start_ymd(day_key)] += 1
+                            return assigned_local
+                        print(
+                            "[FixGapV3] slotSelection",
+                            {
+                                "date": day_key,
+                                "slotCount": len(candidate_starts),
+                                "rejectedSlotCount": rejected_slot_count,
+                                "firstRejectedReason": first_rejected_reason,
+                                "selectedSlot": None,
+                            },
+                            flush=True,
+                        )
+                    return None
+
+                # 1) Preserve even spread: try selected anchor date first.
+                if preferred_day:
+                    on_selected_date_attempted = True
+                    assigned = _try_assign_on_dates([preferred_day], allow_same_child_day=False)
+                    if not assigned:
+                        assigned = _try_assign_on_dates([preferred_day], allow_same_child_day=True)
+                        if assigned:
+                            fallback_reason = "same_child_day_required_on_selected_date"
+                    if assigned and assigned.get("date") == preferred_day:
+                        fallback_used = False
+
+                # 2) Fallback only if selected date cannot fit any valid slot.
+                if not assigned:
+                    fallback_used = True
+                    remaining_dates = [d for d in candidate_dates if d != preferred_day]
+                    ordered_fallback = _nearest_balanced_fallback_dates(preferred_day, remaining_dates)
+                    assigned = _try_assign_on_dates(ordered_fallback, allow_same_child_day=False)
+                    if not assigned:
+                        assigned = _try_assign_on_dates(ordered_fallback, allow_same_child_day=True)
+                        if assigned:
+                            fallback_reason = "same_child_day_required_on_fallback_date"
+                    if not assigned and not fallback_reason:
+                        fallback_reason = "no_open_slot_on_selected_or_fallback_dates"
+
+                if assigned:
+                    if fallback_used and not fallback_reason:
+                        fallback_reason = "selected_date_fully_booked"
+                    assignment_debug.append({
+                        "originalSelectedDate": preferred_day,
+                        "finalAssignedDate": assigned.get("date"),
+                        "fallbackUsed": bool(assigned.get("date") != preferred_day),
+                        "fallbackReason": fallback_reason if bool(assigned.get("date") != preferred_day) else "",
+                        "subject_id": sid,
+                    })
+                    selected_assignments.append(assigned)
+                else:
+                    assignment_debug.append({
+                        "originalSelectedDate": preferred_day,
+                        "finalAssignedDate": None,
+                        "fallbackUsed": True if on_selected_date_attempted else False,
+                        "fallbackReason": fallback_reason or "no_slot_found",
+                        "subject_id": sid,
+                    })
+                    skipped_no_slot += 1
+
+            selected_assignments.sort(key=lambda slot: (slot["date"], slot["subject_id"], slot["start_time"]))
+            selected_dates = [slot["date"] for slot in selected_assignments]
+            assigned_count_before_revalidation = len(selected_assignments)
+            preinsert_conflict_failures: List[Dict[str, Any]] = []
+            if selected_assignments and not body.dry_run:
+                if selected_child_ids_for_conflict:
+                    refreshed_events_by_date: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+                    for ev in _fetch_conflict_events_for_selected_children():
+                        win = _normalize_event_window(ev)
+                        if not win:
+                            continue
+                        start_dt, end_dt = win
+                        child_ids = _event_child_ids(ev)
+                        span_start = start_dt.date()
+                        span_end = (end_dt - timedelta(microseconds=1)).date()
+                        day_cursor = span_start
+                        while day_cursor <= span_end:
+                            day_key = day_cursor.isoformat()
+                            refreshed_events_by_date[day_key].append({
+                                "id": str(ev.get("id") or "").strip() or None,
+                                "start_dt": start_dt,
+                                "end_dt": end_dt,
+                                "start_ts": str(ev.get("start_ts") or ""),
+                                "end_ts": str(ev.get("end_ts") or ""),
+                                "child_id": ev.get("child_id"),
+                                "deleted_at": ev.get("deleted_at"),
+                                "status": ev.get("status"),
+                                "generated_by": ev.get("generated_by"),
+                                "is_placeholder": ev.get("is_placeholder"),
+                                "child_ids_raw": ev.get("child_ids"),
+                                "child_ids": child_ids,
+                            })
+                            day_cursor += timedelta(days=1)
+
+                    revalidated_assignments: List[Dict[str, Any]] = []
+                    for slot in selected_assignments:
+                        day_key = str(slot.get("date") or "").strip()
+                        if not day_key:
+                            fail_detail = {
+                                "date": day_key or None,
+                                "subject_id": str(slot.get("subject_id") or "").strip() or None,
+                                "child_ids": [str(cid) for cid in (slot.get("child_ids") or []) if str(cid).strip()],
+                                "reason": "invalid_assignment_date",
+                            }
+                            preinsert_conflict_failures.append(fail_detail)
+                            print("[FixGapV3] preInsertDrop", fail_detail, flush=True)
+                            continue
+                        child_ids = [str(cid) for cid in (slot.get("child_ids") or []) if str(cid).strip()]
+                        start_min = _to_minutes_or_none(str(slot.get("start_time") or "")) or learning_window_start_min
+                        end_min = _to_minutes_or_none(str(slot.get("end_time") or "")) or (start_min + 60)
+                        if end_min <= start_min:
+                            end_min = start_min + 60
+                        candidate_start_dt = datetime.fromisoformat(f"{day_key}T{_minutes_to_hhmm_simple(start_min)}:00+00:00")
+                        candidate_end_dt = datetime.fromisoformat(f"{day_key}T{_minutes_to_hhmm_simple(end_min)}:00+00:00")
+                        day_events = refreshed_events_by_date.setdefault(day_key, [])
+                        conflicting_ev = _find_conflicting_event(
+                            day_events=day_events,
+                            candidate_start_dt=candidate_start_dt,
+                            candidate_end_dt=candidate_end_dt,
+                            candidate_child_ids=child_ids,
+                            candidate_day_key=day_key,
+                        )
+                        if conflicting_ev is not None:
+                            fail_detail = {
+                                "date": day_key,
+                                "subject_id": str(slot.get("subject_id") or "").strip() or None,
+                                "child_ids": child_ids,
+                                "reason": "preinsert_overlap_conflict",
+                                "conflicting_event_id": conflicting_ev.get("id"),
+                                "conflicting_start": str(conflicting_ev.get("start_ts") or ""),
+                                "conflicting_end": str(conflicting_ev.get("end_ts") or ""),
+                                "conflicting_child_ids": list(conflicting_ev.get("child_ids") or []),
+                                "deleted_at": conflicting_ev.get("deleted_at"),
+                                "status": conflicting_ev.get("status"),
+                                "generated_by": conflicting_ev.get("generated_by"),
+                                "is_placeholder": conflicting_ev.get("is_placeholder"),
+                            }
+                            preinsert_conflict_failures.append(fail_detail)
+                            print(
+                                "[FixGapV3] conflictCheckFail",
+                                {
+                                    "candidate_start": candidate_start_dt.isoformat(),
+                                    "candidate_end": candidate_end_dt.isoformat(),
+                                    "candidate_child_ids": list(child_ids),
+                                    "conflicting_event_id": conflicting_ev.get("id"),
+                                    "conflicting_start": str(conflicting_ev.get("start_ts") or ""),
+                                    "conflicting_end": str(conflicting_ev.get("end_ts") or ""),
+                                    "conflicting_child_ids": list(conflicting_ev.get("child_ids") or []),
+                                    "deleted_at": conflicting_ev.get("deleted_at"),
+                                    "status": conflicting_ev.get("status"),
+                                    "generated_by": conflicting_ev.get("generated_by"),
+                                    "is_placeholder": conflicting_ev.get("is_placeholder"),
+                                },
+                                flush=True,
+                            )
+                            print("[FixGapV3] preInsertDrop", fail_detail, flush=True)
+                            continue
+                        revalidated_assignments.append(slot)
+                        day_events.append({
+                            "id": None,
+                            "start_dt": candidate_start_dt,
+                            "end_dt": candidate_end_dt,
+                            "start_ts": f"{day_key}T{_minutes_to_hhmm_simple(start_min)}:00+00:00",
+                            "end_ts": f"{day_key}T{_minutes_to_hhmm_simple(end_min)}:00+00:00",
+                            "child_ids": list(child_ids),
+                        })
+                    if preinsert_conflict_failures:
+                        print(
+                            "[FixGapV3] preInsertRevalidation",
+                            {
+                                "removed": len(preinsert_conflict_failures),
+                                "kept": len(revalidated_assignments),
+                                "inputAssignments": len(selected_assignments),
+                            },
+                            flush=True,
+                        )
+                    selected_assignments = revalidated_assignments
+                    selected_dates = [slot["date"] for slot in selected_assignments]
+
+            created_rows: List[Dict[str, Any]] = []
+            for slot in selected_assignments:
+                sid = str(slot.get("subject_id") or "").strip()
+                subject_row = subject_by_id.get(sid) or {}
+                subject_name = str(subject_row.get("name") or "Subject").strip() or "Subject"
+                child_ids = [str(cid) for cid in (slot.get("child_ids") or []) if str(cid).strip()]
+                st = str(slot.get("start_time") or learning_window_start_hhmm)
+                et = str(slot.get("end_time") or _default_end_for_start(st))
+                created_rows.append({
+                    "id": str(uuid.uuid4()),
+                    "family_id": family_id,
+                    "academic_year_id": body.academic_year_id,
+                    "created_by": user.get("id"),
+                    "updated_by": user.get("id"),
+                    "subject_id": sid,
+                    "title": f"{subject_name} catch-up day",
+                    "event_type": "Lesson",
+                    "status": "scheduled",
+                    "source": "system",
+                    "start_ts": f"{slot['date']}T{st}:00+00:00",
+                    "end_ts": f"{slot['date']}T{et}:00+00:00",
+                    "counts_toward_plan": True,
+                    "instructional_status": "PLAN_PLACEHOLDER",
+                    "is_placeholder": True,
+                    "generated_by": "fix_gap",
+                    "child_id": (child_ids[0] if child_ids else None),
+                    "child_ids": child_ids,
+                })
+
+            duplicate_suppressed_failures: List[Dict[str, Any]] = []
+            if created_rows and not body.dry_run:
+                def _slot_identity_key(
+                    subject_id: Any,
+                    start_ts: Any,
+                    end_ts: Any,
+                    child_ids_raw: Any,
+                    child_id_raw: Any,
+                ) -> str:
+                    sid = str(subject_id or "").strip()
+                    start_str = str(start_ts or "")
+                    end_str = str(end_ts or "")
+                    day = start_str[:10]
+                    start_hm = start_str[11:16]
+                    end_hm = end_str[11:16]
+                    ids = [str(cid).strip() for cid in (child_ids_raw or []) if str(cid).strip()]
+                    single = str(child_id_raw or "").strip()
+                    if single:
+                        ids.append(single)
+                    ids_key = ",".join(sorted(set(ids)))
+                    return f"{sid}|{day}|{start_hm}|{end_hm}|{ids_key}"
+
+                min_created_day = min(str(row.get("start_ts") or "")[:10] for row in created_rows)
+                max_created_day = max(str(row.get("start_ts") or "")[:10] for row in created_rows)
+                existing_fix_resp = (
+                    supabase.table("events")
+                    .select("subject_id, start_ts, end_ts, child_id, child_ids")
+                    .eq("family_id", family_id)
+                    .eq("academic_year_id", body.academic_year_id)
+                    .eq("generated_by", "fix_gap")
+                    .is_("deleted_at", None)
+                    .neq("status", "canceled")
+                    .gte("start_ts", f"{min_created_day}T00:00:00")
+                    .lte("start_ts", f"{max_created_day}T23:59:59")
+                    .execute()
+                )
+                existing_keys = {
+                    _slot_identity_key(
+                        ev.get("subject_id"),
+                        ev.get("start_ts"),
+                        ev.get("end_ts"),
+                        ev.get("child_ids") or [],
+                        ev.get("child_id"),
+                    )
+                    for ev in (existing_fix_resp.data or [])
+                }
+                filtered_rows: List[Dict[str, Any]] = []
+                seen_new_keys: set = set()
+                for row in created_rows:
+                    row_key = _slot_identity_key(
+                        row.get("subject_id"),
+                        row.get("start_ts"),
+                        row.get("end_ts"),
+                        row.get("child_ids") or [],
+                        row.get("child_id"),
+                    )
+                    if row_key in existing_keys or row_key in seen_new_keys:
+                        fail_detail = {
+                            "date": str(row.get("start_ts") or "")[:10] or None,
+                            "subject_id": str(row.get("subject_id") or "").strip() or None,
+                            "child_ids": [str(cid) for cid in (row.get("child_ids") or []) if str(cid).strip()],
+                            "reason": "duplicate_suppressed",
+                        }
+                        duplicate_suppressed_failures.append(fail_detail)
+                        print("[FixGapV3] preInsertDrop", fail_detail, flush=True)
+                        continue
+                    seen_new_keys.add(row_key)
+                    filtered_rows.append(row)
+                if duplicate_suppressed_failures:
+                    print(
+                        "[FixGapV3] duplicateSuppression",
+                        {
+                            "suppressed": len(duplicate_suppressed_failures),
+                            "remaining": len(filtered_rows),
+                        },
+                        flush=True,
+                    )
+                created_rows = filtered_rows
+
+            inserted_rows: List[Dict[str, Any]] = []
+            inserted_ids: List[str] = []
+            observed_insert = insertFixGapEventsWithObservability(
+                eventsToInsert=created_rows,
+                assignedCount=assigned_count_before_revalidation,
+                preinsertFailures=[*preinsert_conflict_failures, *duplicate_suppressed_failures],
+                dryRun=bool(body.dry_run),
+                logPrefix="[FixGapV3]",
+            )
+            inserted_rows = list(observed_insert.get("insertedRows") or [])
+            inserted_ids = [str(i) for i in (observed_insert.get("insertedIds") or []) if str(i).strip()]
+            attempted_insert_count = int(observed_insert.get("attemptedInsertCount") or 0)
+            successful_insert_count = int(observed_insert.get("successfulInsertCount") or 0)
+            failed_insert_count = int(observed_insert.get("failedInsertCount") or 0)
+            failed_insert_reasons = dict(observed_insert.get("failedInsertReasons") or {})
+            failed_insert_details = list(observed_insert.get("failedInsertDetails") or [])
+            if (
+                not body.dry_run
+                and int(failed_insert_reasons.get("overlap_conflict") or 0) > 0
+                and failed_insert_details
+            ):
+                refreshed_conflict_events = _fetch_conflict_events_for_selected_children()
+                for fail in failed_insert_details:
+                    if str(fail.get("reason") or "") != "overlap_conflict":
+                        continue
+                    cand_start = _parse_ts_utc(fail.get("candidate_start"))
+                    cand_end = _parse_ts_utc(fail.get("candidate_end"))
+                    cand_child_ids = [str(cid) for cid in (fail.get("child_ids") or []) if str(cid).strip()]
+                    if not cand_start or not cand_end or not cand_child_ids:
+                        continue
+                    matched = None
+                    for ev in refreshed_conflict_events:
+                        win = _normalize_event_window(ev)
+                        if not win:
+                            continue
+                        ev_start, ev_end = win
+                        ev_child_ids = _event_child_ids(ev)
+                        if not _shares_child(cand_child_ids, ev_child_ids):
+                            continue
+                        if cand_start < ev_end and cand_end > ev_start:
+                            matched = {
+                                "conflicting_event_id": str(ev.get("id") or "").strip() or None,
+                                "conflicting_start": str(ev.get("start_ts") or ""),
+                                "conflicting_end": str(ev.get("end_ts") or ""),
+                                "conflicting_child_ids": ev_child_ids,
+                                "deleted_at": ev.get("deleted_at"),
+                                "status": ev.get("status"),
+                                "generated_by": ev.get("generated_by"),
+                                "is_placeholder": ev.get("is_placeholder"),
+                            }
+                            break
+                    if matched:
+                        print(
+                            "[FixGapV3] dbRejectConflictMatch",
+                            {
+                                "candidate_start": cand_start.isoformat(),
+                                "candidate_end": cand_end.isoformat(),
+                                "candidate_child_ids": cand_child_ids,
+                                **matched,
+                            },
+                            flush=True,
+                        )
+
+            events_created_count = successful_insert_count
+            projected_after_days = before_projected_days + events_created_count
+            after_gap_days = int(target_days_effective - projected_after_days)
+            remaining_unfixable_gap = max(0, int(before_gap_days - events_created_count))
+            partial_fix_possible = remaining_unfixable_gap > 0
+
+            print(
+                "[FixGapV3] result",
+                {
+                    "target": target_days_effective,
+                    "projectedBefore": before_projected_days,
+                    "gapBefore": before_gap_days,
+                    "eligibleDatesCount": available_dates_count,
+                    "selectedDates": selected_dates,
+                    "eventsToInsert": len(created_rows),
+                    "assignedCount": assigned_count_before_revalidation,
+                    "attemptedInsertCount": attempted_insert_count,
+                    "successfulInsertCount": successful_insert_count,
+                    "insertedEvents": events_created_count,
+                    "failedInsertCount": failed_insert_count,
+                    "failedInsertReasons": failed_insert_reasons,
+                    "unassignedCount": max(0, len(assignment_requests) - assigned_count_before_revalidation),
+                    "preInsertConflictSkips": len(preinsert_conflict_failures),
+                    "duplicateSuppressedCount": len(duplicate_suppressed_failures),
+                    "assignmentStrategy": "even_spread_conflict_aware",
+                    "assignmentDebug": assignment_debug,
+                    "projectedAfter": projected_after_days,
+                    "gapAfter": after_gap_days,
+                },
+                flush=True,
+            )
+
+            message = None
+            if partial_fix_possible:
+                message = (
+                    f"Only {events_created_count} of {before_gap_days} missing day{'s' if before_gap_days != 1 else ''} could be scheduled. "
+                    f"Extend planning range or add more preferred learning days to close the remaining {remaining_unfixable_gap}-day gap."
+                )
+
+            return FixTargetGapOutput(
+                success=not partial_fix_possible,
+                academic_year_id=body.academic_year_id,
+                scope=effective_scope,
+                subject_id=target_subject_id,
+                target_kind="days",
+                target_value=float(target_days_effective),
+                beforeProjectedDays=before_projected_days,
+                afterProjectedDays=projected_after_days,
+                beforeGapDays=before_gap_days,
+                afterGapDays=after_gap_days,
+                createdEvents=events_created_count,
+                removedEvents=0,
+                createdEventIds=inserted_ids,
+                removedEventIds=[],
+                debugDaysNeeded=max(0, before_gap_days),
+                debugCandidateDatesCount=len(learning_dates),
+                debugSelectedDatesCount=len(selected_assignments),
+                debugPotentialSelectedCount=len(assignment_requests),
+                debugInsertedCount=events_created_count,
+                debugSelectedSlots=selected_assignments,
+                debugFailureReason=("partial_fix_possible" if partial_fix_possible else None),
+                debugInitialRangeEnd=saved_range_end,
+                debugFinalRangeEnd=saved_range_end,
+                requestedGap=max(0, before_gap_days),
+                assignedCount=assigned_count_before_revalidation,
+                insertedCount=events_created_count,
+                attemptedInsertCount=attempted_insert_count,
+                successfulInsertCount=successful_insert_count,
+                failedInsertCount=failed_insert_count,
+                failedInsertReasons=failed_insert_reasons,
+                datesWithCapacity=assigned_count_before_revalidation,
+                datesWithoutCapacity=max(0, len(assignment_requests) - assigned_count_before_revalidation),
+                unassignedCount=max(0, len(assignment_requests) - assigned_count_before_revalidation),
+                skippedBecauseNoSlot=(skipped_no_slot + len(preinsert_conflict_failures)),
+                selectedAssignments=selected_assignments,
+                assignmentStrategy="even_spread_conflict_aware",
+                selectedDates=selected_dates,
+                partialFixPossible=partial_fix_possible,
+                availableDates=available_dates_count,
+                remainingUnfixableGap=remaining_unfixable_gap,
+                message=message,
+            )
+
+        now_utc = datetime.now(timezone.utc)
+        today_ymd = now_utc.date().isoformat()
+
+        def _event_is_attended_for_projection(ev: Dict[str, Any]) -> bool:
+            status = str(ev.get("status") or "").strip().lower()
+            instructional_status = str(ev.get("instructional_status") or "").strip().upper()
+            return status == "done" or instructional_status == "MANUAL_COUNTS"
+
+        def _event_is_upcoming_for_projection(ev: Dict[str, Any]) -> bool:
+            ts_raw = str(ev.get("start_ts") or ev.get("due_ts") or "").strip()
+            if not ts_raw:
+                return False
+            # Use day-level comparison to match UI day-target behavior and avoid
+            # timezone/time-of-day skew that can incorrectly drop same-day/future slots.
+            day = ts_raw[:10]
+            return len(day) == 10 and day >= today_ymd
+
+        # Keep backend projection aligned to UI Year Targets row:
+        # projected = attended/manual-counts + upcoming events (not all historical scheduled).
+        projected_events = [
+            ev for ev in counted_events
+            if _event_is_attended_for_projection(ev) or _event_is_upcoming_for_projection(ev)
+        ]
+
         def _projected_unique_days(events: List[Dict[str, Any]]) -> int:
             if scope == "overall":
                 return len({_day_key(ev) for ev in events if _day_key(ev)})
@@ -2072,8 +3520,8 @@ async def fix_target_gap(
                 total_minutes += _event_minutes(ev)
             return round(total_minutes / 60.0, 2)
 
-        backend_before_projected_days = _projected_unique_days(counted_events)
-        backend_before_projected_hours = _projected_total_hours(counted_events)
+        backend_before_projected_days = _projected_unique_days(projected_events)
+        backend_before_projected_hours = _projected_total_hours(projected_events)
         ui_before_projected_days = None
         ui_gap_days = None
         ui_before_projected_hours = None
@@ -2175,19 +3623,19 @@ async def fix_target_gap(
 
         day_set_before = set()
         if target_kind == "hours":
-            for ev in counted_events:
+            for ev in projected_events:
                 dk = _day_key(ev)
                 sid = str(ev.get("subject_id") or "").strip()
                 st_hm = str(ev.get("start_ts") or "")[11:16] or "09:00"
                 if dk and sid:
                     day_set_before.add(f"{sid}:{dk}:{st_hm}")
         elif scope == "overall":
-            for ev in counted_events:
+            for ev in projected_events:
                 dk = _day_key(ev)
                 if dk:
                     day_set_before.add(dk)
         else:
-            for ev in counted_events:
+            for ev in projected_events:
                 dk = _day_key(ev)
                 sid = str(ev.get("subject_id") or "").strip()
                 if dk and sid:
@@ -2208,17 +3656,9 @@ async def fix_target_gap(
         if positive_gap:
             # Need to add placeholders.
             today_iso = datetime.now(timezone.utc).date().isoformat()
-            latest_counted_day = max(
-                (_day_key(ev) for ev in counted_events if _day_key(ev)),
-                default=None,
-            )
-            next_after_latest = None
-            if latest_counted_day:
-                next_after_latest = (date.fromisoformat(latest_counted_day) + timedelta(days=1)).isoformat()
             fix_start_ymd = max(
                 plan_start,
                 today_iso,
-                next_after_latest or plan_start,
             )
             fix_start_obj = date.fromisoformat(fix_start_ymd)
             # Start with effective range end.
@@ -2228,6 +3668,7 @@ async def fix_target_gap(
             progress_needed = days_needed if target_kind == "days" else minutes_needed
             candidate_slots: List[Dict[str, Any]] = []
             potential_selected_count = 0
+            dense_fallback_enabled = bool(target_kind == "days" and scope == "overall")
             extension_anchor_end_obj = effective_end_obj
             if len(range_end_ymd) == 10:
                 try:
@@ -2304,6 +3745,9 @@ async def fix_target_gap(
                         continue
                     dates = get_block_occurrence_dates(block, fix_start_obj, fix_end_obj, exclusion_ranges)
                     for d in dates:
+                        weekday_num = int((d.weekday() + 1) % 7)
+                        if weekday_num not in preferred_allowed_weekdays:
+                            continue
                         ymd = d.isoformat()
                         norm_start, norm_end = _normalize_slot_times(
                             str(block.get("start_time") or learning_window_start_hhmm),
@@ -2318,6 +3762,60 @@ async def fix_target_gap(
                             "all_day": False,
                             "child_ids": list(block.get("child_ids") or []),
                         })
+                if dense_fallback_enabled:
+                    # Keep saved class duration, but allow trying preferred learning weekdays
+                    # when saved cadence is too sparse to close gap.
+                    existing_sid_day = {
+                        f"{str(slot.get('subject_id') or '').strip()}:{str(slot.get('date') or '')[:10]}"
+                        for slot in candidate_slots
+                        if str(slot.get("subject_id") or "").strip() and str(slot.get("date") or "")[:10]
+                    }
+                    template_by_sid: Dict[str, Dict[str, Any]] = {}
+                    for block in filtered_blocks:
+                        sid = str(block.get("subject_id") or "").strip()
+                        if not sid or sid in template_by_sid:
+                            continue
+                        norm_start, norm_end = _normalize_slot_times(
+                            str(block.get("start_time") or learning_window_start_hhmm),
+                            str(block.get("end_time") or learning_window_end_hhmm),
+                        )
+                        template_by_sid[sid] = {
+                            "start_time": norm_start,
+                            "end_time": norm_end,
+                            "child_ids": list(block.get("child_ids") or []),
+                            "block_id": block.get("block_id"),
+                        }
+                    dense_subject_ids = requested_subject_ids if requested_subject_ids else sorted(requested_subject_set)
+                    for sid in dense_subject_ids:
+                        sid_clean = str(sid or "").strip()
+                        tpl = template_by_sid.get(sid_clean)
+                        if not sid_clean or not tpl:
+                            continue
+                        dense_block = {
+                            "subject_id": sid_clean,
+                            "weekdays": list(preferred_allowed_weekdays),
+                            "start_time": tpl.get("start_time") or learning_window_start_hhmm,
+                            "end_time": tpl.get("end_time") or learning_window_end_hhmm,
+                            "all_day": False,
+                            "child_ids": list(tpl.get("child_ids") or []),
+                            "block_id": tpl.get("block_id"),
+                        }
+                        dense_dates = get_block_occurrence_dates(dense_block, fix_start_obj, fix_end_obj, exclusion_ranges)
+                        for d in dense_dates:
+                            ymd = d.isoformat()
+                            sid_day_key = f"{sid_clean}:{ymd}"
+                            if sid_day_key in existing_sid_day:
+                                continue
+                            existing_sid_day.add(sid_day_key)
+                            candidate_slots.append({
+                                "date": ymd,
+                                "subject_id": sid_clean,
+                                "block_id": dense_block.get("block_id"),
+                                "start_time": dense_block["start_time"],
+                                "end_time": dense_block["end_time"],
+                                "all_day": False,
+                                "child_ids": list(dense_block.get("child_ids") or []),
+                            })
                 candidate_slots.sort(key=lambda s: (s["date"], str(s.get("start_time") or ""), str(s.get("subject_id") or "")))
                 # Compute how many truly addable keys exist for this window.
                 preview_used = set(day_set_before)
@@ -2441,11 +3939,31 @@ async def fix_target_gap(
                     if slot_end <= slot_start:
                         slot_end = slot_start + 60
                 day_bucket = conflict_windows_by_day_child.get(day_key, {})
-                for cid in slot_child_ids:
-                    for existing_start, existing_end in (day_bucket.get(cid) or []):
-                        if slot_start < existing_end and slot_end > existing_start:
-                            return True
-                return False
+                def _overlaps_any(start_min: int, end_min: int) -> bool:
+                    for cid in slot_child_ids:
+                        for existing_start, existing_end in (day_bucket.get(cid) or []):
+                            if start_min < existing_end and end_min > existing_start:
+                                return True
+                    return False
+                if not _overlaps_any(slot_start, slot_end):
+                    return False
+                # If a slot conflicts, try to re-time it within saved learning window.
+                # This allows filling open time on already-scheduled days (e.g. 8-9, 10-3).
+                desired_duration = max(15, slot_end - slot_start)
+                if target_kind == "days":
+                    # Day targets count one day, so a 60-minute placeholder is enough.
+                    desired_duration = min(60, learning_window_span_minutes)
+                desired_duration = min(desired_duration, learning_window_span_minutes)
+                latest_start = learning_window_end_min - desired_duration
+                probe_start = learning_window_start_min
+                while probe_start <= latest_start:
+                    probe_end = probe_start + desired_duration
+                    if not _overlaps_any(probe_start, probe_end):
+                        slot["start_time"] = _minutes_to_hhmm(probe_start)
+                        slot["end_time"] = _minutes_to_hhmm(probe_end)
+                        return False
+                    probe_start += 15
+                return True
 
             def _register_slot_window(slot: Dict[str, Any]) -> None:
                 if not body.enforce_conflict_checks:
@@ -2739,6 +4257,11 @@ async def fix_target_gap(
                 )
 
             created_events: List[Dict[str, Any]] = []
+            assigned_count_for_insert = len(selected_slots)
+            attempted_insert_count = assigned_count_for_insert
+            successful_insert_count = 0
+            failed_insert_count = 0
+            failed_insert_reasons: Dict[str, int] = {}
             if selected_slots and not body.dry_run:
                 # Keep selected subject assignments from slot selection. Do not rotate again
                 # during insert, otherwise requested subjects can be dropped unexpectedly.
@@ -2764,12 +4287,11 @@ async def fix_target_gap(
                     sid = str(slot.get("subject_id") or "").strip()
                     tpl = subject_template_by_id.get(sid) or {}
                     if scope == "overall" and tpl:
+                        # Preserve the conflict-safe time window chosen during slot selection.
+                        # Only backfill child_ids if the selected slot does not already have them.
                         slot_for_insert = {
                             **slot,
-                            "start_time": tpl.get("start_time") or slot.get("start_time"),
-                            "end_time": tpl.get("end_time") or slot.get("end_time"),
-                            "all_day": bool(tpl.get("all_day")) if "all_day" in tpl else bool(slot.get("all_day")),
-                            "child_ids": list(tpl.get("child_ids") or slot.get("child_ids") or []),
+                            "child_ids": list(slot.get("child_ids") or tpl.get("child_ids") or []),
                         }
                     eid = str(uuid.uuid4())
                     st, et = _normalize_slot_times(
@@ -2788,14 +4310,23 @@ async def fix_target_gap(
                         remaining_minutes_to_allocate = max(0, remaining_minutes_to_allocate - allocated_minutes)
                         et = _add_minutes_hhmm(st, allocated_minutes)
                     child_ids = [str(cid) for cid in (slot_for_insert.get("child_ids") or []) if str(cid).strip()]
+                    subject_id_for_insert = str(slot_for_insert.get("subject_id") or "").strip()
+                    event_title = subject_name_by_id.get(subject_id_for_insert) or "Lesson"
+                    raw_source_block_id = str(slot_for_insert.get("block_id") or "").strip()
+                    safe_source_block_id = None
+                    if raw_source_block_id:
+                        try:
+                            safe_source_block_id = str(uuid.UUID(raw_source_block_id))
+                        except Exception:
+                            safe_source_block_id = None
                     created_rows.append({
                         "id": eid,
                         "family_id": family_id,
                         "created_by": user.get("id"),
                         "updated_by": user.get("id"),
                         "academic_year_id": body.academic_year_id,
-                        "subject_id": slot_for_insert.get("subject_id"),
-                        "title": "Placeholder lesson",
+                        "subject_id": subject_id_for_insert or None,
+                        "title": event_title,
                         "event_type": "Lesson",
                         "status": "scheduled",
                         "source": "year_plan_seed",
@@ -2806,51 +4337,93 @@ async def fix_target_gap(
                         "instructional_status": "PLAN_PLACEHOLDER",
                         "is_placeholder": True,
                         "generated_by": "target_gap_fix",
-                        "source_block_id": slot_for_insert.get("block_id"),
+                        "source_block_id": safe_source_block_id,
                         "child_id": (child_ids[0] if child_ids else None),
                         "child_ids": child_ids,
                     })
                 if created_rows:
                     print("[FixGapDebug] insert payload", created_rows, flush=True)
-                    insert_error = None
-                    inserted_rows: List[Dict[str, Any]] = []
-                    try:
-                        ins = supabase.table("events").insert(created_rows).execute()
-                        inserted_rows = list(ins.data or [])
-                        if not inserted_rows:
-                            inserted_ids = [str(row.get("id")) for row in created_rows if row.get("id")]
-                            if inserted_ids:
-                                fetch_resp = (
-                                    supabase.table("events")
-                                    .select("id, subject_id, start_ts, counts_toward_plan, is_placeholder, generated_by")
-                                    .in_("id", inserted_ids)
-                                    .execute()
-                                )
-                                inserted_rows = list(fetch_resp.data or [])
-                    except Exception as insert_exc:
-                        insert_error = str(insert_exc)
-                        print(
-                            "[FixGapDebug] insert result",
-                            {
-                                "error": insert_error,
-                                "insertedCount": 0,
-                                "inserted": [],
-                            },
-                            flush=True,
-                        )
-                        raise
+                    def _is_overlap_insert_error(exc: Exception) -> bool:
+                        raw = str(exc or "").lower()
+                        return ("p0001" in raw) or ("overlap" in raw and "event" in raw)
+
+                    def _retime_and_insert_on_conflict(row_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                        if not bool(body.enforce_conflict_checks):
+                            return None
+                        day_key = str(row_payload.get("start_ts") or "")[:10]
+                        if len(day_key) != 10:
+                            return None
+                        start_hm = str(row_payload.get("start_ts") or "")[11:16]
+                        end_hm = str(row_payload.get("end_ts") or "")[11:16]
+                        try:
+                            sh, sm = [int(x) for x in start_hm.split(":")]
+                            eh, em = [int(x) for x in end_hm.split(":")]
+                            duration_minutes = max(15, (eh * 60 + em) - (sh * 60 + sm))
+                        except Exception:
+                            duration_minutes = 60
+                        duration_minutes = min(duration_minutes, max(15, learning_window_end_min - learning_window_start_min))
+                        latest_start_min = learning_window_end_min - duration_minutes
+                        if latest_start_min < learning_window_start_min:
+                            return None
+                        original_start_min = _to_minutes_or_none(start_hm)
+                        candidate_start_minutes = []
+                        for probe in range(learning_window_start_min, latest_start_min + 1, 15):
+                            if original_start_min is not None and probe == original_start_min:
+                                continue
+                            candidate_start_minutes.append(probe)
+                        if original_start_min is not None:
+                            candidate_start_minutes.sort(key=lambda p: (abs(p - original_start_min), p))
+                        for probe_start in candidate_start_minutes:
+                            probe_end = probe_start + duration_minutes
+                            probe_start_hhmm = _minutes_to_hhmm_simple(probe_start)
+                            probe_end_hhmm = _minutes_to_hhmm_simple(probe_end)
+                            candidate_row = {
+                                **row_payload,
+                                "start_ts": f"{day_key}T{probe_start_hhmm}:00+00:00",
+                                "end_ts": f"{day_key}T{probe_end_hhmm}:00+00:00",
+                            }
+                            try:
+                                one = supabase.table("events").insert(candidate_row).execute()
+                                data = list(one.data or [])
+                                if data:
+                                    return data[0]
+                            except Exception as candidate_exc:
+                                if not _is_overlap_insert_error(candidate_exc):
+                                    continue
+                        return None
+                    def _recover_on_insert_error(row_payload: Dict[str, Any], row_exc: Exception) -> Optional[Dict[str, Any]]:
+                        if _is_overlap_insert_error(row_exc):
+                            return _retime_and_insert_on_conflict(row_payload)
+                        return None
+                    observed_insert = insertFixGapEventsWithObservability(
+                        eventsToInsert=created_rows,
+                        assignedCount=len(selected_slots),
+                        preinsertFailures=[],
+                        dryRun=False,
+                        logPrefix="[FixGapLegacy]",
+                        recoverOnInsertError=_recover_on_insert_error,
+                    )
+                    inserted_rows = list(observed_insert.get("insertedRows") or [])
+                    inserted_ids = [str(i) for i in (observed_insert.get("insertedIds") or []) if str(i).strip()]
+                    attempted_insert_count = int(observed_insert.get("attemptedInsertCount") or 0)
+                    successful_insert_count = int(observed_insert.get("successfulInsertCount") or 0)
+                    failed_insert_count = int(observed_insert.get("failedInsertCount") or 0)
+                    failed_insert_reasons = dict(observed_insert.get("failedInsertReasons") or {})
                     print(
                         "[FixGapDebug] insert result",
                         {
-                            "error": insert_error,
+                            "attemptedInsertCount": attempted_insert_count,
+                            "successfulInsertCount": successful_insert_count,
+                            "failedInsertCount": failed_insert_count,
+                            "failedInsertReasons": failed_insert_reasons,
                             "insertedCount": len(inserted_rows),
                             "inserted": inserted_rows,
                         },
                         flush=True,
                     )
                     created_events = inserted_rows
-                    created_event_ids = [str(row.get("id")) for row in inserted_rows if row.get("id")]
-                    debug_inserted_count = len(inserted_rows)
+                    created_event_ids = inserted_ids
+                    debug_inserted_count = successful_insert_count
                     if (not body.strict_range) and fix_end_obj > end_date_obj:
                         new_end_ymd = fix_end_obj.isoformat()
                         supabase.table("academic_year_plan").update({
@@ -2869,6 +4442,10 @@ async def fix_target_gap(
                     "subject_id": slot.get("subject_id"),
                     "counts_toward_plan": True,
                 } for idx, slot in enumerate(selected_slots)]
+                successful_insert_count = len(selected_slots)
+                attempted_insert_count = len(selected_slots)
+                failed_insert_count = 0
+                failed_insert_reasons = {}
                 debug_inserted_count = len(selected_slots)
 
             print(
@@ -2878,6 +4455,11 @@ async def fix_target_gap(
                     "candidateDatesCount": len(candidate_slots),
                     "selectedDatesCount": len(selected_slots),
                     "createdEventsCount": len(created_events),
+                    "assignedCount": assigned_count_for_insert,
+                    "attemptedInsertCount": attempted_insert_count,
+                    "successfulInsertCount": successful_insert_count,
+                    "failedInsertCount": failed_insert_count,
+                    "failedInsertReasons": failed_insert_reasons,
                     "createdEvents": created_events,
                     "requestedRangeStart": range_start_ymd or None,
                     "requestedRangeEnd": range_end_ymd or None,
@@ -2918,7 +4500,7 @@ async def fix_target_gap(
                 afterProjectedHours=after_projected_hours,
                 beforeGapHours=before_gap_hours,
                 afterGapHours=after_gap_hours,
-                createdEvents=len(created_rows) if not body.dry_run else len(selected_slots),
+                createdEvents=successful_insert_count,
                 removedEvents=0,
                 createdEventIds=created_event_ids,
                 removedEventIds=[],
@@ -2939,6 +4521,14 @@ async def fix_target_gap(
                 ],
                 debugInitialRangeEnd=effective_end_obj.isoformat(),
                 debugFinalRangeEnd=fix_end_obj.isoformat(),
+                assignedCount=assigned_count_for_insert,
+                attemptedInsertCount=attempted_insert_count,
+                successfulInsertCount=successful_insert_count,
+                failedInsertCount=failed_insert_count,
+                failedInsertReasons=failed_insert_reasons,
+                datesWithCapacity=len(selected_slots),
+                datesWithoutCapacity=max(0, len(candidate_slots) - len(selected_slots)),
+                insertedCount=successful_insert_count,
                 message="Gap fix applied." if not body.dry_run else "Dry run completed.",
             )
 

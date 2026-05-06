@@ -142,6 +142,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [pendingOnboardingGoal, setPendingOnboardingGoal] = useState(null);
   const [showGoalChangeConfirmModal, setShowGoalChangeConfirmModal] = useState(false);
   const [savingOnboardingGoal, setSavingOnboardingGoal] = useState(false);
+  const goalDropdownRef = useRef(null);
   const lastProfileSaveRef = useRef(0);
   const preferencesLoadedRef = useRef(false);
   const skipPreferencesSaveRef = useRef(true);
@@ -205,6 +206,21 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       cancelled = true;
     };
   }, [activeSection, familyId]);
+
+  useEffect(() => {
+    if (!showGoalDropdown || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const handleOutsidePointer = (event) => {
+      const container = goalDropdownRef.current;
+      if (!container || (typeof container.contains === 'function' && container.contains(event.target))) return;
+      setShowGoalDropdown(false);
+    };
+    document.addEventListener('mousedown', handleOutsidePointer);
+    document.addEventListener('touchstart', handleOutsidePointer);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsidePointer);
+      document.removeEventListener('touchstart', handleOutsidePointer);
+    };
+  }, [showGoalDropdown]);
 
   // Modal state
   const [showComingSoonModal, setShowComingSoonModal] = useState(false);
@@ -2365,12 +2381,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
             
             {/* Reset Password Button */}
-            <View
-              style={[
-                styles.profileFieldGroup,
-                canEditOnboardingGoal && showGoalDropdown && styles.profileFieldGroupDropdownOpen,
-              ]}
-            >
+            <View style={styles.profileFieldGroup}>
               <Text style={styles.profileFieldLabel}>Password</Text>
               <TouchableOpacity
                 style={styles.profileResetPasswordButton}
@@ -2394,11 +2405,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <View style={styles.subsectionDivider} />
             </View>
 
-            <View style={styles.profileFieldGroup}>
+            <View
+              style={[
+                styles.profileFieldGroup,
+                canEditOnboardingGoal && showGoalDropdown && styles.profileFieldGroupDropdownOpen,
+              ]}
+            >
               <Text style={styles.profileFieldLabel}>Goal</Text>
               {canEditOnboardingGoal ? (
                 <>
-                  <View style={styles.profileGoalDropdownWrap}>
+                  <View ref={goalDropdownRef} style={styles.profileGoalDropdownWrap}>
                     <TouchableOpacity
                       style={[styles.profileReadOnlyValue, styles.profileGoalInlineTrigger]}
                       onPress={() => setShowGoalDropdown((prev) => !prev)}
@@ -6199,6 +6215,7 @@ function createStyles(tokens) {
     profileGoalDropdownWrap: {
       marginTop: 2,
       position: 'relative',
+      alignSelf: 'flex-start',
       zIndex: 120,
     },
     profileGoalDropdownMenu: {
