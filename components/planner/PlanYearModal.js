@@ -148,6 +148,8 @@ import {
 import { formatSubjectPlanHeading } from '../../lib/formatSubjectPlanHeading';
 import { prefetchPlanEditListForFamily } from '../../lib/services/plannerPrefetch';
 import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import { getAttendanceMode } from '../../lib/attendanceMode';
+import { trackEvent } from '../../lib/analytics';
 
 // Constants for curriculum building
 const SOURCE_TYPES = [
@@ -5018,6 +5020,10 @@ export default function PlanYearModal({
           constraint_mode: planSummaryData.plan.constraint_mode || 'none',
           target_days: planSummaryData.plan.target_days ?? null,
           target_hours: planSummaryData.plan.target_hours ?? null,
+          attendance_tracking_mode: getAttendanceMode({
+            academicYearMode: planSummaryData?.attendance_tracking_mode,
+            plannerSettingsMode: planningDefaultsData?.settings?.attendance_tracking_mode,
+          }),
           child_id: null,
           replace_placeholders: true,
         create_calendar_events: true,
@@ -5034,6 +5040,13 @@ export default function PlanYearModal({
           })(),
         };
         const { data, error } = await applyToCalendar(payload);
+        trackEvent('apply_to_calendar_result', {
+          mode: payload.attendance_tracking_mode,
+          academic_year_id: data?.academic_year_id || null,
+          generated_count: Number(data?.created || 0),
+          success: !error,
+          error_code: error?.code || null,
+        });
         if (error) throw error;
         setEndDate(extYmd);
         if (familyId && payload.start_date) {
@@ -7571,6 +7584,10 @@ export default function PlanYearModal({
         constraint_mode: effectivePlanTarget.constraint_mode,
         target_days: effectivePlanTarget.target_days ?? null,
         target_hours: effectivePlanTarget.target_hours ?? null,
+        attendance_tracking_mode: getAttendanceMode({
+          academicYearMode: selectedPlanForSchoolYear?.attendance_tracking_mode,
+          plannerSettingsMode: planningDefaultsData?.settings?.attendance_tracking_mode,
+        }),
         child_id: null,
         replace_placeholders: replacePlaceholdersChoice,
         create_calendar_events: true,
@@ -7612,6 +7629,13 @@ export default function PlanYearModal({
       };
 
       const { data, error: applyError } = await applyToCalendar(payload);
+      trackEvent('apply_to_calendar_result', {
+        mode: payload.attendance_tracking_mode,
+        academic_year_id: data?.academic_year_id || academicYearId || null,
+        generated_count: Number(data?.created || 0),
+        success: !applyError,
+        error_code: applyError?.code || null,
+      });
       if (applyError) throw applyError;
       console.log('[PlanYearModal] applyToCalendar result:', {
         academicYearId: data?.academic_year_id || academicYearId || null,

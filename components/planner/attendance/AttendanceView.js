@@ -15,6 +15,8 @@ function notifyAttendanceUpdated() {
 }
 import { getAttendanceLogs, createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../../lib/services/recordsClient';
 import { updateEventStatus } from '../../../lib/services/attendanceClient';
+import { getAttendanceMode, isClassDayMode } from '../../../lib/attendanceMode';
+import { trackEvent } from '../../../lib/analytics';
 import HeaderSummaryStrip from './HeaderSummaryStrip';
 import YearHeatmapGrid from './YearHeatmapGrid';
 import MonthlyCalendarView from './MonthlyCalendarView';
@@ -100,10 +102,22 @@ function getDateKeysInRange(startDate, endDate) {
 
 /** Only events marked as counting toward instructional time are used for attendance. */
 function isInstructionalEvent(e) {
+  if (String(e?.event_type || '').trim().toLowerCase() === 'classday') return true;
   const status = e.instructional_status;
   if (status === 'MANUAL_COUNTS' || status === 'PLAN_PLACEHOLDER') return true;
   if (e.counts_toward_plan === true) return true;
   return false;
+}
+
+function isInstructionalEventForMode(e, attendanceTrackingMode = 'subject') {
+  const mode = getAttendanceMode({ academicYearMode: attendanceTrackingMode });
+  if (!isClassDayMode(mode)) return isInstructionalEvent(e);
+  const eventType = String(e?.event_type || '').trim().toLowerCase();
+  if (eventType === 'classday') return true;
+  const status = String(e?.instructional_status || '').trim().toUpperCase();
+  const counts = e?.counts_toward_plan === true || status === 'MANUAL_COUNTS' || status === 'PLAN_PLACEHOLDER';
+  // In class-day mode, avoid subject-scoped rows; count generic instructional-day rows only.
+  return counts && (e?.subject_id == null || String(e?.subject_id || '').trim() === '');
 }
 
 export default function AttendanceView({
@@ -171,7 +185,7 @@ export default function AttendanceView({
       try {
         const { data: years } = await supabase
           .from('academic_years')
-          .select('id, year_name, start_date, end_date')
+          .select('id, year_name, start_date, end_date, attendance_tracking_mode')
           .eq('family_id', familyIdResolved)
           .order('start_date', { ascending: false })
           .limit(1);
@@ -249,7 +263,11 @@ export default function AttendanceView({
     return d >= yearRange.start && d <= yearRange.end;
   });
 
-  const events = useMemo(() => eventsInRange.filter(isInstructionalEvent), [eventsInRange]);
+  const attendanceTrackingMode = getAttendanceMode({ academicYearMode: academicYear?.attendance_tracking_mode });
+  const events = useMemo(
+    () => eventsInRange.filter((eventItem) => isInstructionalEventForMode(eventItem, attendanceTrackingMode)),
+    [eventsInRange, attendanceTrackingMode]
+  );
 
   const eventsByDateChild = useMemo(() => {
     const map = {};
@@ -605,6 +623,11 @@ export default function AttendanceView({
           setAttendanceRefreshKey((k) => k + 1);
           notifyAttendanceUpdated();
         }, 150);
+        trackEvent('attendance_marked', {
+          mode: attendanceTrackingMode,
+          scope: 'event',
+          status: 'absent',
+        });
         return;
       }
       const siblings = getSiblingEventsOnDay(normKey, event, events);
@@ -635,10 +658,15 @@ export default function AttendanceView({
       }
       setAttendanceRefreshKey((k) => k + 1);
       notifyAttendanceUpdated();
+      trackEvent('attendance_marked', {
+        mode: attendanceTrackingMode,
+        scope: 'event',
+        status: 'present',
+      });
     } catch (_) {
       setAttendanceRefreshKey((k) => k + 1);
     }
-  }, [familyIdResolved, selectedDay.childId, selectedDay.dateKey, attendanceRecordByEventId, attendanceRecords, selectedDayEvents, selectedDayAttendanceByEventId, events, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay]);
+  }, [familyIdResolved, selectedDay.childId, selectedDay.dateKey, attendanceRecordByEventId, attendanceRecords, selectedDayEvents, selectedDayAttendanceByEventId, events, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, attendanceTrackingMode]);
 
   const handleMarkDayAttended = useCallback(async (dateKey, childId) => {
     if (!familyIdResolved || !childId) return;
@@ -673,6 +701,11 @@ export default function AttendanceView({
         }
         setAttendanceRefreshKey((k) => k + 1);
         notifyAttendanceUpdated();
+        trackEvent('attendance_marked', {
+          mode: attendanceTrackingMode,
+          scope: 'day',
+          status: standaloneDay?.status === 'present' ? 'absent' : 'present',
+        });
       } catch (_) {
         setAttendanceRefreshKey((k) => k + 1);
       }
@@ -727,6 +760,11 @@ export default function AttendanceView({
           setAttendanceRefreshKey((k) => k + 1);
           notifyAttendanceUpdated();
         }, 150);
+        trackEvent('attendance_marked', {
+          mode: attendanceTrackingMode,
+          scope: 'day',
+          status: 'absent',
+        });
         return;
       }
       // Replacing manual-only attendance with event-based rows: remove standalone first.
@@ -770,10 +808,15 @@ export default function AttendanceView({
       }
       setAttendanceRefreshKey((k) => k + 1);
       notifyAttendanceUpdated();
+      trackEvent('attendance_marked', {
+        mode: attendanceTrackingMode,
+        scope: 'day',
+        status: 'present',
+      });
     } catch (_) {
       setAttendanceRefreshKey((k) => k + 1);
     }
-  }, [familyIdResolved, eventsByDateChild, events, attendanceRecords, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, toast]);
+  }, [familyIdResolved, eventsByDateChild, events, attendanceRecords, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, toast, attendanceTrackingMode]);
 
   const handleMarkRangeConfirm = useCallback(({ childId, fromDate, toDate }) => {
     // TODO: call API to mark all scheduled events in range as attended
@@ -863,6 +906,11 @@ export default function AttendanceView({
 
       setAttendanceRefreshKey((k) => k + 1);
       notifyAttendanceUpdated();
+      trackEvent('attendance_marked', {
+        mode: attendanceTrackingMode,
+        scope: 'day',
+        status: 'present',
+      });
       toast.push('Marked the selected attendance range as attended.', 'success');
     } catch (_) {
       toast.push('Could not mark the selected range attended.', 'error');
@@ -881,6 +929,7 @@ export default function AttendanceView({
     getChildIdsForEvent,
     getEventMinutes,
     toast,
+    attendanceTrackingMode,
   ]);
 
   if (loading && !familyIdResolved) {

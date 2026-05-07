@@ -24,6 +24,8 @@ import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
 import { getSubjectProgressCache } from '../lib/subjectProgressPlanCache';
 import { findAcademicYearPlanForSubject } from '../lib/subjectPlanSlotLines';
+import { ATTENDANCE_MODES, getAttendanceMode } from '../lib/attendanceMode';
+import { trackEvent } from '../lib/analytics';
 
 const BG = '#ffffff';
 const FG = '#111827';
@@ -46,12 +48,19 @@ const parseSubjectChildIds = (raw) =>
 
 const EVENT_TYPES = [
   'Lesson',
+  'Class Day',
   'Project',
   'Exam',
   'Assignment',
   'Activity',
   'Appointment',
 ];
+
+const normalizeEventTypeForPersistence = (type) => {
+  if (type === 'Scheduled Class Day') return 'Schedule Block';
+  if (type === 'Class Day') return 'ClassDay';
+  return type || 'Lesson';
+};
 
 const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
 const CALENDAR_CONNECTION_OPTIONS = [
@@ -276,6 +285,20 @@ export default function TaskCreateModal({
     () => subjects.find((s) => String(s?.id || '') === String(subjectId || '')) || null,
     [subjects, subjectId]
   );
+  const selectedAcademicYear = useMemo(
+    () => academicYears.find((row) => String(row?.id || '') === String(selectedAcademicYearId || '')) || null,
+    [academicYears, selectedAcademicYearId]
+  );
+  const resolvedAttendanceMode = getAttendanceMode({
+    academicYearMode: selectedAcademicYear?.attendance_tracking_mode,
+    fallback: ATTENDANCE_MODES.CLASS_DAY,
+  });
+  const isClassDayEvent = eventType === 'Class Day';
+  useEffect(() => {
+    if (!isClassDayEvent) return;
+    if (!countsTowardPlan) setCountsTowardPlan(true);
+    if (showRequiresSubmissionHome) setShowRequiresSubmissionHome(false);
+  }, [isClassDayEvent, countsTowardPlan, showRequiresSubmissionHome]);
   const openSubjectDetailsForPlanning = useCallback(async (options = {}) => {
     const { forceCreateNew = false } = options || {};
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -450,7 +473,7 @@ export default function TaskCreateModal({
     (async () => {
       const { data, error } = await supabase
         .from('academic_years')
-        .select('id, start_date, end_date, year_name')
+        .select('id, start_date, end_date, year_name, attendance_tracking_mode')
         .eq('family_id', familyId)
         .order('updated_at', { ascending: false })
         .limit(10);
@@ -1008,7 +1031,7 @@ export default function TaskCreateModal({
       // Reset new fields
       const initialEventType = defaultEventType === 'Schedule Block' ? 'Scheduled Class Day' : (defaultEventType || 'Lesson');
       setEventType(initialEventType);
-      setCountsTowardPlan(['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(initialEventType));
+      setCountsTowardPlan(['Lesson', 'Class Day', 'Project', 'Exam', 'Assignment', 'Activity'].includes(initialEventType));
       setShowRequiresSubmissionHome(
         defaultRequiresSubmissionHomeForEventType(initialEventType === 'Scheduled Class Day' ? 'Lesson' : initialEventType)
       );
@@ -1410,10 +1433,10 @@ export default function TaskCreateModal({
         tags: null,
         is_flexible: true,
         is_backlog: false,
-        event_type: (eventType === 'Scheduled Class Day' ? 'Schedule Block' : eventType) || 'Lesson',
-        subject_id: subjectId || null,
-        unit: unit.trim() || null,
-        grade: grade.trim() || null,
+        event_type: normalizeEventTypeForPersistence(eventType),
+        subject_id: isClassDayEvent ? null : (subjectId || null),
+        unit: isClassDayEvent ? null : (unit.trim() || null),
+        grade: isClassDayEvent ? null : (grade.trim() || null),
         location: location.trim() || null,
         mode: mode || null,
         instructor: instructor.trim() || null,
@@ -1432,7 +1455,7 @@ export default function TaskCreateModal({
       if (insertError) throw insertError;
       return inserted;
     },
-    [attachedMaterialIds, familyId, goalLink, grade, instructor, location, mode, notes, subjectId, unit]
+    [attachedMaterialIds, familyId, goalLink, grade, instructor, isClassDayEvent, location, mode, notes, subjectId, unit]
   );
 
   // Handle overlap errors by fetching conflicting events and showing conflict warning
@@ -1736,11 +1759,11 @@ export default function TaskCreateModal({
           _tags: null,
           _is_flexible: true,
           _is_backlog: true,
-          _event_type: (eventType === 'Scheduled Class Day' ? 'Schedule Block' : eventType) || 'Lesson', // Default to "Lesson" if somehow empty
-          _subject_id: subjectId || null,
-          _unit: unit.trim() || null,
-          _grade: grade.trim() || null,
-          _percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
+          _event_type: normalizeEventTypeForPersistence(eventType),
+          _subject_id: isClassDayEvent ? null : (subjectId || null),
+          _unit: isClassDayEvent ? null : (unit.trim() || null),
+          _grade: isClassDayEvent ? null : (grade.trim() || null),
+          _percent_of_total_grade: (!isClassDayEvent && percentOfTotalGrade.trim()) ? (() => {
             const parsed = parseFloat(percentOfTotalGrade.trim());
             return !isNaN(parsed) && isFinite(parsed) ? parsed : null;
           })() : null,
@@ -1899,11 +1922,11 @@ export default function TaskCreateModal({
               _source: 'manual',
               _tags: null,
               _is_flexible: allDay,
-              _event_type: (eventType === 'Scheduled Class Day' ? 'Schedule Block' : eventType) || 'Lesson',
-              _subject_id: subjectId || null,
-              _unit: unit.trim() || null,
-              _grade: grade.trim() || null,
-              _percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
+              _event_type: normalizeEventTypeForPersistence(eventType),
+              _subject_id: isClassDayEvent ? null : (subjectId || null),
+              _unit: isClassDayEvent ? null : (unit.trim() || null),
+              _grade: isClassDayEvent ? null : (grade.trim() || null),
+              _percent_of_total_grade: (!isClassDayEvent && percentOfTotalGrade.trim()) ? (() => {
             const parsed = parseFloat(percentOfTotalGrade.trim());
             return !isNaN(parsed) && isFinite(parsed) ? parsed : null;
           })() : null,
@@ -2003,11 +2026,11 @@ export default function TaskCreateModal({
             _source: 'manual',
             _tags: null,
             _is_flexible: allDay,
-            _event_type: (eventType === 'Scheduled Class Day' ? 'Schedule Block' : eventType) || 'Lesson', // Default to "Lesson" if somehow empty
-            _subject_id: subjectId || null,
-            _unit: unit.trim() || null,
-            _grade: grade.trim() || null,
-            _percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
+            _event_type: normalizeEventTypeForPersistence(eventType),
+            _subject_id: isClassDayEvent ? null : (subjectId || null),
+            _unit: isClassDayEvent ? null : (unit.trim() || null),
+            _grade: isClassDayEvent ? null : (grade.trim() || null),
+            _percent_of_total_grade: (!isClassDayEvent && percentOfTotalGrade.trim()) ? (() => {
             const parsed = parseFloat(percentOfTotalGrade.trim());
             return !isNaN(parsed) && isFinite(parsed) ? parsed : null;
           })() : null,
@@ -2145,9 +2168,15 @@ export default function TaskCreateModal({
       if (data?.id) {
         const mins = instructionalMinutesOverride.trim() ? parseInt(instructionalMinutesOverride.trim(), 10) : null;
         const updatePayload = {
-          requires_submission_home: showRequiresSubmissionHome,
+          requires_submission_home: isClassDayEvent ? false : showRequiresSubmissionHome,
         };
-        if (countsTowardPlan && placement === 'calendar') {
+        if (isClassDayEvent) {
+          updatePayload.subject_id = null;
+          updatePayload.counts_toward_plan = true;
+          updatePayload.instructional_status = 'MANUAL_COUNTS';
+          updatePayload.instructional_minutes = (mins != null && !Number.isNaN(mins)) ? mins : null;
+          updatePayload.academic_year_id = selectedAcademicYearId || null;
+        } else if (countsTowardPlan && placement === 'calendar') {
           updatePayload.academic_year_id = selectedAcademicYearId || null;
           updatePayload.counts_toward_plan = true;
           updatePayload.instructional_status = 'MANUAL_COUNTS';
@@ -2218,6 +2247,11 @@ export default function TaskCreateModal({
       }
 
       toast.push(placement === 'backlog' ? 'Backlog task created' : 'Task created successfully', 'success');
+      trackEvent('manual_event_created', {
+        mode: resolvedAttendanceMode,
+        event_type: normalizeEventTypeForPersistence(eventType),
+        counts_toward_plan: isClassDayEvent ? true : countsTowardPlan === true,
+      });
       onCreated?.(data);
       
       // Dispatch event for all event creations so home page and other views can refresh
@@ -2390,8 +2424,15 @@ export default function TaskCreateModal({
                     key={type}
                     onPress={() => {
                       setEventType(type);
-                      setCountsTowardPlan(['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(type));
-                      setShowRequiresSubmissionHome(defaultRequiresSubmissionHomeForEventType(type));
+                      const nextCountsTowardPlan = ['Lesson', 'Class Day', 'Project', 'Exam', 'Assignment', 'Activity'].includes(type);
+                      setCountsTowardPlan(nextCountsTowardPlan);
+                      setShowRequiresSubmissionHome(type === 'Class Day' ? false : defaultRequiresSubmissionHomeForEventType(type));
+                      if (type === 'Class Day') {
+                        setSubjectId(null);
+                        setUnit('');
+                        setGrade('');
+                        setPercentOfTotalGrade('');
+                      }
                       if (validationErrors.eventType) {
                         setValidationErrors({ ...validationErrors, eventType: null });
                       }
@@ -3560,7 +3601,7 @@ export default function TaskCreateModal({
                 <SafeView>
               {/* Count this as instructional time + plan (was below Event Type; lives in Academic Details) */}
               {placement === 'calendar' &&
-                ['Lesson', 'Project', 'Exam', 'Assignment', 'Activity', 'Appointment'].includes(eventType) && (
+                ['Lesson', 'Class Day', 'Project', 'Exam', 'Assignment', 'Activity', 'Appointment'].includes(eventType) && (
                 <View style={[styles.inputGroup, { marginTop: 0, marginBottom: 12 }]}>
                   <View
                     style={{
@@ -3571,28 +3612,31 @@ export default function TaskCreateModal({
                       marginBottom: 8,
                     }}
                   >
-                    {['Lesson', 'Project', 'Exam', 'Assignment', 'Activity'].includes(eventType) && (
+                    {['Lesson', 'Class Day', 'Project', 'Exam', 'Assignment', 'Activity'].includes(eventType) && (
                       <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
                         <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }}>Count this as instructional time</Text>
                         <Switch
                           value={countsTowardPlan}
                           onValueChange={setCountsTowardPlan}
+                          disabled={isClassDayEvent}
                           trackColor={{ false: BORDER, true: '#AECBFA' }}
                           thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
                         />
                       </View>
                     )}
-                    <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
-                      <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }} numberOfLines={2}>
-                        Show in student home as &apos;Requires Submission&apos;
-                      </Text>
-                      <Switch
-                        value={showRequiresSubmissionHome}
-                        onValueChange={setShowRequiresSubmissionHome}
-                        trackColor={{ false: BORDER, true: '#AECBFA' }}
-                        thumbColor={showRequiresSubmissionHome ? '#45A29E' : '#f9fafb'}
-                      />
-                    </View>
+                    {!isClassDayEvent ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
+                        <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }} numberOfLines={2}>
+                          Show in student home as &apos;Requires Submission&apos;
+                        </Text>
+                        <Switch
+                          value={showRequiresSubmissionHome}
+                          onValueChange={setShowRequiresSubmissionHome}
+                          trackColor={{ false: BORDER, true: '#AECBFA' }}
+                          thumbColor={showRequiresSubmissionHome ? '#45A29E' : '#f9fafb'}
+                        />
+                      </View>
+                    ) : null}
                   </View>
                   {countsTowardPlan && (
                     <>
@@ -3676,7 +3720,9 @@ export default function TaskCreateModal({
                   )}
                 </View>
               )}
-              {/* Subject, Unit, Grade - always visible */}
+              {/* Subject, Unit, Grade */}
+              {!isClassDayEvent ? (
+              <>
               <SafeFieldRow style={styles.fieldRow}>
                 <View style={styles.field}>
                   <Text style={styles.fieldLabel}>Subject (optional)</Text>
@@ -3918,6 +3964,8 @@ export default function TaskCreateModal({
                   )}
                 </View>
               </SafeFieldRow>
+              </>
+              ) : null}
                 </SafeView>
             </ModalSectionCard>
 

@@ -22,6 +22,8 @@ import { getAcademicYearExclusions, getFamilyPlannerSettings, saveFamilyPlannerS
 import { useToast } from '../Toast';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
+import { ATTENDANCE_MODES, getAttendanceMode, isClassDayMode as resolveClassDayMode } from '../../lib/attendanceMode';
+import { trackEvent } from '../../lib/analytics';
 
 const FG = '#111827';
 const SUB = '#64748b';
@@ -563,7 +565,7 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
     const [{ data: rows, error }, healthResult] = await Promise.all([
       supabase
         .from('academic_years')
-        .select('id, year_name, start_date, end_date, updated_at')
+          .select('id, year_name, start_date, end_date, updated_at, attendance_tracking_mode')
         .eq('family_id', familyId)
         .order('updated_at', { ascending: false }),
       getPlanHealth(familyId),
@@ -853,9 +855,12 @@ async function fetchAndCacheScheduleSupplement({
     const familySettingsPromise = getFamilyPlannerSettings(familyId, schoolYearLabel || null)
       .then(({ data }) => ({
         target_scope: String(data?.target_scope || 'overall').trim().toLowerCase(),
+        attendance_tracking_mode: getAttendanceMode({ academicYearMode: data?.attendance_tracking_mode }),
         default_constraint_mode: String(data?.default_constraint_mode || 'none').trim().toLowerCase(),
         default_target_days: parsePositiveInt(data?.default_target_days),
         default_target_hours: parsePositiveFloat(data?.default_target_hours),
+        default_day_start_time: String(data?.default_day_start_time || '').slice(0, 5) || null,
+        default_day_end_time: String(data?.default_day_end_time || '').slice(0, 5) || null,
         default_year_start_date: String(data?.default_year_start_date || '').slice(0, 10) || null,
         default_year_end_date: String(data?.default_year_end_date || '').slice(0, 10) || null,
         allowed_weekdays: Array.isArray(data?.allowed_weekdays)
@@ -864,9 +869,12 @@ async function fetchAndCacheScheduleSupplement({
       }))
       .catch(() => ({
         target_scope: 'overall',
+        attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
         default_constraint_mode: 'none',
         default_target_days: null,
         default_target_hours: null,
+        default_day_start_time: null,
+        default_day_end_time: null,
         allowed_weekdays: [1, 2, 3, 4, 5],
         default_year_start_date: null,
         default_year_end_date: null,
@@ -1701,6 +1709,12 @@ export default function SubjectsPlanBuilder({
     };
     const settingsScope = String(familyPlannerSettings?.target_scope || 'overall').trim().toLowerCase();
     const isOverallTargetScope = settingsScope === 'overall';
+    const attendanceTrackingMode = getAttendanceMode({
+      // Prefer academic_years mode on the selected year (source of truth), then fall back.
+      academicYearMode: displaySchoolYear?.attendance_tracking_mode || activeScheduleCore?.row?.attendance_tracking_mode,
+      plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
+    });
+    const isClassDayMode = resolveClassDayMode(attendanceTrackingMode);
     const savedPlanningRange = (() => {
       const start = String(familyPlannerSettings?.default_year_start_date || '').slice(0, 10);
       const end = String(familyPlannerSettings?.default_year_end_date || '').slice(0, 10);
@@ -2074,6 +2088,49 @@ export default function SubjectsPlanBuilder({
       };
     });
 
+    const sectionSubjectPlans = isClassDayMode
+      ? (() => {
+        const cadenceDayNums = Array.isArray(familyPlannerSettings?.allowed_weekdays)
+          ? familyPlannerSettings.allowed_weekdays.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+          : scheduledWeekdays;
+        const startTime = String(familyPlannerSettings?.default_day_start_time || '09:00').slice(0, 5);
+        const endTime = String(familyPlannerSettings?.default_day_end_time || '15:00').slice(0, 5);
+        const targetDays = parsePositiveInt(familyPlannerSettings?.default_target_days) ?? plannedDays;
+        const upcomingDays = Math.max(0, plannedDays - completedDays);
+        const allSubjectIds = subjectsInYear
+          .map((subject) => String(subject?.id || '').trim())
+          .filter(Boolean);
+        const allSubjectNames = [...new Set(
+          subjectsInYear
+            .map((subject) => String(subject?.name || '').trim())
+            .filter(Boolean)
+        )];
+        return [{
+          id: 'overall',
+          name: allSubjectNames.join(', ') || 'Class Days',
+          schoolTermId: 'full_year',
+          schoolTermLabel: '',
+          rangeStartYmd: effectiveYearRange?.start_date || yearRange?.start_date || null,
+          rangeEndYmd: effectiveYearRange?.end_date || yearRange?.end_date || null,
+          cadenceDayNums,
+          hasPlan: blocks.length > 0,
+          cadenceText: `${formatWeekdaySummary(cadenceDayNums)} · ${toAmPm(startTime)}-${toAmPm(endTime)}`,
+          cadenceCompactLabel: `${formatWeekdaySummary(cadenceDayNums)} · ${toAmPm(startTime)}`,
+          targetUnit: 'days',
+          targetMode: 'days',
+          targetValue: targetDays,
+          actualDays: completedDays,
+          upcomingDays,
+          projectedDays: completedDays + upcomingDays,
+          isOverall: true,
+          isClassDayAggregate: true,
+          subjectIds: allSubjectIds,
+          attachedStudentIds: allChildIds,
+          attachedStudentsLabel: allChildIds.map((childId) => childNameById[String(childId)] || null).filter(Boolean).join(', '),
+        }];
+      })()
+      : subjectPlans;
+
     return [{
       id: 'school_year',
       title: 'Weekly Cadence',
@@ -2081,7 +2138,7 @@ export default function SubjectsPlanBuilder({
       plannedDays,
       completedDays,
       dayRows,
-      subjectPlans,
+      subjectPlans: sectionSubjectPlans,
     }];
   }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject, attendedDayKeysBySubject, activeScheduleCore, familyPlannerSettings, subjectTargetSettingsById]);
 
@@ -2607,6 +2664,10 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         create_calendar_events: true,
         blocks,
+        attendance_tracking_mode: getAttendanceMode({
+          academicYearMode: activeScheduleCore?.row?.attendance_tracking_mode,
+          plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
+        }),
         run_scope_type: selectedTerm === 'full_year' ? 'full_year' : 'term',
         school_duration_scope: selectedTerm,
         target_instructional_days: 180,
@@ -2615,6 +2676,13 @@ export default function SubjectsPlanBuilder({
         year_name: `${selectedSchoolYear?.label || 'School Year'} · Subjects schedule`,
       };
       const { data, error } = await applyToCalendar(payload);
+      trackEvent('apply_to_calendar_result', {
+        mode: payload.attendance_tracking_mode,
+        academic_year_id: data?.academic_year_id || null,
+        generated_count: Number(data?.created || 0),
+        success: !error,
+        error_code: error?.code || null,
+      });
       if (error) throw error;
       setSurfaceMode('home');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2801,9 +2869,20 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         blocks,
         year_name: yearDetail?.year_name || undefined,
+        attendance_tracking_mode: getAttendanceMode({
+          academicYearMode: activeScheduleCore?.row?.attendance_tracking_mode,
+          plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
+        }),
         timezone: getClientTimezone(),
       };
       const { data, error } = await applyToCalendar(payload);
+      trackEvent('apply_to_calendar_result', {
+        mode: payload.attendance_tracking_mode,
+        academic_year_id: data?.academic_year_id || academicYearId || null,
+        generated_count: Number(data?.created || 0),
+        success: !error,
+        error_code: error?.code || null,
+      });
       if (error) throw error;
       patchCoreBlocksLocally(academicYearId, blocks, { startDate, endDate: nextEndDate });
       scheduleCalcDebug('applySuggestedTermExtension:after_local_patch', {
@@ -3147,6 +3226,10 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         blocks,
         year_name: yearDetail?.year_name || undefined,
+        attendance_tracking_mode: getAttendanceMode({
+          academicYearMode: activeScheduleCore?.row?.attendance_tracking_mode,
+          plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
+        }),
         timezone: getClientTimezone(),
       };
       scheduleCalcDebug('applyOverallSuggestedPlanChanges:payload', {
@@ -3162,6 +3245,13 @@ export default function SubjectsPlanBuilder({
         targetOverallDays,
       });
       const { data, error } = await applyToCalendar(payload);
+      trackEvent('apply_to_calendar_result', {
+        mode: payload.attendance_tracking_mode,
+        academic_year_id: data?.academic_year_id || academicYearId || null,
+        generated_count: Number(data?.created || 0),
+        success: !error,
+        error_code: error?.code || null,
+      });
       if (error) throw error;
       patchCoreBlocksLocally(academicYearId, blocks, { startDate, endDate: nextEndDate });
       scheduleCalcDebug('applyOverallSuggestedPlanChanges:after_local_patch', {
@@ -3558,6 +3648,10 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         create_calendar_events: true,
         blocks: fallbackBlocks,
+        attendance_tracking_mode: getAttendanceMode({
+          academicYearMode: activeScheduleCore?.row?.attendance_tracking_mode,
+          plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
+        }),
         run_scope_type: 'full_year',
         school_duration_scope: 'custom_duration',
         target_instructional_days: 180,
@@ -3566,6 +3660,13 @@ export default function SubjectsPlanBuilder({
         year_name: `${displaySchoolYear?.label || 'School Year'} · Subjects schedule`,
       };
       const { data: bootstrapData, error: bootstrapError } = await applyToCalendar(bootstrapPayload);
+      trackEvent('apply_to_calendar_result', {
+        mode: bootstrapPayload.attendance_tracking_mode,
+        academic_year_id: bootstrapData?.academic_year_id || null,
+        generated_count: Number(bootstrapData?.created || 0),
+        success: !bootstrapError,
+        error_code: bootstrapError?.code || null,
+      });
       if (bootstrapError) throw bootstrapError;
       academicYearId = String(bootstrapData?.academic_year_id || '').trim();
       setOverviewReloadKey((k) => k + 1);
@@ -4403,7 +4504,9 @@ export default function SubjectsPlanBuilder({
                       <View style={styles.subjectSection}>
                         <View style={styles.cadenceStatusTable}>
                           <View style={styles.cadenceStatusHeaderRow}>
-                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusSubjectCol]}>Subject</Text>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusSubjectCol]}>
+                              Subject
+                            </Text>
                             <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusStudentsCol]}>Students</Text>
                             <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusSavedCol]}>Cadence</Text>
                             <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusProgressCol]}>Progress vs. Target</Text>
@@ -4424,15 +4527,39 @@ export default function SubjectsPlanBuilder({
                               const cadenceSummary = hasCadence
                                 ? [row.schoolTermLabel || null, row.cadenceCompactLabel || null, cadenceTime || null].filter(Boolean).join(' · ')
                                 : 'No saved weekly cadence yet';
-                              const targetDays = row.targetUnit === 'days' && Number.isFinite(Number(row.targetValue))
-                                ? Number(row.targetValue)
+                              const overallYearTargetsRow = row?.isClassDayAggregate
+                                ? (
+                                  (yearTargetsDisplayRows || []).find((targetRow) => (
+                                    String(targetRow?.id || '').trim() === 'overall' || targetRow?.isOverall === true
+                                  )) || null
+                                )
                                 : null;
-                              const completedDays = Math.max(0, Number(row.actualDays || 0));
+                              const targetDays = row.targetUnit === 'days'
+                                ? (
+                                  Number.isFinite(Number(overallYearTargetsRow?.targetValue))
+                                    ? Number(overallYearTargetsRow.targetValue)
+                                    : (
+                                      Number.isFinite(Number(row.targetValue))
+                                        ? Number(row.targetValue)
+                                        : null
+                                    )
+                                )
+                                : null;
+                              const completedDays = Math.max(
+                                0,
+                                Number.isFinite(Number(overallYearTargetsRow?.completedDays))
+                                  ? Number(overallYearTargetsRow.completedDays)
+                                  : Number(row.actualDays || 0)
+                              );
                               const upcomingDays = Math.max(
                                 0,
-                                Number.isFinite(Number(row?.upcomingDays))
-                                  ? Number(row.upcomingDays)
-                                  : Math.max(0, Number(row?.projectedDays || 0) - completedDays)
+                                Number.isFinite(Number(overallYearTargetsRow?.upcomingDays))
+                                  ? Number(overallYearTargetsRow.upcomingDays)
+                                  : (
+                                    Number.isFinite(Number(row?.upcomingDays))
+                                      ? Number(row.upcomingDays)
+                                      : Math.max(0, Number(row?.projectedDays || 0) - completedDays)
+                                  )
                               );
                               const progressSummary = targetDays != null
                                 ? `${completedDays} completed / ${upcomingDays} upcoming / ${targetDays} target`
@@ -4549,24 +4676,49 @@ export default function SubjectsPlanBuilder({
                                     >
                                       <Text style={styles.subjectRowActionLinkText}>View schedule</Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity
-                                      style={styles.subjectRowActionLink}
-                                      onPress={() => openBuilderForSubject(row.id, row.hasPlan ? 'edit' : 'add', row.schoolTermId || 'full_year')}
-                                      accessibilityLabel={row.hasPlan ? `Edit plan for ${row.name || 'subject'}` : `Create plan for ${row.name || 'subject'}`}
-                                      activeOpacity={0.8}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      <Text style={styles.subjectRowActionLinkText}>{row.hasPlan ? 'Edit plan' : 'Add plan'}</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                      style={styles.subjectRowActionLink}
-                                      onPress={() => openSubjectEditModal(row.id)}
-                                      accessibilityLabel={`Edit ${row.name || 'subject'}`}
-                                      activeOpacity={0.8}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      <Text style={styles.subjectRowActionLinkText}>Edit subject</Text>
-                                    </TouchableOpacity>
+                                    {row?.isClassDayAggregate ? (
+                                      <>
+                                        <TouchableOpacity
+                                          style={styles.subjectRowActionLink}
+                                          onPress={() => setSurfaceMode('build')}
+                                          accessibilityLabel="Apply class day plan"
+                                          activeOpacity={0.8}
+                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                        >
+                                          <Text style={styles.subjectRowActionLinkText}>Apply plan</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                          style={styles.subjectRowActionLink}
+                                          onPress={() => fixYearTargetGap(row)}
+                                          accessibilityLabel="Fix class day gap"
+                                          activeOpacity={0.8}
+                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                        >
+                                          <Text style={styles.subjectRowActionLinkText}>Fix gap</Text>
+                                        </TouchableOpacity>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <TouchableOpacity
+                                          style={styles.subjectRowActionLink}
+                                          onPress={() => openBuilderForSubject(row.id, row.hasPlan ? 'edit' : 'add', row.schoolTermId || 'full_year')}
+                                          accessibilityLabel={row.hasPlan ? `Edit plan for ${row.name || 'subject'}` : `Create plan for ${row.name || 'subject'}`}
+                                          activeOpacity={0.8}
+                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                        >
+                                          <Text style={styles.subjectRowActionLinkText}>{row.hasPlan ? 'Edit plan' : 'Add plan'}</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                          style={styles.subjectRowActionLink}
+                                          onPress={() => openSubjectEditModal(row.id)}
+                                          accessibilityLabel={`Edit ${row.name || 'subject'}`}
+                                          activeOpacity={0.8}
+                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                        >
+                                          <Text style={styles.subjectRowActionLinkText}>Edit subject</Text>
+                                        </TouchableOpacity>
+                                      </>
+                                    )}
                                   </View>
 
                                 </View>

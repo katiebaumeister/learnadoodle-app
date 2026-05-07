@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   Platform,
   Modal,
+  Alert,
 } from 'react-native';
 import { Plus, Trash2, Pencil, Check, X, ChevronDown, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import {
@@ -26,11 +27,14 @@ import {
 } from '../../lib/services/plannerSettingsClient';
 import { getPublicHolidaysForRange } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
+import { apiRequest } from '../../lib/apiClient';
 import { useToast } from '../Toast';
 import { PLANNING_PREFERENCES_UI } from '../planner/planningPreferencesUiCopy';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
 import { LEARNADOODLE_LIGHT_BLUE } from '../../theme/comingSoonModalTheme';
 import { designTokens } from '../../theme/designTokens';
+import { ATTENDANCE_MODES, getAttendanceMode, isClassDayMode, isSubjectMode } from '../../lib/attendanceMode';
+import { trackEvent } from '../../lib/analytics';
 
 const MUTED = 'rgba(15,23,42,0.6)';
 /** Body copy on this screen — solid black per design */
@@ -240,9 +244,10 @@ export default function PlannerSettingsContent({
 
   // Target scope: overall (one target) vs per_subject
   const [targetScope, setTargetScope] = useState('overall');
+  const [attendanceTrackingMode, setAttendanceTrackingMode] = useState(ATTENDANCE_MODES.CLASS_DAY);
 
   // Learning goals (overall mode only)
-  const [goalMode, setGoalMode] = useState('none');
+  const [goalMode, setGoalMode] = useState('days');
   const [targetDays, setTargetDays] = useState('180');
   const [targetHours, setTargetHours] = useState('1000');
   const [learningStartTime, setLearningStartTime] = useState('8:00 AM');
@@ -312,7 +317,8 @@ export default function PlannerSettingsContent({
     const cached = plannerSettingsSnapshotCache.get(snapshotCacheKey);
     if (!cached) return;
     setTargetScope(cached.targetScope || 'overall');
-    setGoalMode(cached.goalMode || 'none');
+    setAttendanceTrackingMode(getAttendanceMode({ academicYearMode: cached.attendanceTrackingMode }));
+    setGoalMode(cached.goalMode || 'days');
     setTargetDays(cached.targetDays ?? '180');
     setTargetHours(cached.targetHours ?? '1000');
     setLearningStartTime(normalizeLearningTimeDisplay(cached.learningStartTime, DEFAULT_LEARNING_START_TIME));
@@ -339,6 +345,7 @@ export default function PlannerSettingsContent({
   useEffect(() => {
     stateRef.current = {
       targetScope,
+      attendanceTrackingMode,
       goalMode,
       targetDays,
       targetHours,
@@ -364,6 +371,7 @@ export default function PlannerSettingsContent({
     if (!embeddedInModal) return;
     plannerSettingsSnapshotCache.set(snapshotCacheKey, {
       targetScope,
+      attendanceTrackingMode,
       goalMode,
       targetDays,
       targetHours,
@@ -388,6 +396,7 @@ export default function PlannerSettingsContent({
     embeddedInModal,
     snapshotCacheKey,
     targetScope,
+    attendanceTrackingMode,
     goalMode,
     targetDays,
     targetHours,
@@ -426,12 +435,12 @@ export default function PlannerSettingsContent({
 
   useEffect(() => {
     const seeded = schoolYearRangeDefaults(selectedSchoolYearLabel);
-    setDefaultYearStartDate((prev) => prev || seeded.yearStart);
-    setDefaultYearEndDate((prev) => prev || seeded.yearEnd);
-    setDefaultFallStartDate((prev) => prev || seeded.fallStart);
-    setDefaultFallEndDate((prev) => prev || seeded.fallEnd);
-    setDefaultSpringStartDate((prev) => prev || seeded.springStart);
-    setDefaultSpringEndDate((prev) => prev || seeded.springEnd);
+    setDefaultYearStartDate(seeded.yearStart);
+    setDefaultYearEndDate(seeded.yearEnd);
+    setDefaultFallStartDate(seeded.fallStart);
+    setDefaultFallEndDate(seeded.fallEnd);
+    setDefaultSpringStartDate(seeded.springStart);
+    setDefaultSpringEndDate(seeded.springEnd);
   }, [selectedSchoolYearLabel]);
 
   const visibleSubjects = useMemo(
@@ -474,29 +483,87 @@ export default function PlannerSettingsContent({
   useEffect(() => {
     if (!initialData) return;
     const s = initialData.settings || {};
-    const rangeDefaults = schoolYearRangeDefaults(
+    const selectedYearLabel = normalizeSchoolYearLabel(
       isSchoolYearLocked
         ? normalizedLockedSchoolYearLabel
-        : (s.default_school_year || selectedSchoolYearLabel)
+        : (selectedSchoolYearLabel || s.default_school_year)
     );
-    setTargetScope(s.target_scope || 'overall');
-    setGoalMode(s.default_constraint_mode || 'none');
-    setTargetDays(s.default_target_days != null ? String(s.default_target_days) : '180');
-    setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
-    setLearningStartTime(normalizeLearningTimeDisplay(s.default_day_start_time, DEFAULT_LEARNING_START_TIME));
-    setLearningEndTime(normalizeLearningTimeDisplay(s.default_day_end_time, DEFAULT_LEARNING_END_TIME));
-    setPreferredLearningDayNums(normalizeAllowedWeekdays(s.allowed_weekdays));
-    setFollowGlobalHolidays(s.follow_public_holidays !== false);
+    const initialDataYearLabel = normalizeSchoolYearLabel(
+      s.school_year_label || s.default_school_year
+    );
+    const matchesInitialDataYear = Boolean(
+      selectedYearLabel
+      && initialDataYearLabel
+      && selectedYearLabel === initialDataYearLabel
+    );
+    const rangeDefaults = schoolYearRangeDefaults(selectedYearLabel);
+    setTargetScope(matchesInitialDataYear ? (s.target_scope || 'overall') : 'overall');
+    setAttendanceTrackingMode(getAttendanceMode({
+      academicYearMode: matchesInitialDataYear ? s.attendance_tracking_mode : ATTENDANCE_MODES.CLASS_DAY,
+      fallback: ATTENDANCE_MODES.CLASS_DAY,
+    }));
+    setGoalMode(matchesInitialDataYear ? (s.default_constraint_mode || 'days') : 'days');
+    setTargetDays(
+      matchesInitialDataYear
+        ? (s.default_target_days != null ? String(s.default_target_days) : '180')
+        : '180'
+    );
+    setTargetHours(
+      matchesInitialDataYear
+        ? (s.default_target_hours != null ? String(s.default_target_hours) : '1000')
+        : '1000'
+    );
+    setLearningStartTime(
+      matchesInitialDataYear
+        ? normalizeLearningTimeDisplay(s.default_day_start_time, DEFAULT_LEARNING_START_TIME)
+        : normalizeLearningTimeDisplay(DEFAULT_LEARNING_START_TIME, DEFAULT_LEARNING_START_TIME)
+    );
+    setLearningEndTime(
+      matchesInitialDataYear
+        ? normalizeLearningTimeDisplay(s.default_day_end_time, DEFAULT_LEARNING_END_TIME)
+        : normalizeLearningTimeDisplay(DEFAULT_LEARNING_END_TIME, DEFAULT_LEARNING_END_TIME)
+    );
+    setPreferredLearningDayNums(
+      matchesInitialDataYear
+        ? normalizeAllowedWeekdays(s.allowed_weekdays)
+        : [...DEFAULT_ALLOWED_WEEKDAYS]
+    );
+    setFollowGlobalHolidays(matchesInitialDataYear ? s.follow_public_holidays !== false : true);
     if (s.default_school_year && !isSchoolYearLocked) {
-      setSelectedSchoolYearLabel(normalizeSchoolYearLabel(String(s.default_school_year)));
+      const normalizedDefaultYear = normalizeSchoolYearLabel(String(s.default_school_year));
+      setSelectedSchoolYearLabel((prev) => prev || normalizedDefaultYear);
     }
-    setDefaultYearStartDate(normalizeYmd(s.default_year_start_date) || rangeDefaults.yearStart);
-    setDefaultYearEndDate(normalizeYmd(s.default_year_end_date) || rangeDefaults.yearEnd);
-    setDefaultFallStartDate(normalizeYmd(s.default_fall_term_start_date) || rangeDefaults.fallStart);
-    setDefaultFallEndDate(normalizeYmd(s.default_fall_term_end_date) || rangeDefaults.fallEnd);
-    setDefaultSpringStartDate(normalizeYmd(s.default_spring_term_start_date) || rangeDefaults.springStart);
-    setDefaultSpringEndDate(normalizeYmd(s.default_spring_term_end_date) || rangeDefaults.springEnd);
-    const ex = initialData.exclusions || [];
+    setDefaultYearStartDate(
+      matchesInitialDataYear
+        ? (normalizeYmd(s.default_year_start_date) || rangeDefaults.yearStart)
+        : rangeDefaults.yearStart
+    );
+    setDefaultYearEndDate(
+      matchesInitialDataYear
+        ? (normalizeYmd(s.default_year_end_date) || rangeDefaults.yearEnd)
+        : rangeDefaults.yearEnd
+    );
+    setDefaultFallStartDate(
+      matchesInitialDataYear
+        ? (normalizeYmd(s.default_fall_term_start_date) || rangeDefaults.fallStart)
+        : rangeDefaults.fallStart
+    );
+    setDefaultFallEndDate(
+      matchesInitialDataYear
+        ? (normalizeYmd(s.default_fall_term_end_date) || rangeDefaults.fallEnd)
+        : rangeDefaults.fallEnd
+    );
+    setDefaultSpringStartDate(
+      matchesInitialDataYear
+        ? (normalizeYmd(s.default_spring_term_start_date) || rangeDefaults.springStart)
+        : rangeDefaults.springStart
+    );
+    setDefaultSpringEndDate(
+      matchesInitialDataYear
+        ? (normalizeYmd(s.default_spring_term_end_date) || rangeDefaults.springEnd)
+        : rangeDefaults.springEnd
+    );
+    const ex = matchesInitialDataYear ? (initialData.exclusions || []) : [];
     const holidays = ex.filter((e) => e.exclusion_type === 'holiday').map((e) => ({
       id: e.id,
       date: typeof e.start_date === 'string' ? e.start_date.slice(0, 10) : (e.start_date?.isoformat?.() || String(e.start_date || '').slice(0, 10)),
@@ -510,13 +577,17 @@ export default function PlannerSettingsContent({
     }));
     setCustomHolidays(holidays);
     setCustomBreaks(breaks);
-    setExcludedPublicHolidayDates(Array.isArray(initialData.excluded_holiday_dates) ? initialData.excluded_holiday_dates : []);
+    setExcludedPublicHolidayDates(
+      matchesInitialDataYear && Array.isArray(initialData.excluded_holiday_dates)
+        ? initialData.excluded_holiday_dates
+        : []
+    );
     const subjectsList = initialData.subjects || [];
     setSubjects(subjectsList);
     const { subjectTargetsMap, firstActiveTarget } = deriveSubjectTargetState(subjectsList);
     setSubjectTargets(subjectTargetsMap);
-    const initialScope = s.target_scope || 'overall';
-    if (firstActiveTarget && initialScope === 'per_subject') {
+    const initialScope = matchesInitialDataYear ? (s.target_scope || 'overall') : 'overall';
+    if (matchesInitialDataYear && firstActiveTarget && initialScope === 'per_subject') {
       setGoalMode(firstActiveTarget.mode);
       if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '180');
       if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
@@ -577,13 +648,49 @@ export default function PlannerSettingsContent({
         selectedSchoolYearLabel
       );
       if (planErr) throw planErr;
+      let resolvedYearMode = '';
+      let hasAcademicYearRecord = false;
+      try {
+        const targetLabel = normalizeSchoolYearLabel(
+          isSchoolYearLocked
+            ? normalizedLockedSchoolYearLabel
+            : (selectedSchoolYearLabel || s?.default_school_year || '')
+        );
+        const parsedYear = parseSchoolYearLabel(targetLabel);
+        if (parsedYear?.start && parsedYear?.end) {
+          const minStart = `${parsedYear.start}-01-01`;
+          const maxStart = `${parsedYear.end}-12-31`;
+          const { data: yearRows } = await supabase
+            .from('academic_years')
+            .select('id, attendance_tracking_mode, updated_at, start_date')
+            .eq('family_id', familyId)
+            .gte('start_date', minStart)
+            .lte('start_date', maxStart)
+            .order('updated_at', { ascending: false })
+            .limit(1);
+          hasAcademicYearRecord = Array.isArray(yearRows) && yearRows.length > 0;
+          resolvedYearMode = String(
+            hasAcademicYearRecord
+              ? yearRows[0]?.attendance_tracking_mode
+              : ''
+          ).trim().toLowerCase();
+        }
+      } catch (_) {
+        resolvedYearMode = '';
+      }
+
       if (s) {
         const fallbackYearLabel = isSchoolYearLocked
           ? normalizedLockedSchoolYearLabel
           : (s.default_school_year || selectedSchoolYearLabel);
         const rangeDefaults = schoolYearRangeDefaults(fallbackYearLabel);
         setTargetScope(s.target_scope || 'overall');
-        setGoalMode(s.default_constraint_mode || 'none');
+        setAttendanceTrackingMode(getAttendanceMode({
+          academicYearMode: resolvedYearMode,
+          plannerSettingsMode: hasAcademicYearRecord ? s.attendance_tracking_mode : '',
+          fallback: ATTENDANCE_MODES.CLASS_DAY,
+        }));
+        setGoalMode(s.default_constraint_mode || 'days');
         setTargetDays(s.default_target_days != null ? String(s.default_target_days) : '180');
         setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
         setLearningStartTime(normalizeLearningTimeDisplay(s.default_day_start_time, DEFAULT_LEARNING_START_TIME));
@@ -591,7 +698,8 @@ export default function PlannerSettingsContent({
         setPreferredLearningDayNums(normalizeAllowedWeekdays(s.allowed_weekdays));
         setFollowGlobalHolidays(s.follow_public_holidays !== false);
         if (s.default_school_year && !isSchoolYearLocked) {
-          setSelectedSchoolYearLabel(normalizeSchoolYearLabel(String(s.default_school_year)));
+          const normalizedDefaultYear = normalizeSchoolYearLabel(String(s.default_school_year));
+          setSelectedSchoolYearLabel((prev) => prev || normalizedDefaultYear);
         }
         setDefaultYearStartDate(normalizeYmd(s.default_year_start_date) || rangeDefaults.yearStart);
         setDefaultYearEndDate(normalizeYmd(s.default_year_end_date) || rangeDefaults.yearEnd);
@@ -634,7 +742,7 @@ export default function PlannerSettingsContent({
     } finally {
       setLoading(false);
     }
-  }, [familyId, selectedSchoolYearLabel, isSchoolYearLocked]);
+  }, [familyId, selectedSchoolYearLabel, isSchoolYearLocked, normalizedLockedSchoolYearLabel]);
 
   /** Keep Subject targets in sync when a subject is saved elsewhere (e.g. Edit subject modal). */
   const reloadSubjectTargetsFromDb = useCallback(async () => {
@@ -748,6 +856,7 @@ export default function PlannerSettingsContent({
         }
         const settingsPayload = {
           target_scope: s.targetScope || 'overall',
+          attendance_tracking_mode: getAttendanceMode({ academicYearMode: s.attendanceTrackingMode }),
           default_school_year: selectedSchoolYearLabel || null,
           default_constraint_mode: s.goalMode,
           default_target_days: s.goalMode === 'days' ? normalizedTargetDays : null,
@@ -838,6 +947,177 @@ export default function PlannerSettingsContent({
       });
     }
   };
+
+  const confirmAttendanceModeSwitch = useCallback(async ({ isDataRich }) => {
+    if (!isDataRich) return true;
+    const title = 'Change attendance style?';
+    const message = 'This year already has subject-based planning data. You can change how attendance is tracked, but existing subject schedules and progress may be calculated differently.';
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      return window.confirm(`${title}\n\n${message}`);
+    }
+    return new Promise((resolve) => {
+      Alert.alert(
+        title,
+        message,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Change style', style: 'default', onPress: () => resolve(true) },
+        ]
+      );
+    });
+  }, []);
+
+  const getSelectedYearModeAndRisk = useCallback(async () => {
+    const schoolYearStart = `${selectedYearMeta.start}-01-01`;
+    const schoolYearEnd = `${selectedYearMeta.end}-12-31`;
+    const { data: yearRows } = await supabase
+      .from('academic_years')
+      .select('id, attendance_tracking_mode, updated_at, start_date')
+      .eq('family_id', familyId)
+      .gte('start_date', schoolYearStart)
+      .lte('start_date', schoolYearEnd)
+      .order('updated_at', { ascending: false })
+      .limit(1);
+    const selectedYear = Array.isArray(yearRows) && yearRows.length > 0 ? yearRows[0] : null;
+    const resolvedCurrentMode = getAttendanceMode({
+      academicYearMode: selectedYear?.attendance_tracking_mode,
+      plannerSettingsMode: attendanceTrackingMode,
+    });
+    if (!selectedYear?.id) {
+      return {
+        academicYearId: null,
+        currentMode: resolvedCurrentMode,
+        has_subject_plan_events: false,
+        has_grades_or_outcomes: false,
+        has_transcript_artifacts: false,
+        is_data_rich: false,
+      };
+    }
+    const academicYearId = selectedYear.id;
+    try {
+      const routeCandidates = [
+        `/api/academic_year/${encodeURIComponent(academicYearId)}/attendance-mode-switch-risk`,
+        `/api/academic_year/${encodeURIComponent(academicYearId)}/attendance_mode_switch_risk`,
+      ];
+      for (const route of routeCandidates) {
+        const { data: riskData, error: riskError } = await apiRequest(route);
+        if (!riskError && riskData && typeof riskData === 'object') {
+          return {
+            academicYearId,
+            currentMode: resolvedCurrentMode,
+            has_subject_plan_events: riskData.has_subject_plan_events === true,
+            has_grades_or_outcomes: riskData.has_grades_or_outcomes === true,
+            has_transcript_artifacts: riskData.has_transcript_artifacts === true,
+            is_data_rich: riskData.is_data_rich === true,
+          };
+        }
+      }
+    } catch (_) {
+      // Fallback to client-side heuristic for environments without the new API route.
+    }
+
+    const { data: subjectPlanEvents } = await supabase
+      .from('events')
+      .select('id')
+      .eq('academic_year_id', academicYearId)
+      .eq('generated_by', 'plan_year')
+      .eq('event_type', 'Lesson')
+      .not('subject_id', 'is', null)
+      .is('deleted_at', null)
+      .limit(1);
+    const hasSubjectPlanEvents = Array.isArray(subjectPlanEvents) && subjectPlanEvents.length > 0;
+
+    const { data: yearEvents } = await supabase
+      .from('events')
+      .select('id, grade')
+      .eq('academic_year_id', academicYearId)
+      .is('deleted_at', null)
+      .limit(100);
+    const eventIds = (yearEvents || []).map((row) => row.id).filter(Boolean);
+    const hasGradeOnYearEvents = (yearEvents || []).some((row) => row?.grade != null && String(row.grade).trim() !== '');
+    let hasOutcomes = false;
+    if (eventIds.length > 0) {
+      const { data: outcomeRows } = await supabase
+        .from('event_outcomes')
+        .select('id')
+        .in('event_id', eventIds)
+        .limit(1);
+      hasOutcomes = Array.isArray(outcomeRows) && outcomeRows.length > 0;
+    }
+
+    return {
+      academicYearId,
+      currentMode: resolvedCurrentMode,
+      has_subject_plan_events: hasSubjectPlanEvents,
+      has_grades_or_outcomes: hasGradeOnYearEvents || hasOutcomes,
+      has_transcript_artifacts: false, // TODO: replace with backend-backed risk check endpoint
+      is_data_rich: hasSubjectPlanEvents || hasGradeOnYearEvents || hasOutcomes,
+    };
+  }, [attendanceTrackingMode, familyId, selectedYearMeta.end, selectedYearMeta.start]);
+
+  const handleAttendanceTrackingModeChange = useCallback(async (mode) => {
+    if (readOnly) {
+      toast.push('Your family admin has disabled changing planning preferences.', 'error');
+      return;
+    }
+    const normalizedMode = getAttendanceMode({ academicYearMode: mode });
+    const risk = await getSelectedYearModeAndRisk();
+    const previousMode = getAttendanceMode({ academicYearMode: risk.currentMode });
+    if (previousMode === normalizedMode) return;
+    if (isSubjectMode(previousMode) && isClassDayMode(normalizedMode) && risk.is_data_rich) {
+      const confirmed = await confirmAttendanceModeSwitch({ isDataRich: true });
+      trackEvent('attendance_mode_switch_confirmed', {
+        from_mode: previousMode,
+        to_mode: normalizedMode,
+        academic_year_id: risk.academicYearId || null,
+        is_data_rich: true,
+        confirmed,
+      });
+      if (!confirmed) return;
+    }
+    try {
+      const schoolYearStart = `${selectedYearMeta.start}-01-01`;
+      const schoolYearEnd = `${selectedYearMeta.end}-12-31`;
+      const { data: updatedRows, error: yearSaveErr } = await supabase
+        .from('academic_years')
+        .update({ attendance_tracking_mode: normalizedMode })
+        .eq('family_id', familyId)
+        .gte('start_date', schoolYearStart)
+        .lte('start_date', schoolYearEnd)
+        .select('id');
+      if (yearSaveErr) throw yearSaveErr;
+      if (!Array.isArray(updatedRows) || updatedRows.length === 0) {
+        throw new Error('No academic year found for the selected school year. Create or load that year before changing attendance mode.');
+      }
+
+      setAttendanceTrackingMode(normalizedMode);
+
+      const { error: compatSyncError } = await saveFamilyPlannerSettings(
+        familyId,
+        { attendance_tracking_mode: normalizedMode },
+        selectedSchoolYearLabel
+      );
+      if (compatSyncError) {
+        // Compatibility sync should not block the user once the source-of-truth write succeeds.
+        // eslint-disable-next-line no-console
+        console.warn('[PlannerSettingsCompat] attendance_tracking_mode sync failed', compatSyncError);
+      }
+
+      trackEvent('attendance_mode_selected', {
+        mode: normalizedMode,
+        academic_year_id: risk.academicYearId || null,
+        source: 'planner_settings',
+      });
+      showSaved();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar'));
+      }
+    } catch (err) {
+      toast.push(err?.message || 'Failed to save attendance mode', 'error');
+    }
+  }, [confirmAttendanceModeSwitch, familyId, getSelectedYearModeAndRisk, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start, toast]);
 
   const handleGoalChange = (mode) => {
     if (mode === 'days' && !parsePositiveIntOrNull(stateRef.current?.targetDays)) {
@@ -1343,11 +1623,11 @@ export default function PlannerSettingsContent({
             )}
           </View>
         ) : null}
-        {/* Learning Goals */}
+        {/* Learning defaults */}
         <View style={sectionStyle}>
           <View style={{ alignSelf: 'flex-start' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={sectionTitleStyle}>Learning Goals • </Text>
+              <Text style={sectionTitleStyle}>Learning defaults • </Text>
               <View>
                 {isSchoolYearLocked ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -1397,13 +1677,37 @@ export default function PlannerSettingsContent({
             </View>
           </View>
           <View style={sectionDividerStyle} />
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <TouchableOpacity style={chip(targetScope === 'overall')} onPress={() => handleTargetScopeChange('overall')}>
-              <Text style={chipText(targetScope === 'overall')}>Overall</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={chip(targetScope === 'per_subject')} onPress={() => handleTargetScopeChange('per_subject')}>
-              <Text style={chipText(targetScope === 'per_subject')}>Per subject</Text>
-            </TouchableOpacity>
+          <View>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: TEXT_BLACK, marginBottom: 8 }}>
+              Attendance tracking style
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <TouchableOpacity
+                style={chip(attendanceTrackingMode === 'class_day')}
+                onPress={() => handleAttendanceTrackingModeChange('class_day')}
+              >
+                <Text style={chipText(attendanceTrackingMode === 'class_day')}>Simple class days</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={chip(attendanceTrackingMode !== 'class_day')}
+                onPress={() => handleAttendanceTrackingModeChange('subject')}
+              >
+                <Text style={chipText(attendanceTrackingMode !== 'class_day')}>By subject</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: TEXT_BLACK, marginBottom: 8 }}>
+              Learning goals
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <TouchableOpacity style={chip(targetScope === 'overall')} onPress={() => handleTargetScopeChange('overall')}>
+                <Text style={chipText(targetScope === 'overall')}>Overall</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={chip(targetScope === 'per_subject')} onPress={() => handleTargetScopeChange('per_subject')}>
+                <Text style={chipText(targetScope === 'per_subject')}>Per subject</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
@@ -1413,9 +1717,6 @@ export default function PlannerSettingsContent({
             <Text style={sectionTitleStyle}>Target</Text>
             <View style={sectionDividerStyle} />
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <TouchableOpacity style={chip(goalMode === 'none')} onPress={() => handleGoalChange('none')}>
-                <Text style={chipText(goalMode === 'none')}>None</Text>
-              </TouchableOpacity>
               <TouchableOpacity style={chip(goalMode === 'days')} onPress={() => handleGoalChange('days')}>
                 <Text style={chipText(goalMode === 'days')}>Days</Text>
               </TouchableOpacity>
@@ -1452,78 +1753,18 @@ export default function PlannerSettingsContent({
           </View>
         )}
 
-        {/* Subject targets (only when Per subject) */}
         {targetScope === 'per_subject' && (
           <View style={sectionStyle}>
-            <Text style={sectionTitleStyle}>Subject targets</Text>
+            <Text style={sectionTitleStyle}>Subject scheduling</Text>
             <View style={sectionDividerStyle} />
-            {visibleSubjects.length === 0 ? (
-              <View>
-                <Text style={{ fontSize: 13, color: MUTED }}>
-                  No subjects found for {selectedSchoolYearLabel || 'this school year'}.
-                </Text>
-                <TouchableOpacity
-                  onPress={openAddSubjectModal}
-                  style={[addOutlineButtonStyle, { marginTop: 10 }]}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={addOutlineButtonTextStyle}>+ Add subject</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View>
-              {visibleSubjects.map((subj) => {
-                const t = subjectTargets[subj.id] || { mode: 'none', days: '', hours: '' };
-                return (
-                  <View key={subj.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-                    <Text style={{ fontSize: 14, fontWeight: '500', color: TEXT_BLACK, minWidth: 100 }}>{subj.name}</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <TouchableOpacity style={chip(t.mode === 'none')} onPress={() => handleSubjectTargetChange(subj.id, { ...t, mode: 'none' })}>
-                        <Text style={chipText(t.mode === 'none')}>None</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={chip(t.mode === 'days')} onPress={() => handleSubjectTargetChange(subj.id, { ...t, mode: 'days' })}>
-                        <Text style={chipText(t.mode === 'days')}>Days</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={chip(t.mode === 'hours')} onPress={() => handleSubjectTargetChange(subj.id, { ...t, mode: 'hours' })}>
-                        <Text style={chipText(t.mode === 'hours')}>Hours</Text>
-                      </TouchableOpacity>
-                    </View>
-                    {t.mode === 'days' && (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <TextInput
-                          value={t.days}
-                          onChangeText={(v) => handleSubjectTargetChange(subj.id, { ...t, days: v })}
-                          keyboardType="number-pad"
-                          style={[inputStyle, { width: 56 }]}
-                          placeholder="90"
-                          placeholderTextColor="rgba(15,23,42,0.4)"
-                        />
-                        <Text style={{ fontSize: 14, color: TEXT_BLACK }}>days</Text>
-                      </View>
-                    )}
-                    {t.mode === 'hours' && (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <TextInput
-                          value={t.hours}
-                          onChangeText={(v) => handleSubjectTargetChange(subj.id, { ...t, hours: v })}
-                          keyboardType="decimal-pad"
-                          style={[inputStyle, { width: 64 }]}
-                          placeholder="120"
-                          placeholderTextColor="rgba(15,23,42,0.4)"
-                        />
-                        <Text style={{ fontSize: 14, color: TEXT_BLACK }}>hours</Text>
-                      </View>
-                    )}
-                  </View>
-                );
-              })}
-              </View>
-            )}
+            <Text style={{ fontSize: 13, color: MUTED }}>
+              Set subject cadence in Subjects / Schedule. Planning Preferences only sets family-wide defaults.
+            </Text>
           </View>
         )}
 
         <View style={sectionStyle}>
-          <Text style={sectionTitleStyle}>Plan range defaults</Text>
+          <Text style={sectionTitleStyle}>School year & term dates</Text>
           <View style={sectionDividerStyle} />
           <View style={{ marginBottom: 10 }}>
             <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>School year</Text>
@@ -1726,8 +1967,13 @@ export default function PlannerSettingsContent({
               </View>
             </View>
           </View>
-          <View style={{ marginTop: 10 }}>
-            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Preferred learning days</Text>
+        </View>
+
+        <View style={sectionStyle}>
+          <Text style={sectionTitleStyle}>Weekly rhythm</Text>
+          <View style={sectionDividerStyle} />
+          <View style={{ marginTop: 0 }}>
+            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Usual learning days</Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 2 }}>
               {LEARNING_DAY_OPTIONS.map((option) => {
                 const active = preferredLearningDayNums.includes(option.id);
@@ -1745,7 +1991,7 @@ export default function PlannerSettingsContent({
             </View>
           </View>
           <View style={{ marginTop: 10 }}>
-            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Learning times</Text>
+            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Usual learning hours</Text>
             <View
               style={{
                 borderWidth: 1,
@@ -1825,8 +2071,9 @@ export default function PlannerSettingsContent({
 
         {/* Public holidays */}
         <View style={sectionStyle}>
-          <Text style={sectionTitleStyle}>Public holidays</Text>
+          <Text style={sectionTitleStyle}>Days off</Text>
           <View style={sectionDividerStyle} />
+          <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 8 }}>Public holidays</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <TouchableOpacity
               style={[toggleTrackStyle, followGlobalHolidays && toggleTrackOnStyle]}
@@ -2005,9 +2252,8 @@ export default function PlannerSettingsContent({
         )}
 
         {/* Custom days (single-date exclusions) */}
-        <View style={sectionStyle}>
-          <Text style={sectionTitleStyle}>{PLANNING_PREFERENCES_UI.customDaysSectionTitle}</Text>
-          <View style={sectionDividerStyle} />
+        <View style={{ marginTop: 14 }}>
+          <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 8 }}>Custom days off</Text>
           <View>
               {visibleCustomHolidays.map((h, i) => (
                 <View key={h.id || i} style={{ marginBottom: 8 }}>
@@ -2101,9 +2347,8 @@ export default function PlannerSettingsContent({
         </View>
 
         {/* Ranges (date-span exclusions) */}
-        <View style={sectionStyle}>
-          <Text style={sectionTitleStyle}>{PLANNING_PREFERENCES_UI.rangesSectionTitle}</Text>
-          <View style={sectionDividerStyle} />
+        <View style={{ marginTop: 14 }}>
+          <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 8 }}>Custom date ranges off</Text>
           <View>
               {visibleCustomBreaks.map((b, i) => (
                 <View key={b.id || i} style={{ marginBottom: 8 }}>

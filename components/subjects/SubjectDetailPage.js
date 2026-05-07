@@ -63,6 +63,7 @@ import SubjectProgressPlanSection from './SubjectProgressPlanSection';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import MaterialDetailsModal from '../materials/MaterialDetailsModal';
 import { archiveMaterial } from '../../lib/services/materialsClient';
+import { getAttendanceMode, isClassDayMode as resolveClassDayMode } from '../../lib/attendanceMode';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_PROGRESS = false;
@@ -647,6 +648,8 @@ export default function SubjectDetailPage({
 
   // Extract data
   const subject = subjectData?.subject;
+  const attendanceTrackingMode = getAttendanceMode({ academicYearMode: subjectData?.attendance_tracking_mode });
+  const isClassDayMode = resolveClassDayMode(attendanceTrackingMode);
   const materials = subjectData?.materials || [];
   const upcomingItems = subjectData?.upcomingItems || [];
   const overdueItems = subjectData?.overdueItems || [];
@@ -2780,90 +2783,94 @@ export default function SubjectDetailPage({
         ) : null}
 
         {/* Section 2: Attendance */}
-        <View id="attendance-section" style={styles.section}>
-          <View style={styles.attendanceSectionHeader}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
-            <TouchableOpacity
-              style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
-              onPress={() => setShowPastEventsAttendanceModal(true)}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Edit attendance"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Edit2 size={14} color="#6B7280" />
-              <Text style={styles.emptyStateButtonText}>Edit attendance</Text>
-            </TouchableOpacity>
-          </View>
-          {(attendanceViewMode === 'list' ? attendanceRecordsListUI.length > 0 : attendanceRecordsForUI.length > 0) ? (
-            <View style={styles.emptyStateBox}>
-              {attendanceSummaryChips}
-              {attendanceViewMode === 'list' ? (
-                <>
-                  <View style={styles.attendanceList}>
-                    {(showAttendanceExpanded ? attendanceRecordsListUI : attendanceRecordsListUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
-                      const event = (subjectData?.events || []).find(e => e.id === record.event_id);
-                      const statusLabel = String(record?.statusLabel || '');
-                      const statusTone = String(record?.statusTone || '').toLowerCase();
-                      return (
+        {!isClassDayMode && (
+          <View id="attendance-section" style={styles.section}>
+            <>
+              <View style={styles.attendanceSectionHeader}>
+                <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
+                <TouchableOpacity
+                  style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+                  onPress={() => setShowPastEventsAttendanceModal(true)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit attendance"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Edit2 size={14} color="#6B7280" />
+                  <Text style={styles.emptyStateButtonText}>Edit attendance</Text>
+                </TouchableOpacity>
+              </View>
+              {(attendanceViewMode === 'list' ? attendanceRecordsListUI.length > 0 : attendanceRecordsForUI.length > 0) ? (
+                <View style={styles.emptyStateBox}>
+                  {attendanceSummaryChips}
+                  {attendanceViewMode === 'list' ? (
+                    <>
+                      <View style={styles.attendanceList}>
+                        {(showAttendanceExpanded ? attendanceRecordsListUI : attendanceRecordsListUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
+                          const event = (subjectData?.events || []).find(e => e.id === record.event_id);
+                          const statusLabel = String(record?.statusLabel || '');
+                          const statusTone = String(record?.statusTone || '').toLowerCase();
+                          return (
+                            <TouchableOpacity
+                              key={record.id}
+                              style={styles.attendanceItem}
+                              onPress={() => event && handleOpenEventDetails(event.id, event)}
+                              activeOpacity={0.7}
+                              {...(Platform.OS === 'web' && { cursor: event ? 'pointer' : 'default' })}
+                            >
+                              <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
+                              <Text style={styles.attendanceItemTitle}>
+                                {record?.title || event?.title || 'Lesson'}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.attendanceItemStatus,
+                                  statusTone === 'attended' && styles.attendanceItemStatusAttended,
+                                  statusTone === 'unattended' && styles.attendanceItemStatusUnattended,
+                                  statusTone === 'upcoming' && styles.attendanceItemStatusUpcoming,
+                                ]}
+                              >
+                                {statusLabel}
+                              </Text>
+                              <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                      {attendanceRecordsListUI.length > ATTENDANCE_LIST_LIMIT && (
                         <TouchableOpacity
-                          key={record.id}
-                          style={styles.attendanceItem}
-                          onPress={() => event && handleOpenEventDetails(event.id, event)}
+                          style={styles.attendanceShowMoreBtn}
+                          onPress={() => setShowAttendanceExpanded((v) => !v)}
                           activeOpacity={0.7}
-                          {...(Platform.OS === 'web' && { cursor: event ? 'pointer' : 'default' })}
                         >
-                          <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
-                          <Text style={styles.attendanceItemTitle}>
-                            {record?.title || event?.title || 'Lesson'}
+                          <Text style={styles.attendanceShowMoreText}>
+                            {showAttendanceExpanded
+                              ? 'Show less'
+                              : `Show more (${attendanceRecordsListUI.length - ATTENDANCE_LIST_LIMIT} more)`}
                           </Text>
-                          <Text
-                            style={[
-                              styles.attendanceItemStatus,
-                              statusTone === 'attended' && styles.attendanceItemStatusAttended,
-                              statusTone === 'unattended' && styles.attendanceItemStatusUnattended,
-                              statusTone === 'upcoming' && styles.attendanceItemStatusUpcoming,
-                            ]}
-                          >
-                            {statusLabel}
-                          </Text>
-                          <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
                         </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  {attendanceRecordsListUI.length > ATTENDANCE_LIST_LIMIT && (
-                    <TouchableOpacity
-                      style={styles.attendanceShowMoreBtn}
-                      onPress={() => setShowAttendanceExpanded((v) => !v)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.attendanceShowMoreText}>
-                        {showAttendanceExpanded
-                          ? 'Show less'
-                          : `Show more (${attendanceRecordsListUI.length - ATTENDANCE_LIST_LIMIT} more)`}
-                      </Text>
-                    </TouchableOpacity>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {attendanceInsightsPanel}
+                    </>
                   )}
-                </>
+                </View>
               ) : (
-                <>
-                  {attendanceInsightsPanel}
-                </>
+                <View style={styles.emptyStateBox}>
+                  {attendanceSummaryChips}
+                  {attendanceViewMode === 'list' ? null : attendanceInsightsPanel}
+                  {attendanceViewMode === 'list' ? (
+                    <Text style={styles.emptyStateText}>
+                      Attendance appears once you complete an event attached to this subject.
+                    </Text>
+                  ) : null}
+                </View>
               )}
-            </View>
-          ) : (
-            <View style={styles.emptyStateBox}>
-              {attendanceSummaryChips}
-              {attendanceViewMode === 'list' ? null : attendanceInsightsPanel}
-              {attendanceViewMode === 'list' ? (
-                <Text style={styles.emptyStateText}>
-                  Attendance appears once you complete an event attached to this subject.
-                </Text>
-              ) : null}
-            </View>
-          )}
-        </View>
+            </>
+          </View>
+        )}
 
         {/* Section 3: Grades */}
         <View id="grades-section" style={styles.section}>
