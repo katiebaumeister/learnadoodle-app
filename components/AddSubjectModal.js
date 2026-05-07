@@ -662,6 +662,7 @@ export default function AddSubjectModal({
         .eq('subject_id', subjectId)
         .eq('family_id', familyId)
         .is('deleted_at', null)
+        .neq('status', 'canceled')
         .order('start_ts', { ascending: false });
       
       if (error) throw error;
@@ -788,16 +789,19 @@ export default function AddSubjectModal({
   // Delete all events for this subject
   const performDeleteAllEvents = async () => {
     if (!effectiveSubjectId || subjectEvents.length === 0) return;
+    const previousEvents = Array.isArray(subjectEvents) ? [...subjectEvents] : [];
+    // Optimistic UI: immediately reflect empty state in Event management.
+    setSubjectEvents([]);
     setDeletingEvents(true);
     try {
-      const eventIds = subjectEvents.map(e => e.id);
+      const eventIds = previousEvents.map((e) => e.id);
       const { error } = await supabase
         .from('events')
         .update({ deleted_at: new Date().toISOString() })
         .in('id', eventIds)
         .eq('family_id', familyId);
       if (error) throw error;
-      toast.show('All events deleted successfully', 'success');
+      toast?.push?.('All events deleted successfully', 'success');
       setSubjectEvents([]);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         // Keep Subject Detail / Progress attendance sections in sync after bulk event delete.
@@ -811,7 +815,9 @@ export default function AddSubjectModal({
       }
     } catch (error) {
       console.error('Error deleting events:', error);
-      toast.show('Failed to delete events', 'error');
+      // Roll back optimistic clear if delete fails.
+      setSubjectEvents(previousEvents);
+      toast?.push?.('Failed to delete events', 'error');
     } finally {
       setDeletingEvents(false);
     }
@@ -843,7 +849,7 @@ export default function AddSubjectModal({
     
     const unattendedEvents = subjectEvents.filter(e => e.status !== 'done');
     if (unattendedEvents.length === 0) {
-      toast.show('All events are already marked as attended', 'info');
+      toast?.push?.('All events are already marked as attended', 'info');
       return;
     }
     
@@ -888,7 +894,7 @@ export default function AddSubjectModal({
       
       if (error) throw error;
       
-      toast.show(`${unattendedEvents.length} event${unattendedEvents.length === 1 ? '' : 's'} marked as attended`, 'success');
+      toast?.push?.(`${unattendedEvents.length} event${unattendedEvents.length === 1 ? '' : 's'} marked as attended`, 'success');
       
       // Reload events
       await loadSubjectEvents(effectiveSubjectId);
@@ -900,7 +906,7 @@ export default function AddSubjectModal({
       }
     } catch (error) {
       console.error('Error marking events as attended:', error);
-      toast.show('Failed to mark events as attended', 'error');
+      toast?.push?.('Failed to mark events as attended', 'error');
     } finally {
       setMarkingAttended(false);
     }

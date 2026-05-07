@@ -1243,7 +1243,7 @@ async def get_plan_health(
     When academic_year_id is provided, uses that plan only. Otherwise uses the family's most recent academic year.
     Stores result in health_cache for instant UI.
     """
-    from services.plan_health import compute_plan_health_from_attributions
+    from services.plan_health import compute_plan_health_from_attributions, compute_plan_health_from_events
     from services.instructional_attribution import get_instructional_attributions
 
     try:
@@ -1365,6 +1365,22 @@ async def get_plan_health(
             target_hours,
             subject_targets=subject_targets,
         )
+        if len(events) > 0 and len(attributions) == 0:
+            fallback_result = compute_plan_health_from_events(
+                events,
+                start_date_obj,
+                end_date_obj,
+                constraint_mode,
+                target_days,
+                target_hours,
+                academic_year_id=academic_year_id,
+            )
+            result = fallback_result
+            print(
+                "[BACKEND] plan_health fallback_to_events triggered: "
+                f"academic_year_id={academic_year_id} events_in_range={len(events)}",
+                flush=True,
+            )
         print(
             f"[BACKEND] plan_health result: planned_days={result.get('planned_days')} delta_days={result.get('delta_days')} "
             f"planned_hours={result.get('planned_hours')} delta_hours={result.get('delta_hours')}",
@@ -1685,8 +1701,9 @@ async def apply_fix_suggestion(
             if not week_start:
                 raise HTTPException(status_code=400, detail="week_start (YYYY-MM-DD) required for catch_up_week")
             start_d = date.fromisoformat(week_start[:10])
-            sub_resp = supabase.table("subject").select("id").eq("family_id", family_id).limit(1).execute()
+            sub_resp = supabase.table("subject").select("id, name").eq("family_id", family_id).limit(1).execute()
             subject_id = (sub_resp.data[0]["id"] if sub_resp.data else None) or (blocks[0]["subject_id"] if blocks else None)
+            subject_title = (sub_resp.data[0].get("name") if sub_resp.data else None) or "Lesson"
             if not subject_id:
                 raise HTTPException(status_code=400, detail="Add at least one subject first.")
             children_resp = supabase.table("children").select("id").eq("family_id", family_id).execute()
@@ -1699,7 +1716,7 @@ async def apply_fix_suggestion(
                     events_to_insert.append({
                         "family_id": family_id,
                         "child_id": cid,
-                        "title": "Catch-up — Lesson",
+                        "title": str(subject_title),
                         "start_ts": f"{d.isoformat()}T10:00:00+00:00",
                         "end_ts": f"{d.isoformat()}T11:00:00+00:00",
                         "status": "scheduled",
@@ -1821,7 +1838,7 @@ async def fix_target_gap(
 
         year_resp = (
             supabase.table("academic_years")
-            .select("id, family_id, start_date, end_date")
+            .select("id, family_id, start_date, end_date, attendance_tracking_mode")
             .eq("id", body.academic_year_id)
             .limit(1)
             .execute()
@@ -1829,6 +1846,8 @@ async def fix_target_gap(
         if not year_resp.data:
             raise HTTPException(status_code=404, detail="Academic year not found.")
         year_row = year_resp.data[0]
+        year_attendance_mode = str(year_row.get("attendance_tracking_mode") or "").strip().lower()
+        is_class_day_tracking_mode = year_attendance_mode == "class_day"
         if str(year_row.get("family_id")) != str(family_id):
             raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
         plan_resp = (
@@ -2165,6 +2184,42 @@ async def fix_target_gap(
                     },
                     flush=True,
                 )
+
+        child_name_by_id: Dict[str, str] = {}
+        try:
+            children_resp = (
+                supabase.table("children")
+                .select("id, first_name, name")
+                .eq("family_id", family_id)
+                .execute()
+            )
+            for row in (children_resp.data or []):
+                cid = str(row.get("id") or "").strip()
+                if not cid:
+                    continue
+                label = str(row.get("first_name") or row.get("name") or "").strip()
+                if label:
+                    child_name_by_id[cid] = label
+        except Exception:
+            child_name_by_id = {}
+
+        def _join_names_for_title(names: List[str]) -> str:
+            clean = [str(name).strip() for name in (names or []) if str(name).strip()]
+            if not clean:
+                return "Learning"
+            if len(clean) == 1:
+                return f"{clean[0]} Learning"
+            if len(clean) == 2:
+                return f"{clean[0]} & {clean[1]} Learning"
+            return f"{', '.join(clean[:-1])} & {clean[-1]} Learning"
+
+        def _class_day_title_for_child_ids(child_ids: List[str]) -> str:
+            names = []
+            for cid in (child_ids or []):
+                label = child_name_by_id.get(str(cid).strip())
+                if label:
+                    names.append(label)
+            return _join_names_for_title(names)
 
         subject_name_by_id: Dict[str, str] = {}
         try:
@@ -2520,30 +2575,69 @@ async def fix_target_gap(
                     learning_dates.append(day_key)
                 cursor += timedelta(days=1)
 
-            events_for_count_resp = (
-                supabase.table("events")
-                .select("id, subject_id, start_ts, status")
-                .eq("family_id", family_id)
-                .eq("academic_year_id", body.academic_year_id)
-                .eq("counts_toward_plan", True)
-                .is_("deleted_at", None)
-                .neq("status", "canceled")
-                .gte("start_ts", f"{saved_range_start}T00:00:00")
-                .lte("start_ts", f"{saved_range_end}T23:59:59")
-                .execute()
-            )
-            events_for_count = [
-                ev for ev in (events_for_count_resp.data or [])
-                if str(ev.get("subject_id") or "").strip() in set(selected_subject_ids)
-            ]
+            try:
+                events_for_count_resp = (
+                    supabase.table("events")
+                    .select("id, subject_id, start_ts, status, counts_toward_plan, instructional_status, event_type")
+                    .eq("family_id", family_id)
+                    .eq("academic_year_id", body.academic_year_id)
+                    .is_("deleted_at", None)
+                    .neq("status", "canceled")
+                    .gte("start_ts", f"{saved_range_start}T00:00:00")
+                    .lte("start_ts", f"{saved_range_end}T23:59:59")
+                    .execute()
+                )
+                events_for_count = list(events_for_count_resp.data or [])
+            except Exception:
+                events_for_count_resp = (
+                    supabase.table("events")
+                    .select("id, subject_id, start_ts, status, counts_toward_plan")
+                    .eq("family_id", family_id)
+                    .eq("academic_year_id", body.academic_year_id)
+                    .is_("deleted_at", None)
+                    .neq("status", "canceled")
+                    .gte("start_ts", f"{saved_range_start}T00:00:00")
+                    .lte("start_ts", f"{saved_range_end}T23:59:59")
+                    .execute()
+                )
+                events_for_count = list(events_for_count_resp.data or [])
+
+            instructional_event_types = {
+                "lesson",
+                "classday",
+                "class day",
+                "scheduled class day",
+                "schedule block",
+            }
+
+            def _is_instructional_day_event(ev: Dict[str, Any]) -> bool:
+                if _counts_toward(ev):
+                    return True
+                event_type_key = str(ev.get("event_type") or "").strip().lower()
+                return event_type_key in instructional_event_types
             done_by_subject: Dict[str, set] = defaultdict(set)
             upcoming_by_subject: Dict[str, set] = defaultdict(set)
             existing_by_subject: Dict[str, set] = defaultdict(set)
             existing_overall_dates: set = set()
+            done_overall_dates: set = set()
+            upcoming_overall_dates: set = set()
+            selected_subject_id_set = set(selected_subject_ids)
             for ev in events_for_count:
                 sid = str(ev.get("subject_id") or "").strip()
                 day_key = _day_from_ts(ev.get("start_ts"))
-                if not sid or not day_key:
+                if not day_key:
+                    continue
+                status_raw = str(ev.get("status") or "").strip().lower()
+                if effective_scope == "overall":
+                    if not _is_instructional_day_event(ev):
+                        continue
+                    existing_overall_dates.add(day_key)
+                    if status_raw == "done" and day_key <= today_ymd:
+                        done_overall_dates.add(day_key)
+                    elif day_key > today_ymd:
+                        upcoming_overall_dates.add(day_key)
+                    continue
+                if not sid or sid not in selected_subject_id_set or not _counts_toward(ev):
                     continue
                 existing_by_subject[sid].add(day_key)
                 existing_overall_dates.add(day_key)
@@ -2558,9 +2652,7 @@ async def fix_target_gap(
             target_days_effective = _parse_positive_int(planner_settings_row.get("default_target_days")) or target_days
             per_subject_gaps: Dict[str, int] = {}
             if effective_scope == "overall":
-                done_overall = set().union(*done_by_subject.values()) if done_by_subject else set()
-                upcoming_overall = set().union(*upcoming_by_subject.values()) if upcoming_by_subject else set()
-                before_projected_days = len(done_overall.union(upcoming_overall))
+                before_projected_days = len(done_overall_dates.union(upcoming_overall_dates))
                 before_gap_days = int(target_days_effective - before_projected_days)
             else:
                 for sid in selected_subject_ids:
@@ -3304,17 +3396,22 @@ async def fix_target_gap(
                 subject_row = subject_by_id.get(sid) or {}
                 subject_name = str(subject_row.get("name") or "Subject").strip() or "Subject"
                 child_ids = [str(cid) for cid in (slot.get("child_ids") or []) if str(cid).strip()]
+                if not child_ids:
+                    child_ids = list(selected_child_ids_for_conflict)
                 st = str(slot.get("start_time") or learning_window_start_hhmm)
                 et = str(slot.get("end_time") or _default_end_for_start(st))
+                event_title = _class_day_title_for_child_ids(child_ids) if is_class_day_tracking_mode else subject_name
+                event_type = "ClassDay" if is_class_day_tracking_mode else "Lesson"
+                event_subject_id = None if is_class_day_tracking_mode else sid
                 created_rows.append({
                     "id": str(uuid.uuid4()),
                     "family_id": family_id,
                     "academic_year_id": body.academic_year_id,
                     "created_by": user.get("id"),
                     "updated_by": user.get("id"),
-                    "subject_id": sid,
-                    "title": f"{subject_name} catch-up day",
-                    "event_type": "Lesson",
+                    "subject_id": event_subject_id,
+                    "title": event_title,
+                    "event_type": event_type,
                     "status": "scheduled",
                     "source": "system",
                     "start_ts": _slot_iso_utc(slot["date"], st),
@@ -3478,9 +3575,7 @@ async def fix_target_gap(
                     inserted_day_keys_by_subject[sid].add(day_key)
 
             if effective_scope == "overall":
-                done_overall = set().union(*done_by_subject.values()) if done_by_subject else set()
-                upcoming_overall = set().union(*upcoming_by_subject.values()) if upcoming_by_subject else set()
-                before_projected_set = done_overall.union(upcoming_overall)
+                before_projected_set = done_overall_dates.union(upcoming_overall_dates)
                 inserted_overall_days = set().union(*inserted_day_keys_by_subject.values()) if inserted_day_keys_by_subject else set()
                 after_projected_set = before_projected_set.union(inserted_overall_days)
                 projected_after_days = len(after_projected_set)
@@ -5038,9 +5133,11 @@ async def clear_placeholders(
     __: None = Depends(rate_limiter),
 ):
     """
-    Remove Plan Year plan events. By default clears all plan events for the family.
-    If academic_year_id is provided, clears only that year's plan events (validates family ownership).
-    Touches events where generated_by='plan_year' (and optional academic_year_id); deleted_at is null.
+    Remove plan-generated events. By default clears plan_year events for the family.
+    If academic_year_id is provided, clears only that year's plan-generated events (validates family ownership).
+    Touches non-deleted events by generation source:
+      - always: generated_by='plan_year'
+      - when delete_plan=True: also generated_by in {'fix_gap', 'target_gap_fix'}
     Uses soft delete (sets deleted_at) so calendar/views that filter deleted_at IS NULL stop showing them.
     If delete_plan=True and academic_year_id is set, also deletes the academic_year row (CASCADE removes
     academic_year_plan, holidays, class_days, exclusions). Events keep rows but academic_year_id becomes NULL.
@@ -5062,19 +5159,27 @@ async def clear_placeholders(
             if ay.data[0].get("family_id") != family_id:
                 raise HTTPException(status_code=403, detail="Academic year does not belong to your family")
 
-        # Select plan event ids (generated_by='plan_year'; only non-deleted)
+        generated_by_values = ["plan_year"]
+        if delete_plan and academic_year_id:
+            generated_by_values.extend(["fix_gap", "target_gap_fix"])
+
+        # Select plan-generated event ids (only non-deleted)
         q = (
             supabase.table("events")
-            .select("id")
+            .select("id, generated_by")
             .eq("family_id", family_id)
-            .eq("generated_by", "plan_year")
+            .in_("generated_by", generated_by_values)
             .is_("deleted_at", None)
         )
         if academic_year_id:
             q = q.eq("academic_year_id", academic_year_id)
         resp = q.execute()
         ids = [row["id"] for row in (resp.data or [])]
-        print(f"[BACKEND] clear_placeholders: found {len(ids)} plan event(s) to soft-delete")
+        by_source: Dict[str, int] = {}
+        for row in (resp.data or []):
+            src = str(row.get("generated_by") or "").strip() or "unknown"
+            by_source[src] = int(by_source.get(src) or 0) + 1
+        print(f"[BACKEND] clear_placeholders: found {len(ids)} plan-generated event(s) to soft-delete by_source={by_source}")
 
         deleted = 0
         if ids:
@@ -5962,6 +6067,67 @@ async def apply_to_calendar(
         blocks_to_use: List[Dict[str, Any]] = []
         subject_rows: Dict[str, str] = {}
         family_child_ids: List[Any] = []
+        child_name_by_id: Dict[str, str] = {}
+        try:
+            children_resp = supabase.table("children").select("id, first_name, name").eq("family_id", body.family_id).execute()
+            family_child_ids = [r["id"] for r in (children_resp.data or []) if r.get("id") is not None]
+            child_name_by_id = {
+                str(r.get("id")): str(r.get("first_name") or r.get("name") or "").strip()
+                for r in (children_resp.data or [])
+                if str(r.get("id") or "").strip()
+            }
+        except Exception:
+            try:
+                children_resp = supabase.table("child").select("id, first_name, name").eq("family_id", body.family_id).execute()
+                family_child_ids = [r["id"] for r in (children_resp.data or []) if r.get("id") is not None]
+                child_name_by_id = {
+                    str(r.get("id")): str(r.get("first_name") or r.get("name") or "").strip()
+                    for r in (children_resp.data or [])
+                    if str(r.get("id") or "").strip()
+                }
+            except Exception:
+                family_child_ids = []
+                child_name_by_id = {}
+
+        def _class_day_title_for_child_ids(child_ids: List[str]) -> str:
+            names = [
+                child_name_by_id.get(str(cid).strip(), "").strip()
+                for cid in (child_ids or [])
+                if str(cid).strip()
+            ]
+            names = [name for name in names if name]
+            if not names:
+                return "Learning"
+            if len(names) == 1:
+                return f"{names[0]} Learning"
+            if len(names) == 2:
+                return f"{names[0]} & {names[1]} Learning"
+            return f"{', '.join(names[:-1])} & {names[-1]} Learning"
+
+        def _resolve_event_assignees(preferred_child_ids: Optional[List[Any]] = None) -> Tuple[Optional[str], List[str]]:
+            normalized_preferred = [
+                str(cid).strip()
+                for cid in (preferred_child_ids or [])
+                if str(cid).strip()
+            ]
+            normalized_family = [
+                str(cid).strip()
+                for cid in (family_child_ids or [])
+                if str(cid).strip()
+            ]
+            body_child_id = str(body.child_id or "").strip()
+            resolved_ids: List[str] = []
+            if normalized_preferred:
+                resolved_ids = list(dict.fromkeys(normalized_preferred))
+            elif body_child_id:
+                resolved_ids = [body_child_id]
+            elif normalized_family:
+                resolved_ids = list(dict.fromkeys(normalized_family))
+            if body_child_id and body_child_id not in resolved_ids:
+                resolved_ids = [body_child_id, *resolved_ids]
+            resolved_ids = list(dict.fromkeys(resolved_ids))
+            primary_child_id = resolved_ids[0] if resolved_ids else None
+            return primary_child_id, resolved_ids
 
         if use_blocks:
             for b in body.blocks:
@@ -5982,8 +6148,6 @@ async def apply_to_calendar(
             for b in blocks_to_use:
                 if b["subject_id"] and str(b["subject_id"]) not in subject_rows:
                     raise HTTPException(status_code=400, detail=f"Subject {b['subject_id']} is invalid or not in this family.")
-            children_resp = supabase.table("children").select("id").eq("family_id", body.family_id).execute()
-            family_child_ids = [r["id"] for r in (children_resp.data or [])]
         else:
             if not body.subjects and attendance_tracking_mode != "class_day":
                 raise HTTPException(status_code=400, detail="At least one subject is required, or provide blocks.")
@@ -6235,10 +6399,14 @@ async def apply_to_calendar(
 
             for d in regen_class_day_dates:
                 date_str = d.isoformat()
+                block_assignees = blocks_to_use[0].get("child_ids") if blocks_to_use else []
+                resolved_child_id, resolved_child_ids = _resolve_event_assignees(block_assignees)
+                class_day_title = _class_day_title_for_child_ids(resolved_child_ids)
                 events_to_insert.append({
                     "family_id": body.family_id,
-                    "child_id": body.child_id,
-                    "title": "Class Day",
+                    "child_id": resolved_child_id,
+                    "child_ids": resolved_child_ids,
+                    "title": class_day_title,
                     "start_ts": _parse_time_to_iso(d, start_time),
                     "end_ts": _parse_time_to_iso(d, end_time),
                     "status": "scheduled",
@@ -6313,10 +6481,13 @@ async def apply_to_calendar(
                 for d in planned_dates_legacy:
                     date_str = d.isoformat()
                     planned_dates_set.add(d)
+                    resolved_child_id, resolved_child_ids = _resolve_event_assignees()
+                    class_day_title = _class_day_title_for_child_ids(resolved_child_ids)
                     events_to_insert.append({
                         "family_id": body.family_id,
-                        "child_id": body.child_id,
-                        "title": "Class Day",
+                        "child_id": resolved_child_id,
+                        "child_ids": resolved_child_ids,
+                        "title": class_day_title,
                         "start_ts": f"{date_str}T09:00:00+00:00",
                         "end_ts": f"{date_str}T09:45:00+00:00",
                         "status": "scheduled",
@@ -6341,9 +6512,11 @@ async def apply_to_calendar(
                         subject_index += 1
                         start_ts = f"{date_str}T09:00:00+00:00" if slot == 0 else f"{date_str}T10:00:00+00:00"
                         end_ts = f"{date_str}T09:45:00+00:00" if slot == 0 else f"{date_str}T10:45:00+00:00"
+                        resolved_child_id, resolved_child_ids = _resolve_event_assignees()
                         ev = {
                             "family_id": body.family_id,
-                            "child_id": body.child_id,
+                            "child_id": resolved_child_id,
+                            "child_ids": resolved_child_ids,
                             "title": subject_name,
                             "start_ts": start_ts,
                             "end_ts": end_ts,

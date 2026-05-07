@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, Platform } from 'react-native';
+import { Trash2 } from 'lucide-react';
 import { designTokens } from '../theme/designTokens';
 
 const { colors: tok, fonts, radius } = designTokens;
@@ -48,6 +49,7 @@ function DialogContent({ title, message, confirmLabel, cancelLabel, destructive,
           onPress={onConfirm}
           activeOpacity={0.85}
         >
+          {destructive ? <Trash2 size={14} color="#FFFFFF" strokeWidth={2.25} /> : null}
           <Text style={[styles.confirmButtonText, destructive && styles.confirmButtonTextDestructive]}>
             {confirmLabel}
           </Text>
@@ -225,7 +227,10 @@ const styles = StyleSheet.create({
     borderRadius: radius,
     backgroundColor: primary,
     minWidth: 96,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
   },
   confirmButtonDestructive: {
     backgroundColor: '#dc2626',

@@ -4875,6 +4875,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               cancelLabel: 'Cancel',
               destructive: true,
               onConfirm: async () => {
+                const optimisticDetail = { eventId: cleanId };
+                window.dispatchEvent(new CustomEvent('eventDeleted', { detail: optimisticDetail }));
+                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
                 try {
                   const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
                   if (rpcError) {
@@ -4884,9 +4887,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                     const result = await deletePlannerEvent(cleanId, familyId);
                     if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
                   }
-                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: cleanId } }));
-                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
                 } catch (err) {
+                  // Re-sync planner state if optimistic delete fails.
+                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                   Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
                 } finally {
                   setConfirm((prev) => ({ ...prev, visible: false }));
@@ -4946,6 +4949,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               cancelLabel: 'Cancel',
               destructive: true,
               onConfirm: async () => {
+                const optimisticDetail = { eventId: cleanId };
+                window.dispatchEvent(new CustomEvent('eventDeleted', { detail: optimisticDetail }));
+                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
                 try {
                   const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
                   if (rpcError) {
@@ -4955,9 +4961,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                     const result = await deletePlannerEvent(cleanId, familyId);
                     if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
                   }
-                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: cleanId } }));
-                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
                 } catch (err) {
+                  // Re-sync planner state if optimistic delete fails.
+                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                   Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
                 } finally {
                   setConfirm((prev) => ({ ...prev, visible: false }));
@@ -4984,6 +4990,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               cancelLabel: 'Cancel',
               destructive: true,
               onConfirm: async () => {
+                const optimisticDetail = { academicYearId: ev.academic_year_id };
+                window.dispatchEvent(new CustomEvent('eventDeleted', { detail: optimisticDetail }));
+                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                 try {
                   const { clearPlaceholders } = await import('../lib/services/academicYearClient');
                   const { invalidatePlanHealthCache } = await import('../lib/services/academicYearClient');
@@ -4992,10 +5001,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   if (data?.plan_deleted) {
                     invalidatePlanHealthCache();
                     window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-                    window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { academicYearId: ev.academic_year_id } }));
-                    window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                   }
                 } catch (err) {
+                  // Re-sync planner state if optimistic delete fails.
+                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                   Alert.alert('Error', err?.message || 'Failed to delete plan');
                 } finally {
                   setConfirm((prev) => ({ ...prev, visible: false }));

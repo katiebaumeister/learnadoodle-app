@@ -13,7 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 import { applyToCalendar, fixTargetGap, getAcademicYear, getPlanHealth } from '../../lib/services/academicYearClient';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
@@ -317,6 +317,17 @@ function isInstructionalEvent(eventRow) {
   const status = eventRow.instructional_status;
   if (status === 'MANUAL_COUNTS' || status === 'PLAN_PLACEHOLDER') return true;
   return eventRow.counts_toward_plan === true;
+}
+
+function isLessonOrClassDayEvent(eventRow) {
+  const eventType = String(eventRow?.event_type || '').trim().toLowerCase();
+  return (
+    eventType === 'lesson'
+    || eventType === 'classday'
+    || eventType === 'class day'
+    || eventType === 'scheduled class day'
+    || eventType === 'schedule block'
+  );
 }
 
 function buildDayProjectionBySubjectFromEvents(rows = [], subjectIds = []) {
@@ -814,6 +825,7 @@ async function fetchAndCacheScheduleSupplement({
       },
       subjectTargetSettingsById: {},
       instructionalEventsBySubject: {},
+      classDayInstructionalEvents: [],
       attendedDayKeysBySubject: {},
       yearTargetProjectionBySubject: {},
       academicYearId: String(academicYearId || '').trim() || null,
@@ -905,8 +917,8 @@ async function fetchAndCacheScheduleSupplement({
           .catch(() => ({})));
 
     const instructionalPromise = (async () => {
-      if (normalizedSubjectIds.length === 0 || !Number.isFinite(Number(startYear)) || !Number.isFinite(Number(endYear))) {
-        return { instructionalEventsBySubject: {}, attendedDayKeysBySubject: {} };
+      if (!Number.isFinite(Number(startYear)) || !Number.isFinite(Number(endYear))) {
+        return { instructionalEventsBySubject: {}, classDayInstructionalEvents: [], attendedDayKeysBySubject: {} };
       }
       const explicitStart = String(rangeStartYmd || '').slice(0, 10);
       const explicitEnd = String(rangeEndYmd || '').slice(0, 10);
@@ -915,25 +927,49 @@ async function fetchAndCacheScheduleSupplement({
         ? { start_date: explicitStart, end_date: explicitEnd }
         : formatYmdFromTemplateYear(startYear, endYear, 'full_year');
       if (!schoolYearRange?.start_date || !schoolYearRange?.end_date) {
-        return { instructionalEventsBySubject: {}, attendedDayKeysBySubject: {} };
+        return { instructionalEventsBySubject: {}, classDayInstructionalEvents: [], attendedDayKeysBySubject: {} };
       }
-      const { data, error } = await supabase
+      const subjectScopedEventsPromise = normalizedSubjectIds.length > 0
+        ? supabase
+            .from('events')
+            .select('*')
+            .eq('family_id', familyId)
+            .in('subject_id', normalizedSubjectIds)
+            .gte('start_ts', `${schoolYearRange.start_date}T00:00:00`)
+            .lte('start_ts', `${schoolYearRange.end_date}T23:59:59`)
+            .is('deleted_at', null)
+            .neq('is_backlog', true)
+            .neq('status', 'canceled')
+        : Promise.resolve({ data: [], error: null });
+      const subjectlessEventsPromise = supabase
         .from('events')
         .select('*')
         .eq('family_id', familyId)
-        .in('subject_id', normalizedSubjectIds)
+        .is('subject_id', null)
         .gte('start_ts', `${schoolYearRange.start_date}T00:00:00`)
         .lte('start_ts', `${schoolYearRange.end_date}T23:59:59`)
         .is('deleted_at', null)
         .neq('is_backlog', true)
         .neq('status', 'canceled');
+      const [{ data: subjectScopedRows, error }, { data: subjectlessRows, error: subjectlessError }] = await Promise.all([
+        subjectScopedEventsPromise,
+        subjectlessEventsPromise,
+      ]);
       if (error) throw error;
+      if (subjectlessError) throw subjectlessError;
+      const mergedRowsById = new Map();
+      [...(subjectScopedRows || []), ...(subjectlessRows || [])].forEach((row) => {
+        const eventId = String(row?.id || '').trim();
+        if (!eventId) return;
+        if (!mergedRowsById.has(eventId)) mergedRowsById.set(eventId, row);
+      });
+      const data = [...mergedRowsById.values()];
       const eventMetaById = {};
       (data || []).forEach((row) => {
         if (!isInstructionalEvent(row)) return;
         const eventId = row?.id ? String(row.id) : '';
         const subjectId = String(row?.subject_id || '').trim();
-        if (!eventId || !subjectId) return;
+        if (!eventId) return;
         eventMetaById[eventId] = {
           subjectId,
           startDay: String(row?.start_ts || row?.due_ts || '').slice(0, 10),
@@ -1008,11 +1044,48 @@ async function fetchAndCacheScheduleSupplement({
       Object.keys(attendedSetsBySubject).forEach((subjectId) => {
         nextAttendedBySubject[subjectId] = [...attendedSetsBySubject[subjectId]].sort();
       });
+      const classDayInstructionalEvents = (data || [])
+        .filter((row) => isInstructionalEvent(row) || isLessonOrClassDayEvent(row))
+        .map((row, idx) => {
+          const tsMs = new Date(row?.start_ts || '').getTime();
+          if (!Number.isFinite(tsMs)) return null;
+          const subjectId = String(row?.subject_id || '').trim();
+          const rowId = String(row?.id || '').trim();
+          return {
+            id: rowId || `classday-ev-${tsMs}-${idx}`,
+            subject_id: subjectId || null,
+            title: String(row?.title || row?.lesson_name || row?.event_type || 'Instructional event').trim(),
+            startTs: row?.start_ts || row?.due_ts || null,
+            start_ts: row?.start_ts || row?.due_ts || null,
+            due_ts: row?.due_ts || row?.start_ts || null,
+            end_ts: row?.end_ts || null,
+            startMs: tsMs,
+            status: String(row?.status || '').trim().toLowerCase(),
+            instructional_status: String(row?.instructional_status || '').trim().toUpperCase(),
+            hasAttendancePresent: attendedEventIds.has(rowId),
+            is_backlog: row?.is_backlog === true,
+            sourceBlockId: String(row?.source_block_id || '').trim() || null,
+            durationHours: Number.isFinite(Number(row?.duration_minutes)) && Number(row.duration_minutes) > 0
+              ? Number(row.duration_minutes) / 60
+              : (
+                row?.start_ts && row?.end_ts
+                  ? Math.max(0, (new Date(row.end_ts).getTime() - new Date(row.start_ts).getTime()) / 3600000)
+                  : 0
+              ),
+            fromPlan: row?.generated_by === 'plan_year'
+              || row?.instructional_status === 'PLAN_PLACEHOLDER'
+              || Boolean(row?.source_block_id),
+            unitName: String(row?.unit || row?.curriculum_unit_title || row?.unit_name || row?.unit_topic || '').trim() || null,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => Number(a?.startMs || 0) - Number(b?.startMs || 0));
       return {
         instructionalEventsBySubject: nextBySubject,
+        classDayInstructionalEvents,
         attendedDayKeysBySubject: nextAttendedBySubject,
       };
-    })().catch(() => ({ instructionalEventsBySubject: {}, attendedDayKeysBySubject: {} }));
+    })().catch(() => ({ instructionalEventsBySubject: {}, classDayInstructionalEvents: [], attendedDayKeysBySubject: {} }));
 
     const [familyPlannerSettings, subjectTargetSettingsById, instructional] = await Promise.all([
       familySettingsPromise,
@@ -1020,6 +1093,9 @@ async function fetchAndCacheScheduleSupplement({
       instructionalPromise,
     ]);
     const instructionalEventsBySubject = instructional.instructionalEventsBySubject || {};
+    const classDayInstructionalEvents = Array.isArray(instructional.classDayInstructionalEvents)
+      ? instructional.classDayInstructionalEvents
+      : [];
     const attendedDayKeysBySubject = instructional.attendedDayKeysBySubject || {};
     let yearTargetProjectionBySubject = {};
     const explicitStart = String(rangeStartYmd || '').slice(0, 10);
@@ -1075,6 +1151,7 @@ async function fetchAndCacheScheduleSupplement({
       familyPlannerSettings,
       subjectTargetSettingsById,
       instructionalEventsBySubject,
+      classDayInstructionalEvents,
       attendedDayKeysBySubject,
       yearTargetProjectionBySubject,
       academicYearId: normalizedAcademicYearId || null,
@@ -1085,6 +1162,7 @@ async function fetchAndCacheScheduleSupplement({
       familyPlannerSettings,
       subjectTargetSettingsCount: Object.keys(subjectTargetSettingsById || {}).length,
       eventSummaryBySubject,
+      classDayEventsCount: classDayInstructionalEvents.length,
       subjectIdsSignature,
     });
     scheduleSupplementCacheByKey.set(key, payload);
@@ -1172,6 +1250,7 @@ export default function SubjectsPlanBuilder({
   const yearTargetSuggestionAnimByIdRef = useRef({});
   const [blocksBySubject, setBlocksBySubject] = useState({});
   const [instructionalEventsBySubject, setInstructionalEventsBySubject] = useState({});
+  const [classDayInstructionalEvents, setClassDayInstructionalEvents] = useState([]);
   const [attendedDayKeysBySubject, setAttendedDayKeysBySubject] = useState({});
   const [yearTargetProjectionBySubject, setYearTargetProjectionBySubject] = useState({});
   const [showSubjectEventsModal, setShowSubjectEventsModal] = useState(false);
@@ -1202,6 +1281,7 @@ export default function SubjectsPlanBuilder({
     previewLines: [],
     confirmLabel: 'Fix gap',
     confirmDisabled: false,
+    confirmAction: 'fix_gap',
     showLowerTargetOption: false,
     lowerTargetLabel: '',
   });
@@ -1265,6 +1345,7 @@ export default function SubjectsPlanBuilder({
     events: [],
     hasPlan: false,
     schoolTermId: 'full_year',
+    isClassDayAggregate: false,
   });
   const [eventsRefreshKey, setEventsRefreshKey] = useState(0);
   const scheduleSupplementSyncedKeysRef = useRef(new Set());
@@ -1421,6 +1502,7 @@ export default function SubjectsPlanBuilder({
       });
       setSubjectTargetSettingsById(cached.subjectTargetSettingsById || {});
       setInstructionalEventsBySubject(cached.instructionalEventsBySubject || {});
+      setClassDayInstructionalEvents(Array.isArray(cached.classDayInstructionalEvents) ? cached.classDayInstructionalEvents : []);
       setAttendedDayKeysBySubject(cached.attendedDayKeysBySubject || {});
       setYearTargetProjectionBySubject(cached.yearTargetProjectionBySubject || {});
       return (
@@ -1467,6 +1549,7 @@ export default function SubjectsPlanBuilder({
       });
       setSubjectTargetSettingsById(payload.subjectTargetSettingsById || {});
       setInstructionalEventsBySubject(payload.instructionalEventsBySubject || {});
+      setClassDayInstructionalEvents(Array.isArray(payload.classDayInstructionalEvents) ? payload.classDayInstructionalEvents : []);
       setAttendedDayKeysBySubject(payload.attendedDayKeysBySubject || {});
       setYearTargetProjectionBySubject(payload.yearTargetProjectionBySubject || {});
     };
@@ -1482,6 +1565,7 @@ export default function SubjectsPlanBuilder({
         });
         setSubjectTargetSettingsById({});
         setInstructionalEventsBySubject({});
+        setClassDayInstructionalEvents([]);
         setAttendedDayKeysBySubject({});
         setYearTargetProjectionBySubject({});
         return;
@@ -1498,6 +1582,7 @@ export default function SubjectsPlanBuilder({
         if (!cancelled && !cacheMatchesSubjects) {
           setSubjectTargetSettingsById({});
           setInstructionalEventsBySubject({});
+          setClassDayInstructionalEvents([]);
           setAttendedDayKeysBySubject({});
           setYearTargetProjectionBySubject({});
         }
@@ -2103,7 +2188,41 @@ export default function SubjectsPlanBuilder({
         const startTime = String(familyPlannerSettings?.default_day_start_time || '09:00').slice(0, 5);
         const endTime = String(familyPlannerSettings?.default_day_end_time || '15:00').slice(0, 5);
         const targetDays = parsePositiveInt(familyPlannerSettings?.default_target_days) ?? plannedDays;
-        const upcomingDays = Math.max(0, plannedDays - completedDays);
+        const classDayEventsInRange = (Array.isArray(classDayInstructionalEvents) ? classDayInstructionalEvents : [])
+          .filter((eventItem) => {
+            const eventMs = Number(eventItem?.startMs);
+            if (!Number.isFinite(eventMs)) return false;
+            if (Number.isFinite(rangeStartMs) && eventMs < rangeStartMs) return false;
+            if (Number.isFinite(rangeEndMs) && eventMs > rangeEndMs) return false;
+            return true;
+          })
+          .sort((a, b) => Number(a?.startMs || 0) - Number(b?.startMs || 0));
+        const completedDaySet = new Set();
+        const upcomingDaySet = new Set();
+        const projectedDaySet = new Set();
+        classDayEventsInRange.forEach((eventItem) => {
+          const eventMs = Number(eventItem?.startMs || 0);
+          if (!Number.isFinite(eventMs)) return;
+          const dayKey = new Date(eventMs).toISOString().slice(0, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
+          const isAttended = eventItem?.hasAttendancePresent === true
+            || String(eventItem?.status || '').trim().toLowerCase() === 'done'
+            || String(eventItem?.instructional_status || '').trim().toUpperCase() === 'MANUAL_COUNTS';
+          if (isAttended) {
+            completedDaySet.add(dayKey);
+            projectedDaySet.add(dayKey);
+            return;
+          }
+          if (eventMs >= nowMs) {
+            upcomingDaySet.add(dayKey);
+            projectedDaySet.add(dayKey);
+          }
+        });
+        const completedDays = completedDaySet.size;
+        const upcomingDays = Math.max(0, [...upcomingDaySet].filter((dayKey) => !completedDaySet.has(dayKey)).length);
+        const projectedDays = projectedDaySet.size;
+        const completedDayKeys = [...completedDaySet].sort();
+        const upcomingDayKeys = [...upcomingDaySet].filter((dayKey) => !completedDaySet.has(dayKey)).sort();
         const allSubjectIds = subjectsInYear
           .map((subject) => String(subject?.id || '').trim())
           .filter(Boolean);
@@ -2128,7 +2247,10 @@ export default function SubjectsPlanBuilder({
           targetValue: targetDays,
           actualDays: completedDays,
           upcomingDays,
-          projectedDays: completedDays + upcomingDays,
+          projectedDays,
+          completedDayKeys,
+          upcomingDayKeys,
+          eventItems: classDayEventsInRange,
           isOverall: true,
           isClassDayAggregate: true,
           subjectIds: allSubjectIds,
@@ -2147,7 +2269,7 @@ export default function SubjectsPlanBuilder({
       dayRows,
       subjectPlans: sectionSubjectPlans,
     }];
-  }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject, attendedDayKeysBySubject, activeScheduleCore, familyPlannerSettings, subjectTargetSettingsById]);
+  }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject, classDayInstructionalEvents, attendedDayKeysBySubject, activeScheduleCore, familyPlannerSettings, subjectTargetSettingsById]);
 
   const trackingMode = useMemo(() => {
     const scope = String(familyPlannerSettings?.target_scope || 'overall').trim().toLowerCase();
@@ -2214,10 +2336,16 @@ export default function SubjectsPlanBuilder({
     perSubjectRows.forEach((row) => {
       const sid = String(row?.id || '').trim();
       const subjectProjection = strictProjectionBySubject[sid] || {};
-      (Array.isArray(subjectProjection?.doneDayKeys) ? subjectProjection.doneDayKeys : []).forEach((dayKey) => {
+      const rowDoneDayKeys = Array.isArray(subjectProjection?.doneDayKeys) && subjectProjection.doneDayKeys.length > 0
+        ? subjectProjection.doneDayKeys
+        : (Array.isArray(row?.completedDayKeys) ? row.completedDayKeys : []);
+      const rowUpcomingDayKeys = Array.isArray(subjectProjection?.upcomingDayKeys) && subjectProjection.upcomingDayKeys.length > 0
+        ? subjectProjection.upcomingDayKeys
+        : (Array.isArray(row?.upcomingDayKeys) ? row.upcomingDayKeys : []);
+      rowDoneDayKeys.forEach((dayKey) => {
         if (/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) overallDoneDaySet.add(dayKey);
       });
-      (Array.isArray(subjectProjection?.upcomingDayKeys) ? subjectProjection.upcomingDayKeys : []).forEach((dayKey) => {
+      rowUpcomingDayKeys.forEach((dayKey) => {
         if (/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) overallUpcomingDaySet.add(dayKey);
       });
     });
@@ -3404,6 +3532,7 @@ export default function SubjectsPlanBuilder({
       previewLines: [],
       confirmLabel: 'Fix gap',
       confirmDisabled: false,
+      confirmAction: 'fix_gap',
       showLowerTargetOption: false,
       lowerTargetLabel: '',
     });
@@ -3506,7 +3635,8 @@ export default function SubjectsPlanBuilder({
         confirmLabel: confirmDisabled
           ? 'Change planning preferences'
           : (targetKind === 'hours' ? 'Add hours' : 'Add days'),
-        confirmDisabled,
+        confirmDisabled: confirmDisabled ? false : confirmDisabled,
+        confirmAction: confirmDisabled ? 'open_preferences' : 'fix_gap',
         showLowerTargetOption: false,
         lowerTargetLabel: '',
       });
@@ -3561,11 +3691,11 @@ export default function SubjectsPlanBuilder({
         title: 'Add a subject to use Fix gap',
         bodyLines: isClassDayTrackingMode
           ? [
-            'Simple class days can use Fix gap, but this school year needs at least one saved subject first.',
+            'Learning days can use Fix gap, but this school year needs at least one saved subject first.',
             'Add a subject for this school year, then try Fix gap again.',
           ]
           : [
-            'By subject mode needs at least one saved subject before Fix gap can schedule lessons.',
+            'Per subject mode needs at least one saved subject before Fix gap can schedule lessons.',
             'Add a subject first, then try Fix gap again.',
           ],
         primaryLabel: 'Add first subject',
@@ -3674,11 +3804,11 @@ export default function SubjectsPlanBuilder({
             title: 'Complete setup before Fix gap',
             bodyLines: isClassDayTrackingMode
               ? [
-                'Simple class days can use Fix gap, but this school year needs at least one saved subject first.',
+                'Learning days can use Fix gap, but this school year needs at least one saved subject first.',
                 'Add a subject first, then try Fix gap again.',
               ]
               : [
-                'By subject mode needs at least one saved subject before Fix gap can schedule lessons.',
+                'Per subject mode needs at least one saved subject before Fix gap can schedule lessons.',
                 'Add a subject first, then try Fix gap again.',
               ],
             primaryLabel: 'Add first subject',
@@ -3856,6 +3986,7 @@ export default function SubjectsPlanBuilder({
       });
       setSubjectTargetSettingsById(refreshed.subjectTargetSettingsById || {});
       setInstructionalEventsBySubject(refreshed.instructionalEventsBySubject || {});
+      setClassDayInstructionalEvents(Array.isArray(refreshed.classDayInstructionalEvents) ? refreshed.classDayInstructionalEvents : []);
       setAttendedDayKeysBySubject(refreshed.attendedDayKeysBySubject || {});
       setYearTargetProjectionBySubject(refreshed.yearTargetProjectionBySubject || {});
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -4250,13 +4381,53 @@ export default function SubjectsPlanBuilder({
     if (!isAggregate && !subjectId) return;
     const allEvents = (Array.isArray(row?.eventItems) ? row.eventItems : [])
       .sort((a, b) => Number(a?.startMs || 0) - Number(b?.startMs || 0));
+    const isClassDayAggregate = row?.isClassDayAggregate === true;
+    const modalEvents = isClassDayAggregate
+      ? (() => {
+        const byDay = new Map();
+        allEvents.forEach((eventItem) => {
+          const eventMs = Number(eventItem?.startMs || 0);
+          if (!Number.isFinite(eventMs)) return;
+          const dayKey = new Date(eventMs).toISOString().slice(0, 10);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
+          const existing = byDay.get(dayKey) || [];
+          existing.push(eventItem);
+          byDay.set(dayKey, existing);
+        });
+        return [...byDay.entries()]
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([dayKey, dayEvents], index) => {
+            const sample = dayEvents[0] || {};
+            const attendedCount = dayEvents.filter((item) => (
+              item?.hasAttendancePresent === true
+              || String(item?.status || '').toLowerCase() === 'done'
+              || String(item?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS'
+            )).length;
+            const totalCount = dayEvents.length;
+            const startMs = new Date(`${dayKey}T12:00:00`).getTime();
+            return {
+              id: `class-day-${dayKey}-${index}`,
+              title: totalCount === 1 ? '1 instructional item' : `${totalCount} instructional items`,
+              startTs: `${dayKey}T12:00:00`,
+              startMs,
+              hasAttendancePresent: attendedCount > 0,
+              status: attendedCount > 0 ? 'done' : 'scheduled',
+              instructional_status: attendedCount > 0 ? 'MANUAL_COUNTS' : '',
+              isDayAggregate: true,
+              dayEventCount: totalCount,
+              attendedEventCount: attendedCount,
+            };
+          });
+      })()
+      : allEvents;
     setUpcomingEventsModalData({
       subjectId: isAggregate ? null : subjectId,
       subjectName: row?.name || (isAggregate ? 'All subjects' : 'Subject'),
       termTitle: termSectionTitle || '',
-      events: allEvents,
+      events: modalEvents,
       hasPlan: !isAggregate && row?.hasPlan === true,
       schoolTermId: row?.schoolTermId || 'full_year',
+      isClassDayAggregate,
     });
     setShowUpcomingEventsModal(true);
   }, []);
@@ -4321,6 +4492,7 @@ export default function SubjectsPlanBuilder({
     const nowMs = Date.now();
     const events = Array.isArray(upcomingEventsModalData?.events) ? upcomingEventsModalData.events : [];
     const targetEvents = events.filter((eventItem) => {
+      if (eventItem?.isDayAggregate) return false;
       const eventId = String(eventItem?.id || '').trim();
       const startMs = Number(eventItem?.startMs || 0);
       const isPastEvent = startMs > 0 && startMs < nowMs;
@@ -4391,7 +4563,8 @@ export default function SubjectsPlanBuilder({
   }, [toast, upcomingEventsModalData]);
 
   const deleteAllEventsFromAllEventsModal = useCallback(async () => {
-    const events = Array.isArray(upcomingEventsModalData?.events) ? upcomingEventsModalData.events : [];
+    const events = (Array.isArray(upcomingEventsModalData?.events) ? upcomingEventsModalData.events : [])
+      .filter((eventItem) => !eventItem?.isDayAggregate);
     const targetEventIds = events
       .map((eventItem) => String(eventItem?.id || '').trim())
       .filter(Boolean);
@@ -5782,9 +5955,15 @@ export default function SubjectsPlanBuilder({
                 <TouchableOpacity
                   style={[
                     styles.applySuggestionConfirmActionBtn,
-                    fixGapConfirmContent.confirmDisabled && styles.applySuggestionConfirmActionBtnDisabled,
+                    (fixGapConfirmContent.confirmDisabled && fixGapConfirmContent.confirmAction !== 'open_preferences')
+                      && styles.applySuggestionConfirmActionBtnDisabled,
                   ]}
                   onPress={() => {
+                    if (fixGapConfirmContent.confirmAction === 'open_preferences') {
+                      resolveFixGapConfirmation(false);
+                      openPlanningPreferences();
+                      return;
+                    }
                     if (fixGapConfirmContent.confirmDisabled) return;
                     resolveFixGapConfirmation({
                       confirmed: true,
@@ -5794,14 +5973,15 @@ export default function SubjectsPlanBuilder({
                       ),
                     });
                   }}
-                  disabled={Boolean(fixGapConfirmContent.confirmDisabled)}
+                  disabled={Boolean(fixGapConfirmContent.confirmDisabled && fixGapConfirmContent.confirmAction !== 'open_preferences')}
                   activeOpacity={0.9}
-                  {...(Platform.OS === 'web' && { cursor: fixGapConfirmContent.confirmDisabled ? 'default' : 'pointer' })}
+                  {...(Platform.OS === 'web' && { cursor: (fixGapConfirmContent.confirmDisabled && fixGapConfirmContent.confirmAction !== 'open_preferences') ? 'default' : 'pointer' })}
                 >
                   <Text
                     style={[
                       styles.applySuggestionConfirmActionBtnText,
-                      fixGapConfirmContent.confirmDisabled && styles.applySuggestionConfirmActionBtnTextDisabled,
+                      (fixGapConfirmContent.confirmDisabled && fixGapConfirmContent.confirmAction !== 'open_preferences')
+                        && styles.applySuggestionConfirmActionBtnTextDisabled,
                     ]}
                   >
                     {fixGapConfirmContent.confirmLabel || 'Fix gap'}
@@ -5998,7 +6178,9 @@ export default function SubjectsPlanBuilder({
               <View style={styles.subjectEventsHeader}>
                 <View style={styles.subjectEventsHeaderTextWrap}>
                   <Text style={styles.subjectEventsTitle}>
-                    {upcomingEventsModalData.subjectName || 'Subject'} events
+                    {upcomingEventsModalData?.isClassDayAggregate
+                      ? `${upcomingEventsModalData.subjectName || 'Class day'} schedule by day`
+                      : `${upcomingEventsModalData.subjectName || 'Subject'} events`}
                   </Text>
                 </View>
                 <View style={styles.subjectEventsHeaderActions}>
@@ -6021,7 +6203,9 @@ export default function SubjectsPlanBuilder({
                         return (
                           <>
                       <View style={styles.subjectEventRowTop}>
-                        <Text style={styles.subjectEventRowTitle}>{eventItem.title || 'Event'}</Text>
+                        <Text style={styles.subjectEventRowTitle}>
+                          {eventItem?.isDayAggregate ? 'Class day' : (eventItem.title || 'Event')}
+                        </Text>
                         <View style={styles.subjectEventRowMetaRight}>
                           {Number(eventItem?.startMs || 0) > 0 ? (
                             <View style={[styles.subjectEventRowStatusChips, styles.subjectEventRowStatusChipsRight]}>
@@ -6055,10 +6239,20 @@ export default function SubjectsPlanBuilder({
                           ) : null}
                         </View>
                       </View>
-                      <Text style={styles.subjectEventRowDate}>{formatEventDateTime(eventItem.startTs)}</Text>
-                      {eventItem.unitName ? (
+                      <Text style={styles.subjectEventRowDate}>
+                        {eventItem?.isDayAggregate
+                          ? formatDateDisplayYmd(String(eventItem?.startTs || '').slice(0, 10))
+                          : formatEventDateTime(eventItem.startTs)}
+                      </Text>
+                      {eventItem?.isDayAggregate ? (
+                        <Text style={styles.subjectEventRowUnit}>
+                          {`${Number(eventItem?.dayEventCount || 0)} instructional item${Number(eventItem?.dayEventCount || 0) === 1 ? '' : 's'}${Number(eventItem?.attendedEventCount || 0) > 0 ? ` • ${Number(eventItem?.attendedEventCount || 0)} attended` : ''}`}
+                        </Text>
+                      ) : null}
+                      {eventItem.unitName && !eventItem?.isDayAggregate ? (
                         <Text style={styles.subjectEventRowUnit}>Unit: {eventItem.unitName}</Text>
                       ) : null}
+                      {!eventItem?.isDayAggregate ? (
                       <View style={styles.subjectEventRowActions}>
                         <TouchableOpacity
                           onPress={() => {
@@ -6095,6 +6289,7 @@ export default function SubjectsPlanBuilder({
                             </TouchableOpacity>
                           ) : null}
                       </View>
+                      ) : null}
                           </>
                         );
                       })()}
@@ -6103,7 +6298,9 @@ export default function SubjectsPlanBuilder({
                 )}
               </ScrollView>
               {(() => {
+                const isClassDayAggregateModal = upcomingEventsModalData?.isClassDayAggregate === true;
                 const hasPendingPastEvents = (upcomingEventsModalData.events || []).some((eventItem) => {
+                  if (eventItem?.isDayAggregate) return false;
                   const startMs = Number(eventItem?.startMs || 0);
                   const isPastEvent = startMs > 0 && startMs < Date.now();
                   const isAttended = eventItem?.hasAttendancePresent === true
@@ -6112,7 +6309,7 @@ export default function SubjectsPlanBuilder({
                   return isPastEvent && !isAttended;
                 });
                 const isBulkMarking = markingAttendanceEventId === '__bulk_mark_all_past_attended__';
-                const hasAnyEvents = (upcomingEventsModalData.events || []).length > 0;
+                const hasAnyEvents = !isClassDayAggregateModal && (upcomingEventsModalData.events || []).length > 0;
                 return (
                   <View style={styles.subjectEventsFooter}>
                     <View style={styles.subjectEventsFooterButtonsRow}>

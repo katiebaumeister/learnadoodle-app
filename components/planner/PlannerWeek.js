@@ -1030,6 +1030,10 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 originalId: event._originalId, 
                 eventIdFromEvent: event.id 
               });
+              // Optimistically remove from planner UI immediately.
+              handleEventDeleted(cleanEventId);
+              window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: cleanEventId } }));
+              window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
               
               // Use RPC function for reliable deletion (bypasses RLS with SECURITY DEFINER)
               // This is especially important for project events - uses soft delete (deleted_at)
@@ -1074,11 +1078,12 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 }
               }
               
-              handleEventDeleted(cleanEventId);
-              // Trigger refresh
+              // Trigger refresh after successful delete to reconcile server truth.
               handleWeekStartChange(new Date(weekStart));
             } catch (err) {
               console.error('[PlannerWeek] Delete error:', err);
+              // Re-sync planner state if optimistic delete fails.
+              window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
               Alert.alert('Error', `Failed to delete event: ${err.message || 'Unknown error'}`);
             }
           }
@@ -1090,16 +1095,18 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           action: async () => {
             if (window.confirm('This will permanently remove this plan and its scheduled lessons from the calendar. You cannot undo this. Continue?')) {
               try {
+                // Optimistically remove year-linked events from planner immediately.
+                window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { academicYearId: event.academic_year_id } }));
+                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                 const { clearPlaceholders, invalidatePlanHealthCache } = await import('../../lib/services/academicYearClient');
                 const { data, error } = await clearPlaceholders(familyId, event.academic_year_id, { deletePlan: true });
                 if (error) throw new Error(error.message || 'Failed to delete plan');
                 if (data?.plan_deleted) {
                   invalidatePlanHealthCache();
                   window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { academicYearId: event.academic_year_id } }));
-                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                 }
               } catch (err) {
+                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                 Alert.alert('Error', err?.message || 'Failed to delete plan');
               }
             }
