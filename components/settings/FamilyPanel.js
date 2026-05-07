@@ -31,6 +31,7 @@ import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
 import UserControlsSettingsContent from './UserControlsSettingsContent';
 import GoogleDriveImportModal from './GoogleDriveImportModal';
+import { SettingsLayout, SettingsTypography } from './settingsDesignTokens';
 import SubscriptionScreen from '../../screens/profile/SubscriptionScreen';
 import { fetchFamilyAiUnitsUsedThisMonth } from '../../lib/aiUsageSubscription';
 import { PLANNER_FAQ } from '../planner/plannerFaqContent';
@@ -5075,7 +5076,7 @@ function createStyles(tokens) {
       maxWidth: '100%',
     },
     mainContentContainer: {
-      padding: 32,
+      padding: SettingsLayout.pageHorizontalPadding,
       paddingRight: 16,
     },
     mainContentCard: {
@@ -5084,8 +5085,8 @@ function createStyles(tokens) {
       padding: 32,
     },
     mainContentContainerAbout: {
-      padding: 32,
-      paddingRight: 32,
+      padding: SettingsLayout.pageHorizontalPadding,
+      paddingRight: SettingsLayout.pageHorizontalPadding,
       alignItems: 'center',
     },
     mainContentContainerSubscriptionFill: {
@@ -5104,28 +5105,26 @@ function createStyles(tokens) {
       width: '100%',
     },
     mainContentTitle: {
-      fontSize: 36,
-      fontWeight: '800',
+      ...SettingsTypography.pageTitle,
       color: '#111827',
-      marginBottom: 32,
+      marginBottom: SettingsLayout.sectionSpacing,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     sectionSubtitle: {
-      fontSize: 15,
+      ...SettingsTypography.secondary,
       color: '#6b7280',
-      marginBottom: 32,
+      marginBottom: SettingsLayout.sectionSpacing,
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     subsectionTitle: {
-      fontSize: 18,
-      fontWeight: '600',
+      ...SettingsTypography.sectionTitle,
       color: '#374151',
       marginTop: 0,
-      marginBottom: 12,
+      marginBottom: 10,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -5133,10 +5132,10 @@ function createStyles(tokens) {
     subsectionDivider: {
       height: 1,
       backgroundColor: '#e5e7eb',
-      marginBottom: 20,
+      marginBottom: SettingsLayout.dividerSpacing,
     },
     preferencesSectionSpacer: {
-      marginTop: 28,
+      marginTop: SettingsLayout.sectionSpacing,
     },
     membersSectionRow: {
       flexDirection: 'row',
@@ -5198,8 +5197,7 @@ function createStyles(tokens) {
       backgroundColor: '#f9fafb',
     },
     memberRowName: {
-      fontSize: 16,
-      fontWeight: '500',
+      ...SettingsTypography.cardTitle,
       color: '#374151',
       flexShrink: 1,
       ...(Platform.OS === 'web' && {
@@ -5434,8 +5432,8 @@ function createStyles(tokens) {
       borderColor: '#d1d5db',
     },
     sidebarCardTitle: {
-      fontSize: 14,
-      fontWeight: '700',
+      ...SettingsTypography.secondary,
+      fontWeight: '600',
       color: '#111827',
       marginBottom: 10,
       textTransform: 'uppercase',
@@ -5540,7 +5538,7 @@ function createStyles(tokens) {
       borderColor: '#ef4444',
     },
     logoutButtonText: {
-      fontSize: 16,
+      ...SettingsTypography.sectionTitle,
       fontWeight: '700',
       color: '#ef4444',
       letterSpacing: 0.5,
@@ -5639,8 +5637,7 @@ function createStyles(tokens) {
       marginHorizontal: 24,
     },
     sectionTitle: {
-      fontSize: 18,
-      fontWeight: '700',
+      ...SettingsTypography.sectionTitle,
       color: '#111827',
       marginBottom: 4,
       ...(Platform.OS === 'web' && {
@@ -6032,7 +6029,7 @@ function createStyles(tokens) {
     profileFieldGroup: {
       position: 'relative',
       marginTop: 0,
-      marginBottom: 32,
+      marginBottom: SettingsLayout.fieldSpacing,
     },
     profileFieldGroupDropdownOpen: {
       zIndex: 80,
@@ -6041,22 +6038,22 @@ function createStyles(tokens) {
       }),
     },
     profileSectionSpacer: {
-      marginTop: 20,
+      marginTop: SettingsLayout.sectionSpacing,
     },
     profileFieldLabel: {
-      fontSize: 15,
-      fontWeight: '700',
+      ...SettingsTypography.label,
       color: '#111827',
-      marginBottom: 16,
+      marginBottom: SettingsLayout.labelSpacing,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     profileDarkInput: {
-      fontSize: 15,
+      ...SettingsTypography.body,
       paddingHorizontal: 16,
-      paddingVertical: 14,
-      borderRadius: 20,
+      paddingVertical: 12,
+      minHeight: SettingsLayout.rowHeight,
+      borderRadius: 12,
       backgroundColor: '#f9fafb',
       color: '#111827',
       borderWidth: 1,
@@ -6117,17 +6114,17 @@ function createStyles(tokens) {
       textDecorationLine: 'underline',
     },
     profileEmailSaveHint: {
-      fontSize: 13,
+      ...SettingsTypography.secondary,
       color: '#60a5fa',
-      marginTop: 10,
+      marginTop: 8,
       lineHeight: 18,
       fontWeight: '500',
     },
     profileEmailHint: {
-      fontSize: 13,
+      ...SettingsTypography.secondary,
       color: '#6b7280',
-      marginTop: 12,
-      lineHeight: 20,
+      marginTop: 8,
+      lineHeight: 18,
       marginBottom: 0,
     },
     profileSaveButton: {
@@ -6178,33 +6175,33 @@ function createStyles(tokens) {
       }),
     },
     profileResetPasswordHint: {
-      fontSize: 13,
+      ...SettingsTypography.secondary,
       color: '#6b7280',
-      marginTop: 12,
-      lineHeight: 20,
+      marginTop: 8,
+      lineHeight: 18,
     },
     profileReadOnlyValue: {
-      minHeight: 46,
+      minHeight: SettingsLayout.rowHeight,
       paddingHorizontal: 16,
-      borderRadius: 20,
+      borderRadius: 12,
       borderWidth: 1,
       borderColor: '#e5e7eb',
       backgroundColor: '#f9fafb',
       justifyContent: 'center',
     },
     profileReadOnlyValueText: {
-      fontSize: 15,
+      ...SettingsTypography.body,
       color: '#111827',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     profileGoalHint: {
-      fontSize: 13,
+      ...SettingsTypography.secondary,
       color: '#6b7280',
-      marginTop: 12,
-      lineHeight: 20,
-      marginBottom: 10,
+      marginTop: 8,
+      lineHeight: 18,
+      marginBottom: 8,
     },
     profileGoalInlineTrigger: {
       flexDirection: 'row',

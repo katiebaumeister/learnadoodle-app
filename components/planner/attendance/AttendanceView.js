@@ -673,6 +673,12 @@ export default function AttendanceView({
     const normKey = String(dateKey).slice(0, 10);
     const normChildId = String(childId);
     const dayEventsForChild = eventsByDateChild[normKey]?.[normChildId] || [];
+    const classDayEventsForChild = dayEventsForChild.filter(
+      (eventItem) => String(eventItem?.event_type || '').trim().toLowerCase() === 'classday'
+    );
+    const preferredEventRows = isClassDayMode(attendanceTrackingMode)
+      ? classDayEventsForChild
+      : dayEventsForChild;
     const standaloneDay = attendanceRecords.find(
       (r) =>
         r.event_id == null &&
@@ -680,8 +686,8 @@ export default function AttendanceView({
         String(r.day_date).slice(0, 10) === normKey
     );
 
-    // No instructional events: allow a single manual "day present" row (attendance-only workflow).
-    if (dayEventsForChild.length === 0) {
+    // Prefer ClassDay event rows when present in class-day mode; otherwise fallback to manual day-only attendance.
+    if (preferredEventRows.length === 0) {
       try {
         if (standaloneDay?.status === 'present') {
           await deleteAttendanceLog(standaloneDay.id);
@@ -713,7 +719,7 @@ export default function AttendanceView({
     }
 
     // For "all present" check: this child must have at least one present record per their events that day
-    const allPresentForChild = dayEventsForChild.every((e) => {
+    const allPresentForChild = preferredEventRows.every((e) => {
       const rec = attendanceRecords.find(
         (r) => r.event_id === e.id && String(r.child_id) === normChildId && String(r.day_date).slice(0, 10) === normKey
       );
@@ -726,7 +732,7 @@ export default function AttendanceView({
           await deleteAttendanceLog(standaloneDay.id);
         }
         // Mark day unattended for this child only
-        for (const e of dayEventsForChild) {
+        for (const e of preferredEventRows) {
           const assignedIds = getChildIdsForEvent(e);
           const isShared = assignedIds.length > 1;
           const minutes = getEventMinutes(e);
@@ -774,14 +780,23 @@ export default function AttendanceView({
       // Mark day attended: include sibling events so the lesson group shows complete; mark all assigned children present and set event done
       const seenIds = new Set();
       const dayEvents = [];
-      dayEventsForChild.forEach((e) => {
-        getSiblingEventsOnDay(normKey, e, events).forEach((s) => {
-          if (!seenIds.has(s.id)) {
-            seenIds.add(s.id);
-            dayEvents.push(s);
+      if (isClassDayMode(attendanceTrackingMode)) {
+        preferredEventRows.forEach((eventItem) => {
+          if (!seenIds.has(eventItem.id)) {
+            seenIds.add(eventItem.id);
+            dayEvents.push(eventItem);
           }
         });
-      });
+      } else {
+        preferredEventRows.forEach((e) => {
+          getSiblingEventsOnDay(normKey, e, events).forEach((s) => {
+            if (!seenIds.has(s.id)) {
+              seenIds.add(s.id);
+              dayEvents.push(s);
+            }
+          });
+        });
+      }
       for (const e of dayEvents) {
         const childIds = getChildIdsForEvent(e);
         const minutes = getEventMinutes(e);

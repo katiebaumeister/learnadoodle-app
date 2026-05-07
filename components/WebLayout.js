@@ -3453,7 +3453,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             All Event Types
                           </Text>
                         </TouchableOpacity>
-                        {['Lesson', 'Assignment', 'Activity', 'Appointment', 'Project', 'Exam'].map((eventType) => {
+                        {['Lesson', 'Class Day', 'Assignment', 'Activity', 'Appointment', 'Project', 'Exam'].map((eventType) => {
                           const isSelected = selectedEventTypes?.includes(eventType);
                           
                           // Get background color for event type (matching EventChip colors)
@@ -3461,6 +3461,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             const typeLower = type.toLowerCase();
                             if (typeLower === 'lesson') return '#E3F0FF'; // Soft Blue
                             if (typeLower === 'activity') return '#EDE6FF'; // Lavender
+                            if (typeLower === 'class day') return '#E3F0FF'; // Soft Blue (same family as lessons)
                             if (typeLower === 'assignment') return '#DFF7E3'; // Soft Green
                             if (typeLower === 'appointment') return '#F2F4F7'; // Warm Gray
                             if (typeLower === 'project') return '#D6F0ED'; // Soft Teal

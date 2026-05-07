@@ -150,12 +150,25 @@ export default function CenterPane({
         const looksLikePlanSlot = generatedByPlan || hasAcademicYear;
         const typeLower = String(eventType || '').toLowerCase();
 
+        const isSelectedClassDay = selectedLower.includes('class day') || selectedLower.includes('classday');
+        const isClassDayLikeType = (
+          typeLower === 'classday'
+          || typeLower === 'class day'
+          || typeLower === 'schedule block'
+          || typeLower === 'scheduled class day'
+        );
+
         // Plan slots often serialize as "Schedule Block"/"Scheduled Class Day" (or no explicit type).
         // Treat them as lessons for filter UX parity with the right-rail filter chips.
         if (looksLikePlanSlot && selectedLower.includes('lesson')) {
           if (!eventType || typeLower === 'schedule block' || typeLower === 'scheduled class day' || typeLower === 'lesson') {
             return true;
           }
+        }
+
+        // Class Day filter should include explicit ClassDay events and plan-generated class-day blocks.
+        if (isSelectedClassDay && (isClassDayLikeType || (looksLikePlanSlot && !eventType))) {
+          return true;
         }
 
         if (!eventType) return false;

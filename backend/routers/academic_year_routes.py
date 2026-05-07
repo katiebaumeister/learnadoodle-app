@@ -6125,6 +6125,29 @@ async def apply_to_calendar(
         block_regen_results: List[BlockRegenResult] = []
         totals_updated, totals_inserted, totals_deleted = 0, 0, 0
 
+        def _delete_existing_plan_generated_class_day_rows(delete_from_iso: str) -> None:
+            """
+            Remove previously generated class-day rows for the same year/range before re-insert.
+            Includes canonical and legacy class-day-like event_type variants.
+            """
+            legacy_class_day_event_types = [
+                "ClassDay",
+                "Class Day",
+                "Schedule Block",
+                "Scheduled Class Day",
+            ]
+            for event_type in legacy_class_day_event_types:
+                (
+                    supabase.table("events")
+                    .delete()
+                    .eq("academic_year_id", academic_year_id)
+                    .eq("generated_by", "plan_year")
+                    .eq("event_type", event_type)
+                    .eq("counts_toward_plan", True)
+                    .gte("start_ts", f"{delete_from_iso}T00:00:00+00:00")
+                    .execute()
+                )
+
         # Persist plan (target_days, end_date, blocks) immediately so Edit Plan shows saved values even if placeholder generation fails
         if academic_year_id:
             if body.subject_targets is not None:
@@ -6199,7 +6222,7 @@ async def apply_to_calendar(
                 cur += timedelta(days=1)
 
             delete_from_iso = regen_start_date.isoformat()
-            supabase.table("events").delete().eq("academic_year_id", academic_year_id).eq("generated_by", "plan_year").eq("event_type", "ClassDay").eq("counts_toward_plan", True).gte("start_ts", f"{delete_from_iso}T00:00:00+00:00").execute()
+            _delete_existing_plan_generated_class_day_rows(delete_from_iso)
 
             start_time = "09:00"
             end_time = "10:00"
@@ -6286,7 +6309,7 @@ async def apply_to_calendar(
             # Legacy path: no blocks — use target days + subjects
             if attendance_tracking_mode == "class_day":
                 delete_from_iso = regen_start_date.isoformat()
-                supabase.table("events").delete().eq("academic_year_id", academic_year_id).eq("generated_by", "plan_year").eq("event_type", "ClassDay").eq("counts_toward_plan", True).gte("start_ts", f"{delete_from_iso}T00:00:00+00:00").execute()
+                _delete_existing_plan_generated_class_day_rows(delete_from_iso)
                 for d in planned_dates_legacy:
                     date_str = d.isoformat()
                     planned_dates_set.add(d)

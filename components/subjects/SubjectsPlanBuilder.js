@@ -1189,6 +1189,13 @@ export default function SubjectsPlanBuilder({
   const [showUpcomingEventsModal, setShowUpcomingEventsModal] = useState(false);
   const [showApplySuggestionConfirmModal, setShowApplySuggestionConfirmModal] = useState(false);
   const [showFixGapConfirmModal, setShowFixGapConfirmModal] = useState(false);
+  const [showFixGapSetupModal, setShowFixGapSetupModal] = useState(false);
+  const [fixGapSetupContent, setFixGapSetupContent] = useState({
+    title: 'Add a subject to use Fix gap',
+    bodyLines: [],
+    primaryLabel: 'Add first subject',
+    primaryAction: 'add_subject',
+  });
   const [fixGapConfirmContent, setFixGapConfirmContent] = useState({
     title: '',
     bodyLines: [],
@@ -2115,7 +2122,7 @@ export default function SubjectsPlanBuilder({
           cadenceDayNums,
           hasPlan: blocks.length > 0,
           cadenceText: `${formatWeekdaySummary(cadenceDayNums)} · ${toAmPm(startTime)}-${toAmPm(endTime)}`,
-          cadenceCompactLabel: `${formatWeekdaySummary(cadenceDayNums)} · ${toAmPm(startTime)}`,
+          cadenceCompactLabel: `${formatWeekdaySummary(cadenceDayNums)} · ${toAmPm(startTime)}-${toAmPm(endTime)}`,
           targetUnit: 'days',
           targetMode: 'days',
           targetValue: targetDays,
@@ -2385,19 +2392,19 @@ export default function SubjectsPlanBuilder({
   }, [termSections, familyPlannerSettings?.default_target_days, trackingMode, yearTargetProjectionBySubject]);
   const yearTargetsDisplayRows = useMemo(() => {
     if (!yearTargetSummary) {
-      const fallbackMode = String(familyPlannerSettings?.default_constraint_mode || 'none').trim().toLowerCase();
+      const fallbackModeRaw = String(familyPlannerSettings?.default_constraint_mode || 'days').trim().toLowerCase();
+      const fallbackMode = fallbackModeRaw === 'hours' ? 'hours' : 'days';
       const fallbackTargetValue = (() => {
         if (fallbackMode === 'days') {
           const n = Number(familyPlannerSettings?.default_target_days);
-          return Number.isFinite(n) && n > 0 ? n : 0;
+          return Number.isFinite(n) && n > 0 ? n : 180;
         }
         if (fallbackMode === 'hours') {
           const n = Number(familyPlannerSettings?.default_target_hours);
-          return Number.isFinite(n) && n > 0 ? n : 0;
+          return Number.isFinite(n) && n > 0 ? n : 1000;
         }
-        return 0;
+        return 180;
       })();
-      if (fallbackTargetValue <= 0) return [];
       const fallbackSubjects = Array.isArray(homeSlotScopedSubjects) ? homeSlotScopedSubjects : [];
       const fallbackSubjectNames = [...new Set(
         fallbackSubjects
@@ -2419,7 +2426,7 @@ export default function SubjectsPlanBuilder({
       ).slice(0, 10) || null;
       return [{
         id: 'overall',
-        name: fallbackSubjectNames.join(', ') || 'All subjects',
+        name: fallbackSubjectNames.join(', ') || 'No saved subject',
         cadenceCompactLabel: null,
         targetDays: fallbackTargetValue,
         targetValue: fallbackTargetValue,
@@ -2479,9 +2486,13 @@ export default function SubjectsPlanBuilder({
         .filter((ymd) => /^\d{4}-\d{2}-\d{2}$/.test(ymd))
         .sort((a, b) => b.localeCompare(a))[0]
     ) || null;
+    const hasSavedSubjectRows = overallSubjectIds.length > 0;
+    const hasNamedSubjects = subjectNames.length > 0 && !(
+      subjectNames.length === 1 && subjectNames[0].toLowerCase() === 'class days'
+    );
     const overallRows = [{
       id: 'overall',
-      name: subjectNames.join(', ') || 'All subjects',
+      name: (hasSavedSubjectRows && hasNamedSubjects) ? subjectNames.join(', ') : 'No saved subject',
       cadenceCompactLabel: null,
       targetDays: Number(yearTargetSummary?.overallTargetDays || 0),
       targetValue: Number(yearTargetSummary?.overallTargetDays || 0),
@@ -3540,6 +3551,29 @@ export default function SubjectsPlanBuilder({
           : (Array.isArray(row?.subjectIds) ? row.subjectIds.map((id) => String(id || '').trim()).filter(Boolean) : [])
       )]
       : [rowId];
+    const attendanceTrackingMode = getAttendanceMode({
+      academicYearMode: displaySchoolYear?.attendance_tracking_mode || activeScheduleCore?.row?.attendance_tracking_mode,
+      plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
+    });
+    const isClassDayTrackingMode = resolveClassDayMode(attendanceTrackingMode);
+    if (scope === 'overall' && requestedSubjectIds.length === 0) {
+      setFixGapSetupContent({
+        title: 'Add a subject to use Fix gap',
+        bodyLines: isClassDayTrackingMode
+          ? [
+            'Simple class days can use Fix gap, but this school year needs at least one saved subject first.',
+            'Add a subject for this school year, then try Fix gap again.',
+          ]
+          : [
+            'By subject mode needs at least one saved subject before Fix gap can schedule lessons.',
+            'Add a subject first, then try Fix gap again.',
+          ],
+        primaryLabel: 'Add first subject',
+        primaryAction: 'add_subject',
+      });
+      setShowFixGapSetupModal(true);
+      return;
+    }
     const fullYearRange = displaySchoolYear
       ? formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year')
       : null;
@@ -3635,7 +3669,34 @@ export default function SubjectsPlanBuilder({
           fixGapInFlightByRowRef.current.delete(rowId);
         } catch (_) {}
         setFixingGapRowId(null);
-        toast?.push?.('No saved plan found. Unable to auto-create plan: missing subjects or school year range.', 'error');
+        if (fallbackBlocks.length === 0) {
+          setFixGapSetupContent({
+            title: 'Complete setup before Fix gap',
+            bodyLines: isClassDayTrackingMode
+              ? [
+                'Simple class days can use Fix gap, but this school year needs at least one saved subject first.',
+                'Add a subject first, then try Fix gap again.',
+              ]
+              : [
+                'By subject mode needs at least one saved subject before Fix gap can schedule lessons.',
+                'Add a subject first, then try Fix gap again.',
+              ],
+            primaryLabel: 'Add first subject',
+            primaryAction: 'add_subject',
+          });
+          setShowFixGapSetupModal(true);
+        } else {
+          setFixGapSetupContent({
+            title: 'Complete setup before Fix gap',
+            bodyLines: [
+              'Fix gap could not find a saved school-year range for this view.',
+              'Open planning preferences to confirm your school year dates, then try again.',
+            ],
+            primaryLabel: 'Open planning preferences',
+            primaryAction: 'open_preferences',
+          });
+          setShowFixGapSetupModal(true);
+        }
         return;
       }
       const bootstrapPayload = {
@@ -3879,6 +3940,8 @@ export default function SubjectsPlanBuilder({
     activeScheduleCore,
     subjectPlans,
     baseSubjects,
+    displaySchoolYear?.attendance_tracking_mode,
+    familyPlannerSettings?.attendance_tracking_mode,
     familyPlannerSettings?.default_year_start_date,
     familyPlannerSettings?.default_year_end_date,
     toast,
@@ -4502,17 +4565,24 @@ export default function SubjectsPlanBuilder({
                   ) : (
                     <>
                       <View style={styles.subjectSection}>
+                        {(() => {
+                          const isClassDayAggregateTable = (termSection.subjectPlans || []).some((row) => row?.isClassDayAggregate);
+                          return (
                         <View style={styles.cadenceStatusTable}>
-                          <View style={styles.cadenceStatusHeaderRow}>
-                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusSubjectCol]}>
-                              Subject
-                            </Text>
-                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusStudentsCol]}>Students</Text>
-                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusSavedCol]}>Cadence</Text>
-                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusProgressCol]}>Progress vs. Target</Text>
-                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusActionsCol, styles.cadenceStatusActionsHeaderText]}>Actions</Text>
+                          <View style={[styles.cadenceStatusHeaderRow, isClassDayAggregateTable && styles.cadenceStatusHeaderRowClassDay]}>
+                            {!isClassDayAggregateTable ? (
+                              <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusSubjectCol]}>
+                                Subject
+                              </Text>
+                            ) : null}
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusStudentsCol, isClassDayAggregateTable && styles.cadenceStatusStudentsColClassDay]}>Students</Text>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusSavedCol, isClassDayAggregateTable && styles.cadenceStatusSavedColClassDay]}>Cadence</Text>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusProgressCol, isClassDayAggregateTable && styles.cadenceStatusProgressColClassDay]}>Progress vs. Target</Text>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay, styles.cadenceStatusActionsHeaderText]}>Actions</Text>
                           </View>
                         </View>
+                          );
+                        })()}
                         <View style={styles.subjectRows}>
                           {termSection.subjectPlans.length === 0 ? (
                             <View style={[styles.subjectRow, styles.subjectRowLast]}>
@@ -4522,6 +4592,7 @@ export default function SubjectsPlanBuilder({
                             </View>
                           ) : (
                             termSection.subjectPlans.map((row, index) => {
+                              const isClassDayAggregateTable = (termSection.subjectPlans || []).some((entry) => entry?.isClassDayAggregate);
                               const hasCadence = Boolean(String(row?.cadenceText || '').trim());
                               const cadenceTime = extractCadenceTimeLabel(row?.cadenceText || '');
                               const cadenceSummary = hasCadence
@@ -4593,11 +4664,13 @@ export default function SubjectsPlanBuilder({
                                     index === termSection.subjectPlans.length - 1 && styles.subjectRowLast,
                                   ]}
                                 >
-                                  <View style={[styles.subjectMain, styles.cadenceStatusSubjectCol]}>
-                                    <Text style={styles.subjectName}>{row.name}</Text>
-                                  </View>
+                                  {!isClassDayAggregateTable ? (
+                                    <View style={[styles.subjectMain, styles.cadenceStatusSubjectCol]}>
+                                      <Text style={styles.subjectName}>{row.name}</Text>
+                                    </View>
+                                  ) : null}
 
-                                  <View style={[styles.subjectStudentsCol, styles.cadenceStatusStudentsCol]}>
+                                  <View style={[styles.subjectStudentsCol, styles.cadenceStatusStudentsCol, isClassDayAggregateTable && styles.cadenceStatusStudentsColClassDay]}>
                                     {Array.isArray(row.attachedStudentIds) && row.attachedStudentIds.length > 0 ? (
                                       <View style={styles.subjectMetaRow}>
                                         <ChildAvatarCluster
@@ -4615,13 +4688,13 @@ export default function SubjectsPlanBuilder({
                                     )}
                                   </View>
 
-                                  <View style={[styles.subjectCadence, styles.cadenceStatusSavedCol]}>
+                                  <View style={[styles.subjectCadence, styles.cadenceStatusSavedCol, isClassDayAggregateTable && styles.cadenceStatusSavedColClassDay]}>
                                     <View style={styles.subjectCadencePill}>
                                       <Text style={styles.subjectCadenceText}>{cadenceSummary}</Text>
                                     </View>
                                   </View>
 
-                                  <View style={[styles.subjectProgressCol, styles.cadenceStatusProgressCol]}>
+                                  <View style={[styles.subjectProgressCol, styles.cadenceStatusProgressCol, isClassDayAggregateTable && styles.cadenceStatusProgressColClassDay]}>
                                     <Text style={styles.subjectProgressMetric}>{progressSummary}</Text>
                                     <View style={styles.subjectProgressMetaRow}>
                                       <TouchableOpacity
@@ -4667,7 +4740,7 @@ export default function SubjectsPlanBuilder({
                                     </View>
                                   </View>
 
-                                  <View style={[styles.subjectRowActions, styles.cadenceStatusActionsCol]}>
+                                  <View style={[styles.subjectRowActions, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay]}>
                                     <TouchableOpacity
                                       style={styles.subjectRowActionLink}
                                       onPress={() => openUpcomingEventsListModal(row, termSection.title)}
@@ -4725,6 +4798,21 @@ export default function SubjectsPlanBuilder({
                               );
                             })
                           )}
+                        </View>
+                        <View style={styles.weeklyCadencePreferencesHintRow}>
+                          <Text style={styles.weeklyCadencePreferencesHintText}>
+                            To make changes to your saved target{' '}
+                          </Text>
+                          <TouchableOpacity
+                            onPress={openPlanningPreferences}
+                            activeOpacity={0.8}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={styles.weeklyCadencePreferencesHintLink}>click here</Text>
+                          </TouchableOpacity>
+                          <Text style={styles.weeklyCadencePreferencesHintText}>
+                            {' '}to open your planning preferences.
+                          </Text>
                         </View>
                       </View>
                     </>
@@ -5556,6 +5644,66 @@ export default function SubjectsPlanBuilder({
             )}
           </View>
         </ScrollView>
+        <Modal
+          visible={showFixGapSetupModal}
+          transparent
+          animationType="none"
+          onRequestClose={() => setShowFixGapSetupModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.subjectPickerOverlay}
+            activeOpacity={1}
+            onPress={() => setShowFixGapSetupModal(false)}
+          >
+            <TouchableOpacity style={styles.applySuggestionConfirmModal} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
+              <View style={styles.applySuggestionConfirmHeader}>
+                <Text style={styles.applySuggestionConfirmTitle}>
+                  {fixGapSetupContent.title || 'Complete setup before Fix gap'}
+                </Text>
+                <TouchableOpacity
+                  style={styles.subjectPickerClose}
+                  onPress={() => setShowFixGapSetupModal(false)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <X size={18} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+              {(fixGapSetupContent.bodyLines || []).map((line, idx) => (
+                <Text key={`fix-gap-setup-body-${idx}`} style={[styles.applySuggestionConfirmBodyText, idx > 0 && { marginTop: 4 }]}>
+                  {line}
+                </Text>
+              ))}
+              <View style={styles.applySuggestionConfirmActions}>
+                <TouchableOpacity
+                  style={styles.fixGapConfirmCancelBtn}
+                  onPress={() => setShowFixGapSetupModal(false)}
+                  activeOpacity={0.9}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.fixGapConfirmCancelBtnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.applySuggestionConfirmActionBtn}
+                  onPress={() => {
+                    const action = String(fixGapSetupContent?.primaryAction || '').trim().toLowerCase();
+                    setShowFixGapSetupModal(false);
+                    if (action === 'open_preferences') {
+                      openPlanningPreferences();
+                      return;
+                    }
+                    openAddSubjectForCurrentSlot();
+                  }}
+                  activeOpacity={0.9}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.applySuggestionConfirmActionBtnText}>
+                    {fixGapSetupContent.primaryLabel || 'Add first subject'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
         {/* LEGACY archived: Extend-term confirmation modal removed in Fix Gap V2 */}
         <Modal
           visible={showFixGapConfirmModal}
@@ -7589,6 +7737,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E2E8F0',
   },
+  cadenceStatusHeaderRowClassDay: {
+    paddingHorizontal: 24,
+    gap: 14,
+  },
   cadenceStatusHeaderText: {
     fontSize: 13,
     fontWeight: '700',
@@ -7608,17 +7760,33 @@ const styles = StyleSheet.create({
     flex: 1.2,
     minWidth: 170,
   },
+  cadenceStatusStudentsColClassDay: {
+    flex: 1.55,
+    minWidth: 230,
+  },
   cadenceStatusSavedCol: {
     flex: 2.1,
     minWidth: 250,
+  },
+  cadenceStatusSavedColClassDay: {
+    flex: 1.7,
+    minWidth: 220,
   },
   cadenceStatusProgressCol: {
     flex: 1.7,
     minWidth: 220,
   },
+  cadenceStatusProgressColClassDay: {
+    flex: 1.9,
+    minWidth: 250,
+  },
   cadenceStatusActionsCol: {
     flex: 1.3,
     minWidth: 200,
+  },
+  cadenceStatusActionsColClassDay: {
+    flex: 1.05,
+    minWidth: 150,
   },
   subjectRows: {
     borderWidth: 1,
@@ -7629,6 +7797,30 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 0,
     overflow: 'hidden',
     backgroundColor: '#FFFFFF',
+  },
+  weeklyCadencePreferencesHintRow: {
+    marginTop: 10,
+    marginBottom: 2,
+    paddingHorizontal: 4,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  weeklyCadencePreferencesHintText: {
+    fontSize: 12,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  weeklyCadencePreferencesHintLink: {
+    fontSize: 12,
+    color: '#4F46E5',
+    textDecorationLine: 'underline',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   subjectRow: {
     minHeight: 82,

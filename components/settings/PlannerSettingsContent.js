@@ -14,7 +14,6 @@ import {
   ActivityIndicator,
   Platform,
   Modal,
-  Alert,
 } from 'react-native';
 import { Plus, Trash2, Pencil, Check, X, ChevronDown, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import {
@@ -33,7 +32,12 @@ import { PLANNING_PREFERENCES_UI } from '../planner/planningPreferencesUiCopy';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
 import { LEARNADOODLE_LIGHT_BLUE } from '../../theme/comingSoonModalTheme';
 import { designTokens } from '../../theme/designTokens';
-import { ATTENDANCE_MODES, getAttendanceMode, isClassDayMode, isSubjectMode } from '../../lib/attendanceMode';
+import { SettingsLayout, SettingsTypography } from './settingsDesignTokens';
+import {
+  ATTENDANCE_MODES,
+  getAttendanceMode,
+  shouldWarnAttendanceModeSwitch,
+} from '../../lib/attendanceMode';
 import { trackEvent } from '../../lib/analytics';
 
 const MUTED = 'rgba(15,23,42,0.6)';
@@ -291,6 +295,12 @@ export default function PlannerSettingsContent({
   const [selectedSchoolYearLabel, setSelectedSchoolYearLabel] = useState('');
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [schoolYearMenuAnchor, setSchoolYearMenuAnchor] = useState(null);
+  const [attendanceModeConfirmDialog, setAttendanceModeConfirmDialog] = useState({
+    visible: false,
+    title: '',
+    message: '',
+  });
+  const attendanceModeConfirmResolverRef = useRef(null);
   const schoolYearTriggerRef = useRef(null);
   const normalizedLockedSchoolYearLabel = useMemo(
     () => normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim()),
@@ -948,23 +958,35 @@ export default function PlannerSettingsContent({
     }
   };
 
-  const confirmAttendanceModeSwitch = useCallback(async ({ isDataRich }) => {
-    if (!isDataRich) return true;
+  const respondAttendanceModeConfirm = useCallback((confirmed) => {
+    const resolver = attendanceModeConfirmResolverRef.current;
+    attendanceModeConfirmResolverRef.current = null;
+    setAttendanceModeConfirmDialog((prev) => ({ ...prev, visible: false }));
+    if (typeof resolver === 'function') resolver(Boolean(confirmed));
+  }, []);
+
+  const confirmAttendanceModeSwitch = useCallback(async ({ fromMode, toMode, isDataRich }) => {
     const title = 'Change attendance style?';
-    const message = 'This year already has subject-based planning data. You can change how attendance is tracked, but existing subject schedules and progress may be calculated differently.';
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      return window.confirm(`${title}\n\n${message}`);
-    }
+    const baseMessage = 'By subject tracks attendance separately for scheduled subjects.\n\nSimple class days tracks whether learning happened each day without breaking attendance into subjects.\n\nChanging this setting will update how schedules, attendance, and progress are shown for this school year.';
+    const dataRichWarning = isDataRich
+      ? '\n\nThis year already has subject-based planning data. Existing subject schedules and progress may be recalculated after this change.'
+      : '';
+    const message = `${baseMessage}${dataRichWarning}`;
     return new Promise((resolve) => {
-      Alert.alert(
+      attendanceModeConfirmResolverRef.current = resolve;
+      setAttendanceModeConfirmDialog({
+        visible: true,
         title,
         message,
-        [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Change style', style: 'default', onPress: () => resolve(true) },
-        ]
-      );
+      });
     });
+  }, []);
+
+  useEffect(() => () => {
+    if (typeof attendanceModeConfirmResolverRef.current === 'function') {
+      attendanceModeConfirmResolverRef.current(false);
+      attendanceModeConfirmResolverRef.current = null;
+    }
   }, []);
 
   const getSelectedYearModeAndRisk = useCallback(async () => {
@@ -1061,20 +1083,42 @@ export default function PlannerSettingsContent({
       return;
     }
     const normalizedMode = getAttendanceMode({ academicYearMode: mode });
-    const risk = await getSelectedYearModeAndRisk();
-    const previousMode = getAttendanceMode({ academicYearMode: risk.currentMode });
+    const previousMode = getAttendanceMode({ academicYearMode: attendanceTrackingMode });
     if (previousMode === normalizedMode) return;
-    if (isSubjectMode(previousMode) && isClassDayMode(normalizedMode) && risk.is_data_rich) {
-      const confirmed = await confirmAttendanceModeSwitch({ isDataRich: true });
-      trackEvent('attendance_mode_switch_confirmed', {
-        from_mode: previousMode,
-        to_mode: normalizedMode,
-        academic_year_id: risk.academicYearId || null,
-        is_data_rich: true,
-        confirmed,
-      });
-      if (!confirmed) return;
+    const riskPromise = getSelectedYearModeAndRisk();
+    const baseConfirmed = await confirmAttendanceModeSwitch({
+      fromMode: previousMode,
+      toMode: normalizedMode,
+      isDataRich: false,
+    });
+    if (!baseConfirmed) return;
+    let risk = null;
+    try {
+      risk = await riskPromise;
+    } catch (_) {
+      risk = null;
     }
+    const shouldWarnDataRich = shouldWarnAttendanceModeSwitch({
+      fromMode: previousMode,
+      toMode: normalizedMode,
+      isDataRich: risk?.is_data_rich === true,
+    });
+    let confirmed = baseConfirmed;
+    if (shouldWarnDataRich) {
+      confirmed = await confirmAttendanceModeSwitch({
+        fromMode: previousMode,
+        toMode: normalizedMode,
+        isDataRich: true,
+      });
+    }
+    trackEvent('attendance_mode_switch_confirmed', {
+      from_mode: previousMode,
+      to_mode: normalizedMode,
+      academic_year_id: risk?.academicYearId || null,
+      is_data_rich: shouldWarnDataRich,
+      confirmed,
+    });
+    if (!confirmed) return;
     try {
       const schoolYearStart = `${selectedYearMeta.start}-01-01`;
       const schoolYearEnd = `${selectedYearMeta.end}-12-31`;
@@ -1105,7 +1149,7 @@ export default function PlannerSettingsContent({
 
       trackEvent('attendance_mode_selected', {
         mode: normalizedMode,
-        academic_year_id: risk.academicYearId || null,
+        academic_year_id: risk?.academicYearId || null,
         source: 'planner_settings',
       });
       showSaved();
@@ -1117,7 +1161,7 @@ export default function PlannerSettingsContent({
     } catch (err) {
       toast.push(err?.message || 'Failed to save attendance mode', 'error');
     }
-  }, [confirmAttendanceModeSwitch, familyId, getSelectedYearModeAndRisk, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start, toast]);
+  }, [attendanceTrackingMode, confirmAttendanceModeSwitch, familyId, getSelectedYearModeAndRisk, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start, toast]);
 
   const handleGoalChange = (mode) => {
     if (mode === 'days' && !parsePositiveIntOrNull(stateRef.current?.targetDays)) {
@@ -1374,26 +1418,55 @@ export default function PlannerSettingsContent({
 
   const sectionStyle = {
     paddingTop: 0,
-    paddingBottom: embeddedInModal ? 12 : 20,
-    marginBottom: embeddedInModal ? 12 : 20,
+    paddingBottom: embeddedInModal ? 12 : Math.round(SettingsLayout.sectionSpacing * 0.57),
+    marginBottom: embeddedInModal ? 12 : Math.round(SettingsLayout.sectionSpacing * 0.57),
   };
   const sectionTitleStyle = {
-    fontSize: embeddedInModal ? 16 : 18,
-    fontWeight: '600',
+    fontSize: embeddedInModal ? 16 : SettingsTypography.sectionTitle.fontSize,
+    fontWeight: embeddedInModal ? '600' : SettingsTypography.sectionTitle.fontWeight,
     color: '#374151',
-    marginBottom: embeddedInModal ? 10 : 12,
+    marginBottom: embeddedInModal ? 8 : 10,
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   };
   const sectionDividerStyle = {
     height: 1,
     backgroundColor: BORDER,
-    marginBottom: embeddedInModal ? 12 : 20,
+    marginBottom: embeddedInModal ? 12 : Math.round(SettingsLayout.dividerSpacing * 0.8),
+  };
+  const sectionFieldLabelStyle = {
+    fontSize: SettingsTypography.secondary.fontSize,
+    color: TEXT_BLACK,
+    marginBottom: 6,
+  };
+  const compactRangeControlStyle = {
+    borderWidth: 1,
+    borderColor: '#DCE3EE',
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    width: '100%',
+    maxWidth: 350,
+    alignSelf: 'flex-start',
+  };
+  const rangeControlChevronColor = '#64748B';
+  const rangeValueFieldStyle = {
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    paddingVertical: 6,
+    paddingHorizontal: 0,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#111827',
+    alignItems: 'center',
   };
   const pageTitleStyle = {
-    fontSize: 36,
-    fontWeight: '800',
+    ...SettingsTypography.pageTitle,
     color: '#111827',
-    marginBottom: 20,
+    marginBottom: SettingsLayout.dividerSpacing,
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   };
   const chip = (active) => ({
@@ -1766,26 +1839,11 @@ export default function PlannerSettingsContent({
         <View style={sectionStyle}>
           <Text style={sectionTitleStyle}>School year & term dates</Text>
           <View style={sectionDividerStyle} />
-          <View style={{ marginBottom: 10 }}>
-            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>School year</Text>
-            <View
-              style={{
-                borderWidth: 1,
-                borderColor: '#DCE3EE',
-                borderRadius: 24,
-                backgroundColor: '#FFFFFF',
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                width: '100%',
-                maxWidth: 350,
-                alignSelf: 'flex-start',
-              }}
-            >
+          <View style={{ marginBottom: 8 }}>
+            <Text style={sectionFieldLabelStyle}>School year</Text>
+            <View style={compactRangeControlStyle}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <ChevronLeft size={20} color="#1E293B" />
+                <ChevronLeft size={16} color={rangeControlChevronColor} />
                 <PlannerPreferenceDateField
                   value={defaultYearStartDate}
                   onChange={handleRangeDefaultChange(setDefaultYearStartDate)}
@@ -1793,21 +1851,12 @@ export default function PlannerSettingsContent({
                   borderColor="transparent"
                   textColor={TEXT_BLACK}
                   mutedColor="rgba(15,23,42,0.4)"
-                  style={{
-                    borderWidth: 0,
-                    backgroundColor: 'transparent',
-                    paddingVertical: 8,
-                    paddingHorizontal: 0,
-                    fontSize: 14,
-                    fontWeight: '600',
-                    color: '#111827',
-                    alignItems: 'center',
-                  }}
+                  style={rangeValueFieldStyle}
                   minDate={yearRangeMinYmd}
                   maxDate={yearRangeMaxYmd}
                 />
               </View>
-              <ArrowRight size={18} color="#94A3B8" />
+              <ArrowRight size={16} color="#94A3B8" />
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
                 <PlannerPreferenceDateField
                   value={defaultYearEndDate}
@@ -1816,43 +1865,19 @@ export default function PlannerSettingsContent({
                   borderColor="transparent"
                   textColor={TEXT_BLACK}
                   mutedColor="rgba(15,23,42,0.4)"
-                  style={{
-                    borderWidth: 0,
-                    backgroundColor: 'transparent',
-                    paddingVertical: 8,
-                    paddingHorizontal: 0,
-                    fontSize: 14,
-                    fontWeight: '600',
-                    color: '#111827',
-                    alignItems: 'center',
-                  }}
+                  style={rangeValueFieldStyle}
                   minDate={yearRangeMinYmd}
                   maxDate={yearRangeMaxYmd}
                 />
-                <ChevronRight size={20} color="#1E293B" />
+                <ChevronRight size={16} color={rangeControlChevronColor} />
               </View>
             </View>
           </View>
-          <View style={{ marginBottom: 10 }}>
-            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Fall term</Text>
-            <View
-              style={{
-                borderWidth: 1,
-                borderColor: '#DCE3EE',
-                borderRadius: 24,
-                backgroundColor: '#FFFFFF',
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                width: '100%',
-                maxWidth: 350,
-                alignSelf: 'flex-start',
-              }}
-            >
+          <View style={{ marginBottom: 8 }}>
+            <Text style={sectionFieldLabelStyle}>Fall term</Text>
+            <View style={compactRangeControlStyle}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <ChevronLeft size={20} color="#1E293B" />
+                <ChevronLeft size={16} color={rangeControlChevronColor} />
                 <PlannerPreferenceDateField
                   value={defaultFallStartDate}
                   onChange={handleRangeDefaultChange(setDefaultFallStartDate)}
@@ -1860,21 +1885,12 @@ export default function PlannerSettingsContent({
                   borderColor="transparent"
                   textColor={TEXT_BLACK}
                   mutedColor="rgba(15,23,42,0.4)"
-                  style={{
-                    borderWidth: 0,
-                    backgroundColor: 'transparent',
-                    paddingVertical: 8,
-                    paddingHorizontal: 0,
-                    fontSize: 14,
-                    fontWeight: '600',
-                    color: '#111827',
-                    alignItems: 'center',
-                  }}
+                  style={rangeValueFieldStyle}
                   minDate={yearRangeMinYmd}
                   maxDate={yearRangeMaxYmd}
                 />
               </View>
-              <ArrowRight size={18} color="#94A3B8" />
+              <ArrowRight size={16} color="#94A3B8" />
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
                 <PlannerPreferenceDateField
                   value={defaultFallEndDate}
@@ -1883,43 +1899,19 @@ export default function PlannerSettingsContent({
                   borderColor="transparent"
                   textColor={TEXT_BLACK}
                   mutedColor="rgba(15,23,42,0.4)"
-                  style={{
-                    borderWidth: 0,
-                    backgroundColor: 'transparent',
-                    paddingVertical: 8,
-                    paddingHorizontal: 0,
-                    fontSize: 14,
-                    fontWeight: '600',
-                    color: '#111827',
-                    alignItems: 'center',
-                  }}
+                  style={rangeValueFieldStyle}
                   minDate={yearRangeMinYmd}
                   maxDate={yearRangeMaxYmd}
                 />
-                <ChevronRight size={20} color="#1E293B" />
+                <ChevronRight size={16} color={rangeControlChevronColor} />
               </View>
             </View>
           </View>
           <View>
-            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Spring term</Text>
-            <View
-              style={{
-                borderWidth: 1,
-                borderColor: '#DCE3EE',
-                borderRadius: 24,
-                backgroundColor: '#FFFFFF',
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                width: '100%',
-                maxWidth: 350,
-                alignSelf: 'flex-start',
-              }}
-            >
+            <Text style={sectionFieldLabelStyle}>Spring term</Text>
+            <View style={compactRangeControlStyle}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <ChevronLeft size={20} color="#1E293B" />
+                <ChevronLeft size={16} color={rangeControlChevronColor} />
                 <PlannerPreferenceDateField
                   value={defaultSpringStartDate}
                   onChange={handleRangeDefaultChange(setDefaultSpringStartDate)}
@@ -1927,21 +1919,12 @@ export default function PlannerSettingsContent({
                   borderColor="transparent"
                   textColor={TEXT_BLACK}
                   mutedColor="rgba(15,23,42,0.4)"
-                  style={{
-                    borderWidth: 0,
-                    backgroundColor: 'transparent',
-                    paddingVertical: 8,
-                    paddingHorizontal: 0,
-                    fontSize: 14,
-                    fontWeight: '600',
-                    color: '#111827',
-                    alignItems: 'center',
-                  }}
+                  style={rangeValueFieldStyle}
                   minDate={yearRangeMinYmd}
                   maxDate={yearRangeMaxYmd}
                 />
               </View>
-              <ArrowRight size={18} color="#94A3B8" />
+              <ArrowRight size={16} color="#94A3B8" />
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
                 <PlannerPreferenceDateField
                   value={defaultSpringEndDate}
@@ -1950,20 +1933,11 @@ export default function PlannerSettingsContent({
                   borderColor="transparent"
                   textColor={TEXT_BLACK}
                   mutedColor="rgba(15,23,42,0.4)"
-                  style={{
-                    borderWidth: 0,
-                    backgroundColor: 'transparent',
-                    paddingVertical: 8,
-                    paddingHorizontal: 0,
-                    fontSize: 14,
-                    fontWeight: '600',
-                    color: '#111827',
-                    alignItems: 'center',
-                  }}
+                  style={rangeValueFieldStyle}
                   minDate={yearRangeMinYmd}
                   maxDate={yearRangeMaxYmd}
                 />
-                <ChevronRight size={20} color="#1E293B" />
+                <ChevronRight size={16} color={rangeControlChevronColor} />
               </View>
             </View>
           </View>
@@ -1973,7 +1947,7 @@ export default function PlannerSettingsContent({
           <Text style={sectionTitleStyle}>Weekly rhythm</Text>
           <View style={sectionDividerStyle} />
           <View style={{ marginTop: 0 }}>
-            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Usual learning days</Text>
+            <Text style={sectionFieldLabelStyle}>Usual learning days</Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 2 }}>
               {LEARNING_DAY_OPTIONS.map((option) => {
                 const active = preferredLearningDayNums.includes(option.id);
@@ -1990,24 +1964,9 @@ export default function PlannerSettingsContent({
               })}
             </View>
           </View>
-          <View style={{ marginTop: 10 }}>
-            <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 6 }}>Usual learning hours</Text>
-            <View
-              style={{
-                borderWidth: 1,
-                borderColor: '#DCE3EE',
-                borderRadius: 24,
-                backgroundColor: '#FFFFFF',
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                width: '100%',
-                maxWidth: 350,
-                alignSelf: 'flex-start',
-              }}
-            >
+          <View style={{ marginTop: 8 }}>
+            <Text style={sectionFieldLabelStyle}>Usual learning hours</Text>
+            <View style={compactRangeControlStyle}>
               <View style={{ flex: 1, alignItems: 'center' }}>
                 {Platform.OS === 'web' ? (
                   <input
@@ -2018,9 +1977,10 @@ export default function PlannerSettingsContent({
                       backgroundColor: 'transparent',
                       borderWidth: 0,
                       borderStyle: 'none',
-                      fontSize: 14,
+                      fontSize: 13,
+                      fontWeight: '600',
                       color: '#111827',
-                      width: 110,
+                      width: 104,
                       outline: 'none',
                       textAlign: 'center',
                     }}
@@ -2032,11 +1992,17 @@ export default function PlannerSettingsContent({
                     onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
                     placeholder="8:00 AM"
                     placeholderTextColor={MUTED}
-                    style={[inputStyle, { borderWidth: 0, backgroundColor: 'transparent', textAlign: 'center', width: 110 }]}
+                    style={[inputStyle, {
+                      borderWidth: 0,
+                      backgroundColor: 'transparent',
+                      textAlign: 'center',
+                      width: 110,
+                      fontWeight: '600',
+                    }]}
                   />
                 )}
               </View>
-              <ArrowRight size={18} color="#94A3B8" />
+              <ArrowRight size={16} color="#94A3B8" />
               <View style={{ flex: 1, alignItems: 'center' }}>
                 {Platform.OS === 'web' ? (
                   <input
@@ -2047,9 +2013,10 @@ export default function PlannerSettingsContent({
                       backgroundColor: 'transparent',
                       borderWidth: 0,
                       borderStyle: 'none',
-                      fontSize: 14,
+                      fontSize: 13,
+                      fontWeight: '600',
                       color: '#111827',
-                      width: 110,
+                      width: 104,
                       outline: 'none',
                       textAlign: 'center',
                     }}
@@ -2061,7 +2028,13 @@ export default function PlannerSettingsContent({
                     onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
                     placeholder="3:00 PM"
                     placeholderTextColor={MUTED}
-                    style={[inputStyle, { borderWidth: 0, backgroundColor: 'transparent', textAlign: 'center', width: 110 }]}
+                    style={[inputStyle, {
+                      borderWidth: 0,
+                      backgroundColor: 'transparent',
+                      textAlign: 'center',
+                      width: 110,
+                      fontWeight: '600',
+                    }]}
                   />
                 )}
               </View>
@@ -2073,7 +2046,7 @@ export default function PlannerSettingsContent({
         <View style={sectionStyle}>
           <Text style={sectionTitleStyle}>Days off</Text>
           <View style={sectionDividerStyle} />
-          <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 8 }}>Public holidays</Text>
+          <Text style={sectionFieldLabelStyle}>Public holidays</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <TouchableOpacity
               style={[toggleTrackStyle, followGlobalHolidays && toggleTrackOnStyle]}
@@ -2189,6 +2162,141 @@ export default function PlannerSettingsContent({
           </Modal>
         )}
 
+        {attendanceModeConfirmDialog.visible && (
+          <Modal
+            animationType="none"
+            transparent
+            visible={attendanceModeConfirmDialog.visible}
+            onRequestClose={() => respondAttendanceModeConfirm(false)}
+          >
+            <TouchableOpacity
+              style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}
+              activeOpacity={1}
+              onPress={() => respondAttendanceModeConfirm(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={(e) => e.stopPropagation()}
+                style={{
+                  backgroundColor: '#fff',
+                  borderRadius: 20,
+                  width: '100%',
+                  maxWidth: 480,
+                  padding: 28,
+                  borderWidth: 1,
+                  borderColor: '#e5e7eb',
+                  ...(Platform.OS === 'web' && {
+                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
+                  }),
+                }}
+              >
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <Text
+                    style={{
+                      fontSize: 22,
+                      fontWeight: '600',
+                      color: '#111827',
+                      flex: 1,
+                      ...(Platform.OS === 'web' && {
+                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      }),
+                    }}
+                  >
+                    {attendanceModeConfirmDialog.title}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => respondAttendanceModeConfirm(false)}
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: 18,
+                      backgroundColor: '#ffffff',
+                      borderWidth: 1,
+                      borderColor: '#e5e7eb',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    hitSlop={10}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <X size={16} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+                <Text
+                  style={{
+                    fontSize: 15,
+                    color: '#475569',
+                    lineHeight: 24,
+                    marginBottom: 22,
+                    ...(Platform.OS === 'web' && {
+                      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }),
+                  }}
+                >
+                  {attendanceModeConfirmDialog.message}
+                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 10 }}>
+                  <TouchableOpacity
+                    onPress={() => respondAttendanceModeConfirm(false)}
+                    style={{
+                      minWidth: 92,
+                      paddingVertical: 12,
+                      paddingHorizontal: 18,
+                      borderRadius: 10,
+                      backgroundColor: '#F3F4F6',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: '600',
+                        color: '#374151',
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}
+                    >
+                      Cancel
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => respondAttendanceModeConfirm(true)}
+                    style={{
+                      minWidth: 132,
+                      paddingVertical: 12,
+                      paddingHorizontal: 22,
+                      borderRadius: 10,
+                      backgroundColor: '#90CAF5',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      ...(Platform.OS === 'web' && {
+                        boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
+                      }),
+                    }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 15,
+                        fontWeight: '600',
+                        color: '#FFFFFF',
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}
+                    >
+                      Change style
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        )}
+
         {!isSchoolYearLocked && showSchoolYearDropdown && (
           <Modal
             animationType="none"
@@ -2252,8 +2360,8 @@ export default function PlannerSettingsContent({
         )}
 
         {/* Custom days (single-date exclusions) */}
-        <View style={{ marginTop: 14 }}>
-          <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 8 }}>Custom days off</Text>
+        <View style={{ marginTop: 12 }}>
+          <Text style={sectionFieldLabelStyle}>Custom days off</Text>
           <View>
               {visibleCustomHolidays.map((h, i) => (
                 <View key={h.id || i} style={{ marginBottom: 8 }}>
@@ -2347,8 +2455,8 @@ export default function PlannerSettingsContent({
         </View>
 
         {/* Ranges (date-span exclusions) */}
-        <View style={{ marginTop: 14 }}>
-          <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 8 }}>Custom date ranges off</Text>
+        <View style={{ marginTop: 12 }}>
+          <Text style={sectionFieldLabelStyle}>Custom date ranges off</Text>
           <View>
               {visibleCustomBreaks.map((b, i) => (
                 <View key={b.id || i} style={{ marginBottom: 8 }}>

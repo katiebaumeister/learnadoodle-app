@@ -816,24 +816,14 @@ export default function SubjectsPage({
     () => yearNavYears.findIndex((year) => String(year) === String(selectedCoursesYear)),
     [yearNavYears, selectedCoursesYear]
   );
-  const canNavigatePrevCoursesYear = selectedCoursesYearIndex > 0;
-  const canNavigateNextCoursesYear = selectedCoursesYearIndex >= 0 && selectedCoursesYearIndex < yearNavYears.length - 1;
+  const canNavigatePrevCoursesYear = true;
+  const canNavigateNextCoursesYear = true;
   const shiftCoursesYear = useCallback((direction) => {
-    if (!Array.isArray(yearNavYears) || yearNavYears.length === 0) return;
-    const currentIndex = selectedCoursesYearIndex >= 0 ? selectedCoursesYearIndex : 0;
-    let nextIndex = currentIndex;
-    if (direction < 0 && currentIndex > 0) nextIndex = currentIndex - 1;
-    if (direction > 0 && currentIndex < yearNavYears.length - 1) nextIndex = currentIndex + 1;
-    if (nextIndex === currentIndex) {
-      const targetLabel = shiftSchoolYearLabel(selectedCoursesYear, direction);
-      const directionLabel = direction < 0 ? 'previous' : 'next';
-      const message = `Add a subject for ${targetLabel} (the ${directionLabel} school year) to navigate there.`;
-      if (toast?.push) toast.push(message, 'info');
-      else Alert.alert('No subjects in that year', message);
-      return;
-    }
-    setSelectedYearFilter(yearNavYears[nextIndex]);
-  }, [yearNavYears, selectedCoursesYearIndex, selectedCoursesYear, toast]);
+    setSelectedYearFilter((prev) => {
+      const baseline = prev === ALL_YEARS_FILTER ? getCurrentSchoolYear() : (prev || selectedCoursesYear || getCurrentSchoolYear());
+      return shiftSchoolYearLabel(baseline, direction);
+    });
+  }, [selectedCoursesYear]);
   const isAtCurrentCoursesYear = String(selectedCoursesYear) === String(currentCoursesYear);
   const jumpToCurrentCoursesYear = useCallback(() => {
     if (isAtCurrentCoursesYear) return;
