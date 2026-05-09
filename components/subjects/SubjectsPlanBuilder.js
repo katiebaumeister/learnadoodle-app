@@ -13,7 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Check, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Upload, X } from 'lucide-react';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 import { applyToCalendar, fixTargetGap, getAcademicYear, getPlanHealth } from '../../lib/services/academicYearClient';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
@@ -22,6 +22,7 @@ import { getAcademicYearExclusions, getFamilyPlannerSettings, saveFamilyPlannerS
 import { useToast } from '../Toast';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
+import SubjectEventsModal from './SubjectEventsModal';
 import { ATTENDANCE_MODES, getAttendanceMode, isClassDayMode as resolveClassDayMode } from '../../lib/attendanceMode';
 import { trackEvent } from '../../lib/analytics';
 
@@ -314,9 +315,9 @@ function addMinutesToHhmm(hhmm = '09:00', addMinutes = 60) {
 
 function isInstructionalEvent(eventRow) {
   if (!eventRow || typeof eventRow !== 'object') return false;
-  const status = eventRow.instructional_status;
-  if (status === 'MANUAL_COUNTS' || status === 'PLAN_PLACEHOLDER') return true;
-  return eventRow.counts_toward_plan === true;
+  const subjectId = String(eventRow?.subject_id || '').trim();
+  if (!subjectId) return false;
+  return isLessonOrClassDayEvent(eventRow) || String(eventRow?.event_type || '').trim() === '';
 }
 
 function isLessonOrClassDayEvent(eventRow) {
@@ -1110,29 +1111,19 @@ async function fetchAndCacheScheduleSupplement({
       ? defaultRangeEnd
       : (/^\d{4}-\d{2}-\d{2}$/.test(explicitEnd) ? explicitEnd : String(fallbackRange?.end_date || '').slice(0, 10));
     if (
-      normalizedAcademicYearId
-      && normalizedSubjectIds.length > 0
+      normalizedSubjectIds.length > 0
       && /^\d{4}-\d{2}-\d{2}$/.test(savedRangeStart)
       && /^\d{4}-\d{2}-\d{2}$/.test(savedRangeEnd)
       && savedRangeEnd >= savedRangeStart
     ) {
-      try {
-        const { data: targetRows, error: targetRowsError } = await supabase
-          .from('events')
-          .select('subject_id, start_ts, status')
-          .eq('family_id', familyId)
-          .eq('academic_year_id', normalizedAcademicYearId)
-          .eq('counts_toward_plan', true)
-          .is('deleted_at', null)
-          .neq('status', 'canceled')
-          .in('subject_id', normalizedSubjectIds)
-          .gte('start_ts', `${savedRangeStart}T00:00:00`)
-          .lte('start_ts', `${savedRangeEnd}T23:59:59`);
-        if (targetRowsError) throw targetRowsError;
-        yearTargetProjectionBySubject = buildDayProjectionBySubjectFromEvents(targetRows || [], normalizedSubjectIds);
-      } catch (_) {
-        yearTargetProjectionBySubject = {};
-      }
+      const projectionRows = Object.entries(instructionalEventsBySubject || {}).flatMap(([subjectId, events]) =>
+        (Array.isArray(events) ? events : []).map((eventItem) => ({
+          subject_id: String(subjectId || '').trim(),
+          start_ts: eventItem?.start_ts || eventItem?.startTs || null,
+          status: eventItem?.status || null,
+        }))
+      );
+      yearTargetProjectionBySubject = buildDayProjectionBySubjectFromEvents(projectionRows, normalizedSubjectIds);
     }
     const eventSummaryBySubject = Object.fromEntries(
       Object.entries(instructionalEventsBySubject).map(([sid, events]) => [
@@ -1208,6 +1199,8 @@ export default function SubjectsPlanBuilder({
   children = [],
   visibleSubjects = [],
   allSubjects = [],
+  pendingScheduleModalRequest = null,
+  onPendingScheduleModalHandled = null,
   onDone,
   onOpenPlannerSettings,
 }) {
@@ -1348,6 +1341,7 @@ export default function SubjectsPlanBuilder({
     isClassDayAggregate: false,
   });
   const [eventsRefreshKey, setEventsRefreshKey] = useState(0);
+  const consumedPendingScheduleRequestRef = useRef(null);
   const scheduleSupplementSyncedKeysRef = useRef(new Set());
   const [familyPlannerSettings, setFamilyPlannerSettings] = useState({
     target_scope: 'overall',
@@ -1356,6 +1350,7 @@ export default function SubjectsPlanBuilder({
     default_target_hours: null,
     allowed_weekdays: [1, 2, 3, 4, 5],
   });
+  const [uiAttendanceModeOverride, setUiAttendanceModeOverride] = useState(null);
   const [subjectTargetSettingsById, setSubjectTargetSettingsById] = useState({});
 
   const baseSubjects = useMemo(() => {
@@ -1437,6 +1432,88 @@ export default function SubjectsPlanBuilder({
     }
     return selectedTerm;
   }, [selectedTermFilter, selectedTerm]);
+  const selectedYearStart = Number(displaySchoolYear?.start_year);
+  const selectedYearAcademicMode = useMemo(() => {
+    if (!Number.isFinite(selectedYearStart)) return null;
+    const matchingCores = (planCores || []).filter((core) => Number(core?.startYear) === selectedYearStart);
+    const fullYearCore = matchingCores.find((core) => (
+      String(core?.scopeId || '').trim() === 'full_year'
+      && String(core?.row?.attendance_tracking_mode || '').trim()
+    ));
+    const fallbackCore = matchingCores.find((core) => String(core?.row?.attendance_tracking_mode || '').trim());
+    return String(
+      fullYearCore?.row?.attendance_tracking_mode
+      || fallbackCore?.row?.attendance_tracking_mode
+      || ''
+    ).trim() || null;
+  }, [planCores, selectedYearStart]);
+  const activeCoreModeForSelectedYear = useMemo(() => {
+    if (!Number.isFinite(selectedYearStart)) return null;
+    const activeCoreStartYear = parseYearFromYmd(activeScheduleCore?.row?.start_date);
+    if (!Number.isFinite(activeCoreStartYear) || Number(activeCoreStartYear) !== selectedYearStart) return null;
+    return String(activeScheduleCore?.row?.attendance_tracking_mode || '').trim() || null;
+  }, [activeScheduleCore?.row?.start_date, activeScheduleCore?.row?.attendance_tracking_mode, selectedYearStart]);
+  const resolvedAttendanceTrackingMode = useMemo(() => (
+    getAttendanceMode({
+      // Source of truth is the selected academic year mode.
+      // family_planner_settings is compatibility fallback only.
+      academicYearMode: uiAttendanceModeOverride
+        || selectedYearAcademicMode
+        || displaySchoolYear?.attendance_tracking_mode
+        || activeCoreModeForSelectedYear
+        || familyPlannerSettings?.attendance_tracking_mode,
+      plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
+    })
+  ), [
+    uiAttendanceModeOverride,
+    selectedYearAcademicMode,
+    familyPlannerSettings?.attendance_tracking_mode,
+    displaySchoolYear?.attendance_tracking_mode,
+    activeCoreModeForSelectedYear,
+  ]);
+  const resolvedAttendanceTrackingModeSource = useMemo(() => {
+    if (uiAttendanceModeOverride) return 'ui_override';
+    if (selectedYearAcademicMode) return 'selected_year_academic_year';
+    if (displaySchoolYear?.attendance_tracking_mode) return 'display_school_year';
+    if (activeCoreModeForSelectedYear) return 'active_schedule_core_selected_year';
+    if (familyPlannerSettings?.attendance_tracking_mode) return 'family_planner_settings';
+    return 'default';
+  }, [
+    uiAttendanceModeOverride,
+    selectedYearAcademicMode,
+    familyPlannerSettings?.attendance_tracking_mode,
+    displaySchoolYear?.attendance_tracking_mode,
+    activeCoreModeForSelectedYear,
+  ]);
+  const resolvedTargetScope = useMemo(
+    () => (resolveClassDayMode(resolvedAttendanceTrackingMode) ? 'overall' : 'per_subject'),
+    [resolvedAttendanceTrackingMode]
+  );
+  useEffect(() => {
+    scheduleCalcDebug('attendanceMode:resolved', {
+      schoolYearLabel: String(displaySchoolYear?.label || '').trim() || null,
+      resolvedMode: resolvedAttendanceTrackingMode,
+      source: resolvedAttendanceTrackingModeSource,
+      uiAttendanceModeOverride: uiAttendanceModeOverride || null,
+      selectedYearAcademicMode: selectedYearAcademicMode || null,
+      familyPlannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode || null,
+      displaySchoolYearMode: displaySchoolYear?.attendance_tracking_mode || null,
+      activeCoreModeForSelectedYear: activeCoreModeForSelectedYear || null,
+      activeScheduleCoreModeRaw: activeScheduleCore?.row?.attendance_tracking_mode || null,
+      resolvedTargetScope,
+    });
+  }, [
+    displaySchoolYear?.label,
+    resolvedAttendanceTrackingMode,
+    resolvedAttendanceTrackingModeSource,
+    uiAttendanceModeOverride,
+    selectedYearAcademicMode,
+    familyPlannerSettings?.attendance_tracking_mode,
+    displaySchoolYear?.attendance_tracking_mode,
+    activeCoreModeForSelectedYear,
+    activeScheduleCore?.row?.attendance_tracking_mode,
+    resolvedTargetScope,
+  ]);
   const slotScopedSubjects = useMemo(() => (
     (baseSubjects || []).filter((subject) => subjectMatchesYearTerm(subject, selectedSchoolYear?.label, selectedTerm))
   ), [baseSubjects, selectedSchoolYear?.label, selectedTerm]);
@@ -1472,6 +1549,7 @@ export default function SubjectsPlanBuilder({
       rangeStartYmd: null,
       rangeEndYmd: null,
     };
+    setUiAttendanceModeOverride(null);
   }, [displaySchoolYear?.label]);
 
   useEffect(() => {
@@ -1607,17 +1685,28 @@ export default function SubjectsPlanBuilder({
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
     const bump = () => setEventsRefreshKey((prev) => prev + 1);
+    const handleAttendanceModeChanged = (event) => {
+      const nextMode = getAttendanceMode({ academicYearMode: event?.detail?.mode });
+      if (!nextMode) return;
+      const nextSchoolYearLabel = String(event?.detail?.schoolYearLabel || '').trim();
+      const currentSchoolYearLabel = String(displaySchoolYear?.label || '').trim();
+      if (nextSchoolYearLabel && currentSchoolYearLabel && nextSchoolYearLabel !== currentSchoolYearLabel) return;
+      setUiAttendanceModeOverride(nextMode);
+      bump();
+    };
     window.addEventListener('eventCreated', bump);
     window.addEventListener('eventUpdated', bump);
     window.addEventListener('eventDeleted', bump);
     window.addEventListener('refreshSubjects', bump);
+    window.addEventListener('attendanceModeChanged', handleAttendanceModeChanged);
     return () => {
       window.removeEventListener('eventCreated', bump);
       window.removeEventListener('eventUpdated', bump);
       window.removeEventListener('eventDeleted', bump);
       window.removeEventListener('refreshSubjects', bump);
+      window.removeEventListener('attendanceModeChanged', handleAttendanceModeChanged);
     };
-  }, []);
+  }, [displaySchoolYear?.label]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1799,13 +1888,9 @@ export default function SubjectsPlanBuilder({
       fall_term: intersectYmdRanges(templateScopeRangeById.fall_term, coreRangeByScopeId.fall_term) || templateScopeRangeById.fall_term,
       spring_term: intersectYmdRanges(templateScopeRangeById.spring_term, coreRangeByScopeId.spring_term) || templateScopeRangeById.spring_term,
     };
-    const settingsScope = String(familyPlannerSettings?.target_scope || 'overall').trim().toLowerCase();
+    const settingsScope = resolvedTargetScope;
     const isOverallTargetScope = settingsScope === 'overall';
-    const attendanceTrackingMode = getAttendanceMode({
-      // Prefer academic_years mode on the selected year (source of truth), then fall back.
-      academicYearMode: displaySchoolYear?.attendance_tracking_mode || activeScheduleCore?.row?.attendance_tracking_mode,
-      plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
-    });
+    const attendanceTrackingMode = resolvedAttendanceTrackingMode;
     const isClassDayMode = resolveClassDayMode(attendanceTrackingMode);
     const savedPlanningRange = (() => {
       const start = String(familyPlannerSettings?.default_year_start_date || '').slice(0, 10);
@@ -2269,12 +2354,10 @@ export default function SubjectsPlanBuilder({
       dayRows,
       subjectPlans: sectionSubjectPlans,
     }];
-  }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject, classDayInstructionalEvents, attendedDayKeysBySubject, activeScheduleCore, familyPlannerSettings, subjectTargetSettingsById]);
+  }, [displaySchoolYear, planCores, buildDayRowsFromBlocks, planSubjectIdsBySlot, planSubjectNamesBySlot, baseSubjects, allChildIds, childNameById, instructionalEventsBySubject, classDayInstructionalEvents, attendedDayKeysBySubject, activeScheduleCore, familyPlannerSettings, resolvedAttendanceTrackingMode, resolvedTargetScope, subjectTargetSettingsById]);
 
-  const trackingMode = useMemo(() => {
-    const scope = String(familyPlannerSettings?.target_scope || 'overall').trim().toLowerCase();
-    return scope === 'per_subject' ? 'per_subject' : 'overall';
-  }, [familyPlannerSettings?.target_scope]);
+  const trackingMode = resolvedTargetScope;
+  const isLearningDaysTrackingMode = resolveClassDayMode(resolvedAttendanceTrackingMode);
 
   const yearTargetSummary = useMemo(() => {
     const strictProjectionBySubject = yearTargetProjectionBySubject && typeof yearTargetProjectionBySubject === 'object'
@@ -2433,7 +2516,7 @@ export default function SubjectsPlanBuilder({
         const hasAnyCadenceDays = existingDayNums.length > 0;
         const hasPlan = row?.hasPlan === true;
         const suggestionSummaryText = (!hasPlan && !hasAnyCadenceDays && suggestedAddedDaysLabel)
-          ? `Create plan from ${planStartLabel || 'start of year'} to ${planEndLabel || 'end of year'} on ${suggestedAddedDaysLabel}.`
+          ? `Use Schedule from ${planStartLabel || 'start of year'} to ${planEndLabel || 'end of year'} on ${suggestedAddedDaysLabel}.`
           : (suggestedEndYmd && suggestedAddedDaysLabel
             ? 'Extend term length and add multiple class days a week.'
             : (suggestedEndYmd
@@ -2736,28 +2819,8 @@ export default function SubjectsPlanBuilder({
   };
 
   const handleCurriculumAction = (subject, method) => {
-    const subjectId = subject?.id;
-    if (!subjectId || Platform.OS !== 'web' || typeof window === 'undefined') {
-      toast?.push?.('Curriculum actions are available in web mode.', 'info');
-      return;
-    }
-    const assignedChildIds = Array.isArray(subject?.assignedChildren) ? subject.assignedChildren.filter(Boolean) : [];
-    const fallbackChildIds = (children || []).map((c) => c?.id).filter(Boolean);
-    const selectedChildIds = assignedChildIds.length > 0 ? assignedChildIds : fallbackChildIds;
-    window.dispatchEvent(
-      new CustomEvent('openPlanYearModal', {
-        detail: {
-          from: 'subject_detail',
-          openAsModal: true,
-          skipPlanSummary: true,
-          openDirectlyToScope: true,
-          subjectId: String(subjectId),
-          subjectName: subject?.name || null,
-          childIds: selectedChildIds,
-          initialUnitStructureMethod: method,
-        },
-      })
-    );
+    openPlanningPreferences();
+    toast?.push?.('Plan routing is deprecated. Use Planning Preferences and Schedule instead.', 'info');
   };
 
   const handleSave = async () => {
@@ -2803,10 +2866,7 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         create_calendar_events: true,
         blocks,
-        attendance_tracking_mode: getAttendanceMode({
-          academicYearMode: activeScheduleCore?.row?.attendance_tracking_mode,
-          plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
-        }),
+        attendance_tracking_mode: resolvedAttendanceTrackingMode,
         run_scope_type: selectedTerm === 'full_year' ? 'full_year' : 'term',
         school_duration_scope: selectedTerm,
         target_instructional_days: 180,
@@ -3008,10 +3068,7 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         blocks,
         year_name: yearDetail?.year_name || undefined,
-        attendance_tracking_mode: getAttendanceMode({
-          academicYearMode: activeScheduleCore?.row?.attendance_tracking_mode,
-          plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
-        }),
+        attendance_tracking_mode: resolvedAttendanceTrackingMode,
         timezone: getClientTimezone(),
       };
       const { data, error } = await applyToCalendar(payload);
@@ -3365,10 +3422,7 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         blocks,
         year_name: yearDetail?.year_name || undefined,
-        attendance_tracking_mode: getAttendanceMode({
-          academicYearMode: activeScheduleCore?.row?.attendance_tracking_mode,
-          plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
-        }),
+        attendance_tracking_mode: resolvedAttendanceTrackingMode,
         timezone: getClientTimezone(),
       };
       scheduleCalcDebug('applyOverallSuggestedPlanChanges:payload', {
@@ -3681,10 +3735,7 @@ export default function SubjectsPlanBuilder({
           : (Array.isArray(row?.subjectIds) ? row.subjectIds.map((id) => String(id || '').trim()).filter(Boolean) : [])
       )]
       : [rowId];
-    const attendanceTrackingMode = getAttendanceMode({
-      academicYearMode: displaySchoolYear?.attendance_tracking_mode || activeScheduleCore?.row?.attendance_tracking_mode,
-      plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
-    });
+    const attendanceTrackingMode = resolvedAttendanceTrackingMode;
     const isClassDayTrackingMode = resolveClassDayMode(attendanceTrackingMode);
     if (scope === 'overall' && requestedSubjectIds.length === 0) {
       setFixGapSetupContent({
@@ -3839,10 +3890,7 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         create_calendar_events: true,
         blocks: fallbackBlocks,
-        attendance_tracking_mode: getAttendanceMode({
-          academicYearMode: activeScheduleCore?.row?.attendance_tracking_mode,
-          plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
-        }),
+        attendance_tracking_mode: resolvedAttendanceTrackingMode,
         run_scope_type: 'full_year',
         school_duration_scope: 'custom_duration',
         target_instructional_days: 180,
@@ -4080,22 +4128,7 @@ export default function SubjectsPlanBuilder({
   ]);
 
   const openPlannerView = () => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (activeSchedule?.row?.id) {
-      window.dispatchEvent(
-        new CustomEvent('openPlanYearModal', {
-          detail: {
-            from: 'subjects_builder',
-            academicYearId: activeSchedule.row.id,
-            openAsModal: false,
-            openToEditList: false,
-          },
-        })
-      );
-      return;
-    }
-    window.history.pushState({}, '', '/planner?view=plan-year');
-    window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'plan-year' }));
+    openPlanningPreferences();
   };
   const openBuilderForSubject = (subjectId, action = 'edit', termIdOverride = null) => {
     const safeId = String(subjectId || '');
@@ -4116,29 +4149,8 @@ export default function SubjectsPlanBuilder({
       setSelectedTerm(String(termIdOverride).trim());
     }
     if (action === 'add') {
-      const assignedChildIds = Array.isArray(selectedSubject?.assignedChildren)
-        ? selectedSubject.assignedChildren.filter(Boolean)
-        : [];
-      const fallbackChildIds = (children || []).map((c) => c?.id).filter(Boolean);
-      const childIds = assignedChildIds.length > 0 ? assignedChildIds : fallbackChildIds;
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('openPlanYearModal', {
-            detail: {
-              from: 'subject_detail',
-              openAsModal: true,
-              skipPlanSummary: true,
-              openDirectlyToScope: true,
-              subjectId: safeId,
-              subjectName: selectedSubject?.name || null,
-              schoolYear: subjectSchoolYear,
-              schoolTerm: subjectSchoolTerm,
-              childIds,
-            },
-          })
-        );
-        return;
-      }
+      openPlanningPreferences();
+      return;
     }
     if (action === 'edit') {
       let academicYearId = null;
@@ -4158,23 +4170,8 @@ export default function SubjectsPlanBuilder({
       )) || eligibleCores[0] || null;
       academicYearId = matchedCore?.row?.id || null;
 
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('openPlanYearModal', {
-            detail: {
-              from: 'subject_detail',
-              subjectId: safeId,
-              schoolYear: subjectSchoolYear,
-              schoolTerm: subjectSchoolTerm,
-              academicYearId,
-              openAsModal: true,
-              openToEditList: !academicYearId,
-              skipPlanSummary: true,
-            },
-          })
-        );
-        return;
-      }
+      openPlanningPreferences();
+      return;
     }
     if (action === 'delete') {
       const nextIds = (activeSchedule?.subjectIds || []).map(String).filter((id) => id !== safeId);
@@ -4375,6 +4372,21 @@ export default function SubjectsPlanBuilder({
     setShowPastEventsAttendanceModal(true);
   }, []);
 
+  const formatLearningDaysOwnerLabel = useCallback((row) => {
+    const namesFromIds = (Array.isArray(row?.attachedStudentIds) ? row.attachedStudentIds : [])
+      .map((childId) => String(childNameById[String(childId)] || '').trim())
+      .filter(Boolean);
+    const fallbackNames = String(row?.attachedStudentsLabel || '')
+      .split(',')
+      .map((name) => String(name || '').trim())
+      .filter(Boolean);
+    const uniqueNames = [...new Set((namesFromIds.length > 0 ? namesFromIds : fallbackNames))];
+    if (uniqueNames.length === 0) return "Students'";
+    if (uniqueNames.length === 1) return `${uniqueNames[0]}'s`;
+    if (uniqueNames.length === 2) return `${uniqueNames[0]} & ${uniqueNames[1]}'s`;
+    return `${uniqueNames.slice(0, -1).join(', ')} & ${uniqueNames[uniqueNames.length - 1]}'s`;
+  }, [childNameById]);
+
   const openUpcomingEventsListModal = useCallback((row, termSectionTitle = '') => {
     const subjectId = String(row?.id || '').trim();
     const isAggregate = row?.isAggregate === true;
@@ -4422,7 +4434,9 @@ export default function SubjectsPlanBuilder({
       : allEvents;
     setUpcomingEventsModalData({
       subjectId: isAggregate ? null : subjectId,
-      subjectName: row?.name || (isAggregate ? 'All subjects' : 'Subject'),
+      subjectName: isClassDayAggregate
+        ? formatLearningDaysOwnerLabel(row)
+        : (row?.name || (isAggregate ? 'All subjects' : 'Subject')),
       termTitle: termSectionTitle || '',
       events: modalEvents,
       hasPlan: !isAggregate && row?.hasPlan === true,
@@ -4430,7 +4444,35 @@ export default function SubjectsPlanBuilder({
       isClassDayAggregate,
     });
     setShowUpcomingEventsModal(true);
-  }, []);
+  }, [formatLearningDaysOwnerLabel]);
+
+  useEffect(() => {
+    const requestedSubjectId = String(pendingScheduleModalRequest?.subjectId || '').trim();
+    if (!requestedSubjectId || surfaceMode !== 'home') return;
+    const requestKey = `${requestedSubjectId}:${Number(pendingScheduleModalRequest?.requestedAt || 0)}`;
+    if (consumedPendingScheduleRequestRef.current === requestKey) return;
+    let matchedRow = null;
+    let matchedSectionTitle = '';
+    (termSections || []).forEach((section) => {
+      if (matchedRow) return;
+      const rows = Array.isArray(section?.subjectPlans) ? section.subjectPlans : [];
+      const found = rows.find((row) => String(row?.id || '').trim() === requestedSubjectId);
+      if (found) {
+        matchedRow = found;
+        matchedSectionTitle = String(section?.title || '').trim();
+      }
+    });
+    if (!matchedRow) return;
+    consumedPendingScheduleRequestRef.current = requestKey;
+    openUpcomingEventsListModal(matchedRow, matchedSectionTitle);
+    onPendingScheduleModalHandled?.();
+  }, [
+    pendingScheduleModalRequest,
+    surfaceMode,
+    termSections,
+    openUpcomingEventsListModal,
+    onPendingScheduleModalHandled,
+  ]);
 
   const markEventAsAttendedFromAllEventsModal = useCallback(async (eventItem) => {
     const eventId = String(eventItem?.id || '').trim();
@@ -4823,7 +4865,7 @@ export default function SubjectsPlanBuilder({
                                 (statusTone === 'behind' || statusTone === 'ahead')
                                 && Boolean(yearTargetCatchUpById[String(row?.id || '').trim()])
                               );
-                              const canCreatePlanFromStatusChip = statusTone === 'no_cadence' && Boolean(String(row?.id || '').trim());
+                              const canCreatePlanFromStatusChip = false;
                               const statusDetail = !hasCadence
                                 ? 'Completed events can still count toward the yearly target.'
                                 : (deltaDays == null
@@ -4886,7 +4928,7 @@ export default function SubjectsPlanBuilder({
                                             return;
                                           }
                                           if (canCreatePlanFromStatusChip) {
-                                            openBuilderForSubject(subjectId, 'add', row.schoolTermId || 'full_year');
+                                            return;
                                           }
                                         }}
                                         activeOpacity={(canToggleYearTargetSuggestion || canCreatePlanFromStatusChip) ? 0.8 : 1}
@@ -4922,38 +4964,8 @@ export default function SubjectsPlanBuilder({
                                     >
                                       <Text style={styles.subjectRowActionLinkText}>View schedule</Text>
                                     </TouchableOpacity>
-                                    {row?.isClassDayAggregate ? (
+                                    {row?.isClassDayAggregate ? null : (
                                       <>
-                                        <TouchableOpacity
-                                          style={styles.subjectRowActionLink}
-                                          onPress={() => setSurfaceMode('build')}
-                                          accessibilityLabel="Apply class day plan"
-                                          activeOpacity={0.8}
-                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                        >
-                                          <Text style={styles.subjectRowActionLinkText}>Apply plan</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity
-                                          style={styles.subjectRowActionLink}
-                                          onPress={() => fixYearTargetGap(row)}
-                                          accessibilityLabel="Fix class day gap"
-                                          activeOpacity={0.8}
-                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                        >
-                                          <Text style={styles.subjectRowActionLinkText}>Fix gap</Text>
-                                        </TouchableOpacity>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <TouchableOpacity
-                                          style={styles.subjectRowActionLink}
-                                          onPress={() => openBuilderForSubject(row.id, row.hasPlan ? 'edit' : 'add', row.schoolTermId || 'full_year')}
-                                          accessibilityLabel={row.hasPlan ? `Edit plan for ${row.name || 'subject'}` : `Create plan for ${row.name || 'subject'}`}
-                                          activeOpacity={0.8}
-                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                        >
-                                          <Text style={styles.subjectRowActionLinkText}>{row.hasPlan ? 'Edit plan' : 'Add plan'}</Text>
-                                        </TouchableOpacity>
                                         <TouchableOpacity
                                           style={styles.subjectRowActionLink}
                                           onPress={() => openSubjectEditModal(row.id)}
@@ -5004,7 +5016,9 @@ export default function SubjectsPlanBuilder({
                     <View style={styles.yearTargetsTable}>
                       <View style={[styles.yearTargetsTableRow, styles.yearTargetsTableHeaderRow]}>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsSubjectCol]}>
-                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Subject</Text>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>
+                            {isLearningDaysTrackingMode ? 'Subjects' : 'Subject'}
+                          </Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsTargetCol]}>
                           <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Target</Text>
@@ -5598,11 +5612,31 @@ export default function SubjectsPlanBuilder({
                           suggestedEndYmd: null,
                         };
                         const showSuggestion = true;
-                        const suggestionSummary = String(catchUpRowResolved?.suggestionSummaryText || '').trim();
-                        const suggestedDaysText = [
+                        const isNoSavedSubjectRow = String(row?.name || '').trim().toLowerCase() === 'no saved subject';
+                        const noSavedSubjectLearningDaysHint = (
+                          isOverallScopeTable
+                          && isNoSavedSubjectRow
+                          && String(yearTargetSummary?.trackingMode || '').trim().toLowerCase() === 'overall'
+                        )
+                          ? 'Schedule Learning Days now and assign to subjects later.'
+                          : '';
+                        const rawSuggestionSummary = String(catchUpRowResolved?.suggestionSummaryText || '').trim();
+                        const suggestionSummary = (
+                          noSavedSubjectLearningDaysHint
+                          && (!rawSuggestionSummary || /no automatic suggestion/i.test(rawSuggestionSummary))
+                        )
+                          ? noSavedSubjectLearningDaysHint
+                          : rawSuggestionSummary;
+                        const rawSuggestedDaysText = [
                           String(catchUpRowResolved?.suggestedAddedDaysLabel || '').trim(),
                           String(catchUpRowResolved?.extensionAddedDatesLabel || '').trim(),
                         ].filter(Boolean).join(' ');
+                        const suggestedDaysText = (
+                          noSavedSubjectLearningDaysHint
+                          && (!rawSuggestedDaysText || /no automatic schedule suggestion/i.test(rawSuggestedDaysText))
+                        )
+                          ? noSavedSubjectLearningDaysHint
+                          : rawSuggestedDaysText;
                         const fixGapActionRecommendation = fixGapActionRecommendationsByRowId?.[rowId] || null;
                         const canFixGap = Math.abs(Number(rowGapValue || 0)) > 0;
                         const hasApplyAction = Boolean(catchUpRowResolved?.suggestedEndYmd)
@@ -5782,26 +5816,28 @@ export default function SubjectsPlanBuilder({
                                 <Text style={styles.yearTargetsPredictiveSuggestionLine}>
                                   {`Suggested days: ${suggestedDaysText || 'No automatic schedule suggestion yet.'}`}
                                 </Text>
-                                <TouchableOpacity
-                                  onPress={() => fixYearTargetGap(row)}
-                                  activeOpacity={0.85}
-                                  disabled={fixingGapRowId === rowId || !canFixGap}
-                                  style={[
-                                    styles.yearTargetsPredictiveSuggestionButton,
-                                    styles.yearTargetsPredictiveFixGapButton,
-                                    (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonDisabled,
-                                  ]}
-                                  {...(Platform.OS === 'web' && { cursor: (fixingGapRowId === rowId || !canFixGap) ? 'default' : 'pointer' })}
-                                >
-                                  <Text
+                                {!isLearningDaysTrackingMode ? (
+                                  <TouchableOpacity
+                                    onPress={() => fixYearTargetGap(row)}
+                                    activeOpacity={0.85}
+                                    disabled={fixingGapRowId === rowId || !canFixGap}
                                     style={[
-                                      styles.yearTargetsPredictiveSuggestionButtonText,
-                                      (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
+                                      styles.yearTargetsPredictiveSuggestionButton,
+                                      styles.yearTargetsPredictiveFixGapButton,
+                                      (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonDisabled,
                                     ]}
+                                    {...(Platform.OS === 'web' && { cursor: (fixingGapRowId === rowId || !canFixGap) ? 'default' : 'pointer' })}
                                   >
-                                    {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
-                                  </Text>
-                                </TouchableOpacity>
+                                    <Text
+                                      style={[
+                                        styles.yearTargetsPredictiveSuggestionButtonText,
+                                        (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
+                                      ]}
+                                    >
+                                      {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ) : null}
                               </View>
                             </View>
                             </Animated.View>
@@ -6163,208 +6199,23 @@ export default function SubjectsPlanBuilder({
             openEventDetails(eventId, initialEvent);
           }}
         />
-        <Modal
+        <SubjectEventsModal
           visible={showUpcomingEventsModal}
-          transparent
-          animationType="none"
-          onRequestClose={() => setShowUpcomingEventsModal(false)}
-        >
-          <TouchableOpacity
-            style={styles.subjectEventsOverlay}
-            activeOpacity={1}
-            onPress={() => setShowUpcomingEventsModal(false)}
-          >
-            <TouchableOpacity style={styles.subjectEventsModal} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
-              <View style={styles.subjectEventsHeader}>
-                <View style={styles.subjectEventsHeaderTextWrap}>
-                  <Text style={styles.subjectEventsTitle}>
-                    {upcomingEventsModalData?.isClassDayAggregate
-                      ? `${upcomingEventsModalData.subjectName || 'Class day'} schedule by day`
-                      : `${upcomingEventsModalData.subjectName || 'Subject'} events`}
-                  </Text>
-                </View>
-                <View style={styles.subjectEventsHeaderActions}>
-                  <TouchableOpacity onPress={() => setShowUpcomingEventsModal(false)} style={styles.subjectEventsCloseButton}>
-                    <X size={18} color="#64748B" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <ScrollView style={styles.subjectEventsList} contentContainerStyle={styles.subjectEventsListContent}>
-                {(upcomingEventsModalData.events || []).length === 0 ? (
-                  <Text style={styles.subjectEventsEmptyText}>No instructional events are scheduled yet.</Text>
-                ) : (
-                  (upcomingEventsModalData.events || []).map((eventItem) => (
-                    <View key={eventItem.id} style={styles.subjectEventRow}>
-                      {(() => {
-                        const isPastEvent = Number(eventItem?.startMs || 0) > 0 && Number(eventItem.startMs) < Date.now();
-                        const isAttended = eventItem?.hasAttendancePresent === true
-                          || String(eventItem?.status || '').toLowerCase() === 'done'
-                          || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
-                        return (
-                          <>
-                      <View style={styles.subjectEventRowTop}>
-                        <Text style={styles.subjectEventRowTitle}>
-                          {eventItem?.isDayAggregate ? 'Class day' : (eventItem.title || 'Event')}
-                        </Text>
-                        <View style={styles.subjectEventRowMetaRight}>
-                          {Number(eventItem?.startMs || 0) > 0 ? (
-                            <View style={[styles.subjectEventRowStatusChips, styles.subjectEventRowStatusChipsRight]}>
-                              <View
-                                style={[
-                                  styles.subjectEventRowStatusChip,
-                                  (isPastEvent && isAttended) && styles.subjectEventRowStatusChipAttended,
-                                  (isPastEvent && !isAttended) && styles.subjectEventRowStatusChipUnattended,
-                                  !isPastEvent && styles.subjectEventRowStatusChipUpcoming,
-                                ]}
-                              >
-                                <View
-                                  style={[
-                                    styles.subjectEventRowStatusChipDot,
-                                    (isPastEvent && isAttended) && styles.subjectEventRowStatusChipDotAttended,
-                                    (isPastEvent && !isAttended) && styles.subjectEventRowStatusChipDotUnattended,
-                                    !isPastEvent && styles.subjectEventRowStatusChipDotUpcoming,
-                                  ]}
-                                />
-                                <Text
-                                  style={[
-                                    styles.subjectEventRowStatusChipText,
-                                    isAttended ? styles.subjectEventRowStatusChipTextAttended : null,
-                                    !isPastEvent ? styles.subjectEventRowStatusChipTextUpcoming : null,
-                                  ]}
-                                >
-                                  {isPastEvent ? (isAttended ? 'Attended' : 'Unattended') : 'Upcoming'}
-                                </Text>
-                              </View>
-                            </View>
-                          ) : null}
-                        </View>
-                      </View>
-                      <Text style={styles.subjectEventRowDate}>
-                        {eventItem?.isDayAggregate
-                          ? formatDateDisplayYmd(String(eventItem?.startTs || '').slice(0, 10))
-                          : formatEventDateTime(eventItem.startTs)}
-                      </Text>
-                      {eventItem?.isDayAggregate ? (
-                        <Text style={styles.subjectEventRowUnit}>
-                          {`${Number(eventItem?.dayEventCount || 0)} instructional item${Number(eventItem?.dayEventCount || 0) === 1 ? '' : 's'}${Number(eventItem?.attendedEventCount || 0) > 0 ? ` • ${Number(eventItem?.attendedEventCount || 0)} attended` : ''}`}
-                        </Text>
-                      ) : null}
-                      {eventItem.unitName && !eventItem?.isDayAggregate ? (
-                        <Text style={styles.subjectEventRowUnit}>Unit: {eventItem.unitName}</Text>
-                      ) : null}
-                      {!eventItem?.isDayAggregate ? (
-                      <View style={styles.subjectEventRowActions}>
-                        <TouchableOpacity
-                          onPress={() => {
-                            setShowUpcomingEventsModal(false);
-                            openEventDetails(eventItem.id, eventItem);
-                          }}
-                          activeOpacity={0.8}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={styles.subjectEventRowLinkText}>Open event details</Text>
-                        </TouchableOpacity>
-                        {isPastEvent && !isAttended ? (
-                            <TouchableOpacity
-                              onPress={() => markEventAsAttendedFromAllEventsModal(eventItem)}
-                              activeOpacity={0.8}
-                              disabled={markingAttendanceEventId === eventItem.id}
-                              {...(Platform.OS === 'web' && { cursor: markingAttendanceEventId === eventItem.id ? 'default' : 'pointer' })}
-                            >
-                              <Text style={styles.subjectEventRowLinkText}>
-                                {markingAttendanceEventId === eventItem.id ? 'Marking...' : 'Mark attended'}
-                              </Text>
-                            </TouchableOpacity>
-                          ) : null}
-                        {isPastEvent && isAttended ? (
-                            <TouchableOpacity
-                              onPress={() => markEventAsUnattendedFromAllEventsModal(eventItem)}
-                              activeOpacity={0.8}
-                              disabled={markingAttendanceEventId === eventItem.id}
-                              {...(Platform.OS === 'web' && { cursor: markingAttendanceEventId === eventItem.id ? 'default' : 'pointer' })}
-                            >
-                              <Text style={styles.subjectEventRowLinkText}>
-                                {markingAttendanceEventId === eventItem.id ? 'Marking...' : 'Mark unattended'}
-                              </Text>
-                            </TouchableOpacity>
-                          ) : null}
-                      </View>
-                      ) : null}
-                          </>
-                        );
-                      })()}
-                    </View>
-                  ))
-                )}
-              </ScrollView>
-              {(() => {
-                const isClassDayAggregateModal = upcomingEventsModalData?.isClassDayAggregate === true;
-                const hasPendingPastEvents = (upcomingEventsModalData.events || []).some((eventItem) => {
-                  if (eventItem?.isDayAggregate) return false;
-                  const startMs = Number(eventItem?.startMs || 0);
-                  const isPastEvent = startMs > 0 && startMs < Date.now();
-                  const isAttended = eventItem?.hasAttendancePresent === true
-                    || String(eventItem?.status || '').toLowerCase() === 'done'
-                    || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
-                  return isPastEvent && !isAttended;
-                });
-                const isBulkMarking = markingAttendanceEventId === '__bulk_mark_all_past_attended__';
-                const hasAnyEvents = !isClassDayAggregateModal && (upcomingEventsModalData.events || []).length > 0;
-                return (
-                  <View style={styles.subjectEventsFooter}>
-                    <View style={styles.subjectEventsFooterButtonsRow}>
-                      <TouchableOpacity
-                        onPress={() => setShowUpcomingEventsModal(false)}
-                        style={styles.subjectEventsFooterCancelButton}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={styles.subjectEventsFooterCancelButtonText}>Cancel</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={deleteAllEventsFromAllEventsModal}
-                        style={[
-                          styles.subjectEventsFooterDeleteButton,
-                          (!hasAnyEvents || deletingAllEvents) && styles.subjectEventsFooterDeleteButtonDisabled,
-                        ]}
-                        activeOpacity={0.85}
-                        disabled={!hasAnyEvents || deletingAllEvents}
-                      >
-                        <Trash2 size={18} color={!hasAnyEvents || deletingAllEvents ? '#94A3B8' : '#FFFFFF'} strokeWidth={2} />
-                        <Text
-                          style={[
-                            styles.subjectEventsFooterDeleteButtonText,
-                            (!hasAnyEvents || deletingAllEvents) && styles.subjectEventsFooterDeleteButtonTextDisabled,
-                          ]}
-                        >
-                          {deletingAllEvents ? 'Deleting...' : 'Delete all events'}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={markAllPastEventsAsAttendedFromAllEventsModal}
-                        style={[
-                          styles.subjectEventsFooterActionButton,
-                          (!hasPendingPastEvents || isBulkMarking || deletingAllEvents) && styles.subjectEventsFooterActionButtonDisabled,
-                        ]}
-                        activeOpacity={0.85}
-                        disabled={!hasPendingPastEvents || isBulkMarking || deletingAllEvents}
-                      >
-                        <CheckCircle2 size={18} color={!hasPendingPastEvents || isBulkMarking || deletingAllEvents ? '#94A3B8' : '#FFFFFF'} strokeWidth={2} />
-                        <Text
-                          style={[
-                            styles.subjectEventsFooterActionButtonText,
-                            (!hasPendingPastEvents || isBulkMarking || deletingAllEvents) && styles.subjectEventsFooterActionButtonTextDisabled,
-                          ]}
-                        >
-                          {isBulkMarking ? 'Marking...' : 'Mark all as attended'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                );
-              })()}
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </Modal>
+          onClose={() => setShowUpcomingEventsModal(false)}
+          data={upcomingEventsModalData}
+          formatEventDateTime={formatEventDateTime}
+          formatAggregateDate={(startTs) => formatDateDisplayYmd(String(startTs || '').slice(0, 10))}
+          markingAttendanceEventId={markingAttendanceEventId}
+          deletingAllEvents={deletingAllEvents}
+          onDeleteAllEvents={deleteAllEventsFromAllEventsModal}
+          onMarkAllPastEventsAttended={markAllPastEventsAsAttendedFromAllEventsModal}
+          onOpenEventDetails={(eventItem) => {
+            setShowUpcomingEventsModal(false);
+            openEventDetails(eventItem?.id, eventItem);
+          }}
+          onMarkEventAttended={markEventAsAttendedFromAllEventsModal}
+          onMarkEventUnattended={markEventAsUnattendedFromAllEventsModal}
+        />
       </View>
     );
   }
@@ -9135,11 +8986,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  subjectEventsHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
   subjectEventsTitle: {
     fontSize: 22,
     fontWeight: '700',
@@ -9166,93 +9012,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  subjectEventsFooter: {
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 16,
-    backgroundColor: '#FFFFFF',
-  },
-  subjectEventsFooterButtonsRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: 10,
-  },
-  subjectEventsFooterCancelButton: {
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  subjectEventsFooterCancelButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  subjectEventsFooterActionButton: {
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#9ECFFB',
-    backgroundColor: '#9ECFFB',
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  subjectEventsFooterActionButtonDisabled: {
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F1F5F9',
-    opacity: 0.58,
-  },
-  subjectEventsFooterActionButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  subjectEventsFooterActionButtonTextDisabled: {
-    color: '#94A3B8',
-  },
-  subjectEventsFooterDeleteButton: {
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#EF4444',
-    backgroundColor: '#EF4444',
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  subjectEventsFooterDeleteButtonDisabled: {
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F1F5F9',
-    opacity: 0.58,
-  },
-  subjectEventsFooterDeleteButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  subjectEventsFooterDeleteButtonTextDisabled: {
-    color: '#94A3B8',
   },
   subjectEventsList: {
     flex: 1,
@@ -9284,25 +9043,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
-  subjectEventRowMetaRight: {
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    gap: 4,
-  },
   subjectEventRowTitle: {
     flex: 1,
     minWidth: 0,
     fontSize: 14,
     fontWeight: '700',
     color: '#172033',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  subjectEventRowSource: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0F766E',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -9314,25 +9060,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  subjectEventRowMeta: {
-    marginTop: 3,
-    fontSize: 12,
-    color: '#475569',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  subjectEventRowStatusChips: {
-    marginTop: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-  },
-  subjectEventRowStatusChipsRight: {
-    marginTop: 0,
-    justifyContent: 'flex-end',
   },
   subjectEventRowStatusChip: {
     borderRadius: 999,
@@ -9351,12 +9078,6 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  subjectEventRowStatusChipTextAttended: {
-    color: '#475569',
-  },
-  subjectEventRowStatusChipTextUpcoming: {
-    color: '#64748B',
-  },
   subjectEventRowStatusChipDot: {
     width: 8,
     height: 8,
@@ -9371,48 +9092,12 @@ const styles = StyleSheet.create({
   subjectEventRowStatusChipDotUpcoming: {
     backgroundColor: '#CFE2FA',
   },
-  subjectEventRowStatusChipLegacyText: {
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    fontSize: 11,
-    fontWeight: '700',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  subjectEventRowStatusChipUpcoming: {
-    backgroundColor: '#F8FAFC',
-  },
-  subjectEventRowStatusChipAttended: {
-    backgroundColor: '#F8FAFC',
-  },
-  subjectEventRowStatusChipUnattended: {
-    backgroundColor: '#F8FAFC',
-  },
   subjectEventRowUnit: {
     marginTop: 4,
     fontSize: 12,
     color: '#334155',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  subjectEventRowActions: {
-    marginTop: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    flexWrap: 'wrap',
-  },
-  subjectEventRowLinkText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1D4ED8',
-    textDecorationLine: 'underline',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   attendancePlaceholderBody: {

@@ -11,6 +11,7 @@ export function ModalFooter({
   accent = '#7C70F4',
   destructiveLabel,
   disabled,
+  visuallyDisabled = false,
   loading = false,
 }) {
   return (
@@ -31,7 +32,7 @@ export function ModalFooter({
           disabled={disabled || loading}
           style={[
             styles.primary,
-            { backgroundColor: disabled || loading ? '#B7BFCD' : accent },
+            { backgroundColor: disabled || loading || visuallyDisabled ? '#B7BFCD' : accent },
           ]}
         >
           {mode === 'edit' ? (

@@ -22,8 +22,6 @@ import {
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
-import { getSubjectProgressCache } from '../lib/subjectProgressPlanCache';
-import { findAcademicYearPlanForSubject } from '../lib/subjectPlanSlotLines';
 import { ATTENDANCE_MODES, getAttendanceMode } from '../lib/attendanceMode';
 import { trackEvent } from '../lib/analytics';
 
@@ -263,14 +261,7 @@ export default function TaskCreateModal({
   const [attachedStandards, setAttachedStandards] = useState([]);
   const [showStandardsModal, setShowStandardsModal] = useState(false);
 
-  // Counts toward year plan (instructional accounting)
-  const [countsTowardPlan, setCountsTowardPlan] = useState(true); // default true for Lesson
   const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(false);
-  const [academicYears, setAcademicYears] = useState([]);
-  const [selectedAcademicYearId, setSelectedAcademicYearId] = useState(null);
-  const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState('');
-  const [loadingAcademicYears, setLoadingAcademicYears] = useState(false);
-  const [planBuilderInlineError, setPlanBuilderInlineError] = useState('');
   
   // Handle standards selection from modal
   const handleStandardsSelect = useCallback((selectedStandards) => {
@@ -281,74 +272,15 @@ export default function TaskCreateModal({
   const [percentValidationError, setPercentValidationError] = useState(null);
   const [percentValidationData, setPercentValidationData] = useState(null);
   const [checkingPercent, setCheckingPercent] = useState(false);
-  const selectedSubject = useMemo(
-    () => subjects.find((s) => String(s?.id || '') === String(subjectId || '')) || null,
-    [subjects, subjectId]
-  );
-  const selectedAcademicYear = useMemo(
-    () => academicYears.find((row) => String(row?.id || '') === String(selectedAcademicYearId || '')) || null,
-    [academicYears, selectedAcademicYearId]
-  );
   const resolvedAttendanceMode = getAttendanceMode({
-    academicYearMode: selectedAcademicYear?.attendance_tracking_mode,
+    academicYearMode: null,
     fallback: ATTENDANCE_MODES.CLASS_DAY,
   });
   const isClassDayEvent = eventType === 'Class Day';
   useEffect(() => {
     if (!isClassDayEvent) return;
-    if (!countsTowardPlan) setCountsTowardPlan(true);
     if (showRequiresSubmissionHome) setShowRequiresSubmissionHome(false);
-  }, [isClassDayEvent, countsTowardPlan, showRequiresSubmissionHome]);
-  const openSubjectDetailsForPlanning = useCallback(async (options = {}) => {
-    const { forceCreateNew = false } = options || {};
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (!subjectId) {
-      setPlanBuilderInlineError('Add or select a subject first to use Create plan.');
-      return;
-    }
-    setPlanBuilderInlineError('');
-
-    let resolvedAcademicYearId = null;
-    if (!forceCreateNew) {
-      const cached = getSubjectProgressCache(familyId, subjectId);
-      resolvedAcademicYearId = cached?.academicYearId || null;
-      if (!resolvedAcademicYearId && familyId) {
-        const found = await findAcademicYearPlanForSubject(familyId, subjectId);
-        resolvedAcademicYearId = found?.academicYearId || null;
-      }
-    }
-
-    const fallbackChildIds = Array.isArray(familyMembers)
-      ? familyMembers.map((m) => m?.id).filter(Boolean)
-      : [];
-    const effectiveChildIds = assigneeIds.length > 0 ? assigneeIds : fallbackChildIds;
-
-    onClose?.();
-    window.dispatchEvent(
-      new CustomEvent('openPlanYearModal', {
-        detail: {
-          from: 'task_create',
-          subjectId,
-          subjectName: selectedSubject?.name || null,
-          schoolYear: selectedSubject?.school_year || null,
-          schoolTerm: selectedSubject?.school_term || null,
-          childIds: effectiveChildIds,
-          academicYearId: forceCreateNew ? null : resolvedAcademicYearId,
-          openAsModal: true,
-          openToEditList: false,
-          skipPlanSummary: true,
-          openDirectlyToScope: true,
-        },
-      })
-    );
-  }, [subjectId, selectedSubject, familyId, familyMembers, assigneeIds, onClose]);
-
-  useEffect(() => {
-    if (subjectId && planBuilderInlineError) {
-      setPlanBuilderInlineError('');
-    }
-  }, [subjectId, planBuilderInlineError]);
-
+  }, [isClassDayEvent, showRequiresSubmissionHome]);
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes
   useEffect(() => {
     const checkPercentSum = async () => {
@@ -460,44 +392,6 @@ export default function TaskCreateModal({
             text: `Conflict with ${conflictWarning.message}`,
           }
     : null;
-
-  // Load academic years when modal opens (for "Counts toward year plan" dropdown)
-  useEffect(() => {
-    if (!visible || !familyId) {
-      setAcademicYears([]);
-      setSelectedAcademicYearId(null);
-      return;
-    }
-    let cancelled = false;
-    setLoadingAcademicYears(true);
-    (async () => {
-      const { data, error } = await supabase
-        .from('academic_years')
-        .select('id, start_date, end_date, year_name, attendance_tracking_mode')
-        .eq('family_id', familyId)
-        .order('updated_at', { ascending: false })
-        .limit(10);
-      if (cancelled) return;
-      setLoadingAcademicYears(false);
-      if (error) {
-        setAcademicYears([]);
-        return;
-      }
-      // One chip per plan: dedupe by date range so we never show both "Max · Cats · ..." and "2026-2026" for the same plan
-      const seen = new Set();
-      const list = (data || []).filter((ay) => {
-        const start = (ay.start_date && String(ay.start_date).slice(0, 10)) || '';
-        const end = (ay.end_date && String(ay.end_date).slice(0, 10)) || '';
-        const key = `${start}_${end}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      setAcademicYears(list);
-      // Default to "No plan" (null); do not auto-select first plan
-    })();
-    return () => { cancelled = true; };
-  }, [visible, familyId]);
 
   // Detect conflicts when date/time/child changes
   useEffect(() => {
@@ -1031,7 +925,6 @@ export default function TaskCreateModal({
       // Reset new fields
       const initialEventType = defaultEventType === 'Schedule Block' ? 'Scheduled Class Day' : (defaultEventType || 'Lesson');
       setEventType(initialEventType);
-      setCountsTowardPlan(['Lesson', 'Class Day', 'Project', 'Exam', 'Assignment', 'Activity'].includes(initialEventType));
       setShowRequiresSubmissionHome(
         defaultRequiresSubmissionHomeForEventType(initialEventType === 'Scheduled Class Day' ? 'Lesson' : initialEventType)
       );
@@ -1071,7 +964,6 @@ export default function TaskCreateModal({
       setShouldAutoAdjust(false);
       setSuggestedChange(null);
       setChangeAccepted(false);
-      setPlanBuilderInlineError('');
     }
     if (!visible) {
       lastMaterialsLoadKeyRef.current = '';
@@ -1695,12 +1587,6 @@ export default function TaskCreateModal({
       return;
     }
 
-    // Only require one assignee when attaching to a specific plan; "No plan" allows multiple children.
-    if (countsTowardPlan && selectedAcademicYearId != null && assigneeIds.length > 1) {
-      toast.push('Choose one child when adding this event to a plan.', 'error');
-      return;
-    }
-
     // Store allowOverlaps in a variable that will be used in the RPC call
     const shouldAllowOverlaps = allowOverlaps || (skipConflictValidation && conflictWarning !== null);
 
@@ -2164,23 +2050,13 @@ export default function TaskCreateModal({
         return;
       }
 
-      // Persist instructional fields and/or requires_submission_home after create (RPC may omit some columns)
+      // Persist fields after create (RPC may omit some columns)
       if (data?.id) {
-        const mins = instructionalMinutesOverride.trim() ? parseInt(instructionalMinutesOverride.trim(), 10) : null;
         const updatePayload = {
           requires_submission_home: isClassDayEvent ? false : showRequiresSubmissionHome,
         };
         if (isClassDayEvent) {
           updatePayload.subject_id = null;
-          updatePayload.counts_toward_plan = true;
-          updatePayload.instructional_status = 'MANUAL_COUNTS';
-          updatePayload.instructional_minutes = (mins != null && !Number.isNaN(mins)) ? mins : null;
-          updatePayload.academic_year_id = selectedAcademicYearId || null;
-        } else if (countsTowardPlan && placement === 'calendar') {
-          updatePayload.academic_year_id = selectedAcademicYearId || null;
-          updatePayload.counts_toward_plan = true;
-          updatePayload.instructional_status = 'MANUAL_COUNTS';
-          updatePayload.instructional_minutes = (mins != null && !Number.isNaN(mins)) ? mins : null;
         }
         await supabase
           .from('events')
@@ -2250,7 +2126,6 @@ export default function TaskCreateModal({
       trackEvent('manual_event_created', {
         mode: resolvedAttendanceMode,
         event_type: normalizeEventTypeForPersistence(eventType),
-        counts_toward_plan: isClassDayEvent ? true : countsTowardPlan === true,
       });
       onCreated?.(data);
       
@@ -2366,7 +2241,8 @@ export default function TaskCreateModal({
                 onCancel={onClose}
                 onPrimary={handleCreate}
                 accent="#7C70F4"
-                disabled={submitting || !isFormValid()}
+                disabled={submitting}
+                visuallyDisabled={!isFormValid()}
                 loading={submitting}
               />
             )}
@@ -2424,8 +2300,6 @@ export default function TaskCreateModal({
                     key={type}
                     onPress={() => {
                       setEventType(type);
-                      const nextCountsTowardPlan = ['Lesson', 'Class Day', 'Project', 'Exam', 'Assignment', 'Activity'].includes(type);
-                      setCountsTowardPlan(nextCountsTowardPlan);
                       setShowRequiresSubmissionHome(type === 'Class Day' ? false : defaultRequiresSubmissionHomeForEventType(type));
                       if (type === 'Class Day') {
                         setSubjectId(null);
@@ -2763,20 +2637,11 @@ export default function TaskCreateModal({
                     </View>
                   </View>
                 </View>
-                {isRecurring && (
+                {isRecurring ? (
                   <View style={styles.recurringRecommendationCard}>
                     <Text style={styles.recurringRecommendationText}>
-                      If you are trying to build out recurring class days by subject, we recommend you do so by selecting a subject and using{' '}
-                      <Text style={styles.recurringRecommendationLinkText} onPress={() => openSubjectDetailsForPlanning()}>
-                        Create plan
-                      </Text>
-                      .
+                      Add a subject in Academic Details below if you want this event to count towards scheduling goals.
                     </Text>
-                  </View>
-                )}
-                {!!planBuilderInlineError ? (
-                  <View style={styles.planBuilderInlineErrorBanner}>
-                    <Text style={styles.planBuilderInlineErrorText}>{planBuilderInlineError}</Text>
                   </View>
                 ) : null}
                 {!allDay && (
@@ -3593,131 +3458,29 @@ export default function TaskCreateModal({
             <ModalSectionCard
               Icon={GraduationCap}
               title="Academic details"
-              subtitle="Planning and grading context"
+              subtitle="Scheduling and grading context"
               expanded={showAcademicDetails}
               onPress={() => setShowAcademicDetails(!showAcademicDetails)}
               accent="#7C70F4"
             >
                 <SafeView>
-              {/* Count this as instructional time + plan (was below Event Type; lives in Academic Details) */}
+              {/* Count this as instructional time (was below Event Type; lives in Academic Details) */}
               {placement === 'calendar' &&
                 ['Lesson', 'Class Day', 'Project', 'Exam', 'Assignment', 'Activity', 'Appointment'].includes(eventType) && (
                 <View style={[styles.inputGroup, { marginTop: 0, marginBottom: 12 }]}>
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      flexWrap: 'wrap',
-                      alignItems: 'center',
-                      gap: 12,
-                      marginBottom: 8,
-                    }}
-                  >
-                    {['Lesson', 'Class Day', 'Project', 'Exam', 'Assignment', 'Activity'].includes(eventType) && (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
-                        <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }}>Count this as instructional time</Text>
-                        <Switch
-                          value={countsTowardPlan}
-                          onValueChange={setCountsTowardPlan}
-                          disabled={isClassDayEvent}
-                          trackColor={{ false: BORDER, true: '#AECBFA' }}
-                          thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
-                        />
-                      </View>
-                    )}
-                    {!isClassDayEvent ? (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
-                        <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }} numberOfLines={2}>
-                          Show in student home as &apos;Requires Submission&apos;
-                        </Text>
-                        <Switch
-                          value={showRequiresSubmissionHome}
-                          onValueChange={setShowRequiresSubmissionHome}
-                          trackColor={{ false: BORDER, true: '#AECBFA' }}
-                          thumbColor={showRequiresSubmissionHome ? '#45A29E' : '#f9fafb'}
-                        />
-                      </View>
-                    ) : null}
-                  </View>
-                  {countsTowardPlan && (
-                    <>
-                      {loadingAcademicYears ? (
-                        <Text style={{ fontSize: 13, color: MUTED }}>Loading plans…</Text>
-                      ) : (
-                        <>
-                          <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Add to plan? (optional)</Text>
-                          {academicYears.length === 0 ? (
-                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 8 }}>
-                              <TouchableOpacity
-                                onPress={() => openSubjectDetailsForPlanning({ forceCreateNew: true })}
-                                style={styles.chipOption}
-                              >
-                                <Text style={styles.chipOptionText}>Create new plan</Text>
-                              </TouchableOpacity>
-                            </View>
-                          ) : (
-                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                              <TouchableOpacity
-                                onPress={() => setSelectedAcademicYearId(null)}
-                                style={[
-                                  styles.chipOption,
-                                  selectedAcademicYearId === null && styles.chipOptionActive,
-                                ]}
-                              >
-                                <Text style={[styles.chipOptionText, selectedAcademicYearId === null && styles.chipOptionTextActive]}>
-                                  No plan
-                                </Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                onPress={() => openSubjectDetailsForPlanning({ forceCreateNew: true })}
-                                style={styles.chipOption}
-                              >
-                                <Text style={styles.chipOptionText}>Create new plan</Text>
-                              </TouchableOpacity>
-                              {(() => {
-                                const baseLabels = academicYears.map((ay) => {
-                                  const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
-                                  const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
-                                  if (ay.year_name && String(ay.year_name).trim()) {
-                                    return String(ay.year_name).trim();
-                                  }
-                                  return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
-                                });
-                                const labelCounts = {};
-                                baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
-                                return academicYears.map((ay) => {
-                                  const start = ay.start_date ? ay.start_date.slice(0, 10) : '';
-                                  const end = ay.end_date ? ay.end_date.slice(0, 10) : '';
-                                  let base = ay.year_name && String(ay.year_name).trim()
-                                    ? String(ay.year_name).trim()
-                                    : (start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan');
-                                  const needsDisambiguator = labelCounts[base] > 1;
-                                  const monthRange = start && end
-                                    ? `${parseInt(start.slice(5, 7), 10)}/${start.slice(2, 4)}–${parseInt(end.slice(5, 7), 10)}/${end.slice(2, 4)}`
-                                    : '';
-                                  const label = needsDisambiguator && monthRange ? `${base} (${monthRange})` : base;
-                                  const isSelected = selectedAcademicYearId === ay.id;
-                                  return (
-                                    <TouchableOpacity
-                                      key={ay.id}
-                                      onPress={() => setSelectedAcademicYearId(ay.id)}
-                                      style={[
-                                        styles.chipOption,
-                                        isSelected && styles.chipOptionActive,
-                                      ]}
-                                    >
-                                      <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>
-                                        {label}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  );
-                                });
-                              })()}
-                            </View>
-                          )}
-                        </>
-                      )}
-                    </>
-                  )}
+                  {!isClassDayEvent ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
+                      <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }} numberOfLines={2}>
+                        Show in student home as &apos;Requires Submission&apos;
+                      </Text>
+                      <Switch
+                        value={showRequiresSubmissionHome}
+                        onValueChange={setShowRequiresSubmissionHome}
+                        trackColor={{ false: BORDER, true: '#AECBFA' }}
+                        thumbColor={showRequiresSubmissionHome ? '#45A29E' : '#f9fafb'}
+                      />
+                    </View>
+                  ) : null}
                 </View>
               )}
               {/* Subject, Unit, Grade */}
@@ -3972,7 +3735,7 @@ export default function TaskCreateModal({
             {/* Additional notes — collapsible, same pattern as Add Subject modal */}
             <ModalSectionCard
               Icon={FileText}
-              title="Additional notes"
+              title="Notes and attachments"
               subtitle="Anything else to remember"
               expanded={showNotesSection}
               onPress={() => setShowNotesSection(!showNotesSection)}
@@ -3989,7 +3752,6 @@ export default function TaskCreateModal({
                     textAlignVertical="top"
                   />
                 </View>
-            </ModalSectionCard>
 
             {/* Labels removed - no longer used */}
 
@@ -4204,6 +3966,7 @@ export default function TaskCreateModal({
                 </View>
               </SafeFieldRow>
             )}
+            </ModalSectionCard>
 
           </ScrollView>
           </AppModalShell>
@@ -5226,38 +4989,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  planBuilderInlineErrorBanner: {
-    marginTop: 2,
-    marginBottom: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#fff1f2',
-  },
-  planBuilderInlineErrorText: {
-    color: '#b91c1c',
-    fontSize: 12,
-    lineHeight: 18,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  recurringRecommendationLinkBtn: {
-    marginTop: 6,
-    alignSelf: 'flex-start',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  recurringRecommendationLinkText: {
-    color: '#334155',
-    fontSize: 12,
-    textDecorationLine: 'underline',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      cursor: 'pointer',
     }),
   },
   timeInputsRow: {

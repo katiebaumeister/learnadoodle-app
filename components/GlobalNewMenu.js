@@ -112,7 +112,7 @@ export default function GlobalNewMenu({
     },
     { 
       id: 'add-activity',
-      label: 'Add to Plan', 
+      label: 'Add Event', 
       icon: Activity,
       context: 'calendar',
       onPress: () => { onClose(); onAddActivity?.(); }

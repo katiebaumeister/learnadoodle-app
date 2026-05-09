@@ -3519,14 +3519,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         instructor: (instructor && instructor.trim()) ? instructor.trim() : null,
         goal_link: goalLink || null,
         recurrence_rule: recurrenceRule ? JSON.stringify(recurrenceRule) : null,
-        counts_toward_plan: countsTowardPlan,
-        academic_year_id: countsTowardPlan ? (academicYearId || null) : null,
-        instructional_status: countsTowardPlan ? 'MANUAL_COUNTS' : 'NONE',
         requires_submission_home: showRequiresSubmissionHome,
-        instructional_minutes: instructionalMinutesOverride.trim() ? (() => {
-          const n = parseInt(instructionalMinutesOverride.trim(), 10);
-          return (n != null && !Number.isNaN(n)) ? n : null;
-        })() : null,
       };
 
       const cmSave = parseCurriculumMetadata(event);
@@ -3756,12 +3749,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               child_ids: childIdsForFallback, // Use full array from cleanUpdates
               is_flexible: true
             };
-            fallbackUpdate.counts_toward_plan = countsTowardPlan;
-            fallbackUpdate.academic_year_id = countsTowardPlan ? academicYearId : null;
-            fallbackUpdate.instructional_status = countsTowardPlan ? 'MANUAL_COUNTS' : 'NONE';
             fallbackUpdate.requires_submission_home = showRequiresSubmissionHome;
-            const mins = instructionalMinutesOverride.trim() ? parseInt(instructionalMinutesOverride.trim(), 10) : null;
-            fallbackUpdate.instructional_minutes = (mins != null && !Number.isNaN(mins)) ? mins : null;
 
             const fallbackResult = await supabase
               .from('events')
@@ -3942,7 +3930,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
       // Keep canonical curriculum rows in sync when this occurrence is tied to a plan/subject lesson.
       const syncPlanOrSubject =
-        !!(subjectId || countsTowardPlan || event?.subject_id || event?.academic_year_id);
+        !!(subjectId || event?.subject_id || event?.academic_year_id);
       const lessonIdFk = event?.curriculum_lesson_id;
       if (syncPlanOrSubject && lessonIdFk) {
         const newUnitT = (unit && unit.trim()) ? unit.trim() : '';
@@ -4327,18 +4315,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               onUpdated={() => onEventUpdated?.()}
             />
           ) : null}
-
-          {/* Count as instructional time - Add to plan? at top (when lesson and counted) */}
-          {(eventType === 'Lesson' || (event?.event_type || '').toLowerCase() === 'lesson') && placement === 'calendar' && countsTowardPlan && academicYearId && (
-            <View style={{ marginTop: 0, marginBottom: 4, paddingHorizontal: 2 }}>
-              <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12, color: SUB, fontWeight: '400' }]}>Add to plan? (optional)</Text>
-              <View style={[styles.chipOption, styles.chipOptionActive, { alignSelf: 'flex-start' }]}>
-                <Text style={[styles.chipOptionText, styles.chipOptionTextActive]}>
-                  {formatAcademicYearPlanLabel(resolvedAcademicYearRow) || 'This plan'}
-                </Text>
-              </View>
-            </View>
-          )}
 
           {/* Tags - show if they exist */}
           {Array.isArray(event?.tags) && event.tags.length > 0 && (
@@ -5837,114 +5813,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </TouchableOpacity>
           {showAcademicDetails && (
             <>
-          {/* Count this as instructional time + plan (was below Event Type; lives in Academic Details) */}
+          {/* Academic toggles */}
           {placement === 'calendar' && (
             <View style={{ marginTop: 0, marginBottom: 12 }}>
-              <View
-                style={{
-                  flexDirection: 'row',
-                  flexWrap: 'wrap',
-                  alignItems: 'center',
-                  gap: 12,
-                  marginBottom: 8,
-                }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
-                  <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }}>Count this as instructional time</Text>
-                  <Switch
-                    value={countsTowardPlan}
-                    onValueChange={setCountsTowardPlan}
-                    trackColor={{ false: BORDER, true: '#AECBFA' }}
-                    thumbColor={countsTowardPlan ? '#45A29E' : '#f9fafb'}
-                  />
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
-                  <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }} numberOfLines={2}>
-                    Show in student home as &apos;Requires Submission&apos;
-                  </Text>
-                  <Switch
-                    value={showRequiresSubmissionHome}
-                    onValueChange={setShowRequiresSubmissionHome}
-                    trackColor={{ false: BORDER, true: '#AECBFA' }}
-                    thumbColor={showRequiresSubmissionHome ? '#45A29E' : '#f9fafb'}
-                  />
-                </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
+                <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }} numberOfLines={2}>
+                  Show in student home as &apos;Requires Submission&apos;
+                </Text>
+                <Switch
+                  value={showRequiresSubmissionHome}
+                  onValueChange={setShowRequiresSubmissionHome}
+                  trackColor={{ false: BORDER, true: '#AECBFA' }}
+                  thumbColor={showRequiresSubmissionHome ? '#45A29E' : '#f9fafb'}
+                />
               </View>
-              {countsTowardPlan && (
-                <>
-                  <Text style={[styles.fieldLabel, { marginTop: 4, fontSize: 14, color: SUB, fontWeight: '400' }]}>Add to plan? (optional)</Text>
-                  {academicYearsForPlanChips.length === 0 ? (
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        color: MUTED,
-                        marginTop: 4,
-                        marginBottom: 8,
-                        lineHeight: 17,
-                        ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
-                      }}
-                    >
-                      You don&apos;t have any family class plans yet. Build a structured class plan to see options here.
-                    </Text>
-                  ) : (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 0, marginBottom: 8 }}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          setAcademicYearId(null);
-                          if (validationErrors.instructional) {
-                            setValidationErrors({ ...validationErrors, instructional: null });
-                          }
-                        }}
-                        style={[styles.chipOption, academicYearId === null && styles.chipOptionActive]}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text style={[styles.chipOptionText, academicYearId === null && styles.chipOptionTextActive]}>No plan</Text>
-                      </TouchableOpacity>
-                      {(() => {
-                        const baseLabels = academicYearsForPlanChips.map((ay) => {
-                          const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
-                          const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
-                          if (ay.year_name && String(ay.year_name).trim()) return String(ay.year_name).trim();
-                          return start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan';
-                        });
-                        const labelCounts = {};
-                        baseLabels.forEach((l) => { labelCounts[l] = (labelCounts[l] || 0) + 1; });
-                        return academicYearsForPlanChips.map((ay) => {
-                          const start = ay.start_date ? String(ay.start_date).slice(0, 10) : '';
-                          const end = ay.end_date ? String(ay.end_date).slice(0, 10) : '';
-                          let base = ay.year_name && String(ay.year_name).trim()
-                            ? String(ay.year_name).trim()
-                            : (start && end ? `${start.slice(0, 4)}–${end.slice(2, 4)}` : ay.id?.slice(0, 8) || 'Plan');
-                          const needsDisambiguator = labelCounts[base] > 1;
-                          const monthRange = start && end
-                            ? `${parseInt(start.slice(5, 7), 10)}/${start.slice(2, 4)}–${parseInt(end.slice(5, 7), 10)}/${end.slice(2, 4)}`
-                            : '';
-                          const label = needsDisambiguator && monthRange ? `${base} (${monthRange})` : base;
-                          const isSelected = academicYearId === ay.id;
-                          return (
-                            <TouchableOpacity
-                              key={ay.id}
-                              onPress={() => {
-                                setAcademicYearId(ay.id);
-                                if (validationErrors.instructional) {
-                                  setValidationErrors({ ...validationErrors, instructional: null });
-                                }
-                              }}
-                              style={[styles.chipOption, isSelected && styles.chipOptionActive]}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={[styles.chipOptionText, isSelected && styles.chipOptionTextActive]}>{label}</Text>
-                            </TouchableOpacity>
-                          );
-                        });
-                      })()}
-                    </View>
-                  )}
-                  {validationErrors.instructional && (
-                    <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.instructional}</Text>
-                  )}
-                </>
-              )}
             </View>
           )}
           {/* Subject (full width), then Unit / Lesson stacked like Lesson row */}
