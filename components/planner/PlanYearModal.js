@@ -788,7 +788,7 @@ function parsePlanCardLines(ay) {
   return { line1: name, line2: null, line3: dateRange };
 }
 
-/** Sort key for Edit plan list: subject title when present, else first line / year name. */
+/** Sort key for saved schedule list: subject title when present, else first line / year name. */
 function editPlanListSortKey(ay) {
   const lines = parsePlanCardLines(ay);
   if (lines.line2) return lines.line2;
@@ -807,7 +807,7 @@ function extractPlanSubjectNamesFromYearName(ay) {
 
 /**
  * True when at least one scheduling block references a subject id that still exists (e.g. after subject delete + recreate
- * with the same name, old block UUIDs are orphaned — subject page shows "Build plan" and slot lines show "Subject").
+ * with the same name, old block UUIDs are orphaned — subject page shows deprecated schedule labels and slot lines show "Subject").
  */
 function planBlocksReferenceAnyActiveSubject(planData, subjectList) {
   const ids = new Set(
@@ -823,7 +823,7 @@ function planBlocksReferenceAnyActiveSubject(planData, subjectList) {
 }
 
 /**
- * Hide Edit plan rows whose subject label no longer matches any family subject (e.g. subject removed on Subjects page).
+ * Hide saved-schedule rows whose subject label no longer matches any family subject (e.g. subject removed on Subjects page).
  * Matches buildPlanYearName: segment is parts[1] when year_name uses " · "; multi-subject labels use commas and optional "+N".
  * When full plan is cached, also hide rows whose blocks only reference deleted subject ids (name can still match recreated subjects).
  */
@@ -856,7 +856,7 @@ function planRowSubjectsStillExist(ay, subjectList, familyId) {
   return true;
 }
 
-/** Dedupe and stable-sort children for Edit plan / subject-style dot clusters */
+/** Dedupe and stable-sort children for saved schedules / subject-style dot clusters */
 function uniqueChildrenForPlanDots(childList) {
   const list = Array.isArray(childList) ? childList : [];
   const seen = new Set();
@@ -877,7 +877,7 @@ function uniqueChildrenForPlanDots(childList) {
 }
 
 /**
- * Child rows for Edit plan list dots — same prof1–10 colors as subject cards (via getChildColorFromAvatar).
+ * Child rows for saved-schedule list dots — same prof1–10 colors as subject cards (via getChildColorFromAvatar).
  * - Multiple block child_ids → one dot per child (overlapping).
  * - Whole family (label or blocks with no child_ids) → dot for every family child.
  * - Otherwise matches line1 ("Enzo", "Enzo, Max") to children.
@@ -1104,7 +1104,7 @@ function toLocalYYYYMMDD(d) {
   return `${y}-${m}-${day}`;
 }
 
-/** Build plan logistics date range: survives unmount; avoids empty dates while prefilling from Supabase. */
+/** Schedule logistics date range: survives unmount; avoids empty dates while prefilling from Supabase. */
 let planBuildLogisticsDatesCache = { familyId: null, startDate: '', endDate: '' };
 
 function getPlanBuildLogisticsDatesCache(familyId) {
@@ -1625,7 +1625,7 @@ export default function PlanYearModal({
   openToEditPlanList = false,
   openDirectlyToScope = false,
   fromSubjectDetail = false,
-  /** When true (e.g. Subject "Edit plan"), skip the plan-summary screen and open logistics/editing directly. */
+  /** When true (e.g. Subject "Manage schedule"), skip the plan-summary screen and open logistics/editing directly. */
   skipInitialPlanSummary = false,
   highlightFromPlanHealth = false,
   initialSubjectId = null,
@@ -1890,7 +1890,7 @@ export default function PlanYearModal({
   const [planStep, setPlanStep] = useState(() =>
     initialUnitStructureMethod ? 'unit_structure' : getInitialPlanStep(PLAN_MY_YEAR_LOGISTICS_FIRST)
   );
-  const [showPlanManagerView, setShowPlanManagerView] = useState(() => !!openToEditPlanList); // when true and pickerOnly, show Edit plan list; when false and pickerOnly, show entry choice (Plan Manager / Create New Plan)
+  const [showPlanManagerView, setShowPlanManagerView] = useState(() => !!openToEditPlanList); // when true and pickerOnly, show saved schedule list; when false and pickerOnly, show entry choice (Schedule list / Create New Schedule)
   const [planSummaryYearId, setPlanSummaryYearId] = useState(null); // when set, show plan summary view (like event summary) before editing
   const [editingFromSummary, setEditingFromSummary] = useState(false); // true when we opened logistics from "Edit Plan" on plan summary (header = Edit > Review, Back = to summary)
   const [planSummaryData, setPlanSummaryData] = useState(null);
@@ -4217,7 +4217,7 @@ export default function PlanYearModal({
 
   // Force true "create new plan" entry when callers explicitly open new-plan flow
   // (e.g. Progress > Needs attention no-plan). Without this reset, stale picker state
-  // from a prior Edit-plan session can reopen the YOUR PLANS list modal.
+  // from a prior schedule-edit session can reopen the saved schedules list modal.
   useEffect(() => {
     if (!visible) return;
     if (!openForNewPlan) return;
@@ -4227,7 +4227,7 @@ export default function PlanYearModal({
     setStartCreatingNew(true);
   }, [visible, openForNewPlan, openToEditPlanList, initialAcademicYearId]);
 
-  // When opening from banner (Edit plan), sync passed academic year id and clear stale form fields before cache/network hydrate
+  // When opening from banner (manage schedule), sync passed academic year id and clear stale form fields before cache/network hydrate
   useEffect(() => {
     if (visible && initialAcademicYearId) {
       setAcademicYearId(initialAcademicYearId);
@@ -4243,10 +4243,10 @@ export default function PlanYearModal({
 
   // When true, user chose "Create new plan" from picker — show full form even with no plan selected
   // When opening for new plan with no year, go straight to METHOD (screen 1); no entry/loading flash
-  // When openToEditPlanList, keep false so we show YOUR PLANS (existing plans), not the create flow
+  // When openToEditPlanList, keep false so we show SAVED SCHEDULES (existing entries), not the create flow
   const [startCreatingNew, setStartCreatingNew] = useState(() => !!(openForNewPlan && !initialAcademicYearId && !openToEditPlanList));
 
-  // Fetch all academic years for this family for "Edit plan" picker (show every plan/year ever created, not only those with a plan row)
+  // Fetch all academic years for this family for saved-schedule picker (show every plan/year ever created, not only those with a plan row)
   const [previousPlans, setPreviousPlans] = useState(() => {
     const c = familyId ? getAcademicYearsPickerCache(familyId) : null;
     return c !== null ? c : [];
@@ -4855,7 +4855,7 @@ export default function PlanYearModal({
       });
   }, [familyId]);
 
-  /** Refetch academic year rows for YOUR PLANS / Edit plan list (keeps module cache in sync after create or apply). */
+  /** Refetch academic year rows for SAVED SCHEDULES list (keeps module cache in sync after create or apply). */
   const refreshPreviousPlansList = useCallback(async () => {
     if (!familyId) return;
     const { data: rows, error: err } = await supabase
@@ -5207,7 +5207,7 @@ export default function PlanYearModal({
     };
   }, [familyId, editPlanListRows, previousPlansListFetched, prefetchYearSummaryForEditList]);
 
-  // When modal closes, defer clearing plan summary state until after close animation so we don't flash YOUR PLANS list
+  // When modal closes, defer clearing plan summary state until after close animation so we don't flash SAVED SCHEDULES list
   useEffect(() => {
     if (!visible) {
       setEditingFromSummary(false);
@@ -5222,7 +5222,7 @@ export default function PlanYearModal({
     }
   }, [visible]);
 
-  // Explicit "Edit plan list" opens (toolbar/subject fallback): force YOUR PLANS list.
+  // Explicit saved-schedule list opens (toolbar/subject fallback): force SAVED SCHEDULES list.
   // This must win even when skipInitialPlanSummary is true, otherwise stale
   // startCreatingNew/showPlanManagerView state can render the Build flow.
   useEffect(() => {
@@ -5238,7 +5238,7 @@ export default function PlanYearModal({
     }
   }, [visible, openToEditPlanList, initialAcademicYearId]);
 
-  // When opening from subject details or "Edit plan" in toolbar, show YOUR PLANS list directly (skip "Editing or creating?" choice)
+  // When opening from subject details or "Planning preferences" in toolbar, show SAVED SCHEDULES list directly (skip "Editing or creating?" choice)
   useEffect(() => {
     if (visible && (fromSubjectDetail || openToEditPlanList) && !skipInitialPlanSummary) {
       setShowPlanManagerView(true);
@@ -5511,7 +5511,7 @@ export default function PlanYearModal({
     planSummaryGhostLinesRef.current = new Map();
   }, []);
 
-  // Toolbar "Build plan": drop plan-summary / edit drill-down so the structured build wizard shows (not the prior plan).
+  // Toolbar "Schedule setup": drop plan-summary / edit drill-down so the structured setup wizard shows (not the prior schedule).
   useEffect(() => {
     if (!visible || !openDirectlyToScope) return;
     if (renderInline && openForNewPlan) {
@@ -5536,7 +5536,7 @@ export default function PlanYearModal({
     initialUnitStructureMethod,
   ]);
 
-  /** Right toolbar "Edit plan" while drilled into a plan summary or logistics: show YOUR PLANS list again. */
+  /** Right toolbar "Planning preferences" while drilled into a plan summary or logistics: show SAVED SCHEDULES list again. */
   const resetInlineEditPlanDrillDown = useCallback(() => {
     if (!renderInline) return;
     goBackPlanSummaryToList();
@@ -5606,7 +5606,7 @@ export default function PlanYearModal({
     [familyId, toast]
   );
 
-  // When we have academicYearId, load full year + plan to populate form (for "Edit plan" from banner)
+  // When we have academicYearId, load full year + plan to populate form (for schedule management from banner)
   const loadedYearIdRef = useRef(null);
   const invalidYearIdRef = useRef(new Set());
   const savedTargetsAppliedRef = useRef(false);
@@ -6170,7 +6170,7 @@ export default function PlanYearModal({
       setSectionDatesExpanded(true);
     }
     if (!visible) {
-      // Defer view resets so we don't flash "Plan Manager / Create New Plan" during close animation
+      // Defer view resets so we don't flash "Schedule list / Create New Schedule" during close animation
       const t = setTimeout(() => {
         setSuggestionAccepted(false);
         setHighlightBlockIndex(null);
@@ -8930,13 +8930,13 @@ export default function PlanYearModal({
   ];
 
   const pickerOnly = openForNewPlan && !academicYearId && !startCreatingNew;
-  /** YOUR PLANS list: picker idle state OR user chose "Edit plan" from toolbar while mid–build (startCreatingNew would make pickerOnly false). */
+  /** SAVED SCHEDULES list: picker idle state OR user chose "Planning preferences" from toolbar while mid-setup (startCreatingNew would make pickerOnly false). */
   const showYourPlansList =
     showPlanManagerView &&
     openForNewPlan &&
     !academicYearId &&
     (pickerOnly || openToEditPlanList);
-  /** Entry: create vs edit — hide when jumping straight to YOUR PLANS (e.g. Edit plan from toolbar). */
+  /** Entry: create vs edit — hide when jumping straight to SAVED SCHEDULES (e.g. Planning preferences from toolbar). */
   const showEntryChoice =
     openForNewPlan &&
     !academicYearId &&
@@ -9162,7 +9162,7 @@ export default function PlanYearModal({
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
           <Pencil size={16} color="#374151" strokeWidth={2} />
-          <Text style={{ fontSize: 14, color: '#111827', fontWeight: '600' }}>Edit plan</Text>
+          <Text style={{ fontSize: 14, color: '#111827', fontWeight: '600' }}>Manage schedule</Text>
         </TouchableOpacity>
         <View style={{ height: 1, backgroundColor: '#F3F4F6' }} />
         <TouchableOpacity
@@ -11272,7 +11272,7 @@ export default function PlanYearModal({
         styles.modal,
         useModalFlatLf ? styles.modalFlatLf : null,
         (renderInline && { flex: 1, minHeight: 0, width: '100%', maxWidth: '100%', alignSelf: 'stretch' }) || {},
-        /* Inline YOUR PLANS: full width of planner column — do not apply pickerModal (maxWidth 640). */
+        /* Inline SAVED SCHEDULES: full width of planner column — do not apply pickerModal (maxWidth 640). */
         pickerOnly && !(renderInline && showYourPlansList) && styles.pickerModal,
         showYourPlansList && styles.pickerModalPlanSummary,
         (pickerOnly || showYourPlansList) &&
@@ -11903,7 +11903,7 @@ export default function PlanYearModal({
                 <View style={styles.entryChoiceButtonInner}>
                   <Sparkles size={20} color="#FFFFFF" style={styles.entryChoiceIcon} />
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.entryChoiceButtonTextPrimary}>Create New Plan</Text>
+                    <Text style={styles.entryChoiceButtonTextPrimary}>Create New Schedule</Text>
                     <Text style={styles.entryChoiceButtonSubtextPrimary}>Start with scope, then method and logistics</Text>
                   </View>
                   {Platform.OS === 'web' && entryChoiceHoverKey === 'create' && (

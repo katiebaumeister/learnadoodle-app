@@ -836,16 +836,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       const menuItems = [];
       
       menuItems.push({ text: 'Edit Event', action: () => handleEventClick(event) });
-      if (event.academic_year_id) {
-        menuItems.push({
-          text: 'Edit Plan',
-          action: () => {
-            window.dispatchEvent(new CustomEvent('openPlanYearModal', {
-              detail: { from: 'calendar_context_menu', academicYearId: event.academic_year_id, openAsModal: true },
-            }));
-          },
-        });
-      }
       
       // Check if event is recurring
       const isRecurringEvent = isPartOfRecurringSeries(event);

@@ -15,7 +15,7 @@ export const PLANNER_FAQ = [
   {
     id: 'pl-3',
     q: 'What if plans change?',
-    a: 'Reschedule to move an event, Skip when it will not happen, or Edit plan to regenerate future events with new rules. Your history stays intact while future scheduling adapts.',
+    a: 'Reschedule to move an event, Skip when it will not happen, or adjust weekly rhythm in Schedule and Planning Preferences. Your history stays intact while future scheduling adapts.',
   },
   {
     id: 'pl-4',
@@ -30,7 +30,7 @@ export const PLANNER_FAQ = [
   {
     id: 'pl-6',
     q: 'How do I edit a plan?',
-    a: 'Plans control recurring structure. From any event tied to that plan, use the connected plan link, or open plan settings. Edits update future scheduled events and cadence; past events and attendance are preserved.',
+    a: 'Use Schedule and Planning Preferences to adjust recurring structure and cadence. Changes update future scheduled events while past events and attendance are preserved.',
   },
   {
     id: 'pl-7',

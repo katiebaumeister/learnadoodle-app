@@ -50,7 +50,7 @@ Add this to PlannerWeek's render (around line 623, before the grid):
 ```
 
 **Option B: Use AIActions menu**
-If AIActions is rendered somewhere in your Planner, it will show "Plan the Year" option when the feature flag is enabled.
+If AIActions is rendered somewhere in your Planner, it should now expose schedule setup wording when the feature flag is enabled.
 
 ### Step 4: Test the Wizard
 

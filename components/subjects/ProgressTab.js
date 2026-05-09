@@ -18,7 +18,6 @@ import {
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
-import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 import { supabase } from '../../lib/supabase';
 
 const WEB_HEADING_FONT = Platform.OS === 'web'
@@ -272,74 +271,14 @@ export default function ProgressTab({
     const scoped = subjectById.get(String(subjectId));
     const subject = scoped?.subject || null;
     if (!subject?.id) return;
-    const childIds = Array.isArray(subject?.assignedChildren) && subject.assignedChildren.length > 0
-      ? subject.assignedChildren
-      : (selectedStudentId ? [selectedStudentId] : []);
-    const method = ['manual', 'paste_plain', 'upload', 'generate'].includes(preferredMethod)
-      ? preferredMethod
-      : 'manual';
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const handleRefresh = () => onRefreshSubjectDetail?.(subject.id);
-      window.addEventListener('refreshSubjects', handleRefresh, { once: true });
-      window.dispatchEvent(
-        new CustomEvent('openPlanYearModal', {
-          detail: {
-            // Use subject_detail context so PlanYear opens directly to the units editor modal.
-            from: 'subject_detail',
-            subjectId: subject.id,
-            subjectName: subject.name || null,
-            childIds,
-            openAsModal: true,
-            skipPlanSummary: true,
-            openDirectlyToScope: true,
-            initialUnitStructureMethod: method,
-          },
-        })
-      );
-      return;
-    }
+    onRefreshSubjectDetail?.(subject.id);
     onOpenSubject?.(subject.id);
   };
   const openSubjectPlanBuilder = (subjectId, opts = {}) => {
     const scoped = subjectById.get(String(subjectId));
     const subject = scoped?.subject || null;
     if (!subject?.id) return;
-    const childIds = Array.isArray(subject?.assignedChildren) && subject.assignedChildren.length > 0
-      ? subject.assignedChildren
-      : (selectedStudentId ? [selectedStudentId] : []);
-    const yearPlanId = (() => {
-      if (opts.forceNewBuild) return null;
-      const fromCache = familyId
-        ? (getSubjectProgressCache(familyId, subject.id)?.academicYearId || null)
-        : null;
-      if (fromCache) return fromCache;
-      const fromEvents = (scoped?.detail?.events || [])
-        .map((event) => event?.year_plan_id || event?.yearPlanId || null)
-        .find(Boolean);
-      return fromEvents || null;
-    })();
-    const openAddPlanFlow = opts.forceNewBuild === true || opts.preferAddPlan === true;
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('openPlanYearModal', {
-          detail: {
-            from: opts.attendanceFocus ? 'subject_detail_attendance' : 'subject_detail',
-            subjectId: subject.id,
-            subjectName: subject.name || null,
-            schoolYear: subject.school_year || null,
-            schoolTerm: subject.school_term || null,
-            childIds,
-            academicYearId: yearPlanId,
-            openAsModal: true,
-            // No-plan needs-attention should open the new Add Plan modal flow directly.
-            openToEditList: openAddPlanFlow ? false : !yearPlanId,
-            skipPlanSummary: true,
-            openDirectlyToScope: true,
-          },
-        })
-      );
-      return;
-    }
+    onRefreshSubjectDetail?.(subject.id);
     onOpenSubject?.(subject.id);
   };
   const handleNeedsAttentionPress = (item) => {
@@ -347,7 +286,7 @@ export default function ProgressTab({
     if (!sid) return;
     const action = String(item?.actionType || '').trim().toLowerCase();
     if (action === 'plan_no_plan') {
-      openSubjectPlanBuilder(sid, { attendanceFocus: false, forceNewBuild: true, preferAddPlan: true });
+      onOpenSubject?.(sid);
       return;
     }
     if (action === 'plan_attendance_gap') {
@@ -947,7 +886,7 @@ export default function ProgressTab({
           actionType: 'plan_no_plan',
           priority: 100,
           title: `${row.subject} has no plan`,
-          fixText: 'Add plan cadence.',
+          fixText: 'Set weekly rhythm in Schedule and Planning Preferences.',
         });
       }
       if (familyTargetScope !== 'overall' && row.missingDays > 0) {

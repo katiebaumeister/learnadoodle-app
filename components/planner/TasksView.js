@@ -662,14 +662,6 @@ export default function TasksView({
     return items;
   }, [activeSection, trashEvents]);
 
-  const handleOpenEditPlan = (academicYearId) => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openPlanYearModal', {
-        detail: { from: 'trash', academicYearId },
-      }));
-    }
-  };
-
   const formatPlanDateRange = (start, end) => {
     if (!start || !end) return null;
     const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -681,12 +673,9 @@ export default function TasksView({
   const renderPlanTrashItem = (item) => {
     const dateRangeStr = formatPlanDateRange(item.dateRangeStart, item.dateRangeEnd);
     return (
-      <TouchableOpacity
+      <View
         key={`plan-${item.academicYearId}`}
         style={styles.taskItem}
-        onPress={() => handleOpenEditPlan(item.academicYearId)}
-        activeOpacity={0.7}
-        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
       >
         <View style={styles.planTrashRow}>
           <View style={{ marginRight: 10 }}>
@@ -718,7 +707,7 @@ export default function TasksView({
             </View>
           </View>
         </View>
-      </TouchableOpacity>
+      </View>
     );
   };
 

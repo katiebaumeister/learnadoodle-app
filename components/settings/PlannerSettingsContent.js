@@ -1151,7 +1151,14 @@ export default function PlannerSettingsContent({
       });
       showSaved();
       if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('attendanceModeChanged', {
+          detail: {
+            mode: normalizedMode,
+            schoolYearLabel: selectedSchoolYearLabel || null,
+          },
+        }));
         window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
         window.dispatchEvent(new CustomEvent('refreshCalendar'));
       }

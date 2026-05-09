@@ -423,7 +423,6 @@ export default function SubjectDetailPage({
   const [learningGoalsSource, setLearningGoalsSource] = useState(null);
   const [learningGoalsLoading, setLearningGoalsLoading] = useState(false);
   const loadingRef = useRef(false);
-  const openingPlanBuilderRef = useRef(false);
   const autoOpenedMaterialKeyRef = useRef(null);
   const autoOpenedProgressActionRef = useRef(null);
   const materialHighlightTimeoutRef = useRef(null);
@@ -719,32 +718,10 @@ export default function SubjectDetailPage({
     `${totalLearningGoalUnits} ${totalLearningGoalUnits === 1 ? 'unit' : 'units'} · ${totalLearningGoalLessons} ${totalLearningGoalLessons === 1 ? 'lesson' : 'lessons'} built`
   ), [totalLearningGoalUnits, totalLearningGoalLessons]);
   const openSubjectUnitsEditorForMethod = useCallback(
-    (method) => {
-      const requestedMethod = String(method || '').trim().toLowerCase();
-      const mappedMethod = requestedMethod === 'paste' ? 'paste_plain' : requestedMethod;
-      const safeMethod = ['manual', 'paste_plain', 'upload', 'generate'].includes(mappedMethod)
-        ? mappedMethod
-        : null;
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && subjectData?.subject?.id) {
-        window.dispatchEvent(
-          new CustomEvent('openPlanYearModal', {
-            detail: {
-              from: 'subject_detail',
-              subjectId: subjectData.subject.id,
-              subjectName: subjectData.subject.name || null,
-              childIds: assignedChildren,
-              openAsModal: true,
-              skipPlanSummary: true,
-              openDirectlyToScope: true,
-              initialUnitStructureMethod: safeMethod,
-            },
-          })
-        );
-        return;
-      }
+    () => {
       if (onEditSubject && subjectData?.subject) onEditSubject(subjectData.subject);
     },
-    [subjectData, assignedChildren, onEditSubject]
+    [subjectData, onEditSubject]
   );
   const openSubjectUnitsEditor = useCallback(() => {
     const sourceToMethod = {
@@ -1063,84 +1040,14 @@ export default function SubjectDetailPage({
     return () => window.removeEventListener('subjectProgressPlanCacheUpdated', onCacheUpdate);
   }, [familyId, subject?.id, subjectPlanYearIdFromEvents]);
 
-  const handleOpenPlanBuilder = useCallback(async () => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined' || !subject?.id) return;
-    if (openingPlanBuilderRef.current) return;
-    openingPlanBuilderRef.current = true;
-    let resolvedPlanYearId = subjectPlanYearId;
-    try {
-      if (!resolvedPlanYearId) {
-        const cached = getSubjectProgressCache(familyId, subject.id);
-        resolvedPlanYearId = cached?.academicYearId || subjectPlanYearIdFromEvents || null;
-      }
-      if (resolvedPlanYearId) {
-        window.dispatchEvent(
-          new CustomEvent('openPlanYearModal', {
-            detail: {
-              from: 'subject_detail',
-              subjectId: subject.id,
-              subjectName: subject.name || null,
-              schoolYear: subject.school_year || null,
-              schoolTerm: subject.school_term || null,
-              childIds: assignedChildren,
-              academicYearId: resolvedPlanYearId,
-              openAsModal: true,
-              openToEditList: false,
-              skipPlanSummary: true,
-            },
-          })
-        );
-        return;
-      }
-      // Open immediately for new-plan flow if we don't already have a resolved plan id.
-      window.dispatchEvent(
-        new CustomEvent('openPlanYearModal', {
-          detail: {
-            from: 'subject_detail',
-            subjectId: subject.id,
-            subjectName: subject.name || null,
-            schoolYear: subject.school_year || null,
-            schoolTerm: subject.school_term || null,
-            childIds: assignedChildren,
-            openAsModal: true,
-            openDirectlyToScope: true,
-          },
-        })
-      );
-    } finally {
-      openingPlanBuilderRef.current = false;
-    }
-  }, [subject?.id, subject?.name, assignedChildren, subjectPlanYearId, subjectPlanYearIdFromEvents, familyId]);
+  const handleOpenPlanBuilder = useCallback(() => {
+    openAttendanceTargetPreferences();
+  }, [openAttendanceTargetPreferences]);
   const openAttendanceTargetPreferences = useCallback(() => {
     if (typeof onOpenPlannerSettings === 'function') {
       onOpenPlannerSettings(subject?.school_year || null);
-      return;
     }
-    if (Platform.OS !== 'web' || typeof window === 'undefined' || !subject?.id) return;
-    const resolvedPlanYearId = subjectPlanYearId || subjectPlanYearIdFromEvents || null;
-    window.dispatchEvent(
-      new CustomEvent('openPlanYearModal', {
-        detail: {
-          from: 'subject_detail_attendance',
-          subjectId: subject.id,
-          subjectName: subject.name || null,
-          schoolYear: subject.school_year || null,
-          schoolTerm: subject.school_term || null,
-          childIds: assignedChildren,
-          academicYearId: resolvedPlanYearId,
-          openAsModal: true,
-          openToEditList: !resolvedPlanYearId,
-          skipPlanSummary: true,
-          openDirectlyToScope: true,
-        },
-      })
-    );
-  }, [assignedChildren, onOpenPlannerSettings, subject?.id, subject?.name, subject?.school_term, subject?.school_year, subjectPlanYearId, subjectPlanYearIdFromEvents]);
-  const subjectNameForPlanLabel = String(subject?.name || 'Subject').trim() || 'Subject';
-  const planButtonLabel = subjectPlanYearId
-    ? `Edit ${subjectNameForPlanLabel} plan`
-    : `Create ${subjectNameForPlanLabel} plan`;
-
+  }, [onOpenPlannerSettings, subject?.school_year]);
   const attendanceRecordsForUI = useMemo(() => {
     const base = Array.isArray(attendanceRecords) ? attendanceRecords : [];
     const byEvent = new Set(base.map((r) => String(r?.event_id || '')).filter(Boolean));
@@ -1601,7 +1508,7 @@ export default function SubjectDetailPage({
     const suggestionSummaryText = (suggestedEndYmd && cadenceDayNums.length > 0)
       ? 'Extend term length and add multiple class days a week.'
       : (!cadenceDayNums.length && planStartLabel && planEndLabel && suggestedAddedDaysLabel)
-        ? `Create plan from ${planStartLabel} to ${planEndLabel} on ${suggestedAddedDaysLabel}.`
+        ? `Use Schedule from ${planStartLabel} to ${planEndLabel} on ${suggestedAddedDaysLabel}.`
       : (suggestedEndYmd
         ? 'Extend term length or add class days per week.'
         : (cadenceDayNums.length > 0 ? 'Add class days per week.' : ''));
@@ -2604,16 +2511,6 @@ export default function SubjectDetailPage({
                   <Text style={styles.actionButtonText}>Edit subject</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={handleOpenPlanBuilder}
-                accessibilityRole="button"
-                accessibilityLabel={planButtonLabel}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Calendar size={16} color="#6B7280" />
-                <Text style={styles.actionButtonText}>{planButtonLabel}</Text>
-              </TouchableOpacity>
             </View>
           </View>
         </View>

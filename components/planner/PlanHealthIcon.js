@@ -84,13 +84,6 @@ export default function PlanHealthIcon({ familyId, visible = true, initialHealth
       ? `You're scheduled for ${health.delta_days} extra days`
       : `You're scheduled for ${health.delta_hours.toFixed(0)} extra hours`;
 
-  const handleEditPlan = () => {
-    setShowPopover(false);
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openPlanYearModal', { detail: { from: isUnder ? 'plan_health_under' : 'plan_health_over', academicYearId: health?.academic_year_id || null } }));
-    }
-  };
-
   const iconSize = 18;
 
   return (
@@ -150,22 +143,6 @@ export default function PlanHealthIcon({ familyId, visible = true, initialHealth
               <Text style={{ fontSize: 13, color: textColor, flex: 1 }}>{message}</Text>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              {(isUnder || isOver) && (
-                <TouchableOpacity
-                  onPress={handleEditPlan}
-                  style={{
-                    paddingHorizontal: 10,
-                    paddingVertical: 6,
-                    borderRadius: 6,
-                    ...(isUnder ? { backgroundColor: borderColor } : { borderWidth: 1, borderColor, backgroundColor: '#eff6ff' }),
-                    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-                  }}
-                >
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: isUnder ? '#fff' : textColor }}>
-                    {isUnder ? 'Fix it' : 'Edit plan'}
-                  </Text>
-                </TouchableOpacity>
-              )}
               <TouchableOpacity
                 onPress={() => setShowPopover(false)}
                 style={{ paddingVertical: 4, cursor: 'pointer' }}

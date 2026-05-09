@@ -36,7 +36,9 @@ import SubscriptionScreen from '../../screens/profile/SubscriptionScreen';
 import { fetchFamilyAiUnitsUsedThisMonth } from '../../lib/aiUsageSubscription';
 import { PLANNER_FAQ } from '../planner/plannerFaqContent';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
-import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
+import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
+import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
+import SubjectEventsModal from '../subjects/SubjectEventsModal';
 
 /** Strip trailing " (you)" so edit fields never show that suffix (view-only cue). */
 function stripYouLabelForEdit(raw) {
@@ -232,6 +234,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showGoogleDriveImportModal, setShowGoogleDriveImportModal] = useState(false);
   const [showGoogleCurriculumModal, setShowGoogleCurriculumModal] = useState(false);
+  const [showCourseScheduleModal, setShowCourseScheduleModal] = useState(false);
+  const [courseScheduleDeletingAllEvents, setCourseScheduleDeletingAllEvents] = useState(false);
+  const [courseScheduleMarkingEventId, setCourseScheduleMarkingEventId] = useState(null);
+  const [courseScheduleModalData, setCourseScheduleModalData] = useState({
+    subjectName: '',
+    events: [],
+  });
   const [googleCurriculumMaterialId, setGoogleCurriculumMaterialId] = useState(null);
   const [googleCurriculumSourceTitle, setGoogleCurriculumSourceTitle] = useState('');
   const [googleCurriculumSubjectId, setGoogleCurriculumSubjectId] = useState(null);
@@ -1863,64 +1872,276 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     setShowGoogleDriveImportModal(false);
   }, []);
 
-  /** Same routing as Subject Progress “Build plan” / “Edit plan”: existing year → edit/summary; else new structured plan modal. */
+  const formatCourseScheduleDateTime = useCallback((value) => {
+    if (!value) return 'Date unavailable';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Date unavailable';
+    const dateLabel = date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    const timeLabel = date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    return `${dateLabel} · ${timeLabel}`;
+  }, []);
+
+  const resolveSchoolYearRangeForSubject = useCallback((subject) => {
+    const raw = String(subject?.school_year || '').trim();
+    const match = raw.match(/(\d{4})\s*\/\s*(\d{2,4})/);
+    if (match) {
+      const startYear = Number(match[1]);
+      const endRaw = Number(match[2]);
+      const endYear = String(match[2]).length === 2 ? Number(`${String(startYear).slice(0, 2)}${String(match[2]).padStart(2, '0')}`) : endRaw;
+      if (Number.isFinite(startYear) && Number.isFinite(endYear) && endYear >= startYear) {
+        return {
+          startYmd: `${startYear}-08-01`,
+          endYmd: `${endYear}-07-31`,
+        };
+      }
+    }
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const startYear = month >= 8 ? year : year - 1;
+    const endYear = startYear + 1;
+    return {
+      startYmd: `${startYear}-08-01`,
+      endYmd: `${endYear}-07-31`,
+    };
+  }, []);
+
+  /** Open subject schedule modal in-place from Courses. */
   const handleOpenBuildPlanForSubject = useCallback(
     async (subject) => {
       if (Platform.OS !== 'web' || typeof window === 'undefined') {
-        toast.push('Build plan is available in the web app.', 'info');
+        toast.push('Subject schedule is available in the web app.', 'info');
         return;
       }
-      const fid = familyId || family?.id;
-      if (!subject?.id || !fid) {
-        toast.push('Unable to open Build plan. Try again in a moment.', 'info');
+      if (!subject?.id) {
+        toast.push('Unable to open subject schedule. Try again in a moment.', 'info');
         return;
       }
       setOpeningPlanForSubjectId(subject.id);
+      setCourseScheduleModalData({
+        subjectName: String(subject?.name || 'Subject').trim() || 'Subject',
+        events: [],
+      });
+      setShowCourseScheduleModal(true);
       try {
-        const { academicYearId } = await findAcademicYearPlanForSubject(fid, subject.id);
-        if (academicYearId) {
-          window.dispatchEvent(
-            new CustomEvent('openPlanYearModal', {
-              detail: {
-                from: 'subject_detail',
-                subjectId: subject.id,
-                academicYearId,
-                openAsModal: true,
-                openToEditList: false,
-                skipPlanSummary: true,
-              },
-            })
-          );
-        } else {
-          window.dispatchEvent(
-            new CustomEvent('openPlanYearModal', {
-              detail: {
-                from: 'subject_detail',
-                subjectId: subject.id,
-                openAsModal: true,
-                openDirectlyToScope: true,
-              },
-            })
-          );
-        }
+        const { startYmd, endYmd } = resolveSchoolYearRangeForSubject(subject);
+        const { data, error } = await supabase
+          .from('events')
+          .select('id, title, start_ts, status, instructional_status')
+          .eq('family_id', familyId)
+          .eq('subject_id', subject.id)
+          .is('deleted_at', null)
+          .neq('is_backlog', true)
+          .neq('status', 'deleted')
+          .neq('status', 'canceled')
+          .gte('start_ts', `${startYmd}T00:00:00`)
+          .lte('start_ts', `${endYmd}T23:59:59`)
+          .order('start_ts', { ascending: true });
+        if (error) throw error;
+        const mappedEvents = (Array.isArray(data) ? data : []).map((eventItem) => {
+          const isPast = Number(new Date(eventItem?.start_ts || '').getTime()) > 0
+            && new Date(eventItem.start_ts).getTime() < Date.now();
+          const statusRaw = String(eventItem?.status || '').toLowerCase();
+          const instructionalRaw = String(eventItem?.instructional_status || '').toUpperCase();
+          const attended = statusRaw === 'done' || instructionalRaw === 'MANUAL_COUNTS';
+          return {
+            id: String(eventItem?.id || ''),
+            title: String(eventItem?.title || 'Event').trim() || 'Event',
+            startTs: eventItem?.start_ts || null,
+            startMs: Number(new Date(eventItem?.start_ts || '').getTime()) || 0,
+            status: eventItem?.status || null,
+            instructional_status: eventItem?.instructional_status || null,
+            hasAttendancePresent: attended,
+            dateLabel: formatCourseScheduleDateTime(eventItem?.start_ts),
+          };
+        });
+        setCourseScheduleModalData((prev) => ({
+          ...prev,
+          events: mappedEvents,
+        }));
       } catch (e) {
         console.warn('[FamilyPanel] handleOpenBuildPlanForSubject', e);
-        window.dispatchEvent(
-          new CustomEvent('openPlanYearModal', {
-            detail: {
-              from: 'subject_detail',
-              subjectId: subject.id,
-              openAsModal: true,
-              openDirectlyToScope: true,
-            },
-          })
-        );
+        setShowCourseScheduleModal(false);
+        toast.push('Could not open subject schedule.', 'error');
       } finally {
         setOpeningPlanForSubjectId(null);
       }
     },
-    [familyId, family?.id, toast]
+    [toast, familyId, formatCourseScheduleDateTime, resolveSchoolYearRangeForSubject]
   );
+
+  const closeCourseScheduleModal = useCallback(() => {
+    setShowCourseScheduleModal(false);
+    setCourseScheduleDeletingAllEvents(false);
+    setCourseScheduleMarkingEventId(null);
+    setCourseScheduleModalData({
+      subjectName: '',
+      events: [],
+    });
+  }, []);
+
+  const openCourseScheduleEventDetails = useCallback((eventItem) => {
+    const eventId = String(eventItem?.id || '').trim();
+    if (!eventId || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    setShowCourseScheduleModal(false);
+    window.dispatchEvent(
+      new CustomEvent('openEventModal', {
+        detail: {
+          eventId,
+          initialEvent: eventItem || null,
+        },
+      })
+    );
+  }, []);
+
+  const markCourseScheduleEventAsAttended = useCallback(async (eventItem) => {
+    const eventId = String(eventItem?.id || '').trim();
+    if (!eventId) return;
+    setCourseScheduleMarkingEventId(eventId);
+    try {
+      const { error } = await completeEvent(eventId, null, { requirePersist: true });
+      if (error) throw error;
+      setCourseScheduleModalData((prev) => ({
+        ...prev,
+        events: (Array.isArray(prev?.events) ? prev.events : []).map((entry) => (
+          String(entry?.id || '') === eventId
+            ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS', hasAttendancePresent: true }
+            : entry
+        )),
+      }));
+      toast.push('Marked as attended.', 'success');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+    } catch (error) {
+      toast.push(error?.message || 'Could not mark attended.', 'error');
+    } finally {
+      setCourseScheduleMarkingEventId(null);
+    }
+  }, [toast]);
+
+  const markCourseScheduleEventAsUnattended = useCallback(async (eventItem) => {
+    const eventId = String(eventItem?.id || '').trim();
+    if (!eventId) return;
+    setCourseScheduleMarkingEventId(eventId);
+    try {
+      const { error } = await updateEventStatus(eventId, 'scheduled');
+      if (error) throw error;
+      setCourseScheduleModalData((prev) => ({
+        ...prev,
+        events: (Array.isArray(prev?.events) ? prev.events : []).map((entry) => (
+          String(entry?.id || '') === eventId
+            ? { ...entry, status: 'scheduled', instructional_status: null, hasAttendancePresent: false }
+            : entry
+        )),
+      }));
+      toast.push('Marked as unattended.', 'success');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+    } catch (error) {
+      toast.push(error?.message || 'Could not mark unattended.', 'error');
+    } finally {
+      setCourseScheduleMarkingEventId(null);
+    }
+  }, [toast]);
+
+  const deleteAllEventsFromCourseScheduleModal = useCallback(async () => {
+    if (!familyId) return;
+    const eventIds = (Array.isArray(courseScheduleModalData?.events) ? courseScheduleModalData.events : [])
+      .map((eventItem) => String(eventItem?.id || '').trim())
+      .filter(Boolean);
+    if (eventIds.length === 0 || courseScheduleDeletingAllEvents) return;
+    setCourseScheduleDeletingAllEvents(true);
+    const deletedIds = [];
+    let failedCount = 0;
+    try {
+      for (const eventId of eventIds) {
+        try {
+          const { error } = await deletePlannerEvent(eventId, familyId);
+          if (error) throw error;
+          deletedIds.push(eventId);
+        } catch (_) {
+          failedCount += 1;
+        }
+      }
+      if (deletedIds.length > 0) {
+        const deletedIdSet = new Set(deletedIds);
+        setCourseScheduleModalData((prev) => ({
+          ...prev,
+          events: (Array.isArray(prev?.events) ? prev.events : []).filter((entry) => !deletedIdSet.has(String(entry?.id || ''))),
+        }));
+      }
+      if (deletedIds.length > 0 && failedCount === 0) {
+        toast.push(`Deleted ${deletedIds.length} event${deletedIds.length === 1 ? '' : 's'}.`, 'success');
+      } else if (deletedIds.length > 0) {
+        toast.push(`Deleted ${deletedIds.length} event${deletedIds.length === 1 ? '' : 's'}. ${failedCount} failed.`, 'success');
+      } else {
+        toast.push('Could not delete events.', 'error');
+      }
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+    } finally {
+      setCourseScheduleDeletingAllEvents(false);
+    }
+  }, [familyId, courseScheduleModalData, courseScheduleDeletingAllEvents, toast]);
+
+  const markAllPastEventsAsAttendedFromCourseScheduleModal = useCallback(async () => {
+    const BULK_MARK_ID = '__bulk_mark_all_past_attended__';
+    if (courseScheduleDeletingAllEvents || courseScheduleMarkingEventId === BULK_MARK_ID) return;
+    const pastUnattendedEvents = (Array.isArray(courseScheduleModalData?.events) ? courseScheduleModalData.events : [])
+      .filter((eventItem) => {
+        const startMs = Number(eventItem?.startMs || 0);
+        const isPastEvent = startMs > 0 && startMs < Date.now();
+        const isAttended = eventItem?.hasAttendancePresent === true
+          || String(eventItem?.status || '').toLowerCase() === 'done'
+          || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
+        return isPastEvent && !isAttended && String(eventItem?.id || '').trim() !== '';
+      });
+    if (pastUnattendedEvents.length === 0) return;
+    setCourseScheduleMarkingEventId(BULK_MARK_ID);
+    try {
+      await Promise.all(
+        pastUnattendedEvents.map((eventItem) =>
+          completeEvent(eventItem.id, null, { requirePersist: true })
+        )
+      );
+      const completedIdSet = new Set(pastUnattendedEvents.map((eventItem) => String(eventItem?.id || '').trim()));
+      setCourseScheduleModalData((prev) => ({
+        ...prev,
+        events: (Array.isArray(prev?.events) ? prev.events : []).map((eventItem) => (
+          completedIdSet.has(String(eventItem?.id || '').trim())
+            ? {
+                ...eventItem,
+                status: 'done',
+                instructional_status: 'MANUAL_COUNTS',
+                hasAttendancePresent: true,
+              }
+            : eventItem
+        )),
+      }));
+      toast.push('Marked all past events as attended.', 'success');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+      }
+    } catch (error) {
+      toast.push(error?.message || 'Could not mark all as attended.', 'error');
+    } finally {
+      setCourseScheduleMarkingEventId(null);
+    }
+  }, [courseScheduleDeletingAllEvents, courseScheduleMarkingEventId, courseScheduleModalData, toast]);
 
   // Render content based on active section
   const renderMainContent = () => {
@@ -3099,7 +3320,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                                   {...(Platform.OS === 'web' && {
                                     cursor: openingPlanForSubjectId === subject.id ? 'not-allowed' : 'pointer',
                                   })}
-                                  accessibilityLabel="Build plan"
+                                  accessibilityLabel="Open schedule setup"
                                 >
                                   {openingPlanForSubjectId === subject.id ? (
                                     <ActivityIndicator size="small" color="#0d9488" />
@@ -4477,6 +4698,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
+      <SubjectEventsModal
+        visible={showCourseScheduleModal}
+        onClose={closeCourseScheduleModal}
+        data={courseScheduleModalData}
+        formatEventDateTime={(startTs) => formatCourseScheduleDateTime(startTs)}
+        markingAttendanceEventId={courseScheduleMarkingEventId}
+        deletingAllEvents={courseScheduleDeletingAllEvents}
+        onDeleteAllEvents={deleteAllEventsFromCourseScheduleModal}
+        onMarkAllPastEventsAttended={markAllPastEventsAsAttendedFromCourseScheduleModal}
+        onOpenEventDetails={openCourseScheduleEventDetails}
+        onMarkEventAttended={markCourseScheduleEventAsAttended}
+        onMarkEventUnattended={markCourseScheduleEventAsUnattended}
+      />
 
       <Modal
         visible={showComingSoonModal}

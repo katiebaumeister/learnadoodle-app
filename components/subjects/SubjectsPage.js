@@ -124,6 +124,7 @@ function shiftSchoolYearLabel(schoolYearLabel, direction) {
 const ALL_YEARS_FILTER = 'all_years';
 const ALL_TERMS_FILTER = 'all_terms';
 const SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY = 'ld_pending_subject_schedule_plan_open';
+const SUBJECTS_PENDING_SCHEDULE_MODAL_OPEN_STORAGE_KEY = 'ld_pending_subject_schedule_modal_open';
 
 const SUBJECTS_MODE_STORAGE_PREFIX = 'subjects:selected-mode';
 
@@ -219,6 +220,7 @@ export default function SubjectsPage({
   const [selectedYearFilter, setSelectedYearFilter] = useState(() => getCurrentSchoolYear());
   const [selectedTermFilter, setSelectedTermFilter] = useState(ALL_TERMS_FILTER);
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
+  const [pendingScheduleModalRequest, setPendingScheduleModalRequest] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
   const [pendingScrollToSectionId, setPendingScrollToSectionId] = useState(null);
   const [pendingOpenMaterialId, setPendingOpenMaterialId] = useState(null);
@@ -522,29 +524,41 @@ export default function SubjectsPage({
     }
     const subjectId = String(pending?.subjectId || '').trim();
     if (!subjectId) return;
-    const academicYearId = pending?.academicYearId || null;
     const schoolYear = String(pending?.schoolYear || '').trim() || null;
     const schoolTerm = String(pending?.schoolTerm || '').trim() || null;
-    const subjectName = String(pending?.subjectName || '').trim() || null;
     if (schoolYear) setSelectedYearFilter(schoolYear);
     if (schoolTerm) setSelectedTermFilter(normalizeSubjectTerm(schoolTerm));
+    setSelectedModeFilter('view');
+  }, [familyId]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    let rawPending = null;
+    try {
+      rawPending = window.sessionStorage.getItem(SUBJECTS_PENDING_SCHEDULE_MODAL_OPEN_STORAGE_KEY);
+    } catch (_) {
+      rawPending = null;
+    }
+    if (!rawPending) return;
+    let pending = null;
+    try {
+      pending = JSON.parse(rawPending);
+    } catch (_) {
+      pending = null;
+    }
+    try {
+      window.sessionStorage.removeItem(SUBJECTS_PENDING_SCHEDULE_MODAL_OPEN_STORAGE_KEY);
+    } catch (_) {
+      // no-op
+    }
+    const subjectId = String(pending?.subjectId || '').trim();
+    if (!subjectId) return;
+    const schoolYear = String(pending?.schoolYear || '').trim() || null;
+    if (schoolYear) setSelectedYearFilter(schoolYear);
     setSelectedModeFilter('plan');
-    window.requestAnimationFrame(() => {
-      window.dispatchEvent(
-        new CustomEvent('openPlanYearModal', {
-          detail: {
-            from: 'subject_detail',
-            openAsModal: true,
-            skipPlanSummary: true,
-            subjectId,
-            subjectName,
-            schoolYear,
-            schoolTerm,
-            academicYearId,
-            openToEditList: pending?.openToEditList === true || !academicYearId,
-          },
-        })
-      );
+    setPendingScheduleModalRequest({
+      subjectId,
+      requestedAt: Number(pending?.requestedAt || Date.now()),
     });
   }, [familyId]);
 
@@ -2260,6 +2274,8 @@ export default function SubjectsPage({
             children={safeChildren}
             visibleSubjects={filteredSubjects}
             allSubjects={subjects}
+            pendingScheduleModalRequest={pendingScheduleModalRequest}
+            onPendingScheduleModalHandled={() => setPendingScheduleModalRequest(null)}
             onDone={() => setSelectedModeFilter('view')}
             onOpenPlannerSettings={(schoolYearLabel) => {
               setPlanningPreferencesSchoolYearLabel(

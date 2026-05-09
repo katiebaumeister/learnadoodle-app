@@ -4554,7 +4554,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           if (ev.academic_year_id) return 'Yes';
           return 'No';
         } },
-        { key: 'plan', label: 'Build plan', get: (ev) => ev.academic_year_name || ev.plan_name || (ev.academic_year_id ? 'Yes' : '') || '' },
+        { key: 'plan', label: 'Schedule source', get: (ev) => ev.academic_year_name || ev.plan_name || (ev.academic_year_id ? 'Yes' : '') || '' },
         { key: 'location', label: 'Location', get: (ev) => ev.location || '' },
         { key: 'mode', label: 'Mode', get: (ev) => ev.mode || '' },
         { key: 'instructor', label: 'Instructor', get: (ev) => ev.instructor || '' },
@@ -4846,17 +4846,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev } }));
         },
       });
-      if (ev.academic_year_id) {
-        menuItems.push({
-          text: 'Edit Plan',
-          iconKey: 'calendar',
-          action: () => {
-            window.dispatchEvent(new CustomEvent('openPlanYearModal', {
-              detail: { from: 'calendar_context_menu', academicYearId: ev.academic_year_id, openAsModal: true },
-            }));
-          },
-        });
-      }
       const isSeriesGroup = isDeletableSeriesGroup(ev);
       if (isSeriesGroup) {
         menuItems.push({

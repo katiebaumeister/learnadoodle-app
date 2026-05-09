@@ -125,13 +125,6 @@ export default function PlanHealthBanner({ familyId, visible = true, initialHeal
       ? `You're scheduled for ${health.delta_days} extra days`
       : `You're scheduled for ${health.delta_hours.toFixed(0)} extra hours`;
 
-  const handleEditPlan = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      console.log('[PlanHealthBanner] Edit plan clicked with health:', health);
-      window.dispatchEvent(new CustomEvent('openPlanYearModal', { detail: { from: 'plan_health_over', academicYearId: health?.academic_year_id || null } }));
-    }
-  };
-
   return (
     <View
       style={{
@@ -167,22 +160,6 @@ export default function PlanHealthBanner({ familyId, visible = true, initialHeal
             }}
           >
             <Text style={{ fontSize: 13, fontWeight: '600', color: '#fff' }}>Fix it</Text>
-          </TouchableOpacity>
-        )}
-        {isOver && (
-          <TouchableOpacity
-            onPress={handleEditPlan}
-            style={{
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-              borderRadius: 6,
-              borderWidth: 1,
-              borderColor: border,
-              backgroundColor: '#eff6ff',
-              ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-            }}
-          >
-            <Text style={{ fontSize: 13, fontWeight: '600', color: textColor }}>Edit plan</Text>
           </TouchableOpacity>
         )}
         <TouchableOpacity

@@ -216,9 +216,9 @@ Manual refresh available via RPC: `refresh_calendar_days_cache(p_family_id, p_fr
   - Shows impact of changes without applying them
   - Useful for planning ahead
 
-#### 4. **Plan the Year**
+#### 4. **Schedule Setup**
 - **Purpose**: AI-powered curriculum scheduling for entire year
-- **UI**: AI Tools → Plan the Year
+- **UI**: Schedule setup / Planning Preferences
 - **How it works**: Uses LLM to generate year-long curriculum plan
 
 #### 5. **Catch Up**
@@ -601,7 +601,7 @@ The system supports adaptive pacing via `learning_velocity` table:
   - Rebalance Schedule
   - Pack This Week (opens `PackWeekModal`)
   - What-If Analysis
-  - Plan the Year
+  - Schedule setup
   - Catch Up
   - Summarize Progress
   - Analytics

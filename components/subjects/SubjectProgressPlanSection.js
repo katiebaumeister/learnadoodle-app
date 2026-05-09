@@ -34,8 +34,8 @@ import { colors } from '../../theme/colors';
 import { formatSubjectPlanHeading } from '../../lib/formatSubjectPlanHeading';
 
 function dispatchOpenPlanModal(detail) {
-  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent('openPlanYearModal', { detail }));
+  // Deprecated routing: keep call sites intact but disable plan modal navigation.
+  return detail;
 }
 
 function dispatchOpenEventForPlanSlot(line) {
@@ -495,7 +495,7 @@ export default function SubjectProgressPlanSection({
         skipPlanSummary: true,
       });
     } else {
-      // Last-resort fallback: never route Edit plan into Build plan.
+      // Last-resort fallback: deprecated schedule routing path (kept for compatibility).
       // Open the edit-plan picker so users can still select an existing plan.
       dispatchOpenPlanModal({
         from: 'subject_detail',
@@ -507,22 +507,12 @@ export default function SubjectProgressPlanSection({
     }
   }, [academicYearId, mergedScheduleRows, familyId, subjectId]);
 
-  /** Route subject-detail unit actions into the unified Plan My Year / Edit Plan modal. */
+  /** Route subject-detail unit actions without opening deprecated plan modal. */
   const openCurriculumStructureAction = useCallback(
-    (kind) => {
-      if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-      dispatchOpenPlanModal({
-        from: 'subject_detail',
-        subjectId,
-        academicYearId: academicYearId || null,
-        openAsModal: true,
-        openToEditList: false,
-        skipPlanSummary: !!academicYearId,
-        openDirectlyToScope: true,
-        initialUnitStructureMethod: kind,
-      });
+    () => {
+      toast.push('Plan routing is deprecated. Use Schedule and Planning Preferences instead.', 'info');
     },
-    [subjectId, academicYearId]
+    [toast]
   );
 
   const handleDeletePlan = useCallback(async () => {
@@ -594,7 +584,7 @@ export default function SubjectProgressPlanSection({
       }
       if (!eventId) {
         toast.push(
-          'No calendar event for this slot yet. Use Edit plan to adjust your schedule, or apply the plan so lessons appear on the calendar.',
+          'No calendar event for this slot yet. Use Schedule and Planning Preferences to set weekly rhythm, then apply updates.',
           'info'
         );
         return;
@@ -656,17 +646,6 @@ export default function SubjectProgressPlanSection({
           <Text style={styles.emptyStateHint}>
             Start by scheduling this subject, or just organize your lessons.
           </Text>
-          <TouchableOpacity
-            style={[styles.planHeaderRoundedBtn, styles.buildPlanBtnAlign, styles.emptyStatePrimaryBtn]}
-            onPress={openBuildPlanModal}
-            activeOpacity={0.75}
-            accessibilityRole="button"
-            accessibilityLabel="Build plan"
-            {...webCursor}
-          >
-            <Calendar size={16} color={colors.accentContrast || '#ffffff'} strokeWidth={2} />
-            <Text style={styles.emptyStatePrimaryBtnText}>Build plan</Text>
-          </TouchableOpacity>
         </View>
       ) : null}
 
@@ -676,17 +655,6 @@ export default function SubjectProgressPlanSection({
             <View style={styles.datesCardHeaderRow}>
               <Text style={styles.tableTitle}>{planSectionHeading}</Text>
               <View style={styles.planHeaderActionGroup}>
-                <TouchableOpacity
-                  style={styles.planHeaderRoundedBtn}
-                  onPress={openEditPlanModal}
-                  activeOpacity={0.75}
-                  accessibilityRole="button"
-                  accessibilityLabel="Edit plan"
-                  {...webCursor}
-                >
-                  <Pencil size={16} color="#64748b" strokeWidth={2} />
-                  <Text style={styles.planHeaderRoundedBtnText}>Edit plan</Text>
-                </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.planHeaderRoundedBtn, deletingPlan && styles.btnDisabledSoft]}
                   onPress={() => setShowDeletePlanConfirm(true)}
@@ -704,19 +672,6 @@ export default function SubjectProgressPlanSection({
           ) : (
             <View style={styles.datesCardHeaderRow}>
               <Text style={styles.tableTitle}>{upcomingEventsHeading}</Text>
-              <View style={styles.planHeaderActionGroup}>
-                <TouchableOpacity
-                  style={styles.planHeaderRoundedBtn}
-                  onPress={openBuildPlanModal}
-                  activeOpacity={0.75}
-                  accessibilityRole="button"
-                  accessibilityLabel="Build plan"
-                  {...webCursor}
-                >
-                  <Calendar size={16} color="#64748b" strokeWidth={2} />
-                  <Text style={styles.planHeaderRoundedBtnText}>Build plan</Text>
-                </TouchableOpacity>
-              </View>
             </View>
           )}
           <View style={styles.tableBody}>
@@ -879,17 +834,6 @@ export default function SubjectProgressPlanSection({
         <>
           <View style={styles.fallbackPlanIconRow}>
             <TouchableOpacity
-              style={styles.planHeaderRoundedBtn}
-              onPress={openEditPlanModal}
-              activeOpacity={0.75}
-              accessibilityRole="button"
-              accessibilityLabel="Edit plan"
-              {...webCursor}
-            >
-              <Pencil size={16} color="#64748b" strokeWidth={2} />
-              <Text style={styles.planHeaderRoundedBtnText}>Edit plan</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
               style={[styles.planHeaderRoundedBtn, deletingPlan && styles.btnDisabledSoft]}
               onPress={() => setShowDeletePlanConfirm(true)}
               disabled={deletingPlan}
@@ -904,7 +848,7 @@ export default function SubjectProgressPlanSection({
           </View>
           {hasPlan && !hasUnits ? (
             <Text style={styles.muted}>
-              No scheduled dates in range yet. Open Edit plan to add blocks or apply to calendar.
+              No scheduled dates in range yet. Use Schedule and Planning Preferences to manage weekly rhythm.
             </Text>
           ) : null}
         </>

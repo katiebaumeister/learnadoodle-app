@@ -216,17 +216,6 @@ export default function FixItSuggestionsModal({ visible, onClose, familyId, heal
             })}
           </View>
 
-          <TouchableOpacity
-            onPress={() => {
-              onClose();
-              if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('openPlanYearModal'));
-            }}
-            style={{ marginTop: FOOTER_LINK_MARGIN_BELOW }}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Text style={styles.manualLink}>Adjust manually in Build plan →</Text>
-          </TouchableOpacity>
-
           <View style={[styles.buttonRow, { marginTop: BUTTONS_MARGIN_TOP }]}>
             <TouchableOpacity onPress={onClose} style={styles.cancelBtn} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={styles.cancelText}>Cancel</Text>

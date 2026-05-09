@@ -1,29 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Sparkles, ChevronDown, Zap, Calendar, HelpCircle, Target, Link } from 'lucide-react';
+import { Sparkles, ChevronDown, Zap, Calendar, HelpCircle, Link } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
-import { checkFeatureFlags } from '../../lib/services/yearClient';
 import AddFromLinkModal from './AddFromLinkModal';
 
 export default function AIActions({ 
   onPackThisWeek,
   onRebalance4Weeks,
   onWhatIf,
-  onPlanYear,
   onWeeklyReshuffle,
   disabled = false,
   familyId,
   children = [],
   onLinkAdded,
 }) {
-  const [yearPlansEnabled, setYearPlansEnabled] = useState(false);
   const [showAddFromLinkModal, setShowAddFromLinkModal] = useState(false);
-  
-  useEffect(() => {
-    checkFeatureFlags().then(flags => {
-      setYearPlansEnabled(flags.yearPlans);
-    });
-  }, []);
   const [showMenu, setShowMenu] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef(null);
@@ -205,20 +196,6 @@ export default function AIActions({
         </View>
       </TouchableOpacity>
 
-      {yearPlansEnabled && onPlanYear && (
-        <TouchableOpacity
-          style={styles.menuItem}
-          onPress={() => handleAction(onPlanYear)}
-          activeOpacity={0.7}
-        >
-          <Target size={16} color="#374151" />
-          <View style={styles.menuItemContent}>
-            <Text style={styles.menuItemTitle}>Plan the Year</Text>
-            <Text style={styles.menuItemDesc}>Create annual plan with pacing</Text>
-          </View>
-        </TouchableOpacity>
-      )}
-
       <TouchableOpacity
         style={styles.menuItem}
         onPress={() => {
@@ -306,20 +283,6 @@ export default function AIActions({
               <Text style={styles.menuItemDesc}>Test temporary conflicts</Text>
             </View>
           </TouchableOpacity>
-
-          {yearPlansEnabled && onPlanYear && (
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => handleAction(onPlanYear)}
-              activeOpacity={0.7}
-            >
-              <Target size={16} color="#374151" />
-              <View style={styles.menuItemContent}>
-                <Text style={styles.menuItemTitle}>Plan the Year</Text>
-                <Text style={styles.menuItemDesc}>Create annual plan with pacing</Text>
-              </View>
-            </TouchableOpacity>
-          )}
 
           <TouchableOpacity
             style={styles.menuItem}

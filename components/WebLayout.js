@@ -356,7 +356,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [planYearOpenToEditList, setPlanYearOpenToEditList] = useState(false);
   const [planYearOpenDirectlyToScope, setPlanYearOpenDirectlyToScope] = useState(false);
   const [planYearFromSubjectDetail, setPlanYearFromSubjectDetail] = useState(false);
-  /** Subject "Edit plan": open logistics/editing UI without the intermediate plan-summary screen. */
+  /** Subject "Manage schedule": open logistics/editing UI without the intermediate plan-summary screen. */
   const [planYearSkipInitialPlanSummary, setPlanYearSkipInitialPlanSummary] = useState(false);
   const [planYearHighlightFromHealth, setPlanYearHighlightFromHealth] = useState(false);
   const [planYearInitialSubjectId, setPlanYearInitialSubjectId] = useState(null);
@@ -2448,8 +2448,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               from === 'generate_curriculum' ||
               from === 'magic_extract'
           );
-          // Preserve explicit "Edit plan list" intent from subject detail / toolbar.
-          // Clearing this here incorrectly routes the modal into Build plan flow.
+          // Preserve explicit saved-schedule-list intent from subject detail / toolbar.
+          // Clearing this here incorrectly routes the modal into schedule setup flow.
           setPlanYearOpenToEditList(openToEditList);
         }
         setPlanYearOpenDirectlyToScope(!!detail.openDirectlyToScope && !openToEditList);
@@ -2966,7 +2966,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Determine if we're on a calendar screen
   const isCalendarScreen = activeTab === 'calendar' || activeTab === 'planner';
 
-  /** Build / Edit plan replaces the main pane in URL state but must not unmount WebContent (month grid stays warm). */
+  /** Schedule setup / preferences replace the main pane in URL state but must not unmount WebContent (month grid stays warm). */
   const isPlanYearInline =
     isCalendarScreen && (currentView === 'plan-year' || currentView === 'edit-year');
   const plannerViewForWebContent = isPlanYearInline
@@ -4319,45 +4319,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     setShowRebalanceModal(true);
                   }}
                   onBuildPlan={() => {
-                    if (sessionRestricted && !familyUserControls.allowed('plans')) {
-                      Alert.alert('Not available', 'Your family admin has disabled adding or editing plans.');
-                      return;
-                    }
-                    setActiveRightTool('build-plan');
-                    planYearReturnViewRef.current = currentView;
-                    setPlanYearInitialAcademicYearId(null);
-                    setPlanYearOpenForNewPlan(true);
-                    setPlanYearOpenToEditList(false);
-                    setPlanYearOpenDirectlyToScope(true);
-                    setCurrentView('plan-year');
-                    if (Platform.OS === 'web') {
-                      const url = new URL(window.location);
-                      url.searchParams.set('view', 'plan-year');
-                      window.history.pushState({}, '', url);
-                      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'plan-year' }));
-                    }
+                    handleTabChange('settings', 'planner-settings');
                   }}
                   onEditPlan={() => {
-                    if (sessionRestricted && !familyUserControls.allowed('plans')) {
-                      Alert.alert('Not available', 'Your family admin has disabled adding or editing plans.');
-                      return;
-                    }
-                    setActiveRightTool('edit-plan');
-                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      // From a specific plan's summary or logistics: jump back to the "Select a plan" list first.
-                      if (currentView === 'edit-year') {
-                        window.dispatchEvent(new CustomEvent('planYearReturnToEditPlanList'));
-                      }
-                      window.dispatchEvent(new CustomEvent('openPlanYearModal', { detail: { from: 'toolbar', academicYearId: null, openToEditList: true } }));
-                    } else {
-                      planYearReturnViewRef.current = currentView;
-                      setPlanYearInitialAcademicYearId(null);
-                      setPlanYearOpenForNewPlan(true);
-                      setPlanYearOpenToEditList(true);
-                      setPlanYearOpenDirectlyToScope(false);
-                      handleTabChange('planner');
-                      setCurrentView('edit-year');
-                    }
+                    handleTabChange('settings', 'planner-settings');
                   }}
                   onAttendance={() => {
                     if (currentView === 'plan-year' || currentView === 'edit-year') resetInlinePlanYearOpenState();

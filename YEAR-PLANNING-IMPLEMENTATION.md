@@ -115,7 +115,7 @@ This document tracks the implementation of Phase 1 - Year-Round Intelligence Cor
 
 The wizard should be accessible from:
 
-1. **Planner Right Toolbar** → "AI Tools" → "Plan the Year" (primary)
+1. **Planner Right Toolbar** → schedule setup / planning preferences (primary)
    - Location: `components/planner/PlannerWeek.js` or `components/planner/AIActions.js`
    - Add menu item to AIActions dropdown
 

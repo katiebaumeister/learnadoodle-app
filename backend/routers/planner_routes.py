@@ -1764,7 +1764,7 @@ async def plan_week_endpoint(
             horizon_weeks=1
         )
         
-        # Build planner context JSON for LLM
+        # Assemble planner context JSON for LLM
         planner_context = {
             "week_start": body.week_start,
             "timezone": "America/New_York",  # TODO: Get from family settings

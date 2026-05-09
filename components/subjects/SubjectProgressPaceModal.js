@@ -88,7 +88,7 @@ export default function SubjectProgressPaceModal({
 
           {!hasPlanOrUnits ? (
             <Text style={styles.body}>
-              Add a schedule (Build plan) or lesson structure (Add units in Progress) so we can line up lessons and measure
+              Add schedule cadence or lesson structure (Add units in Progress) so we can line up lessons and measure
               progress. You can start with either path and connect them later.
             </Text>
           ) : sorted.length === 0 ? (
