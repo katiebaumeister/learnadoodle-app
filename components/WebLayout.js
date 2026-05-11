@@ -451,6 +451,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   allowedRef.current = familyUserControls.allowed;
   const sessionRestricted = !!(session?.role_flags?.isChild || session?.role_flags?.isTutor);
   const denyFamilyEventEdit = sessionRestricted && !familyUserControls.allowed('events');
+  const childDoodleBotDisabled =
+    session?.role_flags?.isChild === true &&
+    familyUserControls.effectivePermissions?.canUseDoodleBot === false;
 
   /** Home / planner data hydrate in WebContent in the background — shell never blocks on tab data. */
   /** null until first fetch — matches EventDetails query (deduped, limit 24) for Add to plan? chips */
@@ -4425,7 +4428,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       )}
 
       {/* Ask AI — floating button (all main tabs including Home) */}
-      {user && (
+      {user && !childDoodleBotDisabled && (
         <View style={styles.fabAskAIWrap}>
           <TouchableOpacity
             onPress={() => {
@@ -4866,7 +4869,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setInviteChildModalPrefillId(null);
         }}
         onOpenUserControls={() => {
-          handleTabChange('settings', 'user-controls');
+          handleTabChange('settings', 'members');
         }}
         familyId={familyId}
         familyChildren={children}

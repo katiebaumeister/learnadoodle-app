@@ -250,7 +250,7 @@ export default function TutorsAccessPanel({ user }) {
                 ) : (
                   <>
                     <Plus size={14} color="#ffffff" />
-                    <Text style={styles.inviteButtonText}>Send invite</Text>
+                    <Text style={styles.inviteButtonText}>Send Invite</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -340,7 +340,7 @@ export default function TutorsAccessPanel({ user }) {
                 ) : (
                   <>
                     <Plus size={14} color="#ffffff" />
-                    <Text style={styles.inviteButtonText}>Send invite</Text>
+                    <Text style={styles.inviteButtonText}>Send Invite</Text>
                   </>
                 )}
               </TouchableOpacity>

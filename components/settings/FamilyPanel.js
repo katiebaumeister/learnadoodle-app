@@ -21,6 +21,7 @@ import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import StableImage from '../ui/StableImage';
 import EditChildModal from '../EditChildModal';
+import EditTutorModal from '../EditTutorModal';
 import AddChildModal from '../AddChildModal';
 import InviteChildModal from '../InviteChildModal';
 import AddSubjectModal from '../AddSubjectModal';
@@ -29,7 +30,6 @@ import TaskCreateModal from '../TaskCreateModal';
 import ParsePlainTextModal from '../ParsePlainTextModal';
 import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
-import UserControlsSettingsContent from './UserControlsSettingsContent';
 import GoogleDriveImportModal from './GoogleDriveImportModal';
 import { SettingsLayout, SettingsTypography } from './settingsDesignTokens';
 import SubscriptionScreen from '../../screens/profile/SubscriptionScreen';
@@ -39,6 +39,7 @@ import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import SubjectEventsModal from '../subjects/SubjectEventsModal';
+import { DEFAULT_TUTOR_PROFILE, normalizeTutorProfile } from '../../lib/permissions/userPermissionProfiles';
 
 /** Strip trailing " (you)" so edit fields never show that suffix (view-only cue). */
 function stripYouLabelForEdit(raw) {
@@ -93,6 +94,12 @@ const ONBOARDING_GOAL_OPTIONS = [
   { id: 'NONE', label: 'Just scheduling' },
 ];
 
+const TUTOR_PERMISSION_OPTIONS = [
+  { id: 'viewer', label: 'Viewer Tutor' },
+  { id: 'teaching', label: 'Teaching Tutor' },
+  { id: 'manager', label: 'Lead Tutor' },
+];
+
 function getOnboardingGoalLabel(goalId) {
   return ONBOARDING_GOAL_OPTIONS.find((opt) => opt.id === goalId)?.label || '—';
 }
@@ -113,8 +120,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [error, setError] = useState(null);
   const [editingChild, setEditingChild] = useState(null);
   const [showEditChildModal, setShowEditChildModal] = useState(false);
+  const [editingTutor, setEditingTutor] = useState(null);
+  const [showEditTutorModal, setShowEditTutorModal] = useState(false);
   const [familyId, setFamilyId] = useState(propFamilyId);
   const [hoveredChildId, setHoveredChildId] = useState(null);
+  const [hoveredTutorId, setHoveredTutorId] = useState(null);
   const [familyNameRowHovered, setFamilyNameRowHovered] = useState(false);
   const [logoutHovered, setLogoutHovered] = useState(false);
   
@@ -147,6 +157,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [savingOnboardingGoal, setSavingOnboardingGoal] = useState(false);
   const goalDropdownRef = useRef(null);
   const lastProfileSaveRef = useRef(0);
+  const lastNotificationToastAtRef = useRef(0);
+  const notificationTogglePendingRef = useRef(false);
   const preferencesLoadedRef = useRef(false);
   const skipPreferencesSaveRef = useRef(true);
   
@@ -185,7 +197,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [hoveredSubjectId, setHoveredSubjectId] = useState(null);
   
   // Active section for sidebar navigation
-  const [activeSection, setActiveSection] = useState(propInitialSection || 'profile');
+  const normalizeSettingsSection = useCallback((section) => {
+    const normalized = String(section || '').trim().toLowerCase();
+    if (normalized === 'user-controls') return 'members';
+    return normalized || 'profile';
+  }, []);
+  const [activeSection, setActiveSection] = useState(normalizeSettingsSection(propInitialSection));
   /** Monthly AI units (internal); drives Subscription 80% warning. */
   const [aiUsedUnitsThisMonth, setAiUsedUnitsThisMonth] = useState(null);
   /** Mirrors Subscription screen current plan for sidebar label (stub until billing API). */
@@ -193,10 +210,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   // Sync activeSection when initialSection prop changes (e.g. navigated from planner toolbar)
   useEffect(() => {
-    if (propInitialSection && propInitialSection !== activeSection) {
-      setActiveSection(propInitialSection);
+    if (!propInitialSection || !String(propInitialSection).trim()) return;
+    const nextSection = normalizeSettingsSection(propInitialSection);
+    if (nextSection && nextSection !== activeSection) {
+      setActiveSection(nextSection);
     }
-  }, [propInitialSection]);
+  }, [activeSection, normalizeSettingsSection, propInitialSection]);
 
   useEffect(() => {
     if (activeSection !== 'subscription' || !familyId) return;
@@ -298,6 +317,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Tutor invite state
   const [showTutorInviteModal, setShowTutorInviteModal] = useState(false);
   const [tutorInviteEmail, setTutorInviteEmail] = useState('');
+  const [tutorInviteChildIds, setTutorInviteChildIds] = useState([]);
+  const [tutorInvitePermissionProfile, setTutorInvitePermissionProfile] = useState(DEFAULT_TUTOR_PROFILE);
   const [invitingTutor, setInvitingTutor] = useState(false);
   
   const [updatingTutorId, setUpdatingTutorId] = useState(null);
@@ -362,7 +383,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   // Full family payload (including members[]) — server sees linked children; props/RLS often do not
   useEffect(() => {
-    if ((activeSection !== 'members' && activeSection !== 'user-controls') || !user) return;
+    if (activeSection !== 'members' || !user) return;
     const fid = family?.id || familyId || propFamilyId;
     if (!fid) return;
     let cancelled = false;
@@ -733,7 +754,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         { onConflict: 'user_id,family_id' }
       )
       .then(({ error }) => {
-        if (error) console.warn('Failed to save notification preferences:', error.message);
+        if (error) {
+          console.warn('Failed to save notification preferences:', error.message);
+          notificationTogglePendingRef.current = false;
+          return;
+        }
+        // Only show confirmation when a user just toggled a notification option.
+        if (notificationTogglePendingRef.current) {
+          const now = Date.now();
+          if (now - lastNotificationToastAtRef.current > 1200) {
+            toast.push('Notification settings saved.', 'success');
+            lastNotificationToastAtRef.current = now;
+          }
+        }
+        notificationTogglePendingRef.current = false;
       });
   }, [
     isChildMode,
@@ -747,6 +781,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     notifAnnouncements,
     user?.id,
     familyId,
+    toast,
   ]);
 
   // Sync preloaded subjects when prop changes
@@ -1135,6 +1170,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setError('Please enter an email for the tutor.');
       return;
     }
+    if (!Array.isArray(tutorInviteChildIds) || tutorInviteChildIds.length === 0) {
+      setError('Please select at least one child to share.');
+      return;
+    }
 
     setInvitingTutor(true);
     setError(null);
@@ -1142,10 +1181,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       const { data, error: err } = await inviteTutor({
         email: tutorInviteEmail.trim(),
         role: 'tutor',
-        child_ids: children.map(c => c.id),
+        child_ids: tutorInviteChildIds,
+        tutor_permission_profile: normalizeTutorProfile(tutorInvitePermissionProfile),
       });
       if (err) throw err;
       setTutorInviteEmail('');
+      setTutorInviteChildIds(children.map((c) => String(c.id || '').trim()).filter(Boolean));
+      setTutorInvitePermissionProfile(DEFAULT_TUTOR_PROFILE);
       toast.push('Tutor invite sent successfully!', 'success');
       if (data?.invite_url) {
         showInviteSuccessModal(data.invite_url, 'tutor');
@@ -1159,6 +1201,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setInvitingTutor(false);
     }
   };
+
+  useEffect(() => {
+    if (!showTutorInviteModal) return;
+    const inviteChildren = childrenFromDb != null ? childrenFromDb : family?.children || [];
+    const nextIds = inviteChildren.map((c) => String(c?.id || '').trim()).filter(Boolean);
+    setTutorInviteChildIds((prev) => {
+      const prevKey = (Array.isArray(prev) ? prev : []).join('|');
+      const nextKey = nextIds.join('|');
+      return prevKey === nextKey ? prev : nextIds;
+    });
+    setTutorInvitePermissionProfile(DEFAULT_TUTOR_PROFILE);
+  }, [showTutorInviteModal, childrenFromDb, family?.children]);
 
 
   const handleOpenChildInviteModal = (prefillChildId = null) => {
@@ -1372,6 +1426,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const tutors = (family?.members || []).filter(
     (m) => (m.member_role || m.role) === 'tutor'
   );
+  const pendingTutorInvites = Array.isArray(family?.pending_tutor_invites)
+    ? family.pending_tutor_invites
+        .map((invite) => ({
+          id: String(invite?.id || '').trim(),
+          name: invite?.name ? String(invite.name).trim() : null,
+          email: invite?.email ? String(invite.email).trim() : null,
+          sent_at: invite?.sent_at || null,
+          child_scope: Array.isArray(invite?.child_scope)
+            ? invite.child_scope.map((id) => String(id || '').trim()).filter(Boolean)
+            : [],
+        }))
+        .filter((invite) => invite.id)
+    : [];
   const children = (childrenFromDb != null ? childrenFromDb : family?.children || []);
 
   const openIdCardModal = (role, candidates) => {
@@ -2161,23 +2228,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             />
           </View>
         );
-      case 'user-controls':
-        return (
-          <View style={[styles.mainContentInner, { flex: 1, minHeight: 0 }]}>
-            <UserControlsSettingsContent
-              familyId={familyId || family?.id}
-              familyMembers={family?.members || []}
-              children={children}
-              childInviteSummaries={childInviteSummaries}
-              onInviteChildPress={() => handleOpenChildInviteModal(null)}
-              onInviteTutorPress={() => {
-                setError(null);
-                setTutorInviteEmail('');
-                setShowTutorInviteModal(true);
-              }}
-            />
-          </View>
-        );
       case 'connections':
         return (
           <View style={styles.mainContentInner}>
@@ -2787,6 +2837,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </TouchableOpacity>
           </View>
         );
+        const markNotificationToggle = (setter) => (nextValue) => {
+          notificationTogglePendingRef.current = true;
+          setter(nextValue);
+        };
         
         return (
           <View style={styles.mainContentInner}>
@@ -2794,38 +2848,35 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             
             {/* General Section */}
             <View style={styles.notifSection}>
-              <Text style={styles.subsectionTitle}>General</Text>
+              <View style={styles.notifSectionHeader}>
+                <Text style={[styles.subsectionTitle, styles.notifSectionHeaderTitle]}>General</Text>
+                <Text style={styles.notifSectionHeaderLabel}>Email</Text>
+              </View>
               <View style={styles.subsectionDivider} />
-
-              <NotificationCheckbox
-                value={notificationsEnabled}
-                onValueChange={setNotificationsEnabled}
-                label="Email"
-              />
               
               <NotificationCheckbox
                 value={notifPlanningInsights}
-                onValueChange={setNotifPlanningInsights}
+                onValueChange={markNotificationToggle(setNotifPlanningInsights)}
                 label="Planning insights"
               />
               <NotificationCheckbox
                 value={notifMotivation}
-                onValueChange={setNotifMotivation}
+                onValueChange={markNotificationToggle(setNotifMotivation)}
                 label="Motivation & engagement"
               />
               <NotificationCheckbox
                 value={notifParentGuidance}
-                onValueChange={setNotifParentGuidance}
+                onValueChange={markNotificationToggle(setNotifParentGuidance)}
                 label="Parent guidance"
               />
               <NotificationCheckbox
                 value={notifProductUpdates}
-                onValueChange={setNotifProductUpdates}
+                onValueChange={markNotificationToggle(setNotifProductUpdates)}
                 label="Product updates"
               />
               <NotificationCheckbox
                 value={notifAnnouncements}
-                onValueChange={setNotifAnnouncements}
+                onValueChange={markNotificationToggle(setNotifAnnouncements)}
                 label="Announcements & offers"
               />
             </View>
@@ -3150,13 +3201,117 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
             <View style={styles.subsectionDivider} />
             
-            {tutors.length === 0 ? (
+            {tutors.length === 0 && pendingTutorInvites.length === 0 ? (
               <Text style={styles.membersEmptyText}>No tutors yet</Text>
-            ) : tutors.map((tutor) => (
-              <View key={tutor.id} style={styles.memberRow}>
-                <Text style={styles.memberRowName}>{tutor.name || tutor.email || 'Tutor'}</Text>
-              </View>
-            ))}
+            ) : (
+              <>
+                {tutors.map((tutor) => (
+                  <View
+                    key={tutor.id}
+                    style={styles.memberRow}
+                    {...(Platform.OS === 'web' && {
+                      onMouseEnter: () => setHoveredTutorId(String(tutor.id)),
+                      onMouseLeave: () => setHoveredTutorId(null),
+                    })}
+                  >
+                    <View style={styles.memberRowChildTextCol}>
+                      <Text style={styles.memberRowName}>{tutor.name || tutor.email || 'Tutor'}</Text>
+                    </View>
+                    {!isChildMode ? (
+                      <View style={styles.memberRowActions}>
+                        <TouchableOpacity
+                          style={[
+                            styles.memberRowActionButton,
+                            hoveredTutorId === String(tutor.id) && styles.memberRowActionButtonHovered,
+                          ]}
+                          onPress={() => {
+                            setEditingTutor({
+                              id: String(tutor.id),
+                              name: tutor.name || tutor.email || 'Tutor',
+                              display_name:
+                                tutor.display_name ||
+                                (tutor.name && tutor.email && tutor.name !== tutor.email ? tutor.name : null),
+                              email: tutor.email || null,
+                              child_scope: Array.isArray(tutor.child_scope) ? tutor.child_scope : [],
+                              tutor_permission_profile: tutor.tutor_permission_profile || null,
+                              invite_status: 'accepted',
+                            });
+                            setShowEditTutorModal(true);
+                            setError(null);
+                          }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Pencil size={16} color="#374151" />
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
+                ))}
+                {!isChildMode
+                  ? pendingTutorInvites.map((invite) => {
+                      const lastSentRel = invite?.sent_at ? formatInviteLastSent(invite.sent_at) : null;
+                      return (
+                        <View key={`pending-tutor-${invite.id}`} style={styles.memberRow}>
+                          <View style={styles.memberRowChildTextCol}>
+                            <View style={styles.memberRowChildNameRow}>
+                              <Text style={styles.memberRowName} numberOfLines={1}>
+                                {invite.name || invite.email || 'Tutor invite'}
+                              </Text>
+                              <View style={[styles.childStatusPill, styles.childStatusPillAmber]}>
+                                <Text style={[styles.childStatusPillText, styles.childStatusPillTextAmber]}>
+                                  Pending invite
+                                </Text>
+                              </View>
+                            </View>
+                            {lastSentRel ? (
+                              <Text style={styles.memberRowChildPendingMeta} numberOfLines={1}>
+                                Last sent · {lastSentRel}
+                              </Text>
+                            ) : null}
+                            <Text style={styles.memberRowChildPendingWait}>Waiting for acceptance</Text>
+                            <TouchableOpacity
+                              style={styles.memberRowResend}
+                              onPress={() => {
+                                setTutorInviteEmail(invite.email || '');
+                                setShowTutorInviteModal(true);
+                                setError(null);
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <RotateCw size={12} color="#6366F1" />
+                              <Text style={styles.memberRowResendText}>Resend</Text>
+                            </TouchableOpacity>
+                          </View>
+                          <View style={styles.memberRowActions}>
+                            <TouchableOpacity
+                              style={styles.memberRowActionButton}
+                              onPress={() => {
+                                setEditingTutor({
+                                  id: String(invite.id),
+                                  name: invite.name || invite.email || 'Tutor invite',
+                                  display_name:
+                                    invite.name && invite.email && invite.name !== invite.email
+                                      ? invite.name
+                                      : null,
+                                  email: invite.email || '',
+                                  child_scope: Array.isArray(invite.child_scope) ? invite.child_scope : [],
+                                  invite_status: 'pending',
+                                  sent_at: invite.sent_at || null,
+                                });
+                                setShowEditTutorModal(true);
+                                setError(null);
+                              }}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Pencil size={16} color="#374151" />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      );
+                    })
+                  : null}
+              </>
+            )}
           </View>
         );
       
@@ -3361,18 +3516,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             id: 'about',
             title: 'About Learnadoodle',
             questions: [
-              { id: 'about-1', q: 'What is Learnadoodle?', a: 'Learnadoodle is a learning planner designed specifically for family learning - including homeschooling, afterschool enrichment, and flexible education planning. It helps you build, track, and adapt schedules, subjects, lessons, and records in one place.' },
-              { id: 'about-2', q: 'Who is Learnadoodle for?', a: 'Parents, caregivers, and learners of all ages - from early learners to teens and even college students - can use Learnadoodle to organize learning, manage subjects, track progress, and build lifelong learning habits.' },
-              { id: 'about-3', q: 'Can kids use Learnadoodle too?', a: 'Yes. Younger students can check off tasks and view their daily goals, while older learners can take more control of planning, pacing, and progress tracking.' },
+              { id: 'about-1', q: 'What is Learnadoodle?', a: 'Learnadoodle is a family learning operations platform for planning, scheduling, materials, progress tracking, and records. It is built to support homeschooling, afterschool, pods, tutors, and flexible family learning models in one workspace.' },
+              { id: 'about-2', q: 'Who is Learnadoodle for?', a: 'Primary use is parent-led family learning teams, including caregivers, tutors, and learners. It works for early learners through teens, and can support older independent students with parent-defined permission levels.' },
+              { id: 'about-3', q: 'Can kids use Learnadoodle too?', a: 'Yes. Children can use learner accounts with parent-selected permission levels, from guided support to independent planning. Access can be tuned per learner in Family Members via Edit Child.' },
             ]
           },
           {
             id: 'getting-started',
             title: 'Getting Started',
             questions: [
-              { id: 'gs-1', q: 'How do I begin with Learnadoodle?', a: 'Create an account, add your family members (students), set up subjects and materials, and schedule lessons, assignments, and enrichment events. It\'s fine to start simple - you can add detail over time.' },
-              { id: 'gs-2', q: 'Do I need a curriculum before using Learnadoodle?', a: 'No. You can start without a set curriculum and build your plan as you go. Learnadoodle can help organize free resources or combine programs you already use.' },
-              { id: 'gs-3', q: 'How do I manage multiple children with different schedules?', a: 'Learnadoodle lets you assign subjects and materials individually or share them across children, and you can plan events separately for each child\'s pacing.' },
+              { id: 'gs-1', q: 'How do I begin with Learnadoodle?', a: 'Start with Family Members (add children), then create Subjects, then add events in Planner. Next, refine recurring cadence and metrics in Subjects > Schedule, and set family-wide defaults in Planning Preferences.' },
+              { id: 'gs-2', q: 'Do I need a curriculum before using Learnadoodle?', a: 'No. You can begin with lightweight planning: subjects + a few events + basic cadence. Add materials, structure, and detail over time as your family routine becomes clearer.' },
+              { id: 'gs-3', q: 'How do I manage multiple children with different schedules?', a: 'Assign subjects and events per learner, then use Subjects > Schedule to tune cadence/metrics per child. Shared events can include multiple learners while still preserving learner-specific attendance and progress records.' },
+              { id: 'gs-4', q: 'Where do I go in the app for common tasks?', a: 'Home = quick status and daily flow, Planner = event scheduling/editing, Subjects = curriculum/cadence/metrics, Library = materials, Family Members = invites/access/permissions, Planning Preferences = family-wide scheduling rules.' },
             ]
           },
           {
@@ -3381,29 +3537,40 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             questions: PLANNER_FAQ,
           },
           {
+            id: 'user-controls',
+            title: 'User Controls & Permissions',
+            questions: [
+              { id: 'uc-1', q: 'What are User Controls?', a: 'User Controls are permission levels for child and tutor accounts that define what each person can see and change. They are managed through Family Members and applied per account, not globally by tab.' },
+              { id: 'uc-2', q: 'Where do I change a child or tutor permission level?', a: 'Go to Family Members, open Edit Child or Edit Tutor, then set Permission level in the Account section. You can update this anytime as learner independence or tutor responsibilities change.' },
+              { id: 'uc-3', q: 'What does each child permission level do?', a: 'Child levels move from Guided to Standard to Independent, increasing learner self-management. Higher levels allow more planning/tool autonomy, while parent-only areas remain protected.' },
+              { id: 'uc-4', q: 'What does each tutor permission level do?', a: 'Tutor levels move from Viewer to Teaching to Lead Tutor, controlling how much assigned learner planning/coursework they can manage. Family-wide account, billing, and admin settings remain parent-controlled.' },
+              { id: 'uc-5', q: 'Can pending tutor invites have a name and permission level?', a: 'Yes. During tutor invite, you can choose which children to share, set permission level, and provide tutor name before sending. After acceptance, edit these settings in Edit Tutor as needed.' },
+            ],
+          },
+          {
             id: 'subjects',
             title: 'Subjects & Materials',
             questions: [
-              { id: 'sub-1', q: 'What is a subject?', a: 'A subject is a topic area - e.g., Math, History, Art - that organizes related lessons, materials, assignments, and events.' },
-              { id: 'sub-2', q: 'Can materials be shared across subjects or children?', a: 'Yes. Materials like PDFs, lesson plans, or books can be uploaded once and reused wherever needed.' },
-              { id: 'sub-3', q: 'What types of materials can I upload?', a: 'Syllabi, lesson plans, assignments, resources, assessments, books, photos, and other learning documents can all live in your library.' },
+              { id: 'sub-1', q: 'What is a subject?', a: 'A subject is the core container for curriculum and learner work (for example Math, Biology, Writing). It connects events, materials, and schedule/metrics so planning and progress stay aligned.' },
+              { id: 'sub-2', q: 'Can materials be shared across subjects or children?', a: 'Yes. Materials can be reused across subjects and learners when appropriate. You can keep one source asset and attach it where needed instead of duplicating files.' },
+              { id: 'sub-3', q: 'What types of materials can I upload?', a: 'You can upload practical learning assets such as lesson plans, readings, assignments, syllabi, assessments, and reference resources. Use Library as your source-of-truth, then attach materials into subject workflows.' },
             ]
           },
           {
             id: 'records',
             title: 'Records, Progress & Attendance',
             questions: [
-              { id: 'rec-1', q: 'Do I need to keep attendance or records?', a: 'Many states require attendance or progress documentation for homeschooling. Learnadoodle automatically timestamps lessons and logs completed work, making records easy to maintain.' },
-              { id: 'rec-2', q: 'How do I track progress?', a: 'Progress can be marked by lesson completion, grades, checklists, or narrative notes. Upload work samples to build a portfolio over time.' },
-              { id: 'rec-3', q: 'Can I export reports?', a: 'Yes - Learnadoodle helps generate summaries showing attendance, subject coverage, activities, and accomplishments.' },
+              { id: 'rec-1', q: 'Do I need to keep attendance or records?', a: 'If your state, school, or program requires documentation, yes. Learnadoodle keeps learner-level attendance and event history so you can maintain consistent records without extra manual tracking.' },
+              { id: 'rec-2', q: 'How do I track progress?', a: 'Use event completion + attendance in Planner, then review cadence/progress signals in Subjects > Schedule. Add materials and notes to preserve context so progress is meaningful, not just binary completion.' },
+              { id: 'rec-3', q: 'Can I export reports?', a: 'Yes. Learnadoodle supports summary-style reporting for attendance, subject coverage, activities, and learner progress. This helps with family review, tutor alignment, and compliance-style documentation.' },
             ]
           },
           {
             id: 'account',
             title: 'Account & Data',
             questions: [
-              { id: 'acc-1', q: 'Who owns my data?', a: 'You do. All your family\'s plans, materials, and records are yours and can be exported or deleted at any time.' },
-              { id: 'acc-2', q: 'Is my data private and secure?', a: 'Yes - Learnadoodle protects your data and does not share it outside your account.' },
+              { id: 'acc-1', q: 'Who owns my data?', a: 'You do. Your family\'s plans, materials, and records remain under your account ownership. You can manage, export, or remove account data from account management flows.' },
+              { id: 'acc-2', q: 'Is my data private and secure?', a: 'Yes. Learnadoodle is built around private family workspaces with role-based access controls. Only authorized members in your family context can access shared learning data.' },
             ]
           },
         ];
@@ -4481,22 +4648,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'members' && styles.sidebarButtonActive]} onPress={() => setActiveSection('members')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'members' && styles.sidebarButtonTextActive]}>Family Members</Text>
             </TouchableOpacity>
-            {!isChildMode && !isTutorViewer ? (
-              <TouchableOpacity
-                style={[styles.sidebarButton, activeSection === 'user-controls' && styles.sidebarButtonActive]}
-                onPress={() => setActiveSection('user-controls')}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text
-                  style={[
-                    styles.sidebarButtonText,
-                    activeSection === 'user-controls' && styles.sidebarButtonTextActive,
-                  ]}
-                >
-                  User Controls
-                </Text>
-              </TouchableOpacity>
-            ) : null}
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'courses' && styles.sidebarButtonActive]} onPress={() => setActiveSection('courses')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'courses' && styles.sidebarButtonTextActive]}>Courses</Text>
             </TouchableOpacity>
@@ -4837,6 +4988,24 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           loadFamily();
         }}
       />
+      <EditTutorModal
+        visible={showEditTutorModal}
+        onClose={() => {
+          setShowEditTutorModal(false);
+          setEditingTutor(null);
+        }}
+        tutor={editingTutor}
+        children={children}
+        onTutorUpdated={async () => {
+          try {
+            const { data, error: err } = await getFamilyMembers();
+            if (!err && data) {
+              setFamily(data);
+              if (onFamilyUpdate) onFamilyUpdate(data);
+            }
+          } catch (_e) {}
+        }}
+      />
 
       <AddChildModal
         visible={showAddChildModal}
@@ -5040,7 +5209,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           setInviteModalPrefillChildId(null);
         }}
         onOpenUserControls={() => {
-          setActiveSection('user-controls');
+          setActiveSection('members');
         }}
         familyId={family?.id || familyId}
         familyChildren={children}
@@ -5204,6 +5373,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         onRequestClose={() => {
           setShowTutorInviteModal(false);
           setTutorInviteEmail('');
+          setTutorInviteChildIds([]);
+          setTutorInvitePermissionProfile(DEFAULT_TUTOR_PROFILE);
           setError(null);
         }}
       >
@@ -5213,16 +5384,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           onPress={() => {
             setShowTutorInviteModal(false);
             setTutorInviteEmail('');
+            setTutorInviteChildIds([]);
+            setTutorInvitePermissionProfile(DEFAULT_TUTOR_PROFILE);
             setError(null);
           }}
         >
           <TouchableOpacity style={styles.childInviteModal} activeOpacity={1} onPress={() => {}}>
             <View style={styles.childInviteModalHeader}>
-              <Text style={styles.childInviteModalTitle}>Invite Tutor</Text>
+              <Text style={styles.childInviteModalTitle}>Invite a tutor</Text>
               <TouchableOpacity
                 onPress={() => {
                   setShowTutorInviteModal(false);
                   setTutorInviteEmail('');
+                  setTutorInviteChildIds([]);
+                  setTutorInvitePermissionProfile(DEFAULT_TUTOR_PROFILE);
                   setError(null);
                 }}
                 style={styles.inviteUrlModalClose}
@@ -5233,11 +5408,70 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
 
             <Text style={styles.inviteUrlModalDescription}>
-              Enter the email address of the tutor you'd like to invite:
+              Choose which children this tutor can support:
+            </Text>
+            <View style={styles.tutorInviteChildList}>
+              {children.map((child) => {
+                const childId = String(child?.id || '').trim();
+                if (!childId) return null;
+                const checked = tutorInviteChildIds.includes(childId);
+                return (
+                  <TouchableOpacity
+                    key={String(childId)}
+                    style={styles.tutorInviteChildRow}
+                    onPress={() => {
+                      setTutorInviteChildIds((prev) =>
+                        prev.includes(childId) ? prev.filter((id) => id !== childId) : [...prev, childId]
+                      );
+                    }}
+                    activeOpacity={0.85}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={[styles.tutorInviteCheck, checked && styles.tutorInviteCheckSelected]}>
+                      {checked ? <Check size={12} color="#ffffff" /> : null}
+                    </View>
+                    <Text style={styles.tutorInviteChildRowText}>
+                      {child.name || child.first_name || 'Child'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={styles.inviteUrlModalDescription}>Permission level for this tutor:</Text>
+            <View style={styles.tutorInvitePermissionPills}>
+              {TUTOR_PERMISSION_OPTIONS.map((option) => {
+                const selected = option.id === tutorInvitePermissionProfile;
+                return (
+                  <TouchableOpacity
+                    key={option.id}
+                    style={[
+                      styles.tutorInvitePermissionPill,
+                      selected && styles.tutorInvitePermissionPillSelected,
+                      invitingTutor && styles.tutorInvitePermissionPillDisabled,
+                    ]}
+                    onPress={() => setTutorInvitePermissionProfile(option.id)}
+                    disabled={invitingTutor}
+                    activeOpacity={0.85}
+                    {...(Platform.OS === 'web' && { cursor: invitingTutor ? 'not-allowed' : 'pointer' })}
+                  >
+                    <Text style={[styles.tutorInvitePermissionPillText, selected && styles.tutorInvitePermissionPillTextSelected]}>
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Text style={styles.tutorInviteHelperText}>
+              You can update access and permission level anytime in Edit Tutor.
+            </Text>
+
+            <Text style={styles.inviteUrlModalDescription}>
+              Tutor email address:
             </Text>
             <TextInput
               style={styles.childInviteEmailInput}
-              placeholder="email@example.com"
+              placeholder="name@example.com"
               placeholderTextColor="#9ca3af"
               value={tutorInviteEmail}
               onChangeText={setTutorInviteEmail}
@@ -5261,10 +5495,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 <Text style={styles.inviteUrlDoneButtonText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.inviteUrlCopyButton, (invitingTutor || !tutorInviteEmail.trim()) && styles.inviteUrlCopyButtonDisabled]}
+                style={[
+                  styles.inviteUrlCopyButton,
+                  (invitingTutor || !tutorInviteEmail.trim() || tutorInviteChildIds.length === 0) &&
+                    styles.inviteUrlCopyButtonDisabled,
+                ]}
                 onPress={handleInviteTutorFromModal}
-                disabled={invitingTutor || !tutorInviteEmail.trim()}
-                {...(Platform.OS === 'web' && { cursor: (invitingTutor || !tutorInviteEmail.trim()) ? 'not-allowed' : 'pointer' })}
+                disabled={invitingTutor || !tutorInviteEmail.trim() || tutorInviteChildIds.length === 0}
+                {...(Platform.OS === 'web' && {
+                  cursor:
+                    invitingTutor || !tutorInviteEmail.trim() || tutorInviteChildIds.length === 0
+                      ? 'not-allowed'
+                      : 'pointer',
+                })}
               >
                 {invitingTutor ? (
                   <ActivityIndicator size="small" color="#ffffff" />
@@ -6774,10 +7017,10 @@ function createStyles(tokens) {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      borderBottomWidth: 1,
-      borderBottomColor: '#e5e7eb',
-      paddingBottom: 12,
-      marginBottom: 8,
+      marginBottom: 10,
+    },
+    notifSectionHeaderTitle: {
+      marginBottom: 0,
     },
     notifSectionTitle: {
       fontSize: 18,
@@ -6789,11 +7032,11 @@ function createStyles(tokens) {
       }),
     },
     notifSectionHeaderLabel: {
-      fontSize: 18,
-      fontWeight: '500',
+      fontSize: 14,
+      fontWeight: '400',
       color: '#6b7280',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     notifRow: {
@@ -8858,6 +9101,88 @@ function createStyles(tokens) {
       fontSize: 15,
       color: '#111827',
       marginTop: 8,
+      marginBottom: 12,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    tutorInviteChildList: {
+      marginTop: -4,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      borderRadius: 10,
+      backgroundColor: '#ffffff',
+      paddingVertical: 4,
+    },
+    tutorInviteChildRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+    },
+    tutorInviteCheck: {
+      width: 16,
+      height: 16,
+      borderRadius: 4,
+      borderWidth: 1,
+      borderColor: '#cbd5e1',
+      backgroundColor: '#ffffff',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
+    tutorInviteCheckSelected: {
+      backgroundColor: '#85C4F2',
+      borderColor: '#85C4F2',
+    },
+    tutorInviteChildRowText: {
+      fontSize: 14,
+      color: '#1f2937',
+      fontWeight: '500',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    tutorInvitePermissionPills: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: -4,
+      marginBottom: 12,
+    },
+    tutorInvitePermissionPill: {
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: '#d1d5db',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      backgroundColor: '#ffffff',
+      ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+    },
+    tutorInvitePermissionPillSelected: {
+      borderColor: '#9ECFFB',
+      backgroundColor: 'rgba(158, 207, 251, 0.22)',
+    },
+    tutorInvitePermissionPillText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: '#374151',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    tutorInvitePermissionPillTextSelected: {
+      color: '#1e5f8a',
+    },
+    tutorInvitePermissionPillDisabled: {
+      opacity: 0.55,
+    },
+    tutorInviteHelperText: {
+      fontSize: 12,
+      color: '#6b7280',
+      marginTop: -4,
       marginBottom: 12,
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

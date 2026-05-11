@@ -4329,6 +4329,27 @@ export default function SubjectsPlanBuilder({
     );
   }, [baseSubjects]);
 
+  const openAddEventModalForSubjectRow = useCallback((row) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const subjectId = String(row?.id || '').trim();
+    if (!subjectId) return;
+    const childIds = Array.isArray(row?.attachedStudentIds)
+      ? row.attachedStudentIds.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+    const firstChildId = childIds[0] || null;
+    window.dispatchEvent(
+      new CustomEvent('openTaskModal', {
+        detail: {
+          subjectId,
+          eventType: 'Lesson',
+          date: new Date(),
+          childIds,
+          childId: firstChildId,
+        },
+      })
+    );
+  }, []);
+
   const openSubjectEventsModal = useCallback((row, termSectionTitle) => {
     setSubjectEventsModalData({
       subjectName: row?.name || 'Subject',
@@ -4966,6 +4987,15 @@ export default function SubjectsPlanBuilder({
                                     </TouchableOpacity>
                                     {row?.isClassDayAggregate ? null : (
                                       <>
+                                        <TouchableOpacity
+                                          style={styles.subjectRowActionLink}
+                                          onPress={() => openAddEventModalForSubjectRow(row)}
+                                          accessibilityLabel={`Add event for ${row.name || 'subject'}`}
+                                          activeOpacity={0.8}
+                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                        >
+                                          <Text style={styles.subjectRowActionLinkText}>Add event</Text>
+                                        </TouchableOpacity>
                                         <TouchableOpacity
                                           style={styles.subjectRowActionLink}
                                           onPress={() => openSubjectEditModal(row.id)}

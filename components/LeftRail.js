@@ -4,6 +4,7 @@ import { Plus, Home, CalendarDays, Compass, FileText, BookOpen, Brain, UserCircl
 import Dropdown, { DropdownItem } from './ui/Dropdown';
 import StableImage from './ui/StableImage';
 import { safeImageUri } from '../lib/safeImageUri';
+import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
 
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
 
@@ -78,6 +79,8 @@ export default function LeftRail({
   const [expandedChildren, setExpandedChildren] = useState(new Set());
   const [hoveredItem, setHoveredItem] = useState(null);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const familyUserControls = useOptionalFamilyUserControls();
+  const effectivePermissions = familyUserControls.effectivePermissions || {};
   const moreButtonRef = useRef(null);
   const moreMenuTimeoutRef = useRef(null);
   
@@ -157,7 +160,13 @@ export default function LeftRail({
 
       // Same sidebar structure for parent and child (exact same UI); content is child-scoped in WebContent
       if (userRole === 'child') {
-        return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
+        return allItems.filter((item) => {
+          if (item.key === 'records' || item.key === 'explore' || item.key === 'profile') return false;
+          if (item.key === 'planner' && effectivePermissions.canViewPlanner === false) return false;
+          if (item.key === 'subjects' && effectivePermissions.canViewSubjects === false) return false;
+          if (item.key === 'materials' && effectivePermissions.canViewLibrary === false) return false;
+          return true;
+        });
       } else if (userRole === 'tutor') {
         // Lean workspace: intervention + guidance — not family admin or full curriculum control.
         return [
@@ -171,7 +180,7 @@ export default function LeftRail({
         return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
       }
     },
-    [userRole]
+    [effectivePermissions.canViewLibrary, effectivePermissions.canViewPlanner, effectivePermissions.canViewSubjects, userRole]
   );
 
   // Helper to validate if avatar_url is a valid URL (not just a UUID)

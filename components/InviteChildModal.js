@@ -24,6 +24,13 @@ import {
   mergeServerChildInviteSummaries,
 } from '../lib/services/childInviteStatus';
 import { LEARNADOODLE_LIGHT_BLUE } from '../theme/comingSoonModalTheme';
+import { DEFAULT_CHILD_PROFILE, normalizeChildProfile } from '../lib/permissions/userPermissionProfiles';
+
+const CHILD_PERMISSION_OPTIONS = [
+  { id: 'guided', label: 'Guided' },
+  { id: 'standard', label: 'Standard' },
+  { id: 'independent', label: 'Independent' },
+];
 
 function isValidEmail(value) {
   const t = (value || '').trim();
@@ -63,6 +70,7 @@ export default function InviteChildModal({
   const [inviting, setInviting] = useState(false);
   const [successInfo, setSuccessInfo] = useState(null);
   const [emailFocused, setEmailFocused] = useState(false);
+  const [childPermissionProfile, setChildPermissionProfile] = useState(DEFAULT_CHILD_PROFILE);
 
   const list = useMemo(
     () => (familyChildren || []).filter((c) => c && c.id != null && !c.archived),
@@ -105,6 +113,7 @@ export default function InviteChildModal({
     } else {
       setSelectedChildId(null);
     }
+    setChildPermissionProfile(DEFAULT_CHILD_PROFILE);
   }, [visible, childKey, list.length]);
 
   useEffect(() => {
@@ -151,9 +160,12 @@ export default function InviteChildModal({
 
   const selectChild = useCallback((childId) => {
     setSelectedChildId(childId);
+    const matched = mergedList.find((child) => String(child?.id) === String(childId));
+    const preset = matched?.permission_profile || DEFAULT_CHILD_PROFILE;
+    setChildPermissionProfile(normalizeChildProfile(preset));
     setEmailDirty(false);
     setError(null);
-  }, []);
+  }, [mergedList]);
 
   const emailOk = isValidEmail(email);
   const canSend =
@@ -197,6 +209,7 @@ export default function InviteChildModal({
         email: email.trim(),
         role: 'child',
         child_ids: [selectedChildId],
+        child_permission_profile: normalizeChildProfile(childPermissionProfile),
       });
       if (err) throw err;
       const name = childDisplayName(selectedChild);
@@ -251,7 +264,7 @@ export default function InviteChildModal({
           </View>
 
           {list.length === 0 ? (
-            <Text style={styles.descMuted}>Add a child profile first, then you can send an invite.</Text>
+            <Text style={styles.descMuted}>Add a child profile first, then send their invite when you're ready.</Text>
           ) : (
             <>
               {successInfo ? (
@@ -272,14 +285,14 @@ export default function InviteChildModal({
                       {successInfo.name}
                     </Text>
                   </View>
-                  <Text style={styles.successLead}>They’ll get an email to join.</Text>
+                  <Text style={styles.successLead}>They’ll receive an email with a simple link to join.</Text>
                   {typeof onOpenUserControls === 'function' ? (
                     <TouchableOpacity
                       style={styles.successInlineLinkButton}
                       onPress={handleOpenUserControls}
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Text style={styles.successInlineLinkText}>Go to User Controls</Text>
+                      <Text style={styles.successInlineLinkText}>Manage invites in Family Members</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -329,23 +342,47 @@ export default function InviteChildModal({
                   <View style={styles.alreadyConnectedBox}>
                     <View style={styles.alreadyConnectedTitleRow}>
                       <AlertTriangle size={18} color="#b45309" />
-                      <Text style={styles.alreadyConnectedTitle}>This child already has an account</Text>
+                      <Text style={styles.alreadyConnectedTitle}>This child is already connected</Text>
                     </View>
                     <Text style={styles.alreadyConnectedBody}>
-                      Go to Family → Family Members, then tap Edit (pencil) on this child to disconnect
-                      the account or invite a different email.
+                      To change email access, go to Family → Family Members and open Edit for this child.
                     </Text>
                   </View>
                 ) : (
                   <View style={styles.emailSection}>
-                    <Text style={styles.emailLabel}>Email</Text>
+                    <Text style={styles.emailLabel}>Permission level for this child</Text>
+                    <View style={styles.permissionPills}>
+                      {CHILD_PERMISSION_OPTIONS.map((option) => {
+                        const selected = option.id === childPermissionProfile;
+                        return (
+                          <TouchableOpacity
+                            key={option.id}
+                            style={[
+                              styles.permissionPill,
+                              selected && styles.permissionPillSelected,
+                              inviting && styles.permissionPillDisabled,
+                            ]}
+                            onPress={() => setChildPermissionProfile(option.id)}
+                            disabled={inviting}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: inviting ? 'not-allowed' : 'pointer' })}
+                          >
+                            <Text style={[styles.permissionPillText, selected && styles.permissionPillTextSelected]}>
+                              {option.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <Text style={styles.inviteNote}>You can change this anytime later in Edit Child.</Text>
+                    <Text style={styles.emailLabel}>Child email</Text>
                     <TextInput
                       ref={emailInputRef}
                       style={[
                         styles.inputPrimary,
                         emailFocused && styles.inputPrimaryFocused,
                       ]}
-                      placeholder="Enter email address"
+                      placeholder="name@example.com"
                       placeholderTextColor="#9ca3af"
                       value={email}
                       onChangeText={(t) => {
@@ -361,7 +398,7 @@ export default function InviteChildModal({
                       editable={!inviting}
                     />
                     {isPending ? (
-                      <Text style={styles.inviteNote}>Invite already sent — you can edit the email if needed.</Text>
+                      <Text style={styles.inviteNote}>Invite already sent. You can update the email and resend anytime.</Text>
                     ) : null}
                   </View>
                 )
@@ -636,6 +673,38 @@ const styles = StyleSheet.create({
   },
   emailSection: {
     marginBottom: 8,
+  },
+  permissionPills: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  permissionPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#ffffff',
+  },
+  permissionPillSelected: {
+    borderColor: LEARNADOODLE_LIGHT_BLUE,
+    backgroundColor: 'rgba(158, 207, 251, 0.22)',
+  },
+  permissionPillText: {
+    fontSize: 12,
+    color: '#374151',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  permissionPillTextSelected: {
+    color: '#1e5f8a',
+  },
+  permissionPillDisabled: {
+    opacity: 0.55,
   },
   emailLabel: {
     fontSize: 13,

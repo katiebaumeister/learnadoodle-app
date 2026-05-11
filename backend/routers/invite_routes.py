@@ -25,6 +25,7 @@ from logger import log_event
 from supabase_client import get_admin_client
 
 router = APIRouter(prefix="/api/invites", tags=["invites"])
+TUTOR_PERMISSION_PROFILES = {"viewer", "teaching", "manager"}
 
 
 # ============================================================
@@ -96,6 +97,11 @@ def _validate_child_scope(supabase, family_id: str, child_scope: Optional[List[s
         )
     
     return valid_child_ids
+
+
+def _normalize_tutor_permission_profile(value: Optional[str]) -> Optional[str]:
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in TUTOR_PERMISSION_PROFILES else None
 
 
 # ============================================================
@@ -236,6 +242,20 @@ async def accept_invite(
                 success=False,
                 error=rpc_result.get("error", "Failed to accept invite")
             )
+
+        try:
+            invite_res = supabase.table("invites").select(
+                "role, family_id, tutor_permission_profile"
+            ).eq("token", body.token).maybe_single().execute()
+            invite_row = invite_res.data or {}
+            if (invite_row.get("role") or "").strip().lower() == "tutor":
+                tutor_permission_profile = _normalize_tutor_permission_profile(invite_row.get("tutor_permission_profile"))
+                if tutor_permission_profile and rpc_result.get("family_id"):
+                    supabase.table("family_members").update(
+                        {"tutor_permission_profile": tutor_permission_profile}
+                    ).eq("family_id", rpc_result.get("family_id")).eq("user_id", user["id"]).eq("member_role", "tutor").execute()
+        except Exception as profile_apply_error:
+            log_event("invite.accept.tutor_permission_apply_error", user_id=user["id"], error=str(profile_apply_error))
         
         log_event("invite.accept.success", user_id=user["id"], family_id=rpc_result.get("family_id"), role=rpc_result.get("role"))
         
@@ -366,6 +386,15 @@ async def accept_invite_with_password(
         result = rpc_result.data[0] if isinstance(rpc_result.data, list) and rpc_result.data else rpc_result.data
         if not result.get("success"):
             return AcceptInviteWithPasswordOut(success=False, error=result.get("error", "Failed to accept invite"))
+
+        try:
+            tutor_permission_profile = _normalize_tutor_permission_profile(invite.get("tutor_permission_profile"))
+            if invite.get("role") == "tutor" and tutor_permission_profile and family_id:
+                supabase.table("family_members").update(
+                    {"tutor_permission_profile": tutor_permission_profile}
+                ).eq("family_id", family_id).eq("user_id", user_id).eq("member_role", "tutor").execute()
+        except Exception as profile_apply_error:
+            log_event("invite.accept_with_password.tutor_permission_apply_error", user_id=user_id, error=str(profile_apply_error))
 
         log_event("invite.accept_with_password.success", user_id=user_id, role=invite.get("role"))
         return AcceptInviteWithPasswordOut(success=True)
