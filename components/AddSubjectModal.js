@@ -45,10 +45,10 @@ function gradeSortValue(normalizedGrade) {
   return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
 }
 
-/** Matches child / grade chips and primary actions (light blue). */
+/** Matches child / grade chips and primary actions (green). */
 const PLANNING_CHIP_SELECTED = {
-  border: '#6BB3E8',
-  background: 'rgba(133, 196, 242, 0.2)',
+  border: '#45A29E',
+  background: 'rgba(69, 162, 158, 0.18)',
 };
 
 const MATERIAL_SLOT = { SYLLABUS: 'syllabus', LESSON_PLAN: 'lesson_plan' };
@@ -1249,8 +1249,8 @@ export default function AddSubjectModal({
             mode={subject ? 'edit' : 'add'}
             title={subject ? subjectName || 'Edit subject' : 'New subject'}
             eyebrow="SUBJECT"
-            accent="#5A92D6"
-            accentSoft="#EEF7FF"
+            accent="#45A29E"
+            accentSoft="#ECFDF5"
             HeroIcon={BookOpen}
             onClose={handleCloseWithDraftCleanup}
             contentContainerStyle={styles.scrollContent}
@@ -1261,7 +1261,7 @@ export default function AddSubjectModal({
                 primaryLabel={isSubmitting ? 'Saving...' : (subject ? 'Save changes' : 'Save Subject')}
                 onCancel={handleCloseWithDraftCleanup}
                 onPrimary={handleSubmit}
-                accent="#5A92D6"
+                accent="#45A29E"
                 disabled={!canSubmit || isSubmitting}
                 loading={isSubmitting}
               />
@@ -1643,7 +1643,7 @@ export default function AddSubjectModal({
                     subtitle="Units, pacing, and lesson structure"
                     expanded={showMaterialsAccordion}
                     onPress={() => setShowMaterialsAccordion(!showMaterialsAccordion)}
-                    accent="#5A92D6"
+                    accent="#45A29E"
                     allowOverflow
                   >
                       <View style={styles.accordionContent}>
@@ -1673,7 +1673,7 @@ export default function AddSubjectModal({
               subtitle="Cadence, defaults, and planner behavior"
               expanded={showPlanningAccordion}
               onPress={() => setShowPlanningAccordion(!showPlanningAccordion)}
-              accent="#5A92D6"
+              accent="#45A29E"
             >
                 <View style={styles.accordionContent}>
                   <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
@@ -1861,7 +1861,7 @@ export default function AddSubjectModal({
               subtitle="Location, mode, and calendar sync"
               expanded={showLogisticsAccordion}
               onPress={() => setShowLogisticsAccordion(!showLogisticsAccordion)}
-              accent="#5A92D6"
+              accent="#45A29E"
             >
               <View style={styles.accordionContent}>
                 <View style={styles.logisticsRow}>
@@ -1922,7 +1922,7 @@ export default function AddSubjectModal({
                             activeOpacity={0.8}
                           >
                             <View style={styles.calendarChipContent}>
-                              {isSelected ? <CheckCircle size={12} color="#6BB3E8" /> : null}
+                              {isSelected ? <CheckCircle size={12} color="#45A29E" /> : null}
                               <Text style={[styles.logisticsChipText, isSelected && styles.logisticsChipTextActive]}>
                                 {provider.label}
                               </Text>
@@ -1943,7 +1943,7 @@ export default function AddSubjectModal({
               subtitle="Anything extra for this subject"
               expanded={showAdditionalNotesAccordion}
               onPress={() => setShowAdditionalNotesAccordion(!showAdditionalNotesAccordion)}
-              accent="#5A92D6"
+              accent="#45A29E"
             >
                 <View style={styles.accordionContent}>
                   <View style={styles.formGroup}>
@@ -1973,7 +1973,7 @@ export default function AddSubjectModal({
                 }
                 expanded={showEventMgmtAccordion}
                 onPress={() => setShowEventMgmtAccordion(!showEventMgmtAccordion)}
-                accent="#5A92D6"
+                accent="#45A29E"
               >
                 <View style={styles.accordionContent}>
                   <View style={[styles.eventManagementSection, { marginTop: 0, paddingTop: 0, borderTopWidth: 0 }]}>
@@ -2346,8 +2346,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   logisticsChipActive: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#45A29E',
+    backgroundColor: 'rgba(69, 162, 158, 0.18)',
   },
   logisticsChipText: {
     fontSize: 13,
@@ -2355,7 +2355,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   logisticsChipTextActive: {
-    color: '#6BB3E8',
+    color: '#45A29E',
     fontWeight: '700',
   },
   calendarChipContent: {
@@ -2390,7 +2390,7 @@ const styles = StyleSheet.create({
   addUnitsLink: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#6BB3E8',
+    color: '#45A29E',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       textDecorationLine: 'underline',
@@ -2475,7 +2475,7 @@ const styles = StyleSheet.create({
     }),
   },
   subjectNameInputFocused: {
-    borderColor: '#6BB3E8',
+    borderColor: '#45A29E',
     borderWidth: 1.5,
   },
   input: {
@@ -2550,14 +2550,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   dropdownOptionSelected: {
-    backgroundColor: 'rgba(79, 70, 229, 0.08)',
+    backgroundColor: 'rgba(69, 162, 158, 0.12)',
   },
   dropdownOptionText: {
     fontSize: 14,
     color: '#374151',
   },
   dropdownOptionTextSelected: {
-    color: colors.accent || '#4F46E5',
+    color: colors.accent || '#45A29E',
     fontWeight: '600',
   },
   textArea: {
@@ -2591,8 +2591,8 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
   },
   childChipSelected: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#45A29E',
+    backgroundColor: 'rgba(69, 162, 158, 0.18)',
   },
   childChipText: {
     fontSize: 12,
@@ -2603,7 +2603,7 @@ const styles = StyleSheet.create({
     }),
   },
   childChipTextSelected: {
-    color: '#6BB3E8',
+    color: '#45A29E',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2622,8 +2622,8 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   gradeChipSelected: {
-    borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(133,196,242,0.2)',
+    borderColor: '#45A29E',
+    backgroundColor: 'rgba(69, 162, 158, 0.18)',
   },
   gradeChipText: {
     fontSize: 12,
@@ -2634,7 +2634,7 @@ const styles = StyleSheet.create({
     }),
   },
   gradeChipTextSelected: {
-    color: '#6BB3E8',
+    color: '#45A29E',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -2665,14 +2665,14 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   saveButton: {
-    backgroundColor: '#85C4F2',
+    backgroundColor: '#45A29E',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',
     alignSelf: 'flex-end',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+      boxShadow: '0 2px 6px rgba(69,162,158,0.28)',
       cursor: 'pointer',
     }),
   },
@@ -2768,7 +2768,7 @@ const styles = StyleSheet.create({
   },
   addMaterialText: {
     fontSize: 13,
-    color: '#1e40af',
+    color: '#0f766e',
     fontWeight: '600',
   },
   eventManagementSection: {
@@ -2870,7 +2870,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 12,
     fontWeight: '600',
-    color: '#6BB3E8',
+    color: '#45A29E',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

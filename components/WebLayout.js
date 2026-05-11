@@ -2528,6 +2528,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('openScheduleRules', handler);
   }, []);
 
+  // Open Family > Planning Preferences from cross-app actions (e.g. Add Event advanced recurrence options)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = () => {
+      handleTabChange('settings', 'planner-settings');
+    };
+    window.addEventListener('openPlanningPreferences', handler);
+    return () => window.removeEventListener('openPlanningPreferences', handler);
+  }, [handleTabChange]);
+
   // Listen for openExportPlannerModal event (e.g. from Subject detail Attendance section)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;

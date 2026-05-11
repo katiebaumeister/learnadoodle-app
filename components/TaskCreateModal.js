@@ -24,6 +24,7 @@ import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
 import { ATTENDANCE_MODES, getAttendanceMode } from '../lib/attendanceMode';
 import { trackEvent } from '../lib/analytics';
+import { getFamilyExclusions, getFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
 
 const BG = '#ffffff';
 const FG = '#111827';
@@ -44,6 +45,47 @@ const parseSubjectChildIds = (raw) =>
     .map((id) => id.trim())
     .filter(Boolean);
 
+const resolveSchoolYearLabelForDate = (date = new Date()) => {
+  const normalizedDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const month = normalizedDate.getMonth() + 1;
+  const startYear = month >= 8 ? normalizedDate.getFullYear() : normalizedDate.getFullYear() - 1;
+  return `${startYear}/${String(startYear + 1).slice(-2)}`;
+};
+
+const toYmd = (value) => {
+  if (!value) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  return String(value).slice(0, 10) || null;
+};
+
+const parseYmdDate = (value) => {
+  const ymd = toYmd(value);
+  if (!ymd) return null;
+  const parsed = new Date(`${ymd}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const isDateWithin = (candidate, start, end) => {
+  if (!candidate || !start || !end) return false;
+  const c = candidate.getTime();
+  return c >= start.getTime() && c <= end.getTime();
+};
+
+const toAmPmTime = (sqlTime) => {
+  const raw = String(sqlTime || '').trim();
+  const m = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return '';
+  let hours = Number(m[1]);
+  const minutes = m[2];
+  if (!Number.isFinite(hours)) return '';
+  const period = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  return `${hours}:${minutes} ${period}`;
+};
+
 const EVENT_TYPES = [
   'Lesson',
   'Class Day',
@@ -52,6 +94,15 @@ const EVENT_TYPES = [
   'Assignment',
   'Activity',
   'Appointment',
+];
+const WEEKDAY_OPTIONS = [
+  { value: 0, label: 'Sun', rrule: 'SU' },
+  { value: 1, label: 'Mon', rrule: 'MO' },
+  { value: 2, label: 'Tue', rrule: 'TU' },
+  { value: 3, label: 'Wed', rrule: 'WE' },
+  { value: 4, label: 'Thu', rrule: 'TH' },
+  { value: 5, label: 'Fri', rrule: 'FR' },
+  { value: 6, label: 'Sat', rrule: 'SA' },
 ];
 
 const normalizeEventTypeForPersistence = (type) => {
@@ -160,6 +211,7 @@ export default function TaskCreateModal({
   defaultMaterialId = null, // Default material ID to pre-attach
 }) {
   const [title, setTitle] = useState('');
+  const [isClassDayTitleAutofilled, setIsClassDayTitleAutofilled] = useState(false);
   const [dueDate, setDueDate] = useState(defaultDate ?? new Date());
   const [eventEndDate, setEventEndDate] = useState(null); // End date for multi-day events (Trip, Holiday, Project, Other)
   const [showEventEndDatePicker, setShowEventEndDatePicker] = useState(false);
@@ -262,6 +314,30 @@ export default function TaskCreateModal({
   const [showStandardsModal, setShowStandardsModal] = useState(false);
 
   const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(false);
+
+  const applyEventTypeSelection = useCallback((nextType) => {
+    setEventType(nextType);
+    setShowRequiresSubmissionHome(
+      nextType === 'Class Day' ? false : defaultRequiresSubmissionHomeForEventType(nextType)
+    );
+    if (nextType === 'Class Day') {
+      setSubjectId(null);
+      setUnit('');
+      setGrade('');
+      setPercentOfTotalGrade('');
+      if (!title.trim()) {
+        setTitle('Class Day');
+        setIsClassDayTitleAutofilled(true);
+      } else {
+        setIsClassDayTitleAutofilled(false);
+      }
+      return;
+    }
+    if (isClassDayTitleAutofilled && title.trim() === 'Class Day') {
+      setTitle('');
+    }
+    setIsClassDayTitleAutofilled(false);
+  }, [isClassDayTitleAutofilled, title]);
   
   // Handle standards selection from modal
   const handleStandardsSelect = useCallback((selectedStandards) => {
@@ -602,14 +678,21 @@ export default function TaskCreateModal({
   // Recurring event state
   const [isRecurring, setIsRecurring] = useState(false);
   const [showRecurringSection, setShowRecurringSection] = useState(false);
-  const [recurrenceType, setRecurrenceType] = useState('daily'); // 'daily', 'weekly', 'monthly'
-  const [recurrenceInterval, setRecurrenceInterval] = useState(null); // Every N days/weeks/months
-  const [recurrenceIntervalText, setRecurrenceIntervalText] = useState(''); // Local text state for input
+  const [recurrenceType, setRecurrenceType] = useState('weekly'); // 'weekly' or 'monthly'
   const [recurrenceEndType, setRecurrenceEndType] = useState('never'); // 'never', 'after', 'on'
   const [recurrenceEndAfter, setRecurrenceEndAfter] = useState(null); // Number of occurrences
   const [recurrenceEndAfterText, setRecurrenceEndAfterText] = useState(''); // Local text state for input
   const [recurrenceEndDate, setRecurrenceEndDate] = useState(null); // End date
-  const [recurrenceExcludeWeekends, setRecurrenceExcludeWeekends] = useState(false); // For daily: only weekdays
+  const [recurrenceWeekdays, setRecurrenceWeekdays] = useState([]);
+  const [recurrenceInterval, setRecurrenceInterval] = useState(1);
+  const [recurrenceIntervalText, setRecurrenceIntervalText] = useState('1');
+  const [showAdvancedRecurrence, setShowAdvancedRecurrence] = useState(false);
+  const [respectSavedDaysOff, setRespectSavedDaysOff] = useState(true);
+  const [isRecurrenceWeekdayAutofilled, setIsRecurrenceWeekdayAutofilled] = useState(true);
+  const [plannerDefaults, setPlannerDefaults] = useState(null);
+  const [plannerDaysOffSet, setPlannerDaysOffSet] = useState(new Set());
+  const [classDayDefaultsApplied, setClassDayDefaultsApplied] = useState(false);
+  const [plannerDefaultsRefreshKey, setPlannerDefaultsRefreshKey] = useState(0);
   
   const toast = useToast();
   const session = useSession();
@@ -905,6 +988,60 @@ export default function TaskCreateModal({
   }, [familyId, visible]);
 
   useEffect(() => {
+    if (!visible || !familyId) return;
+    let cancelled = false;
+    const loadPlannerDefaults = async () => {
+      try {
+        const schoolYearLabel = resolveSchoolYearLabelForDate(dueDate instanceof Date ? dueDate : new Date());
+        const [settingsRes, exclusionsRes] = await Promise.all([
+          getFamilyPlannerSettings(familyId, schoolYearLabel),
+          getFamilyExclusions(familyId, 'family_default', schoolYearLabel),
+        ]);
+        if (cancelled) return;
+        if (settingsRes?.error) {
+          console.warn('[TaskCreateModal] Failed to load planner settings:', settingsRes.error);
+          return;
+        }
+        setPlannerDefaults(settingsRes?.data || null);
+        const exclusions = Array.isArray(exclusionsRes?.data) ? exclusionsRes.data : [];
+        const dateSet = new Set();
+        exclusions.forEach((item) => {
+          const type = String(item?.exclusion_type || '');
+          const startYmd = toYmd(item?.start_date);
+          const endYmd = toYmd(item?.end_date);
+          if (!startYmd || (type !== 'holiday' && type !== 'break')) return;
+          const start = parseYmdDate(startYmd);
+          const end = parseYmdDate(endYmd || startYmd);
+          if (!start || !end) return;
+          const cursor = new Date(start);
+          while (cursor <= end) {
+            dateSet.add(toYmd(cursor));
+            cursor.setDate(cursor.getDate() + 1);
+          }
+        });
+        setPlannerDaysOffSet(dateSet);
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('[TaskCreateModal] Failed to load planning preferences defaults:', err);
+        }
+      }
+    };
+    loadPlannerDefaults();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, familyId, dueDate, plannerDefaultsRefreshKey]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !visible) return;
+    const handleRefresh = () => {
+      setPlannerDefaultsRefreshKey((prev) => prev + 1);
+    };
+    window.addEventListener('refreshPlanDefaults', handleRefresh);
+    return () => window.removeEventListener('refreshPlanDefaults', handleRefresh);
+  }, [visible]);
+
+  useEffect(() => {
     if (visible && !wasVisibleRef.current) {
       lastOpenLoadKeyRef.current = '';
       lastMaterialsLoadKeyRef.current = '';
@@ -924,10 +1061,8 @@ export default function TaskCreateModal({
       setEndTime('');
       // Reset new fields
       const initialEventType = defaultEventType === 'Schedule Block' ? 'Scheduled Class Day' : (defaultEventType || 'Lesson');
-      setEventType(initialEventType);
-      setShowRequiresSubmissionHome(
-        defaultRequiresSubmissionHomeForEventType(initialEventType === 'Scheduled Class Day' ? 'Lesson' : initialEventType)
-      );
+      setIsClassDayTitleAutofilled(false);
+      applyEventTypeSelection(initialEventType);
       const initialMaterialId = defaultMaterialId ? String(defaultMaterialId) : null;
       setSelectedMaterialId(initialMaterialId);
       setAttachedMaterialIds(initialMaterialId ? [initialMaterialId] : []);
@@ -952,13 +1087,18 @@ export default function TaskCreateModal({
       // Reset recurring fields
       setIsRecurring(false);
       setShowRecurringSection(false);
-      setRecurrenceType('daily');
-      setRecurrenceInterval(null);
-      setRecurrenceIntervalText('');
+      setRecurrenceType('weekly');
       setRecurrenceEndType('never');
       setRecurrenceEndAfter(null);
       setRecurrenceEndAfterText('');
       setRecurrenceEndDate(null);
+      setRecurrenceWeekdays([new Date(defaultDate ?? new Date()).getDay()]);
+      setRecurrenceInterval(1);
+      setRecurrenceIntervalText('1');
+      setShowAdvancedRecurrence(false);
+      setRespectSavedDaysOff(true);
+      setIsRecurrenceWeekdayAutofilled(true);
+      setClassDayDefaultsApplied(false);
       // Reset conflict detection state
       setConflictWarning(null);
       setShouldAutoAdjust(false);
@@ -969,7 +1109,71 @@ export default function TaskCreateModal({
       lastMaterialsLoadKeyRef.current = '';
     }
     wasVisibleRef.current = visible;
-  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId]);
+  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId, applyEventTypeSelection]);
+
+  // Keep weekly "On" default aligned with selected date until user manually edits weekday chips.
+  useEffect(() => {
+    if (!isRecurring || placement !== 'calendar' || recurrenceType !== 'weekly') return;
+    if (!isRecurrenceWeekdayAutofilled) return;
+    if (!(dueDate instanceof Date) || Number.isNaN(dueDate.getTime())) return;
+    setRecurrenceWeekdays([dueDate.getDay()]);
+  }, [dueDate, isRecurring, placement, recurrenceType, isRecurrenceWeekdayAutofilled]);
+
+  const resolvedClassDayTermEnd = useMemo(() => {
+    if (!plannerDefaults || !(dueDate instanceof Date) || Number.isNaN(dueDate.getTime())) return null;
+    const fallStart = parseYmdDate(plannerDefaults.default_fall_term_start_date);
+    const fallEnd = parseYmdDate(plannerDefaults.default_fall_term_end_date);
+    const springStart = parseYmdDate(plannerDefaults.default_spring_term_start_date);
+    const springEnd = parseYmdDate(plannerDefaults.default_spring_term_end_date);
+    const yearEnd = parseYmdDate(plannerDefaults.default_year_end_date);
+    if (isDateWithin(dueDate, fallStart, fallEnd)) return fallEnd;
+    if (isDateWithin(dueDate, springStart, springEnd)) return springEnd;
+    return yearEnd;
+  }, [plannerDefaults, dueDate]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (eventType !== 'Class Day') {
+      if (classDayDefaultsApplied) setClassDayDefaultsApplied(false);
+      return;
+    }
+    if (classDayDefaultsApplied || !plannerDefaults) return;
+    const allowedWeekdays = Array.isArray(plannerDefaults.allowed_weekdays)
+      ? plannerDefaults.allowed_weekdays
+          .map((v) => Number(v))
+          .filter((v) => Number.isInteger(v) && v >= 0 && v <= 6)
+      : [];
+    if (allowedWeekdays.length > 0) {
+      const sorted = Array.from(new Set(allowedWeekdays)).sort((a, b) => a - b);
+      setRecurrenceWeekdays(sorted);
+      setIsRecurrenceWeekdayAutofilled(false);
+    } else if (dueDate instanceof Date && !Number.isNaN(dueDate.getTime())) {
+      setRecurrenceWeekdays([dueDate.getDay()]);
+      setIsRecurrenceWeekdayAutofilled(true);
+    }
+    const defaultStart = toAmPmTime(plannerDefaults.default_day_start_time);
+    const defaultEnd = toAmPmTime(plannerDefaults.default_day_end_time);
+    if (defaultStart) setStartTime(defaultStart);
+    if (defaultEnd) setEndTime(defaultEnd);
+    setIsRecurring(true);
+    setShowRecurringSection(true);
+    setRecurrenceType('weekly');
+    setRecurrenceInterval(1);
+    setRecurrenceIntervalText('1');
+    if (resolvedClassDayTermEnd) {
+      setRecurrenceEndType('on');
+      setRecurrenceEndDate(new Date(resolvedClassDayTermEnd));
+    }
+    setRespectSavedDaysOff(true);
+    setClassDayDefaultsApplied(true);
+  }, [
+    visible,
+    eventType,
+    plannerDefaults,
+    dueDate,
+    resolvedClassDayTermEnd,
+    classDayDefaultsApplied,
+  ]);
 
   const fetchSubjects = async () => {
     if (!familyId) return;
@@ -1555,6 +1759,18 @@ export default function TaskCreateModal({
     }
 
     if (isRecurring && placement === 'calendar') {
+      if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
+        errors.recurrenceWeekdays = 'Select at least one weekday';
+      }
+      const intervalFromState = Number(recurrenceInterval);
+      const intervalFromText = recurrenceIntervalText ? parseInt(recurrenceIntervalText, 10) : NaN;
+      const interval =
+        Number.isFinite(intervalFromState) && intervalFromState >= 1
+          ? intervalFromState
+          : intervalFromText;
+      if (!Number.isFinite(interval) || interval < 1) {
+        errors.recurrenceInterval = 'Enter an interval (1 or more)';
+      }
       if (recurrenceEndType === 'after') {
         const fromNum = recurrenceEndAfter != null ? Number(recurrenceEndAfter) : NaN;
         const fromText = recurrenceEndAfterText ? parseInt(recurrenceEndAfterText, 10) : NaN;
@@ -1731,15 +1947,26 @@ export default function TaskCreateModal({
         // Build recurrence rule if recurring
         let recurrenceRule = null;
         if (isRecurring && placement === 'calendar') {
-          // Use interval of 1 if not specified
-          const interval = recurrenceInterval || 1;
-          
+          const parsedInterval = recurrenceInterval != null
+            ? Number(recurrenceInterval)
+            : (recurrenceIntervalText ? parseInt(recurrenceIntervalText, 10) : NaN);
+          const safeInterval = Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 1;
           const rule = {
             frequency: recurrenceType.toUpperCase(), // DAILY, WEEKLY, MONTHLY
-            interval: interval,
+            interval: safeInterval,
+            respect_saved_days_off: !!respectSavedDaysOff,
           };
-          if (recurrenceType === 'daily' && recurrenceExcludeWeekends) {
-            rule.exclude_weekends = true;
+          if (respectSavedDaysOff && plannerDaysOffSet.size > 0) {
+            rule.excluded_dates = Array.from(plannerDaysOffSet.values()).sort();
+          }
+          if (recurrenceType === 'weekly') {
+            const fallbackWeekday = dueDate instanceof Date ? dueDate.getDay() : new Date().getDay();
+            const days = Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 0
+              ? recurrenceWeekdays
+              : [fallbackWeekday];
+            rule.byweekday = days
+              .map((d) => WEEKDAY_OPTIONS.find((opt) => opt.value === Number(d))?.rrule)
+              .filter(Boolean);
           }
           if (recurrenceEndType === 'after') {
             // Parse from text if state is null (user might not have blurred the field)
@@ -2258,6 +2485,9 @@ export default function TaskCreateModal({
             value={title}
             onChangeText={(text) => {
               setTitle(text);
+              if (isClassDayTitleAutofilled && text.trim() !== 'Class Day') {
+                setIsClassDayTitleAutofilled(false);
+              }
               if (validationErrors.title) {
                 setValidationErrors({ ...validationErrors, title: null });
               }
@@ -2299,14 +2529,7 @@ export default function TaskCreateModal({
                   <TouchableOpacity
                     key={type}
                     onPress={() => {
-                      setEventType(type);
-                      setShowRequiresSubmissionHome(type === 'Class Day' ? false : defaultRequiresSubmissionHomeForEventType(type));
-                      if (type === 'Class Day') {
-                        setSubjectId(null);
-                        setUnit('');
-                        setGrade('');
-                        setPercentOfTotalGrade('');
-                      }
+                      applyEventTypeSelection(type);
                       if (validationErrors.eventType) {
                         setValidationErrors({ ...validationErrors, eventType: null });
                       }
@@ -2627,6 +2850,11 @@ export default function TaskCreateModal({
                         value={isRecurring}
                         onValueChange={(value) => {
                           setIsRecurring(value);
+                          if (value && recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
+                            const defaultDay = dueDate instanceof Date ? dueDate.getDay() : new Date().getDay();
+                            setRecurrenceWeekdays([defaultDay]);
+                            setIsRecurrenceWeekdayAutofilled(true);
+                          }
                           if (validationErrors.recurrenceEnd) {
                             setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
                           }
@@ -2637,13 +2865,6 @@ export default function TaskCreateModal({
                     </View>
                   </View>
                 </View>
-                {isRecurring ? (
-                  <View style={styles.recurringRecommendationCard}>
-                    <Text style={styles.recurringRecommendationText}>
-                      Add a subject in Academic Details below if you want this event to count towards scheduling goals.
-                    </Text>
-                  </View>
-                ) : null}
                 {!allDay && (
                   <View style={styles.timeInputsRow}>
                     <View style={styles.timeField}>
@@ -3167,69 +3388,198 @@ export default function TaskCreateModal({
                 ) : null}
                 {isRecurring && (
                   <View style={styles.recurringSectionContent}>
-                    {/* Repeat and Every in one row */}
                     <View style={{ marginBottom: 16, flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Repeat</Text>
                         <ChipRow style={styles.dropdownRow}>
-                          {['daily', 'weekly', 'monthly'].map((type) => (
-                            <TouchableOpacity
-                              key={type}
-                              onPress={() => setRecurrenceType(type)}
+                          <TouchableOpacity
+                            onPress={() => {
+                              setRecurrenceType('weekly');
+                              if (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0) {
+                                const defaultDay = dueDate instanceof Date ? dueDate.getDay() : new Date().getDay();
+                                setRecurrenceWeekdays([defaultDay]);
+                                setIsRecurrenceWeekdayAutofilled(true);
+                              }
+                              if (validationErrors.recurrenceWeekdays) {
+                                setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
+                              }
+                            }}
+                            style={[
+                              styles.dropdownOption,
+                              recurrenceType === 'weekly' && styles.dropdownOptionActive,
+                            ]}
+                          >
+                            <Text
                               style={[
-                                styles.dropdownOption,
-                                recurrenceType === type && styles.dropdownOptionActive,
+                                styles.dropdownOptionText,
+                                recurrenceType === 'weekly' && styles.dropdownOptionTextActive,
                               ]}
                             >
-                              <Text
-                                style={[
-                                  styles.dropdownOptionText,
-                                  recurrenceType === type && styles.dropdownOptionTextActive,
-                                ]}
-                              >
-                                {type.charAt(0).toUpperCase() + type.slice(1)}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}
+                              Weekly
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setRecurrenceType('monthly');
+                              if (validationErrors.recurrenceWeekdays) {
+                                setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
+                              }
+                            }}
+                            style={[
+                              styles.dropdownOption,
+                              recurrenceType === 'monthly' && styles.dropdownOptionActive,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.dropdownOptionText,
+                                recurrenceType === 'monthly' && styles.dropdownOptionTextActive,
+                              ]}
+                            >
+                              Monthly
+                            </Text>
+                          </TouchableOpacity>
                         </ChipRow>
                       </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Every</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      {recurrenceType === 'weekly' && (
+                      <View style={{ flex: 2 }}>
+                        <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>On</Text>
+                        <ChipRow style={styles.dropdownRow}>
+                          {WEEKDAY_OPTIONS.map((day) => {
+                            const selected = recurrenceWeekdays.includes(day.value);
+                            return (
+                              <TouchableOpacity
+                                key={day.value}
+                                onPress={() => {
+                                  setRecurrenceWeekdays((prev) => {
+                                    const next = Array.isArray(prev) ? [...prev] : [];
+                                    const idx = next.indexOf(day.value);
+                                    if (idx >= 0) {
+                                      next.splice(idx, 1);
+                                    } else {
+                                      next.push(day.value);
+                                    }
+                                    return next.sort((a, b) => a - b);
+                                  });
+                                  setIsRecurrenceWeekdayAutofilled(false);
+                                  if (validationErrors.recurrenceWeekdays) {
+                                    setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
+                                  }
+                                }}
+                                style={[
+                                  styles.dropdownOption,
+                                  selected && styles.dropdownOptionActive,
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.dropdownOptionText,
+                                    selected && styles.dropdownOptionTextActive,
+                                  ]}
+                                >
+                                  {day.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ChipRow>
+                        {validationErrors.recurrenceWeekdays ? (
+                          <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceWeekdays}</Text>
+                        ) : null}
+                      </View>
+                      )}
+                    </View>
+                    <View style={styles.advancedOptionsHeaderRow}>
+                      <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Advanced options</Text>
+                      <TouchableOpacity
+                        onPress={() => setShowAdvancedRecurrence((prev) => !prev)}
+                        style={styles.advancedToggleButton}
+                      >
+                        <Text style={styles.advancedToggleText}>
+                          {showAdvancedRecurrence ? 'Hide' : 'Show'}
+                        </Text>
+                        {showAdvancedRecurrence ? (
+                          <ChevronUp size={14} color={MUTED} />
+                        ) : (
+                          <ChevronDown size={14} color={MUTED} />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                    {showAdvancedRecurrence && (
+                      <View style={styles.advancedOptionsCard}>
+                        <View style={{ marginBottom: 12 }}>
+                          <Text style={[styles.fieldLabel, { marginBottom: 6, fontSize: 12 }]}>
+                            {recurrenceType === 'weekly' ? 'Repeat every (weeks)' : 'Repeat every (months)'}
+                          </Text>
                           <TextInput
-                            style={[styles.input, { width: 60, textAlign: 'center', marginBottom: 0, paddingVertical: 6, paddingHorizontal: 12, height: 'auto' }]}
+                            style={[
+                              styles.input,
+                              { width: 120, marginBottom: 0, paddingVertical: 6, paddingHorizontal: 12, height: 'auto' },
+                              validationErrors.recurrenceInterval && {
+                                borderColor: '#ef4444',
+                                borderWidth: 1.5,
+                              },
+                            ]}
+                            keyboardType="numeric"
                             value={recurrenceIntervalText}
                             onChangeText={(text) => {
-                              // Allow any numeric input for free editing
+                              if (validationErrors.recurrenceInterval) {
+                                setValidationErrors((prev) => ({ ...prev, recurrenceInterval: null }));
+                              }
                               if (text === '' || /^\d+$/.test(text)) {
                                 setRecurrenceIntervalText(text);
-                                const num = parseInt(text, 10);
-                                if (!isNaN(num) && num > 0) {
-                                  setRecurrenceInterval(num);
+                                const parsed = parseInt(text, 10);
+                                if (!Number.isNaN(parsed) && parsed > 0) {
+                                  setRecurrenceInterval(parsed);
                                 }
                               }
-                              // If invalid (like "0" or non-numeric), don't update state
-                              // This allows user to clear and type new number
                             }}
                             onBlur={() => {
-                              // Validate on blur - clear if invalid, otherwise set the value
-                              const num = parseInt(recurrenceIntervalText, 10);
-                              if (isNaN(num) || num <= 0) {
-                                setRecurrenceIntervalText('');
-                                setRecurrenceInterval(null);
+                              const parsed = parseInt(recurrenceIntervalText, 10);
+                              if (Number.isNaN(parsed) || parsed < 1) {
+                                setRecurrenceInterval(1);
+                                setRecurrenceIntervalText('1');
                               } else {
-                                setRecurrenceIntervalText(num.toString());
-                                setRecurrenceInterval(num);
+                                setRecurrenceInterval(parsed);
+                                setRecurrenceIntervalText(String(parsed));
                               }
                             }}
-                            keyboardType="numeric"
                           />
-                          <Text style={{ color: SUB, fontSize: 13 }}>
-                            {recurrenceType === 'daily' ? 'day(s)' : recurrenceType === 'weekly' ? 'week(s)' : 'month(s)'}
-                          </Text>
+                          {validationErrors.recurrenceInterval ? (
+                            <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceInterval}</Text>
+                          ) : null}
+                        </View>
+                        <View style={styles.daysOffRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12 }]}>
+                              Schedule around saved days off
+                            </Text>
+                            <Text style={styles.smallHintText}>
+                              Skip holidays and breaks from Planning Preferences.
+                            </Text>
+                          </View>
+                          <Switch
+                            value={respectSavedDaysOff}
+                            onValueChange={setRespectSavedDaysOff}
+                            trackColor={{ false: '#e5e7eb', true: '#99d5f8' }}
+                            thumbColor={respectSavedDaysOff ? '#6BB3E8' : '#9ca3af'}
+                          />
+                        </View>
+                        <View style={{ marginTop: 10, flexDirection: 'row', justifyContent: 'flex-start' }}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('openPlanningPreferences'));
+                              }
+                              toast.push('Open Family > Planning Preferences to edit days off.', 'info');
+                            }}
+                            style={styles.advancedActionButton}
+                          >
+                            <Text style={styles.advancedActionButtonText}>Change or add days off</Text>
+                          </TouchableOpacity>
                         </View>
                       </View>
-                    </View>
+                    )}
                     
                     {/* Ends and Number of occurrences/End date in one row */}
                     <View style={{ marginBottom: 16, flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
@@ -3263,7 +3613,7 @@ export default function TaskCreateModal({
                         </ChipRow>
                       </View>
                       {recurrenceEndType === 'after' && (
-                        <View style={{ flex: 1 }}>
+                        <View style={{ flex: 2 }}>
                           <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Number of occurrences</Text>
                           <TextInput
                             style={[
@@ -3304,7 +3654,7 @@ export default function TaskCreateModal({
                         </View>
                       )}
                       {recurrenceEndType === 'on' && (
-                        <View style={{ flex: 1 }}>
+                        <View style={{ flex: 2 }}>
                           <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>End date</Text>
                           <TouchableOpacity
                             style={[
@@ -3337,19 +3687,11 @@ export default function TaskCreateModal({
                         </View>
                       )}
                     </View>
-                    {recurrenceType === 'daily' && (
-                      <View style={{ marginBottom: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        <TouchableOpacity
-                          onPress={() => setRecurrenceExcludeWeekends((v) => !v)}
-                          style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
-                        >
-                          <View style={[styles.checkbox, recurrenceExcludeWeekends && styles.checkboxChecked]}>
-                            {recurrenceExcludeWeekends ? <Check size={14} color="#fff" /> : null}
-                          </View>
-                          <Text style={{ fontSize: 14, color: FG }}>Exclude weekends</Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
+                    <View style={styles.recurringRecommendationCard}>
+                      <Text style={styles.recurringRecommendationText}>
+                        Add a subject in Academic Details below if you want this event to count towards scheduling goals.
+                      </Text>
+                    </View>
                     {validationErrors.recurrenceEnd ? (
                       <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceEnd}</Text>
                     ) : null}
@@ -4987,6 +5329,63 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontSize: 12,
     lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  advancedOptionsHeaderRow: {
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  advancedToggleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  advancedToggleText: {
+    color: SUB,
+    fontSize: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  advancedOptionsCard: {
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  daysOffRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  smallHintText: {
+    color: '#64748b',
+    fontSize: 12,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  advancedActionButton: {
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  advancedActionButtonText: {
+    color: '#1d4ed8',
+    fontSize: 12,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
