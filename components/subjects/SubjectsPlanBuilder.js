@@ -350,7 +350,7 @@ function buildDayProjectionBySubjectFromEvents(rows = [], subjectIds = []) {
     const status = String(row?.status || '').trim().toLowerCase();
     if (status === 'done' && dayKey <= todayYmd) {
       doneSets[sid].add(dayKey);
-    } else if (dayKey > todayYmd) {
+    } else if (dayKey >= todayYmd) {
       upcomingSets[sid].add(dayKey);
     }
   });
@@ -2049,6 +2049,7 @@ export default function SubjectsPlanBuilder({
         if (Number.isFinite(rangeEndMs) && dayMs > rangeEndMs) return;
         completedDaySet.add(String(dayKey).slice(0, 10));
       });
+      const todayYmd = new Date(nowMs).toISOString().slice(0, 10);
       eventItems.forEach((eventItem) => {
         const eventMs = Number(eventItem?.startMs);
         if (!Number.isFinite(eventMs)) return;
@@ -2069,7 +2070,7 @@ export default function SubjectsPlanBuilder({
         if (isAttended) {
           projectedDaySet.add(dayKey);
           completedDaySet.add(dayKey);
-        } else if (eventMs >= nowMs) {
+        } else if (dayKey >= todayYmd) {
           projectedDaySet.add(dayKey);
           upcomingDaySet.add(dayKey);
         }
@@ -2285,6 +2286,7 @@ export default function SubjectsPlanBuilder({
         const completedDaySet = new Set();
         const upcomingDaySet = new Set();
         const projectedDaySet = new Set();
+        const todayYmd = new Date(nowMs).toISOString().slice(0, 10);
         classDayEventsInRange.forEach((eventItem) => {
           const eventMs = Number(eventItem?.startMs || 0);
           if (!Number.isFinite(eventMs)) return;
@@ -2298,7 +2300,7 @@ export default function SubjectsPlanBuilder({
             projectedDaySet.add(dayKey);
             return;
           }
-          if (eventMs >= nowMs) {
+          if (dayKey >= todayYmd) {
             upcomingDaySet.add(dayKey);
             projectedDaySet.add(dayKey);
           }

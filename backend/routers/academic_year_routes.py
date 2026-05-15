@@ -2634,7 +2634,7 @@ async def fix_target_gap(
                     existing_overall_dates.add(day_key)
                     if status_raw == "done" and day_key <= today_ymd:
                         done_overall_dates.add(day_key)
-                    elif day_key > today_ymd:
+                    elif day_key >= today_ymd:
                         upcoming_overall_dates.add(day_key)
                     continue
                 if not sid or sid not in selected_subject_id_set or not _counts_toward(ev):
@@ -2644,7 +2644,7 @@ async def fix_target_gap(
                 status_raw = str(ev.get("status") or "").strip().lower()
                 if status_raw == "done" and day_key <= today_ymd:
                     done_by_subject[sid].add(day_key)
-                elif day_key > today_ymd:
+                elif day_key >= today_ymd:
                     upcoming_by_subject[sid].add(day_key)
 
             before_projected_days = 0
