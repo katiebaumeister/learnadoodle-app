@@ -1888,7 +1888,7 @@ async def fix_target_gap(
         try:
             planner_settings_resp = (
                 supabase.table("family_planner_settings")
-                .select("default_planned_hours_per_day, default_day_start_time, default_day_end_time, allowed_weekdays, updated_at")
+                .select("default_planned_hours_per_day, default_day_start_time, default_day_end_time, allowed_weekdays, target_scope, default_target_days, default_target_hours, updated_at")
                 .eq("family_id", family_id)
                 .order("updated_at", desc=True)
                 .limit(1)
@@ -2457,7 +2457,7 @@ async def fix_target_gap(
                     selected.append(eligible_days[idx])
                 return selected
 
-            settings_scope = str(planner_settings_row.get("target_scope") or "overall").strip().lower()
+            settings_scope = str(planner_settings_row.get("target_scope") or "").strip().lower()
             effective_scope = settings_scope if settings_scope in {"overall", "per_subject"} else scope
             selected_subject_ids = (
                 [target_subject_id] if effective_scope == "per_subject" and target_subject_id
@@ -2658,6 +2658,17 @@ async def fix_target_gap(
                 for sid in selected_subject_ids:
                     subject_row = subject_by_id.get(sid) or {}
                     subject_target_days = _parse_positive_int(subject_row.get("default_target_days"))
+                    if subject_target_days is None:
+                        # Per-subject Fix Gap receives the visible row target from the UI.
+                        # If the subject row has no persisted target yet, use this request target
+                        # so we do not incorrectly short-circuit to "already on target".
+                        if (
+                            effective_scope == "per_subject"
+                            and target_subject_id
+                            and sid == target_subject_id
+                            and target_days > 0
+                        ):
+                            subject_target_days = target_days
                     if subject_target_days is None:
                         continue
                     projected_sid = len((done_by_subject.get(sid) or set()).union(upcoming_by_subject.get(sid) or set()))

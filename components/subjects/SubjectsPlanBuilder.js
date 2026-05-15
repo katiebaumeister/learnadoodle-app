@@ -3739,11 +3739,12 @@ export default function SubjectsPlanBuilder({
       .filter((subject) => String(subject?.school_year || '').trim() === schoolYearLabel)
       .map((subject) => String(subject?.id || '').trim())
       .filter(Boolean);
+    const rowSubjectIds = Array.isArray(row?.subjectIds)
+      ? row.subjectIds.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
     const requestedSubjectIds = isOverallRow
       ? [...new Set(
-        scopedSchoolYearSubjectIds.length > 0
-          ? scopedSchoolYearSubjectIds
-          : (Array.isArray(row?.subjectIds) ? row.subjectIds.map((id) => String(id || '').trim()).filter(Boolean) : [])
+        [...rowSubjectIds, ...scopedSchoolYearSubjectIds]
       )]
       : [rowId];
     const attendanceTrackingMode = resolvedAttendanceTrackingMode;
@@ -3770,22 +3771,22 @@ export default function SubjectsPlanBuilder({
       ? formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year')
       : null;
     const requestedRangeStartYmd = String(
-      familyPlannerSettings?.default_year_start_date
+      row?.rangeStartYmd
+      || familyPlannerSettings?.default_year_start_date
       || fullYearRange?.start_date
-      || row?.rangeStartYmd
       || ''
     ).slice(0, 10) || null;
     const requestedRangeEndYmd = String(
-      familyPlannerSettings?.default_year_end_date
+      row?.rangeEndYmd
+      || familyPlannerSettings?.default_year_end_date
       || fullYearRange?.end_date
-      || row?.rangeEndYmd
       || ''
     ).slice(0, 10) || null;
     if (!Number.isFinite(targetDays) || targetDays <= 0) {
       toast?.push?.('Set a valid target before fixing gaps.', 'info');
       return;
     }
-    if (!Number.isFinite(gapDays) || gapDays === 0) {
+    if (!Number.isFinite(gapDays) || gapDays <= 0) {
       toast?.push?.('Already on target.', 'success');
       return;
     }
