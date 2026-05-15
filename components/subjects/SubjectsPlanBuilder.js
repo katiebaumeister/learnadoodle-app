@@ -1283,6 +1283,7 @@ export default function SubjectsPlanBuilder({
   });
   const fixGapConfirmResolverRef = useRef(null);
   const fixGapInFlightByRowRef = useRef(new Set());
+  const fixGapCooldownUntilByTargetRef = useRef(new Map());
   const [pendingSuggestionToApply, setPendingSuggestionToApply] = useState(null);
   const [fixingGapRowId, setFixingGapRowId] = useState(null);
   const [fixGapActionRecommendationsByRowId, setFixGapActionRecommendationsByRowId] = useState({});
@@ -3726,6 +3727,14 @@ export default function SubjectsPlanBuilder({
     const isOverallRow = rowId === 'overall' || row?.isOverall === true;
     const scope = isOverallRow ? 'overall' : 'per_subject';
     const schoolYearLabel = String(displaySchoolYear?.label || '').trim();
+    const fixGapTargetKey = `${scope}:${rowId}:${schoolYearLabel || 'unknown'}`;
+    const nowMs = Date.now();
+    const cooldownUntil = Number(fixGapCooldownUntilByTargetRef.current.get(fixGapTargetKey) || 0);
+    if (cooldownUntil > nowMs) {
+      return;
+    }
+    // Prevent accidental duplicate runs from rapid taps/click-throughs.
+    fixGapCooldownUntilByTargetRef.current.set(fixGapTargetKey, nowMs + 1500);
     const scopedSchoolYearSubjectIds = (baseSubjects || [])
       .filter((subject) => String(subject?.school_year || '').trim() === schoolYearLabel)
       .map((subject) => String(subject?.id || '').trim())
