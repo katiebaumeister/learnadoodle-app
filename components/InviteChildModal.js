@@ -374,7 +374,6 @@ export default function InviteChildModal({
                         );
                       })}
                     </View>
-                    <Text style={styles.inviteNote}>You can change this anytime later in Edit Child.</Text>
                     <Text style={styles.emailLabel}>Child email</Text>
                     <TextInput
                       ref={emailInputRef}
@@ -612,8 +611,8 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   miniCardSelected: {
-    borderColor: LEARNADOODLE_LIGHT_BLUE,
-    backgroundColor: 'rgba(158, 207, 251, 0.22)',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133, 196, 242, 0.2)',
   },
   miniCardTop: {
     flexDirection: 'row',
@@ -637,7 +636,7 @@ const styles = StyleSheet.create({
     }),
   },
   miniCardNameSelected: {
-    color: '#1e5f8a',
+    color: '#6BB3E8',
   },
   alreadyConnectedBox: {
     marginBottom: 12,
@@ -689,8 +688,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   permissionPillSelected: {
-    borderColor: LEARNADOODLE_LIGHT_BLUE,
-    backgroundColor: 'rgba(158, 207, 251, 0.22)',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133, 196, 242, 0.2)',
   },
   permissionPillText: {
     fontSize: 12,
@@ -701,7 +700,7 @@ const styles = StyleSheet.create({
     }),
   },
   permissionPillTextSelected: {
-    color: '#1e5f8a',
+    color: '#6BB3E8',
   },
   permissionPillDisabled: {
     opacity: 0.55,

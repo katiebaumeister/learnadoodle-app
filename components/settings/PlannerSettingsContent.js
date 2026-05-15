@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   Platform,
   Modal,
+  Switch,
 } from 'react-native';
 import { Plus, Trash2, Pencil, Check, X, ChevronDown, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import {
@@ -45,10 +46,12 @@ const MUTED = 'rgba(15,23,42,0.6)';
 const TEXT_BLACK = '#000000';
 /** Brand pastel blue (FAB, coming-soon CTAs) — borders, fills, toggles on this page */
 const ACCENT = LEARNADOODLE_LIGHT_BLUE;
-const BORDER = '#E2E8F0';
+const BORDER = '#EEF1F5';
 /** Selected chips — light blue border/text + soft blue fill */
-const CHIP_SELECTED_BORDER = '#6BB3E8';
-const CHIP_SELECTED_BG = 'rgba(107, 179, 232, 0.12)';
+const CHIP_SELECTED_BORDER = '#C9D8EC';
+const CHIP_SELECTED_BG = 'rgba(155, 184, 220, 0.26)';
+const SECTION_SEPARATOR = 'rgba(15,23,42,0.05)';
+const LINK_PURPLE = '#4F46E5';
 const plannerSettingsSnapshotCache = new Map();
 
 const parsePositiveIntOrNull = (value) => {
@@ -65,13 +68,13 @@ const DEFAULT_LEARNING_START_TIME = '08:00:00';
 const DEFAULT_LEARNING_END_TIME = '15:00:00';
 const DEFAULT_ALLOWED_WEEKDAYS = [1, 2, 3, 4, 5];
 const LEARNING_DAY_OPTIONS = [
+  { id: 0, label: 'Sun' },
   { id: 1, label: 'Mon' },
   { id: 2, label: 'Tue' },
   { id: 3, label: 'Wed' },
   { id: 4, label: 'Thu' },
   { id: 5, label: 'Fri' },
   { id: 6, label: 'Sat' },
-  { id: 0, label: 'Sun' },
 ];
 
 const normalizeAllowedWeekdays = (input) => {
@@ -301,6 +304,8 @@ export default function PlannerSettingsContent({
   const [selectedSchoolYearLabel, setSelectedSchoolYearLabel] = useState('');
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [schoolYearMenuAnchor, setSchoolYearMenuAnchor] = useState(null);
+  const [showAttendanceModeDropdown, setShowAttendanceModeDropdown] = useState(false);
+  const [attendanceModeMenuAnchor, setAttendanceModeMenuAnchor] = useState(null);
   const [attendanceModeConfirmDialog, setAttendanceModeConfirmDialog] = useState({
     visible: false,
     title: '',
@@ -308,6 +313,7 @@ export default function PlannerSettingsContent({
   });
   const attendanceModeConfirmResolverRef = useRef(null);
   const schoolYearTriggerRef = useRef(null);
+  const attendanceModeTriggerRef = useRef(null);
   const normalizedLockedSchoolYearLabel = useMemo(
     () => normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim()),
     [lockedSchoolYearLabel]
@@ -1422,50 +1428,120 @@ export default function PlannerSettingsContent({
 
   const sectionStyle = {
     paddingTop: 0,
-    paddingBottom: embeddedInModal ? 12 : Math.round(SettingsLayout.sectionSpacing * 0.57),
-    marginBottom: embeddedInModal ? 12 : Math.round(SettingsLayout.sectionSpacing * 0.57),
+    paddingBottom: 0,
+    paddingHorizontal: 0,
+    marginBottom: SettingsLayout.sectionSpacing,
+    borderBottomWidth: 0,
+    borderBottomColor: 'transparent',
   };
   const sectionTitleStyle = {
-    fontSize: embeddedInModal ? 16 : SettingsTypography.sectionTitle.fontSize,
-    fontWeight: embeddedInModal ? '600' : SettingsTypography.sectionTitle.fontWeight,
+    ...SettingsTypography.sectionTitle,
     color: '#374151',
-    marginBottom: embeddedInModal ? 8 : 10,
+    marginBottom: 10,
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   };
   const sectionDividerStyle = {
     height: 1,
-    backgroundColor: BORDER,
-    marginBottom: embeddedInModal ? 12 : Math.round(SettingsLayout.dividerSpacing * 0.8),
+    backgroundColor: '#e5e7eb',
+    marginBottom: SettingsLayout.dividerSpacing,
   };
   const sectionFieldLabelStyle = {
-    fontSize: SettingsTypography.secondary.fontSize,
-    color: TEXT_BLACK,
-    marginBottom: 6,
+    ...SettingsTypography.secondary,
+    color: '#6b7280',
+    marginBottom: SettingsLayout.labelSpacing,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   };
-  const compactRangeControlStyle = {
-    borderWidth: 1,
-    borderColor: '#DCE3EE',
-    borderRadius: 24,
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+  const sectionDescriptionStyle = {
+    ...SettingsTypography.secondary,
+    color: '#6b7280',
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  };
+  const mutedMetaTextStyle = {
+    fontSize: 14,
+    fontWeight: '400',
+    color: '#6b7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  };
+  const learningDefaultsFieldTitleStyle = {
+    ...SettingsTypography.cardTitle,
+    color: '#374151',
+    marginBottom: SettingsLayout.labelSpacing,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  };
+  const settingRowStyle = {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 10,
+    minHeight: 38,
+    marginBottom: 12,
+  };
+  const settingRowControlStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  };
+  const settingRowLabelStyle = {
+    ...SettingsTypography.body,
+    color: '#111827',
+    flexShrink: 1,
+    paddingRight: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  };
+  const compactRangeControlStyle = {
+    borderWidth: 0,
+    borderColor: 'transparent',
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     width: '100%',
-    maxWidth: 350,
+    maxWidth: 420,
     alignSelf: 'flex-start',
   };
-  const rangeControlChevronColor = '#64748B';
+  const groupedControlContainerStyle = {
+    borderWidth: 1,
+    borderColor: '#E3E8EF',
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  };
+  const compactGroupedControlContainerStyle = {
+    ...groupedControlContainerStyle,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  };
+  const rangeControlChevronColor = '#C1C9D4';
   const rangeValueFieldStyle = {
     borderWidth: 0,
     backgroundColor: 'transparent',
-    paddingVertical: 6,
+    paddingVertical: 5,
     paddingHorizontal: 0,
-    fontSize: 13,
-    fontWeight: '600',
+    ...SettingsTypography.body,
     color: '#111827',
     alignItems: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   };
   const pageTitleStyle = {
     ...SettingsTypography.pageTitle,
@@ -1474,72 +1550,99 @@ export default function PlannerSettingsContent({
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   };
   const chip = (active) => ({
-    paddingVertical: embeddedInModal ? 5 : 6,
-    paddingHorizontal: embeddedInModal ? 10 : 12,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: active ? CHIP_SELECTED_BORDER : BORDER,
-    backgroundColor: active ? CHIP_SELECTED_BG : '#FFFFFF',
+    paddingVertical: embeddedInModal ? 4 : 5,
+    paddingHorizontal: embeddedInModal ? 9 : 10,
+    borderRadius: 14,
+    borderWidth: active ? 1 : 0,
+    borderColor: active ? CHIP_SELECTED_BORDER : 'transparent',
+    backgroundColor: active ? CHIP_SELECTED_BG : 'rgba(15,23,42,0.05)',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   });
   const chipText = (active) => ({
-    fontSize: embeddedInModal ? 13 : 14,
+    fontSize: embeddedInModal ? 12 : 12,
     fontWeight: active ? '600' : '500',
-    color: active ? CHIP_SELECTED_BORDER : TEXT_BLACK,
+    color: active ? '#334E68' : 'rgba(15,23,42,0.64)',
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   });
   const inputStyle = {
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 8,
-    paddingVertical: embeddedInModal ? 7 : 8,
-    paddingHorizontal: embeddedInModal ? 10 : 12,
-    fontSize: embeddedInModal ? 13 : 14,
+    borderColor: '#E9EEF5',
+    borderRadius: 6,
+    paddingVertical: embeddedInModal ? 6 : 6,
+    paddingHorizontal: embeddedInModal ? 9 : 10,
+    fontSize: 13,
     color: TEXT_BLACK,
-    minWidth: 72,
+    minWidth: 56,
+    minHeight: 32,
+    backgroundColor: '#FFFFFF',
   };
-  const toggleTrackStyle = {
-    width: 52,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#d1d5db',
-    paddingHorizontal: 2,
-    paddingVertical: 0,
+  const modeToggleButtonStyle = (active) => ({
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
+    minHeight: 30,
+    minWidth: 62,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: active ? '#6BB3E8' : '#e5e7eb',
+    backgroundColor: active ? 'rgba(133,196,242,0.2)' : '#FFFFFF',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  });
+  const modeToggleButtonTextStyle = (active) => ({
+    fontSize: 12,
+    color: active ? '#6BB3E8' : '#6b7280',
+    fontWeight: active ? '700' : '500',
+  });
+  const attendanceModeSelectTriggerStyle = {
+    minHeight: SettingsLayout.rowHeight,
+    minWidth: 0,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    backgroundColor: '#f9fafb',
+    paddingHorizontal: 16,
+    paddingRight: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   };
-  const toggleTrackOnStyle = { backgroundColor: ACCENT };
-  const toggleThumbStyle = {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#94A3B8',
+  const attendanceModeSelectTriggerTextStyle = {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#111827',
     ...(Platform.OS === 'web' && {
-      transition: 'transform 0.2s ease',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-    }),
-    ...(Platform.OS !== 'web' && {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.2,
-      shadowRadius: 2,
-      elevation: 3,
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   };
-  const toggleThumbOnStyle = {
-    transform: [{ translateX: 24 }],
-    backgroundColor: '#0D9488',
-  };
+  const weekdayDotStyle = (active) => ({
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: active ? 'rgba(133,196,242,0.2)' : '#FFFFFF',
+    borderWidth: 1,
+    borderColor: active ? '#6BB3E8' : '#e5e7eb',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  });
+  const weekdayDotLabelStyle = (active) => ({
+    fontSize: 12,
+    fontWeight: active ? '700' : '500',
+    color: active ? '#6BB3E8' : '#6b7280',
+  });
   const rowActionButtonsStyle = {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   };
   const rowActionButtonStyle = {
-    width: embeddedInModal ? 32 : 36,
-    height: embeddedInModal ? 32 : 36,
-    borderRadius: embeddedInModal ? 16 : 18,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 0,
     backgroundColor: '#f9fafb',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1551,22 +1654,20 @@ export default function PlannerSettingsContent({
   const addOutlineButtonStyle = {
     alignItems: 'center',
     justifyContent: 'center',
-    height: embeddedInModal ? 30 : 32,
-    paddingHorizontal: embeddedInModal ? 10 : 12,
+    height: 30,
+    paddingHorizontal: 0,
     borderRadius: 999,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#9ED3FF',
-    backgroundColor: '#F8FCFF',
+    borderWidth: 0,
+    backgroundColor: 'transparent',
     alignSelf: 'flex-start',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
   };
   const addOutlineButtonTextStyle = {
-    fontSize: embeddedInModal ? 13 : 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#5AAEF2',
+    color: ACCENT,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -1587,12 +1688,12 @@ export default function PlannerSettingsContent({
     }),
   };
   const embeddedCloseButtonStyle = {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#ffffff',
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    backgroundColor: '#F8FAFC',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#E6EBF2',
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
@@ -1607,43 +1708,45 @@ export default function PlannerSettingsContent({
   };
   const embeddedCancelButtonStyle = {
     minWidth: 92,
-    paddingVertical: 12,
+    paddingVertical: 10,
     paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E6EBF2',
     alignItems: 'center',
     justifyContent: 'center',
   };
   const embeddedCancelButtonTextStyle = {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: '#475569',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   };
   const embeddedSaveButtonStyle = {
     minWidth: 132,
-    paddingVertical: 12,
+    paddingVertical: 10,
     paddingHorizontal: 22,
-    borderRadius: 10,
-    backgroundColor: '#90CAF5',
+    borderRadius: 8,
+    backgroundColor: '#E8F0F8',
+    borderWidth: 1,
+    borderColor: '#D9E4F1',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
-    }),
   };
   const embeddedSaveButtonTextStyle = {
     fontSize: 15,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#334155',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   };
+  const attendanceModeLabel = attendanceTrackingMode === 'class_day' ? 'Learning days' : 'Per subject';
   if (loading && !embeddedInModal) {
     return (
       <View style={{ padding: embeddedInModal ? 20 : 32, alignItems: 'center' }}>
@@ -1704,11 +1807,11 @@ export default function PlannerSettingsContent({
         <View style={sectionStyle}>
           <View style={{ alignSelf: 'flex-start' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={sectionTitleStyle}>Learning defaults • </Text>
+              <Text style={learningDefaultsFieldTitleStyle}>Learning defaults • </Text>
               <View>
                 {isSchoolYearLocked ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={sectionTitleStyle}>
+                    <Text style={learningDefaultsFieldTitleStyle}>
                       {selectedSchoolYearLabel ? `${selectedSchoolYearLabel} School Year` : 'School Year'}
                     </Text>
                   </View>
@@ -1734,7 +1837,7 @@ export default function PlannerSettingsContent({
                     style={{ flexDirection: 'row', alignItems: 'center' }}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Text style={sectionTitleStyle}>
+                    <Text style={learningDefaultsFieldTitleStyle}>
                       {selectedSchoolYearLabel ? `${selectedSchoolYearLabel} School Year` : 'School Year'}
                     </Text>
                     <View
@@ -1754,75 +1857,283 @@ export default function PlannerSettingsContent({
             </View>
           </View>
           <View style={sectionDividerStyle} />
-          <View>
-            <Text style={{ fontSize: 14, fontWeight: '600', color: TEXT_BLACK, marginBottom: 8 }}>
-              Attendance tracking style
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <TouchableOpacity
-                style={chip(attendanceTrackingMode === 'class_day')}
-                onPress={() => handleAttendanceTrackingModeChange('class_day')}
-              >
-                <Text style={chipText(attendanceTrackingMode === 'class_day')}>Learning days</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={chip(attendanceTrackingMode !== 'class_day')}
-                onPress={() => handleAttendanceTrackingModeChange('subject')}
-              >
-                <Text style={chipText(attendanceTrackingMode !== 'class_day')}>Per subject</Text>
-              </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', flexWrap: 'wrap', columnGap: 8, rowGap: 16, justifyContent: 'flex-start' }}>
+            <View style={{ width: 360, flexGrow: 0, flexShrink: 0 }}>
+              <View style={{ marginBottom: 12 }}>
+                <Text style={learningDefaultsFieldTitleStyle}>School year</Text>
+                <View style={[compactGroupedControlContainerStyle, { alignSelf: 'flex-start' }]}>
+                  <View style={[compactRangeControlStyle, { width: 'auto', maxWidth: undefined }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <ChevronLeft size={14} color={rangeControlChevronColor} />
+                      <PlannerPreferenceDateField
+                        value={defaultYearStartDate}
+                        onChange={handleRangeDefaultChange(setDefaultYearStartDate)}
+                        placeholder="Start"
+                        borderColor="transparent"
+                        textColor={TEXT_BLACK}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={rangeValueFieldStyle}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
+                      />
+                    </View>
+                    <ArrowRight size={14} color="#CAD2DD" />
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <PlannerPreferenceDateField
+                        value={defaultYearEndDate}
+                        onChange={handleRangeDefaultChange(setDefaultYearEndDate)}
+                        placeholder="End"
+                        borderColor="transparent"
+                        textColor={TEXT_BLACK}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={rangeValueFieldStyle}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
+                      />
+                      <ChevronRight size={14} color={rangeControlChevronColor} />
+                    </View>
+                  </View>
+                </View>
+              </View>
+              <View style={{ marginBottom: 12 }}>
+                <Text style={learningDefaultsFieldTitleStyle}>Fall term</Text>
+                <View style={[compactGroupedControlContainerStyle, { alignSelf: 'flex-start' }]}>
+                  <View style={[compactRangeControlStyle, { width: 'auto', maxWidth: undefined }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <ChevronLeft size={14} color={rangeControlChevronColor} />
+                      <PlannerPreferenceDateField
+                        value={defaultFallStartDate}
+                        onChange={handleRangeDefaultChange(setDefaultFallStartDate)}
+                        placeholder="Start"
+                        borderColor="transparent"
+                        textColor={TEXT_BLACK}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={rangeValueFieldStyle}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
+                      />
+                    </View>
+                    <ArrowRight size={14} color="#CAD2DD" />
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <PlannerPreferenceDateField
+                        value={defaultFallEndDate}
+                        onChange={handleRangeDefaultChange(setDefaultFallEndDate)}
+                        placeholder="End"
+                        borderColor="transparent"
+                        textColor={TEXT_BLACK}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={rangeValueFieldStyle}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
+                      />
+                      <ChevronRight size={14} color={rangeControlChevronColor} />
+                    </View>
+                  </View>
+                </View>
+              </View>
+              <View>
+                <Text style={learningDefaultsFieldTitleStyle}>Spring term</Text>
+                <View style={[compactGroupedControlContainerStyle, { alignSelf: 'flex-start' }]}>
+                  <View style={[compactRangeControlStyle, { width: 'auto', maxWidth: undefined }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <ChevronLeft size={14} color={rangeControlChevronColor} />
+                      <PlannerPreferenceDateField
+                        value={defaultSpringStartDate}
+                        onChange={handleRangeDefaultChange(setDefaultSpringStartDate)}
+                        placeholder="Start"
+                        borderColor="transparent"
+                        textColor={TEXT_BLACK}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={rangeValueFieldStyle}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
+                      />
+                    </View>
+                    <ArrowRight size={14} color="#CAD2DD" />
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <PlannerPreferenceDateField
+                        value={defaultSpringEndDate}
+                        onChange={handleRangeDefaultChange(setDefaultSpringEndDate)}
+                        placeholder="End"
+                        borderColor="transparent"
+                        textColor={TEXT_BLACK}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={rangeValueFieldStyle}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
+                      />
+                      <ChevronRight size={14} color={rangeControlChevronColor} />
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </View>
+            <View style={{ width: 320, flexGrow: 0, flexShrink: 0 }}>
+              <View style={{ marginBottom: 12 }}>
+                <Text style={learningDefaultsFieldTitleStyle}>Usual learning days</Text>
+                <View style={{ marginTop: 4 }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'nowrap', gap: 8, marginBottom: 2, justifyContent: 'flex-start' }}>
+                    {LEARNING_DAY_OPTIONS.map((option) => {
+                      const active = preferredLearningDayNums.includes(option.id);
+                      return (
+                        <TouchableOpacity
+                          key={`learning-day-${option.id}`}
+                          style={weekdayDotStyle(active)}
+                          onPress={() => handlePreferredLearningDayToggle(option.id)}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={weekdayDotLabelStyle(active)}>{option.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              </View>
+              <View style={{ marginTop: 4, marginBottom: 12 }}>
+                <Text style={learningDefaultsFieldTitleStyle}>Usual learning hours</Text>
+                <View style={[compactGroupedControlContainerStyle, { marginTop: 6, alignSelf: 'flex-start', paddingRight: 6 }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start' }}>
+                    <View style={{ alignItems: 'center' }}>
+                      {Platform.OS === 'web' ? (
+                        <input
+                          type="time"
+                          value={learningStartTimeWebValue}
+                          onChange={(e) => handleLearningStartTimeWebChange(e.target.value)}
+                          style={{
+                            backgroundColor: 'transparent',
+                            borderWidth: 0,
+                            borderStyle: 'none',
+                            fontSize: 13,
+                            fontWeight: '600',
+                            color: '#111827',
+                            width: 92,
+                            outline: 'none',
+                            textAlign: 'center',
+                          }}
+                        />
+                      ) : (
+                        <TextInput
+                          value={learningStartTime}
+                          onChangeText={setLearningStartTime}
+                          onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
+                          placeholder="8:00 AM"
+                          placeholderTextColor={MUTED}
+                          style={[inputStyle, {
+                            borderWidth: 0,
+                            backgroundColor: 'transparent',
+                            textAlign: 'center',
+                            width: 96,
+                            fontWeight: '600',
+                          }]}
+                        />
+                      )}
+                    </View>
+                    <ArrowRight size={15} color="#B5BFCD" />
+                    <View style={{ alignItems: 'center' }}>
+                      {Platform.OS === 'web' ? (
+                        <input
+                          type="time"
+                          value={learningEndTimeWebValue}
+                          onChange={(e) => handleLearningEndTimeWebChange(e.target.value)}
+                          style={{
+                            backgroundColor: 'transparent',
+                            borderWidth: 0,
+                            borderStyle: 'none',
+                            fontSize: 13,
+                            fontWeight: '600',
+                            color: '#111827',
+                            width: 92,
+                            outline: 'none',
+                            textAlign: 'center',
+                          }}
+                        />
+                      ) : (
+                        <TextInput
+                          value={learningEndTime}
+                          onChangeText={setLearningEndTime}
+                          onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
+                          placeholder="3:00 PM"
+                          placeholderTextColor={MUTED}
+                          style={[inputStyle, {
+                            borderWidth: 0,
+                            backgroundColor: 'transparent',
+                            textAlign: 'center',
+                            width: 96,
+                            fontWeight: '600',
+                          }]}
+                        />
+                      )}
+                    </View>
+                  </View>
+                </View>
+              </View>
+              <View style={{ marginTop: 4, marginBottom: 12 }}>
+                <Text style={learningDefaultsFieldTitleStyle}>Attendance tracking</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+                  <TouchableOpacity
+                    style={[modeToggleButtonStyle(attendanceTrackingMode === 'class_day'), { minWidth: 104 }]}
+                    onPress={() => handleAttendanceTrackingModeChange('class_day')}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={modeToggleButtonTextStyle(attendanceTrackingMode === 'class_day')}>Learning days</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[modeToggleButtonStyle(attendanceTrackingMode === 'subject'), { minWidth: 96 }]}
+                    onPress={() => handleAttendanceTrackingModeChange('subject')}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={modeToggleButtonTextStyle(attendanceTrackingMode === 'subject')}>Per subject</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
           </View>
         </View>
 
-        {/* Target (only when Overall) */}
-        {attendanceTrackingMode !== 'class_day' && targetScope === 'overall' && (
+        {(attendanceTrackingMode === 'class_day' || targetScope === 'per_subject') && (
           <View style={sectionStyle}>
-            <Text style={sectionTitleStyle}>Target</Text>
+            <Text style={learningDefaultsFieldTitleStyle}>Subject pacing</Text>
             <View style={sectionDividerStyle} />
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <TouchableOpacity style={chip(goalMode === 'days')} onPress={() => handleGoalChange('days')}>
-                <Text style={chipText(goalMode === 'days')}>Days</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={chip(goalMode === 'hours')} onPress={() => handleGoalChange('hours')}>
-                <Text style={chipText(goalMode === 'hours')}>Hours</Text>
-              </TouchableOpacity>
-              {goalMode === 'days' && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <TextInput
-                    value={targetDays}
-                    onChangeText={handleTargetDaysChange}
-                    keyboardType="number-pad"
-                    style={[inputStyle, { width: 56 }]}
-                    placeholder="180"
-                    placeholderTextColor="rgba(15,23,42,0.4)"
-                  />
-                  <Text style={{ fontSize: 14, color: TEXT_BLACK }}>days</Text>
+            {attendanceTrackingMode === 'class_day' ? (
+              <View style={{ marginBottom: 12 }}>
+                <View style={[settingRowControlStyle, { minWidth: 220, gap: 6, justifyContent: 'flex-start', marginTop: 2 }]}>
+                  <Text style={mutedMetaTextStyle}>Total attendance goal:</Text>
+                  {goalMode === 'days' && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <TextInput
+                        value={targetDays}
+                        onChangeText={handleTargetDaysChange}
+                        keyboardType="number-pad"
+                        style={[inputStyle, { width: 52 }]}
+                        placeholder="180"
+                        placeholderTextColor="rgba(15,23,42,0.4)"
+                      />
+                    </View>
+                  )}
+                  {goalMode === 'hours' && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <TextInput
+                        value={targetHours}
+                        onChangeText={handleTargetHoursChange}
+                        keyboardType="number-pad"
+                        style={[inputStyle, { width: 58 }]}
+                        placeholder="1000"
+                        placeholderTextColor="rgba(15,23,42,0.4)"
+                      />
+                    </View>
+                  )}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <TouchableOpacity style={modeToggleButtonStyle(goalMode === 'days')} onPress={() => handleGoalChange('days')}>
+                      <Text style={modeToggleButtonTextStyle(goalMode === 'days')}>days</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={modeToggleButtonStyle(goalMode === 'hours')} onPress={() => handleGoalChange('hours')}>
+                      <Text style={modeToggleButtonTextStyle(goalMode === 'hours')}>hours</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              )}
-              {goalMode === 'hours' && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <TextInput
-                    value={targetHours}
-                    onChangeText={handleTargetHoursChange}
-                    keyboardType="number-pad"
-                    style={[inputStyle, { width: 64 }]}
-                    placeholder="1000"
-                    placeholderTextColor="rgba(15,23,42,0.4)"
-                  />
-                  <Text style={{ fontSize: 14, color: TEXT_BLACK }}>hours</Text>
-                </View>
-              )}
-            </View>
-          </View>
-        )}
-
-        {attendanceTrackingMode !== 'class_day' && targetScope === 'per_subject' && (
-          <View style={sectionStyle}>
-            <Text style={sectionTitleStyle}>Subject scheduling</Text>
-            <View style={sectionDividerStyle} />
-            {visibleSubjects.length === 0 ? (
-              <View style={{ gap: 10 }}>
+              </View>
+            ) : visibleSubjects.length === 0 ? (
+              <View style={[groupedControlContainerStyle, { gap: 10 }]}>
                 <Text style={{ fontSize: 13, color: MUTED }}>
                   Add a subject first to set per-subject targets.
                 </Text>
@@ -1835,44 +2146,19 @@ export default function PlannerSettingsContent({
                 </TouchableOpacity>
               </View>
             ) : (
-              <View style={{ gap: 10 }}>
+              <View style={{ gap: 8 }}>
                 {visibleSubjects.map((subj) => {
                   const current = subjectTargets[subj.id] || {};
                   const mode = current.mode === 'hours' ? 'hours' : 'days';
                   const daysValue = mode === 'days' ? String(current.days ?? '') : '';
                   const hoursValue = mode === 'hours' ? String(current.hours ?? '') : '';
                   return (
-                    <View key={subj.id} style={{ gap: 10, paddingVertical: 2 }}>
-                      <Text style={{ fontSize: 14, fontWeight: '600', color: TEXT_BLACK }}>
-                        {subj.name || 'Subject'}
-                      </Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <TouchableOpacity
-                          style={chip(mode === 'days')}
-                          onPress={() =>
-                            handleSubjectTargetChange(subj.id, {
-                              ...current,
-                              mode: 'days',
-                              days: String(current.days ?? targetDays ?? '180'),
-                            })
-                          }
-                        >
-                          <Text style={chipText(mode === 'days')}>Days</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={chip(mode === 'hours')}
-                          onPress={() =>
-                            handleSubjectTargetChange(subj.id, {
-                              ...current,
-                              mode: 'hours',
-                              hours: String(current.hours ?? targetHours ?? '1000'),
-                            })
-                          }
-                        >
-                          <Text style={chipText(mode === 'hours')}>Hours</Text>
-                        </TouchableOpacity>
+                    <View key={subj.id} style={{ marginBottom: 12 }}>
+                      <Text style={learningDefaultsFieldTitleStyle}>{subj.name || 'Subject'}</Text>
+                      <View style={[settingRowControlStyle, { gap: 6, justifyContent: 'flex-start', marginTop: 6 }]}>
+                        <Text style={mutedMetaTextStyle}>Total attendance goal:</Text>
                         {mode === 'days' ? (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                             <TextInput
                               value={daysValue}
                               onChangeText={(v) =>
@@ -1883,14 +2169,13 @@ export default function PlannerSettingsContent({
                                 })
                               }
                               keyboardType="number-pad"
-                              style={[inputStyle, { width: 64 }]}
+                              style={[inputStyle, { width: 54 }]}
                               placeholder="180"
                               placeholderTextColor="rgba(15,23,42,0.4)"
                             />
-                            <Text style={{ fontSize: 14, color: TEXT_BLACK }}>days</Text>
                           </View>
                         ) : (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                             <TextInput
                               value={hoursValue}
                               onChangeText={(v) =>
@@ -1901,13 +2186,38 @@ export default function PlannerSettingsContent({
                                 })
                               }
                               keyboardType="number-pad"
-                              style={[inputStyle, { width: 70 }]}
+                              style={[inputStyle, { width: 60 }]}
                               placeholder="1000"
                               placeholderTextColor="rgba(15,23,42,0.4)"
                             />
-                            <Text style={{ fontSize: 14, color: TEXT_BLACK }}>hours</Text>
                           </View>
                         )}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <TouchableOpacity
+                            style={modeToggleButtonStyle(mode === 'days')}
+                            onPress={() =>
+                              handleSubjectTargetChange(subj.id, {
+                                ...current,
+                                mode: 'days',
+                                days: String(current.days ?? targetDays ?? '180'),
+                              })
+                            }
+                          >
+                            <Text style={modeToggleButtonTextStyle(mode === 'days')}>days</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={modeToggleButtonStyle(mode === 'hours')}
+                            onPress={() =>
+                              handleSubjectTargetChange(subj.id, {
+                                ...current,
+                                mode: 'hours',
+                                hours: String(current.hours ?? targetHours ?? '1000'),
+                              })
+                            }
+                          >
+                            <Text style={modeToggleButtonTextStyle(mode === 'hours')}>hours</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     </View>
                   );
@@ -1917,248 +2227,21 @@ export default function PlannerSettingsContent({
           </View>
         )}
 
-        <View style={sectionStyle}>
-          <Text style={sectionTitleStyle}>School year & term dates</Text>
-          <View style={sectionDividerStyle} />
-          <View style={{ marginBottom: 8 }}>
-            <Text style={sectionFieldLabelStyle}>School year</Text>
-            <View style={compactRangeControlStyle}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <ChevronLeft size={16} color={rangeControlChevronColor} />
-                <PlannerPreferenceDateField
-                  value={defaultYearStartDate}
-                  onChange={handleRangeDefaultChange(setDefaultYearStartDate)}
-                  placeholder="Start"
-                  borderColor="transparent"
-                  textColor={TEXT_BLACK}
-                  mutedColor="rgba(15,23,42,0.4)"
-                  style={rangeValueFieldStyle}
-                  minDate={yearRangeMinYmd}
-                  maxDate={yearRangeMaxYmd}
-                />
-              </View>
-              <ArrowRight size={16} color="#94A3B8" />
-              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
-                <PlannerPreferenceDateField
-                  value={defaultYearEndDate}
-                  onChange={handleRangeDefaultChange(setDefaultYearEndDate)}
-                  placeholder="End"
-                  borderColor="transparent"
-                  textColor={TEXT_BLACK}
-                  mutedColor="rgba(15,23,42,0.4)"
-                  style={rangeValueFieldStyle}
-                  minDate={yearRangeMinYmd}
-                  maxDate={yearRangeMaxYmd}
-                />
-                <ChevronRight size={16} color={rangeControlChevronColor} />
-              </View>
-            </View>
-          </View>
-          <View style={{ marginBottom: 8 }}>
-            <Text style={sectionFieldLabelStyle}>Fall term</Text>
-            <View style={compactRangeControlStyle}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <ChevronLeft size={16} color={rangeControlChevronColor} />
-                <PlannerPreferenceDateField
-                  value={defaultFallStartDate}
-                  onChange={handleRangeDefaultChange(setDefaultFallStartDate)}
-                  placeholder="Start"
-                  borderColor="transparent"
-                  textColor={TEXT_BLACK}
-                  mutedColor="rgba(15,23,42,0.4)"
-                  style={rangeValueFieldStyle}
-                  minDate={yearRangeMinYmd}
-                  maxDate={yearRangeMaxYmd}
-                />
-              </View>
-              <ArrowRight size={16} color="#94A3B8" />
-              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
-                <PlannerPreferenceDateField
-                  value={defaultFallEndDate}
-                  onChange={handleRangeDefaultChange(setDefaultFallEndDate)}
-                  placeholder="End"
-                  borderColor="transparent"
-                  textColor={TEXT_BLACK}
-                  mutedColor="rgba(15,23,42,0.4)"
-                  style={rangeValueFieldStyle}
-                  minDate={yearRangeMinYmd}
-                  maxDate={yearRangeMaxYmd}
-                />
-                <ChevronRight size={16} color={rangeControlChevronColor} />
-              </View>
-            </View>
-          </View>
-          <View>
-            <Text style={sectionFieldLabelStyle}>Spring term</Text>
-            <View style={compactRangeControlStyle}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                <ChevronLeft size={16} color={rangeControlChevronColor} />
-                <PlannerPreferenceDateField
-                  value={defaultSpringStartDate}
-                  onChange={handleRangeDefaultChange(setDefaultSpringStartDate)}
-                  placeholder="Start"
-                  borderColor="transparent"
-                  textColor={TEXT_BLACK}
-                  mutedColor="rgba(15,23,42,0.4)"
-                  style={rangeValueFieldStyle}
-                  minDate={yearRangeMinYmd}
-                  maxDate={yearRangeMaxYmd}
-                />
-              </View>
-              <ArrowRight size={16} color="#94A3B8" />
-              <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
-                <PlannerPreferenceDateField
-                  value={defaultSpringEndDate}
-                  onChange={handleRangeDefaultChange(setDefaultSpringEndDate)}
-                  placeholder="End"
-                  borderColor="transparent"
-                  textColor={TEXT_BLACK}
-                  mutedColor="rgba(15,23,42,0.4)"
-                  style={rangeValueFieldStyle}
-                  minDate={yearRangeMinYmd}
-                  maxDate={yearRangeMaxYmd}
-                />
-                <ChevronRight size={16} color={rangeControlChevronColor} />
-              </View>
-            </View>
-          </View>
-        </View>
-
-        <View style={sectionStyle}>
-          <Text style={sectionTitleStyle}>Weekly rhythm</Text>
-          <View style={sectionDividerStyle} />
-          <View style={{ marginTop: 0 }}>
-            <Text style={sectionFieldLabelStyle}>Usual learning days</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 2 }}>
-              {LEARNING_DAY_OPTIONS.map((option) => {
-                const active = preferredLearningDayNums.includes(option.id);
-                return (
-                  <TouchableOpacity
-                    key={`learning-day-${option.id}`}
-                    style={chip(active)}
-                    onPress={() => handlePreferredLearningDayToggle(option.id)}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={chipText(active)}>{option.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-          <View style={{ marginTop: 8 }}>
-            <Text style={sectionFieldLabelStyle}>Usual learning hours</Text>
-            <View style={compactRangeControlStyle}>
-              <View style={{ flex: 1, alignItems: 'center' }}>
-                {Platform.OS === 'web' ? (
-                  <input
-                    type="time"
-                    value={learningStartTimeWebValue}
-                    onChange={(e) => handleLearningStartTimeWebChange(e.target.value)}
-                    style={{
-                      backgroundColor: 'transparent',
-                      borderWidth: 0,
-                      borderStyle: 'none',
-                      fontSize: 13,
-                      fontWeight: '600',
-                      color: '#111827',
-                      width: 104,
-                      outline: 'none',
-                      textAlign: 'center',
-                    }}
-                  />
-                ) : (
-                  <TextInput
-                    value={learningStartTime}
-                    onChangeText={setLearningStartTime}
-                    onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
-                    placeholder="8:00 AM"
-                    placeholderTextColor={MUTED}
-                    style={[inputStyle, {
-                      borderWidth: 0,
-                      backgroundColor: 'transparent',
-                      textAlign: 'center',
-                      width: 110,
-                      fontWeight: '600',
-                    }]}
-                  />
-                )}
-              </View>
-              <ArrowRight size={16} color="#94A3B8" />
-              <View style={{ flex: 1, alignItems: 'center' }}>
-                {Platform.OS === 'web' ? (
-                  <input
-                    type="time"
-                    value={learningEndTimeWebValue}
-                    onChange={(e) => handleLearningEndTimeWebChange(e.target.value)}
-                    style={{
-                      backgroundColor: 'transparent',
-                      borderWidth: 0,
-                      borderStyle: 'none',
-                      fontSize: 13,
-                      fontWeight: '600',
-                      color: '#111827',
-                      width: 104,
-                      outline: 'none',
-                      textAlign: 'center',
-                    }}
-                  />
-                ) : (
-                  <TextInput
-                    value={learningEndTime}
-                    onChangeText={setLearningEndTime}
-                    onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
-                    placeholder="3:00 PM"
-                    placeholderTextColor={MUTED}
-                    style={[inputStyle, {
-                      borderWidth: 0,
-                      backgroundColor: 'transparent',
-                      textAlign: 'center',
-                      width: 110,
-                      fontWeight: '600',
-                    }]}
-                  />
-                )}
-              </View>
-            </View>
-          </View>
-        </View>
-
         {/* Public holidays */}
-        <View style={sectionStyle}>
+        <View style={[sectionStyle, { marginBottom: 12 }]}>
           <Text style={sectionTitleStyle}>Days off</Text>
           <View style={sectionDividerStyle} />
-          <Text style={sectionFieldLabelStyle}>Public holidays</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <TouchableOpacity
-              style={[toggleTrackStyle, followGlobalHolidays && toggleTrackOnStyle]}
-              onPress={() => handleFollowChange(!followGlobalHolidays)}
-              activeOpacity={0.8}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <View style={[toggleThumbStyle, followGlobalHolidays && toggleThumbOnStyle]} />
-            </TouchableOpacity>
-            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
-              <Text style={{ fontSize: 15, color: TEXT_BLACK, marginRight: 4 }}>Follow </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  if (followGlobalHolidays) {
-                    setShowPublicHolidaysPicker(true);
-                    const start = yearRangeMinYmd;
-                    const endStr = yearRangeMaxYmd;
-                    setPublicHolidaysLoading(true);
-                    getPublicHolidaysForRange(countryCode || 'US', start, endStr).then(({ data: res }) => {
-                      setPublicHolidaysList(res?.holidays || []);
-                      setPublicHolidaysLoading(false);
-                    });
-                  }
-                }}
-                activeOpacity={0.7}
-                style={{ flexDirection: 'row', alignItems: 'center' }}
-                {...(Platform.OS === 'web' && { cursor: followGlobalHolidays ? 'pointer' : 'default' })}
-              >
-                <Text style={{ fontSize: 15, color: TEXT_BLACK, textDecorationLine: followGlobalHolidays ? 'underline' : 'none' }}>U.S. public holidays</Text>
-              </TouchableOpacity>
-              <Text style={{ fontSize: 15, color: TEXT_BLACK, marginLeft: 4 }}>?</Text>
+          <View style={{ marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 8 }}>
+            <View>
+              <Text style={learningDefaultsFieldTitleStyle}>U.S. Public Holidays</Text>
+            </View>
+            <View>
+              <Switch
+                value={followGlobalHolidays}
+                onValueChange={handleFollowChange}
+                trackColor={{ false: BORDER, true: '#AECBFA' }}
+                thumbColor={followGlobalHolidays ? '#45A29E' : '#f9fafb'}
+              />
             </View>
           </View>
         </View>
@@ -2232,7 +2315,7 @@ export default function PlannerSettingsContent({
                     }
                     setShowPublicHolidaysPicker(false);
                   }}
-                  style={{ marginTop: 16, backgroundColor: ACCENT, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8, alignSelf: 'flex-end' }}
+                  style={{ marginTop: 16, backgroundColor: ACCENT, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 6, alignSelf: 'flex-end' }}
                   activeOpacity={0.9}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
@@ -2260,15 +2343,12 @@ export default function PlannerSettingsContent({
                 onPress={(e) => e.stopPropagation()}
                 style={{
                   backgroundColor: '#fff',
-                  borderRadius: 20,
+                  borderRadius: 16,
                   width: '100%',
                   maxWidth: 480,
                   padding: 28,
                   borderWidth: 1,
-                  borderColor: '#e5e7eb',
-                  ...(Platform.OS === 'web' && {
-                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
-                  }),
+                  borderColor: '#E6EBF2',
                 }}
               >
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -2288,12 +2368,12 @@ export default function PlannerSettingsContent({
                   <TouchableOpacity
                     onPress={() => respondAttendanceModeConfirm(false)}
                     style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      backgroundColor: '#ffffff',
+                      width: 32,
+                      height: 32,
+                      borderRadius: 6,
+                      backgroundColor: '#F8FAFC',
                       borderWidth: 1,
-                      borderColor: '#e5e7eb',
+                      borderColor: '#E6EBF2',
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
@@ -2321,10 +2401,12 @@ export default function PlannerSettingsContent({
                     onPress={() => respondAttendanceModeConfirm(false)}
                     style={{
                       minWidth: 92,
-                      paddingVertical: 12,
+                      paddingVertical: 10,
                       paddingHorizontal: 18,
-                      borderRadius: 10,
-                      backgroundColor: '#F3F4F6',
+                      borderRadius: 8,
+                      backgroundColor: '#E5E7EB',
+                      borderWidth: 0,
+                      borderColor: 'transparent',
                       alignItems: 'center',
                       justifyContent: 'center',
                     }}
@@ -2347,18 +2429,30 @@ export default function PlannerSettingsContent({
                     onPress={() => respondAttendanceModeConfirm(true)}
                     style={{
                       minWidth: 132,
-                      paddingVertical: 12,
+                      paddingVertical: 10,
                       paddingHorizontal: 22,
-                      borderRadius: 10,
-                      backgroundColor: '#90CAF5',
+                      borderRadius: 8,
+                      backgroundColor: '#85C4F2',
+                      borderWidth: 0,
+                      borderColor: 'transparent',
+                      flexDirection: 'row',
                       alignItems: 'center',
                       justifyContent: 'center',
+                      gap: 6,
                       ...(Platform.OS === 'web' && {
-                        boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
+                        boxShadow: '0 2px 6px rgba(133,196,242,0.3)',
+                      }),
+                      ...((Platform.OS === 'ios' || Platform.OS === 'android') && {
+                        shadowColor: '#85C4F2',
+                        shadowOpacity: 0.3,
+                        shadowRadius: 6,
+                        shadowOffset: { width: 0, height: 2 },
+                        elevation: 2,
                       }),
                     }}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
+                    <Check size={15} color="#FFFFFF" />
                     <Text
                       style={{
                         fontSize: 15,
@@ -2375,6 +2469,88 @@ export default function PlannerSettingsContent({
                 </View>
               </TouchableOpacity>
             </TouchableOpacity>
+          </Modal>
+        )}
+
+        {showAttendanceModeDropdown && (
+          <Modal
+            animationType="none"
+            transparent
+            visible={showAttendanceModeDropdown}
+            onRequestClose={() => setShowAttendanceModeDropdown(false)}
+          >
+            <View style={{ flex: 1 }}>
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={() => setShowAttendanceModeDropdown(false)}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'transparent' }}
+              />
+              <View
+                style={{
+                  position: 'absolute',
+                  top: (attendanceModeMenuAnchor?.y || 140) + (attendanceModeMenuAnchor?.height || 48) + 6,
+                  left: attendanceModeMenuAnchor?.x || 220,
+                  minWidth: Math.max(attendanceModeMenuAnchor?.width || 0, 180),
+                  borderWidth: 1,
+                  borderColor: '#d1d5db',
+                  borderRadius: 10,
+                  backgroundColor: '#FFFFFF',
+                  ...(Platform.OS === 'web' && {
+                    boxShadow: '0 10px 25px rgba(17, 24, 39, 0.14)',
+                  }),
+                  ...((Platform.OS === 'ios' || Platform.OS === 'android') && {
+                    elevation: 6,
+                    shadowColor: '#000',
+                    shadowOpacity: 0.12,
+                    shadowRadius: 12,
+                    shadowOffset: { width: 0, height: 6 },
+                  }),
+                  overflow: 'hidden',
+                }}
+              >
+                {[
+                  { mode: 'class_day', label: 'Learning days' },
+                  { mode: 'subject', label: 'Per subject' },
+                ].map((option, index, arr) => {
+                  const isActive = attendanceTrackingMode === option.mode;
+                  return (
+                    <TouchableOpacity
+                      key={option.mode}
+                      onPress={async () => {
+                        setShowAttendanceModeDropdown(false);
+                        await handleAttendanceTrackingModeChange(option.mode);
+                      }}
+                      style={{
+                        minHeight: 40,
+                        paddingHorizontal: 12,
+                        paddingVertical: 10,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        backgroundColor: '#FFFFFF',
+                        borderBottomWidth: index === arr.length - 1 ? 0 : 1,
+                        borderBottomColor: '#f3f4f6',
+                      }}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 14,
+                          color: isActive ? '#111827' : '#374151',
+                          fontWeight: isActive ? '700' : '400',
+                          ...(Platform.OS === 'web' && {
+                            fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          }),
+                        }}
+                      >
+                        {option.label}
+                      </Text>
+                      {isActive ? <Check size={14} color="#111827" /> : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
           </Modal>
         )}
 
@@ -2396,7 +2572,7 @@ export default function PlannerSettingsContent({
                   position: 'absolute',
                   top: (schoolYearMenuAnchor?.y || 120) + (schoolYearMenuAnchor?.height || 32) + 4,
                   left: schoolYearMenuAnchor?.x || 220,
-                  minWidth: Math.max(240, schoolYearMenuAnchor?.width || 0),
+                  width: Math.max(176, Math.min(220, schoolYearMenuAnchor?.width || 0)),
                   maxHeight: 260,
                   borderWidth: 1,
                   borderColor: BORDER,
@@ -2420,17 +2596,31 @@ export default function PlannerSettingsContent({
                           setShowSchoolYearDropdown(false);
                         }}
                         style={{
+                          minHeight: 40,
                           paddingHorizontal: 12,
                           paddingVertical: 10,
-                          backgroundColor: isActive ? CHIP_SELECTED_BG : '#FFFFFF',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          backgroundColor: '#FFFFFF',
                           borderBottomWidth: schoolYearOptions[schoolYearOptions.length - 1] === label ? 0 : 1,
-                          borderBottomColor: BORDER,
+                          borderBottomColor: '#f3f4f6',
                         }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Text style={{ fontSize: 14, color: isActive ? CHIP_SELECTED_BORDER : TEXT_BLACK, fontWeight: isActive ? '600' : '500' }}>
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            color: isActive ? '#111827' : '#374151',
+                            fontWeight: isActive ? '700' : '400',
+                            ...(Platform.OS === 'web' && {
+                              fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                            }),
+                          }}
+                        >
                           {label}
                         </Text>
+                        {isActive ? <Check size={14} color="#111827" /> : null}
                       </TouchableOpacity>
                     );
                   })}
@@ -2442,10 +2632,13 @@ export default function PlannerSettingsContent({
 
         {/* Custom days (single-date exclusions) */}
         <View style={{ marginTop: 12 }}>
-          <Text style={sectionFieldLabelStyle}>Custom days off</Text>
+          <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 2 }]}>Custom days off</Text>
           <View>
+              {visibleCustomHolidays.length === 0 && !addingHoliday ? (
+                <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 8 }}>No custom days yet</Text>
+              ) : null}
               {visibleCustomHolidays.map((h, i) => (
-                <View key={h.id || i} style={{ marginBottom: 8 }}>
+                <View key={h.id || i} style={{ marginBottom: 4 }}>
                   {editingHolidayIndex === h._idx ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <PlannerPreferenceDateField
@@ -2479,16 +2672,16 @@ export default function PlannerSettingsContent({
                       </TouchableOpacity>
                     </View>
                   ) : (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Text style={{ fontSize: 14, color: TEXT_BLACK }}>
+                    <View style={[settingRowStyle, { marginBottom: 0 }]}>
+                      <Text style={mutedMetaTextStyle}>
                         {h.date} — {h.name}
                       </Text>
                       <View style={rowActionButtonsStyle}>
                         <TouchableOpacity onPress={() => startEditHoliday(h._idx)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Pencil size={16} color="#374151" />
+                          <Pencil size={16} color="#475569" />
                         </TouchableOpacity>
                         <TouchableOpacity onPress={() => removeHoliday(h._idx)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Trash2 size={16} color="#991B1B" />
+                          <Trash2 size={16} color="#B42318" />
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -2516,7 +2709,7 @@ export default function PlannerSettingsContent({
                     style={[inputStyle, { flex: 1, minWidth: 120 }]}
                     placeholderTextColor="rgba(15,23,42,0.4)"
                   />
-                  <TouchableOpacity onPress={addHoliday} style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ACCENT, borderRadius: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                  <TouchableOpacity onPress={addHoliday} style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ACCENT, borderRadius: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                     <Check size={18} color="#FFFFFF" />
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => { setAddingHoliday(false); setNewHolidayDate(''); setNewHolidayName(''); }} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
@@ -2529,7 +2722,7 @@ export default function PlannerSettingsContent({
                   style={addOutlineButtonStyle}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={addOutlineButtonTextStyle}>+ {PLANNING_PREFERENCES_UI.addDay}</Text>
+                  <Text style={[addOutlineButtonTextStyle, { color: LINK_PURPLE }]}>+ Add day</Text>
                 </TouchableOpacity>
               )}
           </View>
@@ -2537,8 +2730,11 @@ export default function PlannerSettingsContent({
 
         {/* Ranges (date-span exclusions) */}
         <View style={{ marginTop: 12 }}>
-          <Text style={sectionFieldLabelStyle}>Custom date ranges off</Text>
+          <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 2 }]}>Custom breaks</Text>
           <View>
+              {visibleCustomBreaks.length === 0 && !addingBreak ? (
+                <Text style={[mutedMetaTextStyle, { marginBottom: 8 }]}>No custom ranges yet</Text>
+              ) : null}
               {visibleCustomBreaks.map((b, i) => (
                 <View key={b.id || i} style={{ marginBottom: 8 }}>
                   {editingBreakIndex === b._idx ? (
@@ -2586,16 +2782,16 @@ export default function PlannerSettingsContent({
                       </TouchableOpacity>
                     </View>
                   ) : (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Text style={{ fontSize: 14, color: TEXT_BLACK }}>
+                    <View style={settingRowStyle}>
+                      <Text style={[settingRowLabelStyle, { fontWeight: '400' }]}>
                         {b.start}–{b.end} {b.name}
                       </Text>
-                      <View style={{ flexDirection: 'row', gap: 4 }}>
-                        <TouchableOpacity onPress={() => startEditBreak(b._idx)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Pencil size={14} color={MUTED} />
+                      <View style={rowActionButtonsStyle}>
+                        <TouchableOpacity onPress={() => startEditBreak(b._idx)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Pencil size={16} color="#475569" />
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={() => removeBreak(b._idx)} style={{ padding: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Trash2 size={14} color="#991B1B" />
+                        <TouchableOpacity onPress={() => removeBreak(b._idx)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Trash2 size={16} color="#B42318" />
                         </TouchableOpacity>
                       </View>
                     </View>
@@ -2635,7 +2831,7 @@ export default function PlannerSettingsContent({
                     style={[inputStyle, { flex: 1, minWidth: 80 }]}
                     placeholderTextColor="rgba(15,23,42,0.4)"
                   />
-                  <TouchableOpacity onPress={addBreak} style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ACCENT, borderRadius: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                  <TouchableOpacity onPress={addBreak} style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ACCENT, borderRadius: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
                     <Check size={18} color="#FFFFFF" />
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -2657,7 +2853,7 @@ export default function PlannerSettingsContent({
                   style={addOutlineButtonStyle}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={addOutlineButtonTextStyle}>+ {PLANNING_PREFERENCES_UI.addRange}</Text>
+                  <Text style={[addOutlineButtonTextStyle, { color: LINK_PURPLE }]}>+ Add break</Text>
                 </TouchableOpacity>
               )}
           </View>
@@ -2675,12 +2871,12 @@ export default function PlannerSettingsContent({
               <Text style={embeddedCancelButtonTextStyle}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[embeddedSaveButtonStyle, saving && { opacity: 0.7, ...(Platform.OS === 'web' ? { boxShadow: 'none' } : null) }]}
+              style={[embeddedSaveButtonStyle, saving && { opacity: 0.7 }]}
               onPress={handleEmbeddedSave}
               disabled={saving}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Check size={16} color="#ffffff" />
+              <Check size={16} color="#334155" />
               <Text style={embeddedSaveButtonTextStyle}>{saving ? 'Saving…' : 'Save'}</Text>
             </TouchableOpacity>
           </View>
