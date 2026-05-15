@@ -665,6 +665,9 @@ export default function PlannerSettingsContent({
 
   const showSaved = () => {
     setSavedIndicator(true);
+    if (embeddedInModal) {
+      toast.push('Saved', 'success');
+    }
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => setSavedIndicator(false), 2000);
   };
@@ -948,13 +951,6 @@ export default function PlannerSettingsContent({
   const debouncedPersist = useCallback(() => {
     persist({});
   }, [persist]);
-
-  const handleEmbeddedSave = useCallback(async () => {
-    const ok = await persist({});
-    if (ok && typeof onRequestClose === 'function') {
-      onRequestClose();
-    }
-  }, [persist, onRequestClose]);
 
   const respondAttendanceModeConfirm = useCallback((confirmed) => {
     const resolver = attendanceModeConfirmResolverRef.current;
@@ -1697,54 +1693,6 @@ export default function PlannerSettingsContent({
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  };
-  const embeddedFooterActionsStyle = {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 16,
-    paddingTop: 8,
-  };
-  const embeddedCancelButtonStyle = {
-    minWidth: 92,
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 8,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E6EBF2',
-    alignItems: 'center',
-    justifyContent: 'center',
-  };
-  const embeddedCancelButtonTextStyle = {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#475569',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  };
-  const embeddedSaveButtonStyle = {
-    minWidth: 132,
-    paddingVertical: 10,
-    paddingHorizontal: 22,
-    borderRadius: 8,
-    backgroundColor: '#E8F0F8',
-    borderWidth: 1,
-    borderColor: '#D9E4F1',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  };
-  const embeddedSaveButtonTextStyle = {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#334155',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   };
   const attendanceModeLabel = attendanceTrackingMode === 'class_day' ? 'Learning days' : 'Per subject';
   if (loading && !embeddedInModal) {
@@ -2860,27 +2808,6 @@ export default function PlannerSettingsContent({
         </View>
 
         {error && <Text style={{ color: '#DC2626', fontSize: 14, marginTop: 12 }}>{error}</Text>}
-        {embeddedInModal ? (
-          <View style={embeddedFooterActionsStyle}>
-            <TouchableOpacity
-              style={embeddedCancelButtonStyle}
-              onPress={() => onRequestClose?.()}
-              disabled={saving}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={embeddedCancelButtonTextStyle}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[embeddedSaveButtonStyle, saving && { opacity: 0.7 }]}
-              onPress={handleEmbeddedSave}
-              disabled={saving}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Check size={16} color="#334155" />
-              <Text style={embeddedSaveButtonTextStyle}>{saving ? 'Saving…' : 'Save'}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
       </View>
 
     </ScrollView>
