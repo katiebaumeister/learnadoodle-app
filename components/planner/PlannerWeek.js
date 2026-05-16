@@ -1079,32 +1079,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           }
         }, isDelete: true });
       }
-      if (event.academic_year_id) {
-        menuItems.push({
-          text: 'Delete Plan',
-          action: async () => {
-            if (window.confirm('This will permanently remove this plan and its scheduled lessons from the calendar. You cannot undo this. Continue?')) {
-              try {
-                // Optimistically remove year-linked events from planner immediately.
-                window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { academicYearId: event.academic_year_id } }));
-                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-                const { clearPlaceholders, invalidatePlanHealthCache } = await import('../../lib/services/academicYearClient');
-                const { data, error } = await clearPlaceholders(familyId, event.academic_year_id, { deletePlan: true });
-                if (error) throw new Error(error.message || 'Failed to delete plan');
-                if (data?.plan_deleted) {
-                  invalidatePlanHealthCache();
-                  window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-                }
-              } catch (err) {
-                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-                Alert.alert('Error', err?.message || 'Failed to delete plan');
-              }
-            }
-          },
-          isDelete: true,
-        });
-      }
-      
       // Calculate menu height (estimate: ~48px per item + 16px padding)
       const estimatedMenuHeight = menuItems.length * 48 + 16;
       const windowHeight = window.innerHeight;

@@ -1879,6 +1879,13 @@ async def fix_target_gap(
             for sid in (body.subject_ids or [])
             if str(sid).strip()
         ]
+        normalized_requested_subject_ids: List[str] = []
+        for sid in requested_subject_ids:
+            try:
+                normalized_requested_subject_ids.append(str(uuid.UUID(sid)))
+            except Exception:
+                continue
+        requested_subject_ids = normalized_requested_subject_ids
         requested_subject_set = set(requested_subject_ids)
         max_minutes_per_slot_for_hours = 300  # default 5h/session cap
         learning_window_start_min = 8 * 60
@@ -2204,19 +2211,26 @@ async def fix_target_gap(
             child_name_by_id = {}
 
         def _join_names_for_title(names: List[str]) -> str:
-            clean = [str(name).strip() for name in (names or []) if str(name).strip()]
+            clean: List[str] = []
+            seen: set = set()
+            for name in (names or []):
+                label = str(name).strip()
+                if not label or label in seen:
+                    continue
+                seen.add(label)
+                clean.append(label)
             if not clean:
                 return "Learning"
             if len(clean) == 1:
-                return f"{clean[0]} Learning"
+                return clean[0]
             if len(clean) == 2:
-                return f"{clean[0]} & {clean[1]} Learning"
-            return f"{', '.join(clean[:-1])} & {clean[-1]} Learning"
+                return f"{clean[0]} & {clean[1]}"
+            return ", ".join(clean)
 
-        def _class_day_title_for_child_ids(child_ids: List[str]) -> str:
+        def _class_day_title_for_subject_ids(subject_ids: List[str]) -> str:
             names = []
-            for cid in (child_ids or []):
-                label = child_name_by_id.get(str(cid).strip())
+            for sid in (subject_ids or []):
+                label = subject_name_by_id.get(str(sid).strip())
                 if label:
                     names.append(label)
             return _join_names_for_title(names)
@@ -3411,7 +3425,11 @@ async def fix_target_gap(
                     child_ids = list(selected_child_ids_for_conflict)
                 st = str(slot.get("start_time") or learning_window_start_hhmm)
                 et = str(slot.get("end_time") or _default_end_for_start(st))
-                event_title = _class_day_title_for_child_ids(child_ids) if is_class_day_tracking_mode else subject_name
+                event_title = (
+                    _class_day_title_for_subject_ids([sid] if sid else selected_subject_ids)
+                    if is_class_day_tracking_mode
+                    else subject_name
+                )
                 event_type = "ClassDay" if is_class_day_tracking_mode else "Lesson"
                 event_subject_id = None if is_class_day_tracking_mode else sid
                 created_rows.append({
@@ -3579,15 +3597,18 @@ async def fix_target_gap(
 
             events_created_count = successful_insert_count
             inserted_day_keys_by_subject: Dict[str, set] = defaultdict(set)
+            inserted_overall_day_keys: set = set()
             for ev in inserted_rows:
                 sid = str(ev.get("subject_id") or "").strip()
                 day_key = _day_from_ts(ev.get("start_ts"))
-                if sid and day_key:
-                    inserted_day_keys_by_subject[sid].add(day_key)
+                if day_key:
+                    inserted_overall_day_keys.add(day_key)
+                    if sid:
+                        inserted_day_keys_by_subject[sid].add(day_key)
 
             if effective_scope == "overall":
                 before_projected_set = done_overall_dates.union(upcoming_overall_dates)
-                inserted_overall_days = set().union(*inserted_day_keys_by_subject.values()) if inserted_day_keys_by_subject else set()
+                inserted_overall_days = inserted_overall_day_keys
                 after_projected_set = before_projected_set.union(inserted_overall_days)
                 projected_after_days = len(after_projected_set)
             else:
@@ -6100,20 +6121,22 @@ async def apply_to_calendar(
                 family_child_ids = []
                 child_name_by_id = {}
 
-        def _class_day_title_for_child_ids(child_ids: List[str]) -> str:
-            names = [
-                child_name_by_id.get(str(cid).strip(), "").strip()
-                for cid in (child_ids or [])
-                if str(cid).strip()
-            ]
-            names = [name for name in names if name]
+        def _class_day_title_for_subject_ids(subject_ids: List[Any]) -> str:
+            names: List[str] = []
+            seen: set = set()
+            for sid in (subject_ids or []):
+                label = str(subject_rows.get(str(sid), "") or "").strip()
+                if not label or label in seen:
+                    continue
+                seen.add(label)
+                names.append(label)
             if not names:
                 return "Learning"
             if len(names) == 1:
-                return f"{names[0]} Learning"
+                return names[0]
             if len(names) == 2:
-                return f"{names[0]} & {names[1]} Learning"
-            return f"{', '.join(names[:-1])} & {names[-1]} Learning"
+                return f"{names[0]} & {names[1]}"
+            return ", ".join(names)
 
         def _resolve_event_assignees(preferred_child_ids: Optional[List[Any]] = None) -> Tuple[Optional[str], List[str]]:
             normalized_preferred = [
@@ -6412,7 +6435,12 @@ async def apply_to_calendar(
                 date_str = d.isoformat()
                 block_assignees = blocks_to_use[0].get("child_ids") if blocks_to_use else []
                 resolved_child_id, resolved_child_ids = _resolve_event_assignees(block_assignees)
-                class_day_title = _class_day_title_for_child_ids(resolved_child_ids)
+                class_day_subject_ids = [
+                    str(block.get("subject_id") or "").strip()
+                    for block in (blocks_to_use or [])
+                    if str(block.get("subject_id") or "").strip()
+                ]
+                class_day_title = _class_day_title_for_subject_ids(class_day_subject_ids)
                 events_to_insert.append({
                     "family_id": body.family_id,
                     "child_id": resolved_child_id,
@@ -6493,7 +6521,7 @@ async def apply_to_calendar(
                     date_str = d.isoformat()
                     planned_dates_set.add(d)
                     resolved_child_id, resolved_child_ids = _resolve_event_assignees()
-                    class_day_title = _class_day_title_for_child_ids(resolved_child_ids)
+                    class_day_title = _class_day_title_for_subject_ids(subject_ids_ordered)
                     events_to_insert.append({
                         "family_id": body.family_id,
                         "child_id": resolved_child_id,

@@ -2543,6 +2543,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   
   // Track events with pending optimistic updates to prevent cache overwrites
   const pendingOptimisticUpdatesRef = useRef(new Set());
+  // Keep recently deleted events hidden during eventual-consistency windows.
+  const recentlyDeletedEventIdsRef = useRef(new Map()); // Map<eventId, hideUntilMs>
+  const recentlyDeletedAcademicYearsRef = useRef(new Map()); // Map<academicYearId, hideUntilMs>
   // Track events that were just merged from API (reschedule success) so we can skip full month refetch
   const lastMergeFromApiRef = useRef(null); // { eventId, at }
   // Track events that were just updated from database to prevent merge from overwriting
@@ -2619,6 +2622,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         const { data, error } = monthResult;
         if (error) throw error;
         const eventsByDate = data?.events_by_date || {};
+        const nowMs = Date.now();
+        for (const [eventId, hideUntil] of recentlyDeletedEventIdsRef.current.entries()) {
+          if (!hideUntil || hideUntil <= nowMs) recentlyDeletedEventIdsRef.current.delete(eventId);
+        }
+        for (const [yearId, hideUntil] of recentlyDeletedAcademicYearsRef.current.entries()) {
+          if (!hideUntil || hideUntil <= nowMs) recentlyDeletedAcademicYearsRef.current.delete(yearId);
+        }
         // Normalize: RPC returns date_local -> array of events; ensure each event has id, time for MonthGrid
         const byDate = {};
         Object.keys(eventsByDate).forEach((dateKey) => {
@@ -2638,7 +2648,22 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             subjectName: e.subject_name,
             status: e.status,
             source: e.source,
-          }));
+          })).filter((e) => {
+            if (!e) return false;
+            const eventId = String(e.id || '').trim();
+            const cleanEventId = cleanPlannerEventId(eventId);
+            if (
+              (eventId && recentlyDeletedEventIdsRef.current.has(eventId)) ||
+              (cleanEventId && recentlyDeletedEventIdsRef.current.has(cleanEventId))
+            ) {
+              return false;
+            }
+            const yearId = String(e.academic_year_id || '').trim();
+            if (yearId && recentlyDeletedAcademicYearsRef.current.has(yearId)) {
+              return false;
+            }
+            return true;
+          });
         });
         setCalendarDataCache((prev) => ({ ...prev, [monthKey]: byDate }));
         setCalendarEvents((prev) => {
@@ -2949,6 +2974,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       if (!deletedId && !deletedAcademicYearId) return;
       const idStr = deletedId ? String(deletedId) : null;
       const academicYearIdStr = deletedAcademicYearId ? String(deletedAcademicYearId) : null;
+      const hideUntil = Date.now() + 15000;
+      if (idStr) {
+        recentlyDeletedEventIdsRef.current.set(idStr, hideUntil);
+        const cleanId = cleanPlannerEventId(idStr);
+        if (cleanId) recentlyDeletedEventIdsRef.current.set(cleanId, hideUntil);
+      }
+      if (academicYearIdStr) {
+        recentlyDeletedAcademicYearsRef.current.set(academicYearIdStr, hideUntil);
+      }
       setCalendarEvents((prev) => {
         let changed = false;
         const next = {};
@@ -2959,7 +2993,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           }
           const filtered = list.filter((e) => {
             if (!e) return false;
-            if (idStr && String(e.id) === idStr) return false;
+            if (idStr) {
+              const eventId = String(e.id || '');
+              if (eventId === idStr || cleanPlannerEventId(eventId) === cleanPlannerEventId(idStr)) return false;
+            }
             if (academicYearIdStr && String(e.academic_year_id || '') === academicYearIdStr) return false;
             return true;
           });
@@ -2984,7 +3021,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             }
             const filtered = list.filter((e) => {
               if (!e) return false;
-              if (idStr && String(e.id) === idStr) return false;
+            if (idStr) {
+              const eventId = String(e.id || '');
+              if (eventId === idStr || cleanPlannerEventId(eventId) === cleanPlannerEventId(idStr)) return false;
+            }
               if (academicYearIdStr && String(e.academic_year_id || '') === academicYearIdStr) return false;
               return true;
             });
@@ -4954,47 +4994,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   // Re-sync planner state if optimistic delete fails.
                   window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                   Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
-                } finally {
-                  setConfirm((prev) => ({ ...prev, visible: false }));
-                }
-              },
-              onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
-            });
-          },
-        });
-      }
-      if (ev.academic_year_id) {
-        menuItems.push({
-          text: 'Delete Plan',
-          isDelete: true,
-          iconKey: 'trash2',
-          action: () => {
-            const setConfirm = setConfirmDialogRef.current;
-            if (!setConfirm) return;
-            setConfirm({
-              visible: true,
-              title: 'Delete plan?',
-              message: 'This will permanently remove this plan and its scheduled lessons from the calendar. You cannot undo this.',
-              confirmLabel: 'Delete plan',
-              cancelLabel: 'Cancel',
-              destructive: true,
-              onConfirm: async () => {
-                const optimisticDetail = { academicYearId: ev.academic_year_id };
-                window.dispatchEvent(new CustomEvent('eventDeleted', { detail: optimisticDetail }));
-                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-                try {
-                  const { clearPlaceholders } = await import('../lib/services/academicYearClient');
-                  const { invalidatePlanHealthCache } = await import('../lib/services/academicYearClient');
-                  const { data, error } = await clearPlaceholders(familyId, ev.academic_year_id, { deletePlan: true });
-                  if (error) throw new Error(error.message || 'Failed to delete plan');
-                  if (data?.plan_deleted) {
-                    invalidatePlanHealthCache();
-                    window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
-                  }
-                } catch (err) {
-                  // Re-sync planner state if optimistic delete fails.
-                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-                  Alert.alert('Error', err?.message || 'Failed to delete plan');
                 } finally {
                   setConfirm((prev) => ({ ...prev, visible: false }));
                 }

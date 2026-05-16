@@ -22,7 +22,12 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     if (eventTypeLower === 'lesson') return 'lesson';
     if (eventTypeLower === 'activity') return 'activity';
     if (eventTypeLower === 'assignment') return 'assignment';
-    if (eventTypeLower === 'schedule block' || eventTypeLower === 'scheduled class day') return 'schedule_block';
+    if (
+      eventTypeLower === 'schedule block' ||
+      eventTypeLower === 'scheduled class day' ||
+      eventTypeLower === 'classday' ||
+      eventTypeLower === 'class day'
+    ) return 'lesson';
     if (eventTypeLower === 'appointment') return 'appointment';
     if (eventTypeLower === 'project') return 'project';
     if (eventTypeLower === 'exam' || eventTypeLower === 'assessment') return 'exam';
@@ -56,8 +61,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#EDE6FF'; // Lavender
       case 'assignment':
         return '#DFF7E3'; // Soft Green
-      case 'schedule_block':
-        return '#FFE8D1'; // Soft Orange / Peach
       case 'appointment':
         return '#F2F4F7'; // Warm Gray
       case 'project':
@@ -80,8 +83,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#DDD0FF'; // More saturated Lavender
       case 'assignment':
         return '#C5F0D1'; // More saturated Soft Green
-      case 'schedule_block':
-        return '#FFD9B3'; // More saturated Soft Orange / Peach
       case 'appointment':
         return '#E5E7EB'; // More saturated Warm Gray
       case 'project':
@@ -104,8 +105,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#7A5CD6'; // Lavender accent
       case 'assignment':
         return '#4FAF75'; // Soft Green accent
-      case 'schedule_block':
-        return '#E08A3C'; // Soft Orange / Peach accent
       case 'appointment':
         return '#6B7280'; // Warm Gray accent
       case 'project':

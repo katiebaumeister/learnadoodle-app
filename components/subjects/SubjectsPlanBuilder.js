@@ -3735,12 +3735,13 @@ export default function SubjectsPlanBuilder({
     }
     // Prevent accidental duplicate runs from rapid taps/click-throughs.
     fixGapCooldownUntilByTargetRef.current.set(fixGapTargetKey, nowMs + 1500);
+    const isUuidLike = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
     const scopedSchoolYearSubjectIds = (baseSubjects || [])
       .filter((subject) => String(subject?.school_year || '').trim() === schoolYearLabel)
       .map((subject) => String(subject?.id || '').trim())
-      .filter(Boolean);
+      .filter((id) => isUuidLike(id));
     const rowSubjectIds = Array.isArray(row?.subjectIds)
-      ? row.subjectIds.map((id) => String(id || '').trim()).filter(Boolean)
+      ? row.subjectIds.map((id) => String(id || '').trim()).filter((id) => isUuidLike(id))
       : [];
     const requestedSubjectIds = isOverallRow
       ? [...new Set(
@@ -5858,28 +5859,26 @@ export default function SubjectsPlanBuilder({
                                 <Text style={styles.yearTargetsPredictiveSuggestionLine}>
                                   {`Suggested days: ${suggestedDaysText || 'No automatic schedule suggestion yet.'}`}
                                 </Text>
-                                {!isLearningDaysTrackingMode ? (
-                                  <TouchableOpacity
-                                    onPress={() => fixYearTargetGap(row)}
-                                    activeOpacity={0.85}
-                                    disabled={fixingGapRowId === rowId || !canFixGap}
+                                <TouchableOpacity
+                                  onPress={() => fixYearTargetGap(row)}
+                                  activeOpacity={0.85}
+                                  disabled={fixingGapRowId === rowId || !canFixGap}
+                                  style={[
+                                    styles.yearTargetsPredictiveSuggestionButton,
+                                    styles.yearTargetsPredictiveFixGapButton,
+                                    (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonDisabled,
+                                  ]}
+                                  {...(Platform.OS === 'web' && { cursor: (fixingGapRowId === rowId || !canFixGap) ? 'default' : 'pointer' })}
+                                >
+                                  <Text
                                     style={[
-                                      styles.yearTargetsPredictiveSuggestionButton,
-                                      styles.yearTargetsPredictiveFixGapButton,
-                                      (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonDisabled,
+                                      styles.yearTargetsPredictiveSuggestionButtonText,
+                                      (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
                                     ]}
-                                    {...(Platform.OS === 'web' && { cursor: (fixingGapRowId === rowId || !canFixGap) ? 'default' : 'pointer' })}
                                   >
-                                    <Text
-                                      style={[
-                                        styles.yearTargetsPredictiveSuggestionButtonText,
-                                        (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
-                                      ]}
-                                    >
-                                      {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
-                                    </Text>
-                                  </TouchableOpacity>
-                                ) : null}
+                                    {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
+                                  </Text>
+                                </TouchableOpacity>
                               </View>
                             </View>
                             </Animated.View>

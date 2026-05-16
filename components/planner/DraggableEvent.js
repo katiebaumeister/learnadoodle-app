@@ -361,7 +361,9 @@ export default function DraggableEvent({
         return '#DFF7E3'; // Soft Green
       case 'schedule block':
       case 'scheduled class day':
-        return '#FFE8D1'; // Soft Orange / Peach
+      case 'classday':
+      case 'class day':
+        return '#E3F0FF'; // Match Lesson light blue
       case 'appointment':
         return '#F2F4F7'; // Warm Gray
       case 'project':

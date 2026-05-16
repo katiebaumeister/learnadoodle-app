@@ -8,7 +8,7 @@ import {
   mapChildrenForConflict,
   sharedConflictBannerStyles as cb,
 } from '../planner/conflictBannerShared';
-import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle } from 'lucide-react';
+import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { formatDate, apiRequest, pushEventToGoogleCalendar } from '../../lib/apiClient';
@@ -34,6 +34,7 @@ import TutorEventHelpPanel from '../tutor/TutorEventHelpPanel';
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 import { defaultRequiresSubmissionHomeForEventType } from '../../lib/eventRequiresSubmissionHome';
+import { ModalSectionCard } from '../ui/ModalSectionCard';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 import { findFirstConflictEvent } from '../../lib/utils/conflictDetection';
 import {
@@ -639,12 +640,28 @@ const SUGGESTED_TAGS = ['math', 'reading', 'science', 'writing', 'review', 'test
 
 const EVENT_TYPES = [
   'Lesson',
+  'Class Day',
   'Project',
   'Exam',
   'Assignment',
   'Activity',
   'Appointment',
 ];
+
+const normalizeEventTypeForDisplay = (type) => {
+  const raw = String(type || '').trim();
+  if (!raw) return 'Lesson';
+  if (raw === 'Schedule Block' || raw === 'Scheduled Class Day' || raw === 'ClassDay') {
+    return 'Class Day';
+  }
+  return raw;
+};
+
+const normalizeEventTypeForPersistence = (type) => {
+  if (type === 'Scheduled Class Day') return 'Schedule Block';
+  if (type === 'Class Day') return 'ClassDay';
+  return type || 'Lesson';
+};
 
 // Tag categories and suggested tags
 const TAG_CATEGORIES = {
@@ -855,7 +872,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   
   // Event type and placement
   const [eventType, setEventType] = useState(() =>
-    event?.event_type === 'Schedule Block' ? 'Scheduled Class Day' : (event?.event_type || 'Lesson')
+    normalizeEventTypeForDisplay(event?.event_type || 'Lesson')
   );
   const [placement, setPlacement] = useState('calendar'); // 'calendar' or 'backlog'
   const [showCalendarPicker, setShowCalendarPicker] = useState(false);
@@ -878,8 +895,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(() => {
     if (!event) return false;
     if (typeof event.requires_submission_home === 'boolean') return event.requires_submission_home;
-    const loadedType = event.event_type === 'Schedule Block' ? 'Scheduled Class Day' : (event.event_type || 'Lesson');
-    return defaultRequiresSubmissionHomeForEventType(loadedType === 'Scheduled Class Day' ? 'Lesson' : loadedType);
+    const loadedType = normalizeEventTypeForDisplay(event.event_type || 'Lesson');
+    return defaultRequiresSubmissionHomeForEventType(loadedType === 'Class Day' ? 'Lesson' : loadedType);
   });
   const [academicYearId, setAcademicYearId] = useState(() => event?.academic_year_id ?? null);
   const [academicYears, setAcademicYears] = useState(() =>
@@ -1465,7 +1482,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   // Helper functions matching TaskCreateModal
   const showAcademicFields = () => {
-    return eventType && ['Lesson', 'Activity', 'Assignment', 'Scheduled Class Day', 'Schedule Block'].includes(eventType);
+    return eventType && ['Lesson', 'Activity', 'Assignment', 'Class Day', 'Scheduled Class Day', 'Schedule Block', 'ClassDay'].includes(eventType);
   };
 
   const showLocationFields = () => {
@@ -2010,18 +2027,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setDraftTags(Array.isArray(event.tags) ? event.tags : []);
     setTagInput('');
     
-    // Event type (display "Scheduled Class Day" for DB value "Schedule Block")
-    setEventType(event.event_type === 'Schedule Block' ? 'Scheduled Class Day' : (event.event_type || 'Lesson'));
+    // Event type (display class day variants consistently as "Class Day")
+    setEventType(normalizeEventTypeForDisplay(event.event_type || 'Lesson'));
     
     // Academic fields
     setSubjectId(event.subject_id || null);
     setCountsTowardPlan(event.counts_toward_plan !== false);
-    const loadedType = event.event_type === 'Schedule Block' ? 'Scheduled Class Day' : (event.event_type || 'Lesson');
+    const loadedType = normalizeEventTypeForDisplay(event.event_type || 'Lesson');
     setShowRequiresSubmissionHome(
       typeof event.requires_submission_home === 'boolean'
         ? event.requires_submission_home
         : defaultRequiresSubmissionHomeForEventType(
-            loadedType === 'Scheduled Class Day' ? 'Lesson' : loadedType
+            loadedType === 'Class Day' ? 'Lesson' : loadedType
           )
     );
     setAcademicYearId(event.academic_year_id || null);
@@ -3503,7 +3520,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         tags: draftTags.length ? draftTags : null,
         material_id: selectedMaterialId || null,
         materials_attachment_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : null,
-        event_type: eventType === 'Scheduled Class Day' ? 'Schedule Block' : (eventType || 'Lesson'),
+        event_type: normalizeEventTypeForPersistence(eventType),
         subject_id: subjectId || null,
         unit: (unit && unit.trim()) ? unit.trim() : null,
         // Mirror unit/lesson for APIs that read curriculum_unit_title / events.lesson (subject structure, plan slot labels).
@@ -4832,7 +4849,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           <Text style={styles.headerBadgeText}>EDIT EVENT</Text>
         </View>
         <TextInput
-          placeholder="Task name (required)"
+          placeholder="Event name"
           placeholderTextColor={MUTED}
           value={draftTitle}
           onChangeText={(text) => {
@@ -4842,9 +4859,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             }
           }}
           style={[
-            styles.titleInputHero,
+            styles.titleInput,
             validationErrors.title && styles.inputError,
           ]}
+          autoFocus
         />
         {validationErrors.title && (
           <Text style={styles.errorText}>{validationErrors.title}</Text>
@@ -5015,11 +5033,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         )}
 
       {/* Event Type - at top above Schedule on calendar/backlog */}
-      <SafeFieldRow style={[styles.fieldRow, { marginTop: 10, marginBottom: 12 }]}>
+      <SafeFieldRow style={[styles.fieldRow, { marginTop: 12, marginBottom: 8 }]}>
         <View style={styles.field}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Text style={styles.fieldLabel}>Event Type</Text>
-            <Text style={styles.fieldLabel}>(required)</Text>
+            <Text style={styles.fieldLabel}>Event Type <Text style={{ color: '#ef4444' }}>*</Text></Text>
           </View>
           <SafeView style={[
             styles.dropdownContainer,
@@ -5031,7 +5048,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 onPress={() => {
                   setEventType(type);
                   setShowRequiresSubmissionHome(
-                    defaultRequiresSubmissionHomeForEventType(type === 'Scheduled Class Day' ? 'Lesson' : type)
+                    defaultRequiresSubmissionHomeForEventType(type === 'Class Day' ? 'Lesson' : type)
                   );
                   if (validationErrors.eventType) {
                     setValidationErrors({ ...validationErrors, eventType: null });
@@ -5166,8 +5183,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           <View style={styles.assigneeChipColumn}>
             <View style={[styles.chip, validationErrors.assignee && styles.chipFieldError]}>
               <View>
-                <Text style={styles.chipLabel}>Assignee</Text>
-                <Text style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>(required)</Text>
+                <Text style={styles.chipLabel}>Assignee <Text style={{ color: '#ef4444' }}>*</Text></Text>
               </View>
               <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
                 {familyMembers.map((m) => {
@@ -5285,8 +5301,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           <View style={[styles.timeSection, validationErrors.time && styles.timeSectionError]}>
             <View style={styles.timeToggleRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text style={styles.sectionLabel}>Schedule time</Text>
-                <Text style={styles.sectionLabel}>(required)</Text>
+                <Text style={styles.sectionLabel}>Schedule time <Text style={{ color: '#ef4444' }}>*</Text></Text>
               </View>
               <View style={styles.timeToggleControls}>
                 <View style={styles.allDayControl}>
@@ -5684,26 +5699,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </View>
         )}
       </SafeView>
-        {/* Logistic Details Section */}
-        <SafeView style={styles.academicSection}>
-          <TouchableOpacity
-            onPress={() => setShowLogisticDetails(!showLogisticDetails)}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingVertical: 4,
-            }}
-          >
-            <Text style={styles.sectionLabel}>Logistical details</Text>
-            {showLogisticDetails ? (
-              <ChevronUp size={20} color={MUTED} />
-            ) : (
-              <ChevronDown size={20} color={MUTED} />
-            )}
-          </TouchableOpacity>
-          {showLogisticDetails && (
-            <>
+        {/* Logistical details section */}
+        <ModalSectionCard
+          Icon={MapPin}
+          title="Logistical details"
+          subtitle="Location, mode, and host"
+          expanded={showLogisticDetails}
+          onPress={() => setShowLogisticDetails(!showLogisticDetails)}
+          accent="#7C70F4"
+        >
               <SafeFieldRow style={styles.fieldRow}>
                 <View style={styles.field}>
                   <Text style={styles.fieldLabel}>Location (optional)</Text>
@@ -5714,11 +5718,19 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     onChangeText={setLocation}
                     style={styles.input}
                   />
+                  <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Instructor / Host (optional)</Text>
+                  <TextInput
+                    placeholder="e.g. Elisa"
+                    placeholderTextColor={MUTED}
+                    value={instructor}
+                    onChangeText={setInstructor}
+                    style={styles.input}
+                  />
                 </View>
                 <View style={styles.field}>
                   <Text style={styles.fieldLabel}>Mode (optional)</Text>
                   <SafeView style={styles.dropdownContainer}>
-                    <ChipRow style={styles.dropdownRow}>{MODE_OPTIONS.map((m) => (
+                    <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>{MODE_OPTIONS.map((m) => (
                       <TouchableOpacity
                         key={m}
                         onPress={() => setMode(mode === m ? '' : m)}
@@ -5740,7 +5752,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   </SafeView>
                   <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add to connected calendar</Text>
                   <SafeView style={styles.dropdownContainer}>
-                    <ChipRow style={styles.dropdownRow}>
+                    <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
                       {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
                         const isSelected = connectedCalendarTargets.includes(provider.value);
                         return (
@@ -5777,42 +5789,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   </SafeView>
                 </View>
               </SafeFieldRow>
-              <SafeFieldRow style={styles.fieldRow}>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Instructor / Host (optional)</Text>
-                  <TextInput
-                    placeholder="e.g. Ms. Chen"
-                    placeholderTextColor={MUTED}
-                    value={instructor}
-                    onChangeText={setInstructor}
-                    style={styles.input}
-                  />
-                </View>
-              </SafeFieldRow>
-            </>
-          )}
-        </SafeView>
+        </ModalSectionCard>
 
-        {/* Academic Details Section - after Schedule time */}
-        <SafeView style={[styles.academicSection, styles.academicSectionTopSpacing]}>
-          <TouchableOpacity
-            onPress={() => setShowAcademicDetails(!showAcademicDetails)}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingVertical: 4,
-            }}
-          >
-            <Text style={styles.sectionLabel}>Academic Details</Text>
-            {showAcademicDetails ? (
-              <ChevronUp size={20} color={MUTED} />
-            ) : (
-              <ChevronDown size={20} color={MUTED} />
-            )}
-          </TouchableOpacity>
-          {showAcademicDetails && (
-            <>
+        {/* Academic details section */}
+        <ModalSectionCard
+          Icon={GraduationCap}
+          title="Academic details"
+          subtitle="Scheduling and grading context"
+          expanded={showAcademicDetails}
+          onPress={() => setShowAcademicDetails(!showAcademicDetails)}
+          accent="#7C70F4"
+        >
           {/* Academic toggles */}
           {placement === 'calendar' && (
             <View style={{ marginTop: 0, marginBottom: 12 }}>
@@ -5829,14 +5816,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </View>
             </View>
           )}
-          {/* Subject (full width), then Unit / Lesson stacked like Lesson row */}
-          <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
-            <View style={[styles.field, styles.fieldStretch]}>
+          {/* Subject + Unit row */}
+          <SafeFieldRow style={styles.fieldRow}>
+            <View style={styles.field}>
               <Text style={styles.fieldLabel}>Subject (optional)</Text>
-              <View style={[styles.selectContainer, styles.selectContainerFull]}>
+              <View style={styles.selectContainer}>
                 <TouchableOpacity
                   ref={subjectButtonRef}
-                  style={[styles.select, styles.selectFullWidth, assigneeIds.length === 0 && { opacity: 0.6 }]}
+                  style={[styles.select, assigneeIds.length === 0 && { opacity: 0.6 }]}
                   onPress={() => {
                     if (assigneeIds.length > 0) {
                       setShowSubjectDropdown(!showSubjectDropdown);
@@ -5998,30 +5985,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 )}
               </View>
             </View>
-          </SafeFieldRow>
-
-          <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
-            <View style={[styles.field, styles.fieldStretch]}>
+            <View style={styles.field}>
               <Text style={styles.fieldLabel}>Unit (optional)</Text>
               <TextInput
                 placeholder="e.g. Algebra I – Linear Equations"
                 placeholderTextColor={MUTED}
                 value={unit}
                 onChangeText={setUnit}
-                style={[styles.input, styles.inputFullWidth]}
-              />
-            </View>
-          </SafeFieldRow>
-
-          <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
-            <View style={[styles.field, styles.fieldStretch]}>
-              <Text style={styles.fieldLabel}>Lesson (optional)</Text>
-              <TextInput
-                placeholder="e.g. Introduction to fractions"
-                placeholderTextColor={MUTED}
-                value={lesson}
-                onChangeText={setLesson}
-                style={[styles.input, styles.inputFullWidth]}
+                style={styles.input}
               />
             </View>
           </SafeFieldRow>
@@ -6089,51 +6060,34 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               )}
             </View>
           </SafeFieldRow>
+        </ModalSectionCard>
 
-            </>
-          )}
-        </SafeView>
+        {/* Notes and attachments section */}
+        <ModalSectionCard
+          Icon={FileText}
+          title="Notes and attachments"
+          subtitle="Anything else to remember"
+          expanded={showNotesSection}
+          onPress={() => setShowNotesSection(!showNotesSection)}
+          accent="#7C70F4"
+        >
+          <View style={{ marginTop: 2 }}>
+            <TextInput
+              placeholder="Add any additional notes about this event"
+              placeholderTextColor={MUTED}
+              value={notes}
+              onChangeText={(text) => {
+                setNotes(text);
+                setDraftNotes(text);
+              }}
+              style={[styles.input, styles.notesInput]}
+              multiline
+              textAlignVertical="top"
+            />
+          </View>
 
-        {/* Additional notes — collapsible, same pattern as Add Subject modal */}
-        <SafeView style={styles.academicSection}>
-          <TouchableOpacity
-            onPress={() => setShowNotesSection(!showNotesSection)}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingVertical: 4,
-            }}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.sectionLabel}>Additional notes</Text>
-            {showNotesSection ? (
-              <ChevronUp size={20} color={MUTED} />
-            ) : (
-              <ChevronDown size={20} color={MUTED} />
-            )}
-          </TouchableOpacity>
-          {showNotesSection && (
-            <View style={{ marginTop: 12, paddingTop: 8 }}>
-              <TextInput
-                placeholder="Add any additional notes about this event"
-                placeholderTextColor={MUTED}
-                value={notes}
-                onChangeText={(text) => {
-                  setNotes(text);
-                  setDraftNotes(text);
-                }}
-                style={[styles.input, styles.notesInput]}
-                multiline
-                textAlignVertical="top"
-              />
-            </View>
-          )}
-        </SafeView>
-
-        {/* Attachments Selector - always visible */}
-        {familyId && (
-          <SafeFieldRow style={[styles.fieldRow, { marginTop: 8 }]}>
+          {familyId && (
+            <SafeFieldRow style={[styles.fieldRow, { marginTop: 8 }]}>
             <View style={styles.field}>
               <Text style={styles.fieldLabel}>Attachments (optional)</Text>
               <View style={styles.materialSelectorContainer}>
@@ -6278,8 +6232,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 return dropdownContent;
               })()}
             </View>
-          </SafeFieldRow>
-        )}
+            </SafeFieldRow>
+          )}
+        </ModalSectionCard>
 
       </ScrollView>
 
@@ -8472,18 +8427,18 @@ const styles = StyleSheet.create({
   },
   bodyScroll: {
     flex: 1,
-    maxHeight: Platform.OS === 'web' ? 'calc(100vh - 200px)' : undefined,
+    maxHeight: Platform.OS === 'web' ? 'min(70vh, calc(100vh - 220px))' : undefined,
   },
   bodyContent: {
-    paddingHorizontal: 24,
-    paddingTop: 10,
-    paddingBottom: 12,
+    paddingHorizontal: 20,
+    paddingTop: 0,
+    paddingBottom: 6,
   },
   modeToggle: {
     flexDirection: 'row',
     paddingHorizontal: 0,
-    paddingTop: 12,
-    paddingBottom: 8,
+    paddingTop: 8,
+    paddingBottom: 6,
     gap: 8,
   },
   modeOption: {
@@ -8527,10 +8482,10 @@ const styles = StyleSheet.create({
   },
   chipRow: {
     paddingHorizontal: 0,
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingTop: 6,
+    paddingBottom: 6,
     gap: 8,
-    alignItems: 'flex-start',
+    alignItems: 'center',
     flexDirection: 'row',
   },
   chip: {
@@ -8621,6 +8576,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     marginBottom: 10,
+    overflow: 'visible',
   },
   /** Single full-width row (e.g. Lesson) — row + column stretch so inputs span the modal. */
   fieldRowFull: {
@@ -8630,6 +8586,7 @@ const styles = StyleSheet.create({
   field: {
     flex: 1,
     alignItems: 'flex-start',
+    overflow: 'visible',
   },
   fieldStretch: {
     flex: 1,
@@ -8715,8 +8672,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BORDER,
     borderRadius: 12,
-    padding: 10,
-    marginBottom: 10,
+    padding: 8,
+    marginBottom: 8,
     backgroundColor: '#f9fafb',
   },
   timeSectionError: {
@@ -8727,7 +8684,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   sectionLabel: {
     fontSize: 14,
@@ -8789,6 +8746,7 @@ const styles = StyleSheet.create({
     color: FG,
     marginBottom: 8,
     textAlign: 'left',
+    backgroundColor: '#ffffff',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
