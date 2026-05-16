@@ -14,14 +14,19 @@ export default function AppModalShell({
   footer,
   contentContainerStyle,
   bodyStyle,
+  disableShellScroll = false,
 }) {
+  const ShellScroller = disableShellScroll ? View : ScrollView;
+  const shellScrollerProps = disableShellScroll
+    ? { style: styles.scrollContentNoScroll }
+    : {
+        style: styles.scroll,
+        contentContainerStyle: styles.scrollContent,
+        showsVerticalScrollIndicator: false,
+      };
   return (
     <View style={styles.modal}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
+      <ShellScroller {...shellScrollerProps}>
         <View style={[styles.header, { backgroundColor: accentSoft }]}>
           <View style={styles.headerLeft}>
             {!!eyebrow && (
@@ -45,7 +50,7 @@ export default function AppModalShell({
         </View>
 
         <View style={[styles.body, contentContainerStyle, bodyStyle]}>{children}</View>
-      </ScrollView>
+      </ShellScroller>
 
       {footer ? <View style={styles.footer}>{footer}</View> : null}
     </View>
@@ -72,6 +77,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 0,
+  },
+  scrollContentNoScroll: {
+    flex: 1,
   },
   header: {
     paddingHorizontal: 24,
@@ -133,6 +141,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   body: {
+    flex: 1,
+    minHeight: 0,
     width: '100%',
     paddingHorizontal: 24,
     paddingTop: 16,

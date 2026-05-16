@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Platform, Animated, Easing, ScrollView, StyleSheet, Modal, Switch } from 'react-native';
-import { X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import AddSubjectModal from './AddSubjectModal';
@@ -50,6 +50,29 @@ const resolveSchoolYearLabelForDate = (date = new Date()) => {
   const month = normalizedDate.getMonth() + 1;
   const startYear = month >= 8 ? normalizedDate.getFullYear() : normalizedDate.getFullYear() - 1;
   return `${startYear}/${String(startYear + 1).slice(-2)}`;
+};
+
+const normalizeSubjectTerm = (term) => {
+  const raw = String(term || '').trim().toLowerCase();
+  if (raw === 'fall term' || raw === 'fall_term' || raw === 'fall') return 'fall_term';
+  if (raw === 'spring term' || raw === 'spring_term' || raw === 'spring') return 'spring_term';
+  return 'full_year';
+};
+
+const parseSchoolYearLabel = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{4})\s*\/\s*(\d{2,4})$/);
+  if (!match) return null;
+  const startYear = Number(match[1]);
+  let endYear = Number(match[2]);
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return null;
+  if (String(match[2]).length === 2) {
+    endYear = Math.floor(startYear / 100) * 100 + endYear;
+    if (endYear < startYear) endYear += 100;
+  }
+  if (!Number.isFinite(endYear) || endYear < startYear) return null;
+  return { startYear, endYear };
 };
 
 const toYmd = (value) => {
@@ -686,7 +709,6 @@ export default function TaskCreateModal({
   const [recurrenceWeekdays, setRecurrenceWeekdays] = useState([]);
   const [recurrenceInterval, setRecurrenceInterval] = useState(1);
   const [recurrenceIntervalText, setRecurrenceIntervalText] = useState('1');
-  const [showAdvancedRecurrence, setShowAdvancedRecurrence] = useState(false);
   const [respectSavedDaysOff, setRespectSavedDaysOff] = useState(true);
   const [isRecurrenceWeekdayAutofilled, setIsRecurrenceWeekdayAutofilled] = useState(true);
   const [plannerDefaults, setPlannerDefaults] = useState(null);
@@ -1095,7 +1117,6 @@ export default function TaskCreateModal({
       setRecurrenceWeekdays([new Date(defaultDate ?? new Date()).getDay()]);
       setRecurrenceInterval(1);
       setRecurrenceIntervalText('1');
-      setShowAdvancedRecurrence(false);
       setRespectSavedDaysOff(true);
       setIsRecurrenceWeekdayAutofilled(true);
       setClassDayDefaultsApplied(false);
@@ -1129,6 +1150,35 @@ export default function TaskCreateModal({
     if (isDateWithin(dueDate, fallStart, fallEnd)) return fallEnd;
     if (isDateWithin(dueDate, springStart, springEnd)) return springEnd;
     return yearEnd;
+  }, [plannerDefaults, dueDate]);
+
+  const resolveSubjectTermEndDate = useCallback((subject) => {
+    if (!subject) return null;
+    const term = normalizeSubjectTerm(subject.school_term);
+    const parsedYear = parseSchoolYearLabel(subject.school_year);
+    const fallbackStartYear = dueDate instanceof Date && !Number.isNaN(dueDate.getTime())
+      ? (dueDate.getMonth() + 1 >= 8 ? dueDate.getFullYear() : dueDate.getFullYear() - 1)
+      : new Date().getFullYear();
+    const fallbackEndYear = fallbackStartYear + 1;
+    const startYear = parsedYear?.startYear || fallbackStartYear;
+    const endYear = parsedYear?.endYear || fallbackEndYear;
+
+    const defaultFallTermEnd = parseYmdDate(plannerDefaults?.default_fall_term_end_date);
+    const defaultSpringTermEnd = parseYmdDate(plannerDefaults?.default_spring_term_end_date);
+    const defaultYearEnd = parseYmdDate(plannerDefaults?.default_year_end_date);
+    const templateEnd =
+      term === 'fall_term'
+        ? defaultFallTermEnd
+        : (term === 'spring_term' ? defaultSpringTermEnd : defaultYearEnd || defaultSpringTermEnd);
+    const fallbackMonthDay =
+      term === 'fall_term'
+        ? { month: 11, day: 31 }
+        : { month: 5, day: 30 };
+    const month = templateEnd ? templateEnd.getMonth() : fallbackMonthDay.month;
+    const day = templateEnd ? templateEnd.getDate() : fallbackMonthDay.day;
+    const year = term === 'fall_term' ? startYear : endYear;
+    const resolved = new Date(year, month, day);
+    return Number.isNaN(resolved.getTime()) ? null : resolved;
   }, [plannerDefaults, dueDate]);
 
   useEffect(() => {
@@ -1174,6 +1224,21 @@ export default function TaskCreateModal({
     resolvedClassDayTermEnd,
     classDayDefaultsApplied,
   ]);
+
+  useEffect(() => {
+    if (!visible || eventType !== 'Class Day' || !subjectId) return;
+    const selectedSubject = (subjects || []).find((item) => String(item?.id) === String(subjectId));
+    if (!selectedSubject) return;
+    const subjectTermEnd = resolveSubjectTermEndDate(selectedSubject);
+    if (!subjectTermEnd) return;
+    setRecurrenceEndType('on');
+    setRecurrenceEndDate((prev) => {
+      const prevYmd = toYmd(prev);
+      const nextYmd = toYmd(subjectTermEnd);
+      if (prevYmd && nextYmd && prevYmd === nextYmd) return prev;
+      return new Date(subjectTermEnd);
+    });
+  }, [visible, eventType, subjectId, subjects, resolveSubjectTermEndDate]);
 
   const fetchSubjects = async () => {
     if (!familyId) return;
@@ -1530,9 +1595,9 @@ export default function TaskCreateModal({
         is_flexible: true,
         is_backlog: false,
         event_type: normalizeEventTypeForPersistence(eventType),
-        subject_id: isClassDayEvent ? null : (subjectId || null),
-        unit: isClassDayEvent ? null : (unit.trim() || null),
-        grade: isClassDayEvent ? null : (grade.trim() || null),
+        subject_id: subjectId || null,
+        unit: unit.trim() || null,
+        grade: grade.trim() || null,
         location: location.trim() || null,
         mode: mode || null,
         instructor: instructor.trim() || null,
@@ -1551,7 +1616,7 @@ export default function TaskCreateModal({
       if (insertError) throw insertError;
       return inserted;
     },
-    [attachedMaterialIds, familyId, goalLink, grade, instructor, isClassDayEvent, location, mode, notes, subjectId, unit]
+    [attachedMaterialIds, familyId, goalLink, grade, instructor, location, mode, notes, subjectId, unit]
   );
 
   // Handle overlap errors by fetching conflicting events and showing conflict warning
@@ -1862,10 +1927,10 @@ export default function TaskCreateModal({
           _is_flexible: true,
           _is_backlog: true,
           _event_type: normalizeEventTypeForPersistence(eventType),
-          _subject_id: isClassDayEvent ? null : (subjectId || null),
-          _unit: isClassDayEvent ? null : (unit.trim() || null),
-          _grade: isClassDayEvent ? null : (grade.trim() || null),
-          _percent_of_total_grade: (!isClassDayEvent && percentOfTotalGrade.trim()) ? (() => {
+          _subject_id: subjectId || null,
+          _unit: unit.trim() || null,
+          _grade: grade.trim() || null,
+          _percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
             const parsed = parseFloat(percentOfTotalGrade.trim());
             return !isNaN(parsed) && isFinite(parsed) ? parsed : null;
           })() : null,
@@ -2036,10 +2101,10 @@ export default function TaskCreateModal({
               _tags: null,
               _is_flexible: allDay,
               _event_type: normalizeEventTypeForPersistence(eventType),
-              _subject_id: isClassDayEvent ? null : (subjectId || null),
-              _unit: isClassDayEvent ? null : (unit.trim() || null),
-              _grade: isClassDayEvent ? null : (grade.trim() || null),
-              _percent_of_total_grade: (!isClassDayEvent && percentOfTotalGrade.trim()) ? (() => {
+              _subject_id: subjectId || null,
+              _unit: unit.trim() || null,
+              _grade: grade.trim() || null,
+              _percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
             const parsed = parseFloat(percentOfTotalGrade.trim());
             return !isNaN(parsed) && isFinite(parsed) ? parsed : null;
           })() : null,
@@ -2140,10 +2205,10 @@ export default function TaskCreateModal({
             _tags: null,
             _is_flexible: allDay,
             _event_type: normalizeEventTypeForPersistence(eventType),
-            _subject_id: isClassDayEvent ? null : (subjectId || null),
-            _unit: isClassDayEvent ? null : (unit.trim() || null),
-            _grade: isClassDayEvent ? null : (grade.trim() || null),
-            _percent_of_total_grade: (!isClassDayEvent && percentOfTotalGrade.trim()) ? (() => {
+            _subject_id: subjectId || null,
+            _unit: unit.trim() || null,
+            _grade: grade.trim() || null,
+            _percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
             const parsed = parseFloat(percentOfTotalGrade.trim());
             return !isNaN(parsed) && isFinite(parsed) ? parsed : null;
           })() : null,
@@ -2282,9 +2347,6 @@ export default function TaskCreateModal({
         const updatePayload = {
           requires_submission_home: isClassDayEvent ? false : showRequiresSubmissionHome,
         };
-        if (isClassDayEvent) {
-          updatePayload.subject_id = null;
-        }
         await supabase
           .from('events')
           .update(updatePayload)
@@ -2446,10 +2508,6 @@ export default function TaskCreateModal({
               transform: [{ scale }],
             },
           ]}
-          onStartShouldSetResponder={() => true}
-          onResponderGrant={() => {
-            // Prevent clicks inside modal from closing it
-          }}
         >
           <AppModalShell
             mode="add"
@@ -2459,6 +2517,7 @@ export default function TaskCreateModal({
             accentSoft="#FAF9FF"
             HeroIcon={Calendar}
             onClose={onClose}
+            disableShellScroll
             contentContainerStyle={styles.bodyContent}
             bodyStyle={styles.shellBody}
             footer={(
@@ -3489,98 +3548,6 @@ export default function TaskCreateModal({
                       </View>
                       )}
                     </View>
-                    <View style={styles.advancedOptionsHeaderRow}>
-                      <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Advanced options</Text>
-                      <TouchableOpacity
-                        onPress={() => setShowAdvancedRecurrence((prev) => !prev)}
-                        style={styles.advancedToggleButton}
-                      >
-                        <Text style={styles.advancedToggleText}>
-                          {showAdvancedRecurrence ? 'Hide' : 'Show'}
-                        </Text>
-                        {showAdvancedRecurrence ? (
-                          <ChevronUp size={14} color={MUTED} />
-                        ) : (
-                          <ChevronDown size={14} color={MUTED} />
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                    {showAdvancedRecurrence && (
-                      <View style={styles.advancedOptionsCard}>
-                        <View style={{ marginBottom: 12 }}>
-                          <Text style={[styles.fieldLabel, { marginBottom: 6, fontSize: 12 }]}>
-                            {recurrenceType === 'weekly' ? 'Repeat every (weeks)' : 'Repeat every (months)'}
-                          </Text>
-                          <TextInput
-                            style={[
-                              styles.input,
-                              { width: 120, marginBottom: 0, paddingVertical: 6, paddingHorizontal: 12, height: 'auto' },
-                              validationErrors.recurrenceInterval && {
-                                borderColor: '#ef4444',
-                                borderWidth: 1.5,
-                              },
-                            ]}
-                            keyboardType="numeric"
-                            value={recurrenceIntervalText}
-                            onChangeText={(text) => {
-                              if (validationErrors.recurrenceInterval) {
-                                setValidationErrors((prev) => ({ ...prev, recurrenceInterval: null }));
-                              }
-                              if (text === '' || /^\d+$/.test(text)) {
-                                setRecurrenceIntervalText(text);
-                                const parsed = parseInt(text, 10);
-                                if (!Number.isNaN(parsed) && parsed > 0) {
-                                  setRecurrenceInterval(parsed);
-                                }
-                              }
-                            }}
-                            onBlur={() => {
-                              const parsed = parseInt(recurrenceIntervalText, 10);
-                              if (Number.isNaN(parsed) || parsed < 1) {
-                                setRecurrenceInterval(1);
-                                setRecurrenceIntervalText('1');
-                              } else {
-                                setRecurrenceInterval(parsed);
-                                setRecurrenceIntervalText(String(parsed));
-                              }
-                            }}
-                          />
-                          {validationErrors.recurrenceInterval ? (
-                            <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceInterval}</Text>
-                          ) : null}
-                        </View>
-                        <View style={styles.daysOffRow}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.fieldLabel, { marginBottom: 4, fontSize: 12 }]}>
-                              Schedule around saved days off
-                            </Text>
-                            <Text style={styles.smallHintText}>
-                              Skip holidays and breaks from Planning Preferences.
-                            </Text>
-                          </View>
-                          <Switch
-                            value={respectSavedDaysOff}
-                            onValueChange={setRespectSavedDaysOff}
-                            trackColor={{ false: '#e5e7eb', true: '#99d5f8' }}
-                            thumbColor={respectSavedDaysOff ? '#6BB3E8' : '#9ca3af'}
-                          />
-                        </View>
-                        <View style={{ marginTop: 10, flexDirection: 'row', justifyContent: 'flex-start' }}>
-                          <TouchableOpacity
-                            onPress={() => {
-                              if (typeof window !== 'undefined') {
-                                window.dispatchEvent(new CustomEvent('openPlanningPreferences'));
-                              }
-                              toast.push('Open Family > Planning Preferences to edit days off.', 'info');
-                            }}
-                            style={styles.advancedActionButton}
-                          >
-                            <Text style={styles.advancedActionButtonText}>Change or add days off</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    )}
-                    
                     {/* Ends and Number of occurrences/End date in one row */}
                     <View style={{ marginBottom: 16, flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
                       <View style={{ flex: 1 }}>
@@ -3826,7 +3793,6 @@ export default function TaskCreateModal({
                 </View>
               )}
               {/* Subject, Unit, Grade */}
-              {!isClassDayEvent ? (
               <>
               <SafeFieldRow style={styles.fieldRow}>
                 <View style={styles.field}>
@@ -4070,7 +4036,6 @@ export default function TaskCreateModal({
                 </View>
               </SafeFieldRow>
               </>
-              ) : null}
                 </SafeView>
             </ModalSectionCard>
 
@@ -5066,6 +5031,8 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
   shellBody: {
+    flex: 1,
+    minHeight: 0,
     paddingTop: 10,
   },
   header: {
@@ -5269,7 +5236,7 @@ const styles = StyleSheet.create({
   },
   bodyScroll: {
     flex: 1,
-    maxHeight: Platform.OS === 'web' ? 'min(70vh, calc(100vh - 220px))' : undefined,
+    minHeight: 0,
   },
   bodyContent: {
     paddingHorizontal: 20,

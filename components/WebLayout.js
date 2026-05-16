@@ -4464,7 +4464,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         defaultChildIds={addSubjectPrefill.childIds}
         children={children}
         onSubjectAdded={(newSubject) => {
-          const wasNewSubject = !editingSubject;
           setSubjects((prev) => {
             const list = Array.isArray(prev) ? prev : [];
             if (!newSubject?.id) return list;
@@ -4481,14 +4480,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               window.dispatchEvent(new CustomEvent('subjectRecordUpserted', { detail: { subject: newSubject } }));
             }
             window.dispatchEvent(new CustomEvent('refreshSubjects'));
-          }
-          // After adding (not editing), go to the new subject's detail page
-          if (wasNewSubject && newSubject?.id) {
-            handleTabChange(`subject-${newSubject.id}`);
-            setActiveTopNav('subjects');
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.history.pushState({}, '', `/subjects/${newSubject.id}`);
-            }
           }
         }}
       />

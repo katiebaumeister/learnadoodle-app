@@ -1040,14 +1040,14 @@ export default function SubjectDetailPage({
     return () => window.removeEventListener('subjectProgressPlanCacheUpdated', onCacheUpdate);
   }, [familyId, subject?.id, subjectPlanYearIdFromEvents]);
 
-  const handleOpenPlanBuilder = useCallback(() => {
-    openAttendanceTargetPreferences();
-  }, [openAttendanceTargetPreferences]);
   const openAttendanceTargetPreferences = useCallback(() => {
     if (typeof onOpenPlannerSettings === 'function') {
       onOpenPlannerSettings(subject?.school_year || null);
     }
   }, [onOpenPlannerSettings, subject?.school_year]);
+  const handleOpenPlanBuilder = useCallback(() => {
+    openAttendanceTargetPreferences();
+  }, [openAttendanceTargetPreferences]);
   const attendanceRecordsForUI = useMemo(() => {
     const base = Array.isArray(attendanceRecords) ? attendanceRecords : [];
     const byEvent = new Set(base.map((r) => String(r?.event_id || '')).filter(Boolean));

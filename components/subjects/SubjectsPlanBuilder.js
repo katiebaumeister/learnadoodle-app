@@ -4817,7 +4817,7 @@ export default function SubjectsPlanBuilder({
                   {termSection.subjectPlans.length === 0 ? (
                     <View style={styles.scheduleEmptyCard}>
                       <Text style={styles.scheduleEmptyText}>
-                        No subjects for this school year yet. Add a subject, then create a plan to build weekly cadence.
+                        No subjects for this school year yet. Add a subject, then start scheduling.
                       </Text>
                     </View>
                   ) : (
@@ -4904,6 +4904,7 @@ export default function SubjectsPlanBuilder({
                                 : (deltaDays == null
                                   ? 'on_track'
                                   : (deltaDays < 0 ? 'behind' : (deltaDays > 0 ? 'ahead' : 'on_track')));
+                              const showStatusChip = statusTone === 'behind' || statusTone === 'ahead';
                               const canToggleYearTargetSuggestion = (
                                 (statusTone === 'behind' || statusTone === 'ahead')
                                 && Boolean(yearTargetCatchUpById[String(row?.id || '').trim()])
@@ -4954,48 +4955,46 @@ export default function SubjectsPlanBuilder({
 
                                   <View style={[styles.subjectProgressCol, styles.cadenceStatusProgressCol, isClassDayAggregateTable && styles.cadenceStatusProgressColClassDay]}>
                                     <Text style={styles.subjectProgressMetric}>{progressSummary}</Text>
-                                    <View style={styles.subjectProgressMetaRow}>
-                                      <TouchableOpacity
-                                        style={[
-                                          styles.subjectProgressChip,
-                                          statusTone === 'behind' && styles.subjectProgressChipBehind,
-                                          statusTone === 'ahead' && styles.subjectProgressChipAhead,
-                                          statusTone === 'on_track' && styles.subjectProgressChipOnTrack,
-                                          statusTone === 'no_cadence' && styles.subjectProgressChipNoCadence,
-                                        ]}
-                                        onPress={() => {
-                                          const subjectId = String(row?.id || '').trim();
-                                          if (!subjectId) return;
-                                          if (canToggleYearTargetSuggestion) {
-                                            toggleYearTargetSuggestion(subjectId);
-                                            return;
-                                          }
-                                          if (canCreatePlanFromStatusChip) {
-                                            return;
-                                          }
-                                        }}
-                                        activeOpacity={(canToggleYearTargetSuggestion || canCreatePlanFromStatusChip) ? 0.8 : 1}
-                                        disabled={!(canToggleYearTargetSuggestion || canCreatePlanFromStatusChip)}
-                                        accessibilityLabel={
-                                          canCreatePlanFromStatusChip
-                                            ? `Create plan for ${row.name || 'subject'}`
-                                            : undefined
-                                        }
-                                        {...(Platform.OS === 'web' && (canToggleYearTargetSuggestion || canCreatePlanFromStatusChip) && { cursor: 'pointer' })}
-                                      >
-                                        <Text
+                                    {showStatusChip ? (
+                                      <View style={styles.subjectProgressMetaRow}>
+                                        <TouchableOpacity
                                           style={[
-                                            styles.subjectProgressChipText,
-                                            statusTone === 'behind' && styles.subjectProgressChipTextBehind,
-                                            statusTone === 'ahead' && styles.subjectProgressChipTextAhead,
-                                            statusTone === 'on_track' && styles.subjectProgressChipTextOnTrack,
-                                            statusTone === 'no_cadence' && styles.subjectProgressChipTextNoCadence,
+                                            styles.subjectProgressChip,
+                                            statusTone === 'behind' && styles.subjectProgressChipBehind,
+                                            statusTone === 'ahead' && styles.subjectProgressChipAhead,
                                           ]}
+                                          onPress={() => {
+                                            const subjectId = String(row?.id || '').trim();
+                                            if (!subjectId) return;
+                                            if (canToggleYearTargetSuggestion) {
+                                              toggleYearTargetSuggestion(subjectId);
+                                              return;
+                                            }
+                                            if (canCreatePlanFromStatusChip) {
+                                              return;
+                                            }
+                                          }}
+                                          activeOpacity={(canToggleYearTargetSuggestion || canCreatePlanFromStatusChip) ? 0.8 : 1}
+                                          disabled={!(canToggleYearTargetSuggestion || canCreatePlanFromStatusChip)}
+                                          accessibilityLabel={
+                                            canCreatePlanFromStatusChip
+                                              ? `Create plan for ${row.name || 'subject'}`
+                                              : undefined
+                                          }
+                                          {...(Platform.OS === 'web' && (canToggleYearTargetSuggestion || canCreatePlanFromStatusChip) && { cursor: 'pointer' })}
                                         >
-                                          {statusLabel}
-                                        </Text>
-                                      </TouchableOpacity>
-                                    </View>
+                                          <Text
+                                            style={[
+                                              styles.subjectProgressChipText,
+                                              statusTone === 'behind' && styles.subjectProgressChipTextBehind,
+                                              statusTone === 'ahead' && styles.subjectProgressChipTextAhead,
+                                            ]}
+                                          >
+                                            {statusLabel}
+                                          </Text>
+                                        </TouchableOpacity>
+                                      </View>
+                                    ) : null}
                                   </View>
 
                                   <View style={[styles.subjectRowActions, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay]}>
@@ -5691,16 +5690,22 @@ export default function SubjectsPlanBuilder({
                         )
                           ? noSavedSubjectLearningDaysHint
                           : rawSuggestionSummary;
-                        const rawSuggestedDaysText = [
-                          String(catchUpRowResolved?.suggestedAddedDaysLabel || '').trim(),
-                          String(catchUpRowResolved?.extensionAddedDatesLabel || '').trim(),
-                        ].filter(Boolean).join(' ');
-                        const suggestedDaysText = (
-                          noSavedSubjectLearningDaysHint
-                          && (!rawSuggestedDaysText || /no automatic schedule suggestion/i.test(rawSuggestedDaysText))
-                        )
-                          ? noSavedSubjectLearningDaysHint
-                          : rawSuggestedDaysText;
+                        const suggestedDaysText = (() => {
+                          const numericGap = Number(rowGapValue || 0);
+                          if (rowTargetUnit === 'hours') {
+                            const hoursToAdd = Math.max(0, Math.abs(numericGap));
+                            return `Add ${toOneDecimal(hoursToAdd)} hour${hoursToAdd === 1 ? '' : 's'}`;
+                          }
+                          if (numericGap > 0) {
+                            const daysToAdd = Math.max(1, Math.ceil(numericGap));
+                            return `Add ${daysToAdd} day${daysToAdd === 1 ? '' : 's'}`;
+                          }
+                          if (numericGap < 0) {
+                            const daysToRemove = Math.max(1, Math.ceil(Math.abs(numericGap)));
+                            return `Remove ${daysToRemove} day${daysToRemove === 1 ? '' : 's'}`;
+                          }
+                          return 'On target';
+                        })();
                         const fixGapActionRecommendation = fixGapActionRecommendationsByRowId?.[rowId] || null;
                         const canFixGap = Math.abs(Number(rowGapValue || 0)) > 0;
                         const hasApplyAction = Boolean(catchUpRowResolved?.suggestedEndYmd)
@@ -5735,15 +5740,6 @@ export default function SubjectsPlanBuilder({
                         >
                           <View style={[styles.yearTargetsSubjectCol, styles.yearTargetsSubjectCell]}>
                             <Text style={styles.yearTargetsSubjectCellName}>{row.name}</Text>
-                            <View style={styles.yearTargetsSubjectCadenceSlot}>
-                              {row.cadenceCompactLabel ? (
-                                <View style={styles.yearTargetsSubjectCadenceBadge}>
-                                  <Text style={styles.yearTargetsSubjectCadenceHint}>{row.cadenceCompactLabel}</Text>
-                                </View>
-                              ) : (
-                                <View style={styles.yearTargetsSubjectCadenceSpacer} />
-                              )}
-                            </View>
                           </View>
                           <View style={[styles.yearTargetsCellWrap, styles.yearTargetsTargetCol]}>
                             <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsTargetCellText, styles.yearTargetsCellLeft]}>{toOneDecimal(rowTargetValue)}</Text>
@@ -5815,29 +5811,11 @@ export default function SubjectsPlanBuilder({
                           <View style={[styles.yearTargetsTableRow, styles.yearTargetsExpandedSuggestionRow]}>
                             <Animated.View style={[styles.yearTargetsExpandedSuggestionWrap, suggestionAnimatedStyle]}>
                             <View style={styles.yearTargetsExpandedSuggestionContainer}>
-                              <View style={styles.yearTargetsExpandedSuggestionTopLine}>
-                                <Text
-                                  style={[
-                                    styles.yearTargetsPredictiveItemGap,
-                                    catchUpRowResolved?.mode === 'overload' && styles.yearTargetsPredictiveItemGapPositive,
-                                  ]}
-                                >
-                                  {`${toOneDecimal(catchUpRowResolved.shortDays)} ${rowTargetLabel} ${catchUpRowResolved?.mode === 'overload' ? 'over target' : 'short'}`}
-                                </Text>
-                                {catchUpRowResolved?.mode !== 'overload' && Number(catchUpRowResolved?.lowSessionsPerWeek || 0) > 0 ? (
-                                  <View style={styles.yearTargetsPredictiveItemPaceWrap}>
-                                    <Text style={styles.yearTargetsPredictiveItemArrow}>→</Text>
-                                    <Text style={styles.yearTargetsPredictiveItemPace}>
-                                      {`${catchUpRowResolved?.mode === 'overload' ? '-' : '+'}${catchUpRowResolved.lowSessionsPerWeek}${catchUpRowResolved.highSessionsPerWeek > catchUpRowResolved.lowSessionsPerWeek ? `-${catchUpRowResolved.highSessionsPerWeek}` : ''}/week`}
-                                    </Text>
-                                  </View>
-                                ) : null}
-                              </View>
                               <View style={styles.yearTargetsSavedTargetRow}>
                                 <Text style={styles.yearTargetsSavedTargetText}>
                                   {isOverallRow
-                                    ? `Gap is based on saved overall planning preferences: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}.`
-                                    : `Gap is based on saved subject planning preferences: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}.`}
+                                    ? `Gap is based on saved overall planning preferences: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`
+                                    : `Gap is based on saved ${String(row?.name || 'subject')} attendance goal of ${toOneDecimal(rowTargetValue)} days`}
                                 </Text>
                                 <TouchableOpacity
                                   onPress={openPlanningPreferences}
@@ -5850,13 +5828,6 @@ export default function SubjectsPlanBuilder({
                                   <Text style={styles.yearTargetsSavedTargetButtonText}>Change saved target</Text>
                                 </TouchableOpacity>
                               </View>
-                              {suggestionSummary ? (
-                                <View style={styles.yearTargetsExpandedSuggestionLineRow}>
-                                  <Text style={styles.yearTargetsPredictiveSuggestionLine}>
-                                    {`Suggestion: ${suggestionSummary}`}
-                                  </Text>
-                                </View>
-                              ) : null}
                               {fixGapActionRecommendation ? (
                                 <View style={styles.yearTargetsRecommendationActionsRow}>
                                   {isOverallRow ? (
@@ -5878,7 +5849,7 @@ export default function SubjectsPlanBuilder({
                               ) : null}
                               <View style={styles.yearTargetsExpandedSuggestionLineRow}>
                                 <Text style={styles.yearTargetsPredictiveSuggestionLine}>
-                                  {`Suggested days: ${suggestedDaysText || 'No automatic schedule suggestion yet.'}`}
+                                  {`Suggestion: ${suggestedDaysText}`}
                                 </Text>
                                 <TouchableOpacity
                                   onPress={() => fixYearTargetGap(row)}
@@ -7382,7 +7353,7 @@ const styles = StyleSheet.create({
   yearTargetsExpandedSuggestionLineRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     flexWrap: 'wrap',
   },
   yearTargetsRecommendationActionsRow: {
@@ -7455,7 +7426,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   yearTargetsPredictiveFixGapButton: {
-    marginLeft: 8,
+    marginLeft: 0,
     borderColor: 'rgba(16, 185, 129, 0.45)',
     backgroundColor: 'rgba(16, 185, 129, 0.12)',
   },

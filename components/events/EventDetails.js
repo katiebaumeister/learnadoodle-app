@@ -978,7 +978,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrenceType, setRecurrenceType] = useState('daily');
   const [recurrenceInterval, setRecurrenceInterval] = useState(null);
-  const [recurrenceIntervalText, setRecurrenceIntervalText] = useState('');
   const [recurrenceEndType, setRecurrenceEndType] = useState('never');
   const [recurrenceEndAfter, setRecurrenceEndAfter] = useState(null);
   const [recurrenceEndAfterText, setRecurrenceEndAfterText] = useState('');
@@ -2081,7 +2080,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setIsRecurring(true);
         setRecurrenceType(rule.frequency?.toLowerCase() || 'daily');
         setRecurrenceInterval(rule.interval || null);
-        setRecurrenceIntervalText(rule.interval ? rule.interval.toString() : '');
         if (rule.count) {
           setRecurrenceEndType('after');
           setRecurrenceEndAfter(rule.count);
@@ -2100,7 +2098,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setIsRecurring(true);
       setRecurrenceType('weekly');
       setRecurrenceInterval(null);
-      setRecurrenceIntervalText('');
       setRecurrenceEndType('never');
       setRecurrenceEndAfter(null);
       setRecurrenceEndAfterText('');
@@ -2109,7 +2106,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setIsRecurring(false);
       setRecurrenceType('daily');
       setRecurrenceInterval(null);
-      setRecurrenceIntervalText('');
       setRecurrenceEndType('never');
       setRecurrenceEndAfter(null);
       setRecurrenceEndAfterText('');
@@ -2142,7 +2138,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setIsRecurring(true);
         setRecurrenceType(rule.frequency?.toLowerCase() || 'daily');
         setRecurrenceInterval(rule.interval || null);
-        setRecurrenceIntervalText(rule.interval ? rule.interval.toString() : '');
         if (rule.count) {
           setRecurrenceEndType('after');
           setRecurrenceEndAfter(rule.count);
@@ -5520,49 +5515,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         </TouchableOpacity>
                       ))}
                     </ChipRow>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Every</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <TextInput
-                        style={{
-                          borderWidth: 1,
-                          borderColor: BORDER,
-                          borderRadius: 10,
-                          width: 60,
-                          textAlign: 'center',
-                          marginBottom: 0,
-                          paddingVertical: 6,
-                          paddingHorizontal: 12,
-                          height: 'auto',
-                          color: FG,
-                        }}
-                        value={recurrenceIntervalText}
-                        onChangeText={(text) => {
-                          if (text === '' || /^\d+$/.test(text)) {
-                            setRecurrenceIntervalText(text);
-                            const num = parseInt(text, 10);
-                            if (!isNaN(num) && num > 0) {
-                              setRecurrenceInterval(num);
-                            }
-                          }
-                        }}
-                        onBlur={() => {
-                          const num = parseInt(recurrenceIntervalText, 10);
-                          if (isNaN(num) || num <= 0) {
-                            setRecurrenceIntervalText('');
-                            setRecurrenceInterval(null);
-                          } else {
-                            setRecurrenceIntervalText(num.toString());
-                            setRecurrenceInterval(num);
-                          }
-                        }}
-              keyboardType="numeric"
-                      />
-                      <Text style={{ color: SUB, fontSize: 13 }}>
-                        {recurrenceType === 'daily' ? 'day(s)' : recurrenceType === 'weekly' ? 'week(s)' : 'month(s)'}
-                      </Text>
-                    </View>
                   </View>
                 </View>
                 

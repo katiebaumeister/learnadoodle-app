@@ -335,6 +335,7 @@ export default function AddSubjectModal({
   useEffect(() => {
     if (!visible) return;
     if (subject) return;
+    if (isSubmitting) return;
     if (gradeManuallyEdited) return;
     if (!Array.isArray(selectedChildIds) || selectedChildIds.length === 0) return;
     if (!Array.isArray(children) || children.length === 0) return;
@@ -352,7 +353,7 @@ export default function AddSubjectModal({
     if (lowestGrade && lowestGrade !== grade) {
       setGrade(lowestGrade);
     }
-  }, [visible, subject, gradeManuallyEdited, selectedChildIds, children, grade]);
+  }, [visible, subject, isSubmitting, gradeManuallyEdited, selectedChildIds, children, grade]);
 
   // Clear transient validation/banner errors as soon as form state is corrected.
   useEffect(() => {
