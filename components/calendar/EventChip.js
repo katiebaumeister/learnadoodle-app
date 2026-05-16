@@ -678,9 +678,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
-                {isExcludedFromPlan && (
-                  <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
-                )}
                 {displayTime && !hideTime && !isHoliday && (
                   <Text style={{ 
                     opacity: 1,
@@ -694,7 +691,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                       fontVariantNumeric: 'tabular-nums',
                       letterSpacing: '0',
                     }),
-                  }}>· {displayTime}</Text>
+                  }}>{displayTime}</Text>
                 )}
               </View>
               {/* Child participation dots - right after time */}
@@ -751,9 +748,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
-                {isExcludedFromPlan && (
-                  <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
-                )}
                 {displayTime && !hideTime && !isHoliday && (
                   <Text style={{ 
                     opacity: 1,
@@ -767,7 +761,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                       fontVariantNumeric: 'tabular-nums',
                       letterSpacing: '0',
                     }),
-                  }}>· {displayTime}</Text>
+                  }}>{displayTime}</Text>
                 )}
               </View>
               {/* Child participation dots - Right-aligned */}
@@ -941,9 +935,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           >
             {ev.title || 'Untitled Event'}
           </Text>
-          {isExcludedFromPlan && (
-            <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
-          )}
           {displayTime && !hideTime && (
             <Text style={{ 
               opacity: 1,
@@ -957,7 +948,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 fontVariantNumeric: 'tabular-nums',
                 letterSpacing: '0',
               }),
-            }}>· {displayTime}</Text>
+            }}>{displayTime}</Text>
           )}
         </View>
         {/* Child participation dots - Cluster Glyph (month compact) */}
@@ -1187,9 +1178,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         >
           {ev.title || 'Untitled Event'}
         </Text>
-        {isExcludedFromPlan && (
-          <View style={{ width: 6, height: 6, borderRadius: 3, borderWidth: 1.5, borderColor: '#9CA3AF', marginLeft: 4 }} />
-        )}
         {displayTime && !hideTime && (
             <Text style={{ 
               opacity: 1,
@@ -1203,7 +1191,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 fontVariantNumeric: 'tabular-nums',
                 letterSpacing: '0',
               }),
-            }}>· {displayTime}</Text>
+            }}>{displayTime}</Text>
         )}
       </View>
       {/* Child participation dots - Cluster Glyph */}
