@@ -283,8 +283,29 @@ export default function ParentHomeScreen({
       if (e?.detail?.skipHomeRefresh) return;
       loadDataRef.current(true);
     };
+    const onAttendancePatched = (e) => {
+      const rawEventId = e?.detail?.eventId;
+      if (!rawEventId) return;
+      const eventId = String(rawEventId);
+      const rawStatus = String(e?.detail?.status || '').trim().toLowerCase();
+      const nextStatus = rawStatus === 'completed' ? 'done' : (rawStatus || 'scheduled');
+      setHomeData((prev) => {
+        if (!prev || !Array.isArray(prev.learning) || prev.learning.length === 0) return prev;
+        let changed = false;
+        const nextLearning = prev.learning.map((event) => {
+          if (!event?.id || String(event.id) !== eventId) return event;
+          changed = true;
+          return { ...event, status: nextStatus };
+        });
+        return changed ? { ...prev, learning: nextLearning } : prev;
+      });
+    };
     window.addEventListener('refreshCalendar', onRefreshCalendar);
-    return () => window.removeEventListener('refreshCalendar', onRefreshCalendar);
+    window.addEventListener('eventAttendancePatched', onAttendancePatched);
+    return () => {
+      window.removeEventListener('refreshCalendar', onRefreshCalendar);
+      window.removeEventListener('eventAttendancePatched', onAttendancePatched);
+    };
   }, [familyId]);
 
   /** Must stay above any early return (Rules of Hooks). */

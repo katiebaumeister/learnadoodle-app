@@ -5,6 +5,7 @@ import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
+import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 
 export default function TodayScheduleCard({
   events = [],
@@ -43,7 +44,8 @@ export default function TodayScheduleCard({
     (ev) => {
       if (!ev?.id) return false;
       if (attendanceOptimistic[ev.id] !== undefined) return attendanceOptimistic[ev.id];
-      return ev.status === 'done';
+      const normalized = String(ev.status || '').trim().toLowerCase();
+      return normalized === 'done' || normalized === 'completed';
     },
     [attendanceOptimistic]
   );
@@ -53,17 +55,26 @@ export default function TodayScheduleCard({
       if (!showAttendanceToggle || !ev?.id) return;
       const et = (ev.event_type || ev.type || '').toLowerCase();
       if (et === 'holiday') return;
+      const cleanEventId = cleanPlannerEventId(String(ev.id || ''));
+      if (!cleanEventId) return;
 
       const wasDone = isEventDone(ev);
       const nextDone = !wasDone;
       setAttendanceOptimistic((p) => ({ ...p, [ev.id]: nextDone }));
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('eventAttendancePatched', {
+            detail: { eventId: cleanEventId, status: nextDone ? 'done' : 'scheduled' },
+          })
+        );
+      }
 
       try {
         if (wasDone) {
-          const { error } = await updateEventStatus(ev.id, 'scheduled');
+          const { error } = await updateEventStatus(cleanEventId, 'scheduled');
           if (error) throw error;
         } else {
-          const { error } = await completeEvent(ev.id);
+          const { error } = await completeEvent(cleanEventId);
           if (error) throw error;
         }
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -80,6 +91,13 @@ export default function TodayScheduleCard({
           delete n[ev.id];
           return n;
         });
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('eventAttendancePatched', {
+              detail: { eventId: cleanEventId, status: wasDone ? 'done' : 'scheduled' },
+            })
+          );
+        }
         if (Platform.OS === 'web') {
           window.alert?.(`Could not update attendance: ${err?.message || err}`);
         }

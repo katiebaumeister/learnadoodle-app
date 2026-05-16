@@ -2636,6 +2636,9 @@ async def fix_target_gap(
             done_overall_dates: set = set()
             upcoming_overall_dates: set = set()
             selected_subject_id_set = set(selected_subject_ids)
+            def _is_done_status(value: Any) -> bool:
+                normalized = str(value or "").strip().lower()
+                return normalized in {"done", "completed"}
             for ev in events_for_count:
                 sid = str(ev.get("subject_id") or "").strip()
                 day_key = _day_from_ts(ev.get("start_ts"))
@@ -2646,7 +2649,7 @@ async def fix_target_gap(
                     if not _is_instructional_day_event(ev):
                         continue
                     existing_overall_dates.add(day_key)
-                    if status_raw == "done" and day_key <= today_ymd:
+                    if _is_done_status(status_raw) and day_key <= today_ymd:
                         done_overall_dates.add(day_key)
                     elif day_key >= today_ymd:
                         upcoming_overall_dates.add(day_key)
@@ -2656,7 +2659,7 @@ async def fix_target_gap(
                 existing_by_subject[sid].add(day_key)
                 existing_overall_dates.add(day_key)
                 status_raw = str(ev.get("status") or "").strip().lower()
-                if status_raw == "done" and day_key <= today_ymd:
+                if _is_done_status(status_raw) and day_key <= today_ymd:
                     done_by_subject[sid].add(day_key)
                 elif day_key >= today_ymd:
                     upcoming_by_subject[sid].add(day_key)
@@ -2695,6 +2698,33 @@ async def fix_target_gap(
                 before_gap_days = sum(max(0, gap) for gap in per_subject_gaps.values())
                 target_days_effective = before_projected_days + before_gap_days
 
+            # Keep a copy of backend-derived baseline so we can align post-insert
+            # projection to a UI-provided baseline (visible row values).
+            backend_before_projected_days = int(before_projected_days)
+
+            # Keep V3 baseline aligned with the visible Year Targets row values
+            # sent by the client (same intent as the V2 baseline handling).
+            ui_before_projected_days = None
+            ui_gap_days = None
+            try:
+                if body.visible_projected_days is not None:
+                    ui_before_projected_days = int(round(float(body.visible_projected_days)))
+            except Exception:
+                ui_before_projected_days = None
+            try:
+                if body.visible_gap_days is not None:
+                    ui_gap_days = int(round(float(body.visible_gap_days)))
+            except Exception:
+                ui_gap_days = None
+
+            if ui_before_projected_days is not None and ui_before_projected_days >= 0:
+                before_projected_days = ui_before_projected_days
+            if ui_gap_days is not None:
+                before_gap_days = ui_gap_days
+            else:
+                before_gap_days = int(target_days_effective - before_projected_days)
+            projected_days_alignment_offset = int(before_projected_days - backend_before_projected_days)
+
             if before_gap_days <= 0:
                 return FixTargetGapOutput(
                     success=True,
@@ -2722,15 +2752,31 @@ async def fix_target_gap(
                 )
 
             slot_templates_by_subject: Dict[str, Tuple[str, str]] = {}
+            weekday_templates_by_subject: Dict[str, set] = {}
             for block in filtered_blocks:
                 sid = str(block.get("subject_id") or "").strip()
                 if not sid or sid in slot_templates_by_subject:
+                    # still collect weekdays from additional blocks for this subject
+                    block_weekdays = {
+                        int(day) for day in (block.get("weekdays") or [])
+                        if isinstance(day, (int, float, str)) and str(day).strip() != ""
+                        and str(day).strip().lstrip("-").isdigit()
+                    }
+                    if block_weekdays:
+                        weekday_templates_by_subject.setdefault(sid, set()).update(block_weekdays)
                     continue
                 st, et = _normalize_slot_times_v3(
                     str(block.get("start_time") or learning_window_start_hhmm),
                     str(block.get("end_time") or learning_window_end_hhmm),
                 )
                 slot_templates_by_subject[sid] = (st, et)
+                block_weekdays = {
+                    int(day) for day in (block.get("weekdays") or [])
+                    if isinstance(day, (int, float, str)) and str(day).strip() != ""
+                    and str(day).strip().lstrip("-").isdigit()
+                }
+                if block_weekdays:
+                    weekday_templates_by_subject.setdefault(sid, set()).update(block_weekdays)
 
             assignment_requests: List[Dict[str, Any]] = []
             available_dates_count = 0
@@ -2758,9 +2804,28 @@ async def fix_target_gap(
                     gap_sid = max(0, int(per_subject_gaps.get(sid, 0)))
                     if gap_sid <= 0:
                         continue
+                    sid_weekdays = set(weekday_templates_by_subject.get(sid) or set())
+                    if sid_weekdays:
+                        cadence_days_sid = []
+                        for day_key in learning_dates:
+                            try:
+                                weekday_num = int((date.fromisoformat(day_key).weekday() + 1) % 7)
+                            except Exception:
+                                continue
+                            if weekday_num in sid_weekdays:
+                                cadence_days_sid.append(day_key)
+                        # Prefer subject cadence days first, but if cadence days in the current
+                        # range cannot satisfy the gap, allow remaining usual learning days so
+                        # Fix Gap can still use open capacity in-range.
+                        if len(cadence_days_sid) >= gap_sid:
+                            eligible_days_sid = cadence_days_sid
+                        else:
+                            extra_days_sid = [d for d in learning_dates if d not in set(cadence_days_sid)]
+                            eligible_days_sid = cadence_days_sid + extra_days_sid
+                    else:
+                        eligible_days_sid = list(learning_dates)
                     # Keep all preferred/excluded-filtered learning dates; per-slot conflict checks
                     # handle whether each date can accept an additional event.
-                    eligible_days_sid = list(learning_dates)
                     available_dates_count += len(eligible_days_sid)
                     selected_days_sid = _evenly_pick_days(eligible_days_sid, gap_sid)
                     st, et = slot_templates_by_subject.get(
@@ -3425,8 +3490,13 @@ async def fix_target_gap(
                     child_ids = list(selected_child_ids_for_conflict)
                 st = str(slot.get("start_time") or learning_window_start_hhmm)
                 et = str(slot.get("end_time") or _default_end_for_start(st))
+                class_day_title_subject_ids = (
+                    selected_subject_ids
+                    if (is_class_day_tracking_mode and effective_scope == "overall")
+                    else ([sid] if sid else selected_subject_ids)
+                )
                 event_title = (
-                    _class_day_title_for_subject_ids([sid] if sid else selected_subject_ids)
+                    _class_day_title_for_subject_ids(class_day_title_subject_ids)
                     if is_class_day_tracking_mode
                     else subject_name
                 )
@@ -3618,6 +3688,11 @@ async def fix_target_gap(
                     projected_after_sid = projected_before_sid.union(inserted_day_keys_by_subject.get(sid) or set())
                     projected_after_days += len(projected_after_sid)
 
+            # When UI baseline differs from backend baseline (e.g. UI counts a day
+            # through attendance/manual-credit semantics), apply the same offset
+            # to after-projection so "add N days" remains consistent end-to-end.
+            projected_after_days = max(0, int(projected_after_days + projected_days_alignment_offset))
+
             after_gap_days = int(target_days_effective - projected_after_days)
             remaining_unfixable_gap = max(0, after_gap_days)
             partial_fix_possible = after_gap_days > 0
@@ -3629,6 +3704,8 @@ async def fix_target_gap(
                     "target": target_days_effective,
                     "projectedBefore": before_projected_days,
                     "gapBefore": before_gap_days,
+                    "uiProjectedInput": ui_before_projected_days,
+                    "uiGapInput": ui_gap_days,
                     "eligibleDatesCount": available_dates_count,
                     "selectedDates": selected_dates,
                     "eventsToInsert": len(created_rows),

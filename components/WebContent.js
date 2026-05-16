@@ -2531,10 +2531,80 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         return nextEvents;
       });
     };
+    const handleAttendancePatched = (event) => {
+      const rawEventId = event?.detail?.eventId;
+      if (!rawEventId) return;
+      const targetEventId = cleanPlannerEventId(String(rawEventId));
+      if (!targetEventId) return;
+      const normalized = String(event?.detail?.status || 'scheduled').trim().toLowerCase();
+      const nextStatus = normalized === 'completed' ? 'done' : (normalized || 'scheduled');
+
+      setCalendarEvents((prev) => {
+        if (!prev || typeof prev !== 'object') return prev;
+        let changed = false;
+        const next = {};
+        for (const [dateKey, dayEvents] of Object.entries(prev)) {
+          if (!Array.isArray(dayEvents)) {
+            next[dateKey] = dayEvents;
+            continue;
+          }
+          const patchedDay = dayEvents.map((ev) => {
+            const evId = cleanPlannerEventId(String(ev?.id || ''));
+            if (!evId || evId !== targetEventId) return ev;
+            changed = true;
+            return { ...ev, status: nextStatus };
+          });
+          next[dateKey] = patchedDay;
+        }
+        return changed ? next : prev;
+      });
+
+      setCalendarDataCache((prev) => {
+        if (!prev || typeof prev !== 'object') return prev;
+        let changed = false;
+        const next = {};
+        for (const [monthKey, monthData] of Object.entries(prev)) {
+          if (!monthData || typeof monthData !== 'object') {
+            next[monthKey] = monthData;
+            continue;
+          }
+          const nextMonth = {};
+          for (const [dateKey, dayEvents] of Object.entries(monthData)) {
+            if (!Array.isArray(dayEvents)) {
+              nextMonth[dateKey] = dayEvents;
+              continue;
+            }
+            const patchedDay = dayEvents.map((ev) => {
+              const evId = cleanPlannerEventId(String(ev?.id || ''));
+              if (!evId || evId !== targetEventId) return ev;
+              changed = true;
+              return { ...ev, status: nextStatus };
+            });
+            nextMonth[dateKey] = patchedDay;
+          }
+          next[monthKey] = nextMonth;
+        }
+        return changed ? next : prev;
+      });
+
+      setHomeData((prev) => {
+        if (!prev || !Array.isArray(prev.learning) || prev.learning.length === 0) return prev;
+        let changed = false;
+        const nextLearning = prev.learning.map((ev) => {
+          const evId = cleanPlannerEventId(String(ev?.id || ''));
+          if (!evId || evId !== targetEventId) return ev;
+          changed = true;
+          return { ...ev, status: nextStatus };
+        });
+        return changed ? { ...prev, learning: nextLearning } : prev;
+      });
+    };
 
     window.addEventListener('eventPatched', handleEventPatched);
+    window.addEventListener('eventAttendancePatched', handleAttendancePatched);
     return () => {
       window.removeEventListener('eventPatched', handleEventPatched);
+      window.removeEventListener('eventAttendancePatched', handleAttendancePatched);
     };
   }, []);
   
@@ -8734,6 +8804,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               : ev
           );
           setCalendarEvents((prev) => ({ ...prev, [dateKey]: optimisticList }));
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('eventAttendancePatched', {
+                detail: { eventId: cleanEventId, status: newStatus },
+              })
+            );
+          }
           try {
             let operationResult = null;
             if (isCurrentlyDone) {
@@ -8762,6 +8839,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             }
           } catch (err) {
             setCalendarEvents((prev) => ({ ...prev, [dateKey]: listForDate }));
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(
+                new CustomEvent('eventAttendancePatched', {
+                  detail: {
+                    eventId: cleanEventId,
+                    status: isCurrentlyDone ? 'done' : 'scheduled',
+                  },
+                })
+              );
+            }
             if (Platform.OS === 'web') {
               alert(`Failed to ${isCurrentlyDone ? 'unmark' : 'mark'} event: ${err?.message || err}`);
             }

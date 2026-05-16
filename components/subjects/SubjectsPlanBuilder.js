@@ -2221,10 +2221,19 @@ export default function SubjectsPlanBuilder({
         }
       }
       const schoolTermId = subjectTermId;
+      const templateSubjectRange = clampToSavedRange(
+        templateScopeRangeById[schoolTermId]
+        || templateScopeRangeById.full_year
+        || yearRange
+      );
       const subjectRange = isOverallTargetScope
         ? (effectiveYearRange || yearRange)
         : (
-          clampToSavedRange(scopeRangeById[schoolTermId] || yearRange)
+          // Prefer the saved template term window for per-subject rows so
+          // spring-term subjects keep June coverage even if an active core
+          // was temporarily narrowed.
+          templateSubjectRange
+          || clampToSavedRange(scopeRangeById[schoolTermId] || yearRange)
           || fullYearRange
           || yearRange
         );
@@ -5084,14 +5093,26 @@ export default function SubjectsPlanBuilder({
                         const rowTargetUnit = String(row?.targetUnit || row?.targetMode || 'days').trim().toLowerCase() === 'hours' ? 'hours' : 'days';
                         const rowTargetLabel = rowTargetUnit === 'hours' ? 'hours' : 'days';
                         const rowTargetValue = Number.isFinite(Number(row?.targetValue)) ? Number(row.targetValue) : Number(row?.targetDays || 0);
-                        const rowProjectedValue = Number.isFinite(Number(row?.projectedHours))
-                          ? Number(row.projectedHours)
+                        const rowProjectedValue = rowTargetUnit === 'hours'
+                          ? (
+                            Number.isFinite(Number(row?.projectedHours))
+                              ? Number(row.projectedHours)
+                              : Number(row?.projectedDays || 0)
+                          )
                           : Number(row?.projectedDays || 0);
-                        const rowCompletedValue = Number.isFinite(Number(row?.completedHours))
-                          ? Number(row.completedHours)
+                        const rowCompletedValue = rowTargetUnit === 'hours'
+                          ? (
+                            Number.isFinite(Number(row?.completedHours))
+                              ? Number(row.completedHours)
+                              : Number(row?.completedDays || 0)
+                          )
                           : Number(row?.completedDays || 0);
-                        const rowUpcomingValue = Number.isFinite(Number(row?.upcomingHours))
-                          ? Number(row.upcomingHours)
+                        const rowUpcomingValue = rowTargetUnit === 'hours'
+                          ? (
+                            Number.isFinite(Number(row?.upcomingHours))
+                              ? Number(row.upcomingHours)
+                              : Number(row?.upcomingDays || 0)
+                          )
                           : Number(row?.upcomingDays || 0);
                         const rowGapValue = Number.isFinite(Number(row?.gapHours))
                           ? Number(row.gapHours)
