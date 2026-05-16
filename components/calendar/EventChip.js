@@ -7,6 +7,10 @@ import ChildDotCluster from '../ui/ChildDotCluster';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 
 export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [] }) {
+  const isDoneStatus = (statusValue) => {
+    const normalized = String(statusValue || '').trim().toLowerCase();
+    return normalized === 'done' || normalized === 'completed';
+  };
   // Holidays should not be clickable, movable, or show time
   const isHoliday = ev?.type === 'holiday' || ev?.event_type === 'holiday';
   const effectiveHideTime = hideTime || isHoliday;
@@ -277,7 +281,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   }, [ev?.id]);
   useEffect(() => {
     if (completionOverride === null) return;
-    const serverDone = ev?.status === 'done';
+    const serverDone = isDoneStatus(ev?.status);
     if (serverDone === completionOverride) {
       setCompletionOverride(null);
     }
@@ -285,7 +289,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
   const handleCompletionToggle = useCallback(() => {
     if (!onComplete || !ev) return;
-    const serverDone = ev.status === 'done';
+    const serverDone = isDoneStatus(ev.status);
     setCompletionOverride(!serverDone);
     Promise.resolve(onComplete(ev)).catch(() => {
       setCompletionOverride(null);
@@ -502,7 +506,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     );
   };
 
-  const isDone = completionOverride !== null ? completionOverride : ev.status === 'done';
+  const isDone = completionOverride !== null ? completionOverride : isDoneStatus(ev?.status);
   const shouldShowDoneStyling = isDone && !hideDoneStyling;
   // Always show lighter text for completed events, but only strikethrough when hideDoneStyling is false
   const shouldShowLighterText = isDone;

@@ -2550,6 +2550,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const lastMergeFromApiRef = useRef(null); // { eventId, at }
   // Track events that were just updated from database to prevent merge from overwriting
   const recentlyFetchedFromDbRef = useRef(new Map()); // Map<eventId, timestamp>
+  const normalizeEventStatus = useCallback((status) => {
+    const normalized = String(status || '').trim().toLowerCase();
+    return normalized === 'completed' ? 'done' : (normalized || 'scheduled');
+  }, []);
   // Ref for planner visible date so refresh handler can read it without plannerDate in deps (plannerDate is declared later)
   const plannerDateRef = useRef(null);
 
@@ -2622,6 +2626,50 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         const { data, error } = monthResult;
         if (error) throw error;
         const eventsByDate = data?.events_by_date || {};
+        const monthEventIds = [];
+        Object.keys(eventsByDate).forEach((dateKey) => {
+          const dayEvents = eventsByDate[dateKey];
+          const list = Array.isArray(dayEvents) ? dayEvents : (dayEvents && dayEvents.events ? dayEvents.events : []);
+          (list || []).forEach((e) => {
+            const cleanId = cleanPlannerEventId(String(e?.id || ''));
+            if (cleanId) monthEventIds.push(cleanId);
+          });
+        });
+        const uniqueMonthEventIds = [...new Set(monthEventIds)];
+        let attendedEventIds = new Set();
+        if (uniqueMonthEventIds.length > 0) {
+          try {
+            let attendanceRows = null;
+            let attendanceError = null;
+            const attendanceSelectAttempts = [
+              'event_id, status, minutes',
+              'event_id, status, minutes_present',
+              'event_id, status',
+            ];
+            for (const selectFields of attendanceSelectAttempts) {
+              const resp = await supabase
+                .from('attendance_records')
+                .select(selectFields)
+                .in('event_id', uniqueMonthEventIds);
+              attendanceRows = resp?.data || [];
+              attendanceError = resp?.error || null;
+              if (!attendanceError) break;
+            }
+            if (!attendanceError) {
+              attendedEventIds = new Set(
+                (attendanceRows || [])
+                  .filter((row) => {
+                    const statusKey = String(row?.status || '').trim().toLowerCase();
+                    const minutes = Number(row?.minutes ?? row?.minutes_present ?? 0);
+                    return statusKey === 'present' || statusKey === 'partial' || minutes > 0;
+                  })
+                  .map((row) => cleanPlannerEventId(String(row?.event_id || '')))
+                  .filter(Boolean)
+              );
+            }
+          } catch (_) {
+          }
+        }
         const nowMs = Date.now();
         for (const [eventId, hideUntil] of recentlyDeletedEventIdsRef.current.entries()) {
           if (!hideUntil || hideUntil <= nowMs) recentlyDeletedEventIdsRef.current.delete(eventId);
@@ -2646,7 +2694,16 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             childId: e.child_id,
             subject_name: e.subject_name,
             subjectName: e.subject_name,
-            status: e.status,
+            status: (() => {
+              const normalizedStatus = normalizeEventStatus(e.status);
+              const eventId = cleanPlannerEventId(String(e?.id || ''));
+              return (
+                normalizedStatus === 'done' ||
+                (eventId && attendedEventIds.has(eventId))
+              )
+                ? 'done'
+                : normalizedStatus;
+            })(),
             source: e.source,
           })).filter((e) => {
             if (!e) return false;
@@ -2735,7 +2792,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       }
     });
     return run;
-  }, [familyId, propSelectedCalendarChildren]);
+  }, [familyId, propSelectedCalendarChildren, normalizeEventStatus]);
 
   useEffect(() => {
     refreshCalendarDataRef.current = refreshCalendarData;
@@ -4166,7 +4223,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             childId: e.child_id,
             subject_name: e.subject_name,
             subjectName: e.subject_name,
-            status: e.status,
+            status: normalizeEventStatus(e.status),
             source: e.source,
           });
         });
@@ -4176,7 +4233,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         if (!cancelled) setPlannerSpilloverEventsByDate({});
       });
     return () => { cancelled = true; };
-  }, [familyId, plannerDate]);
+  }, [familyId, plannerDate, normalizeEventStatus]);
 
   // Add child form state
   const [addChildName, setAddChildName] = useState('')
@@ -8659,24 +8716,32 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         onEventComplete={plannerReadOnly ? undefined : async (event) => {
           if (!event?.id) return;
           if (event?.type === 'holiday' || event?.event_type === 'holiday') return;
-          const isCurrentlyDone = event.status === 'done';
+          const rawEventId = String(event.id);
+          const cleanEventId = cleanPlannerEventId(rawEventId);
+          if (!cleanEventId) return;
+          const isCurrentlyDone = normalizeEventStatus(event.status) === 'done';
           const newStatus = isCurrentlyDone ? 'scheduled' : 'done';
           const dateKey = event.date_local || (event.start_ts && event.start_ts.split('T')[0]);
           const monthKey = `${plannerDate.getFullYear()}-${plannerDate.getMonth()}`;
           const cacheMonth = calendarDataCache[monthKey] || {};
           const listForDate = calendarEvents[dateKey] || cacheMonth[dateKey] || [];
           const optimisticList = listForDate.map((ev) =>
-            ev.id === event.id ? { ...ev, status: newStatus } : ev
+            (
+              String(ev?.id || '') === rawEventId ||
+              cleanPlannerEventId(String(ev?.id || '')) === cleanEventId
+            )
+              ? { ...ev, status: newStatus }
+              : ev
           );
           setCalendarEvents((prev) => ({ ...prev, [dateKey]: optimisticList }));
           try {
             let operationResult = null;
             if (isCurrentlyDone) {
-              const result = await updateEventStatus(event.id, 'scheduled');
+              const result = await updateEventStatus(cleanEventId, 'scheduled');
               if (result.error) throw result.error;
               operationResult = result.data;
             } else {
-              const result = await completeEvent(event.id);
+              const result = await completeEvent(cleanEventId);
               if (result.error) throw result.error;
               operationResult = result.data;
             }
