@@ -110,8 +110,8 @@ const toAmPmTime = (sqlTime) => {
 };
 
 const EVENT_TYPES = [
-  'Lesson',
   'Class Day',
+  'Lesson',
   'Project',
   'Exam',
   'Assignment',
@@ -228,7 +228,7 @@ export default function TaskCreateModal({
   onCreated,
   defaultPlacement = 'calendar', // New prop: 'calendar' or 'backlog'
   defaultSubjectId = null, // Default subject ID to set when opening modal
-  defaultEventType = null, // Default event type to set when opening modal (e.g., 'Lesson')
+  defaultEventType = null, // Default event type to set when opening modal (e.g., 'Class Day')
   defaultStartTime = null, // Default start time (e.g. '9:00 AM') when opening from plan slot
   defaultTitle = null, // Default title when opening from Doodle (e.g. 'Doctors' for appointment)
   defaultMaterialId = null, // Default material ID to pre-attach
@@ -297,7 +297,7 @@ export default function TaskCreateModal({
   const [endTime, setEndTime] = useState('');
   
   // New academic and metadata fields
-  const [eventType, setEventType] = useState('Lesson'); // Default to "Lesson" and require selection
+  const [eventType, setEventType] = useState('Class Day'); // Default to "Class Day" for new events
   const [subjectId, setSubjectId] = useState(null);
   const [unit, setUnit] = useState('');
   const [grade, setGrade] = useState('');
@@ -339,6 +339,7 @@ export default function TaskCreateModal({
   const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(false);
 
   const applyEventTypeSelection = useCallback((nextType) => {
+    const isSwitchingAwayFromClassDay = eventType === 'Class Day' && nextType !== 'Class Day';
     setEventType(nextType);
     setShowRequiresSubmissionHome(
       nextType === 'Class Day' ? false : defaultRequiresSubmissionHomeForEventType(nextType)
@@ -356,11 +357,25 @@ export default function TaskCreateModal({
       }
       return;
     }
+    if (isSwitchingAwayFromClassDay) {
+      // Class Day is the only chip that auto-enables recurring defaults.
+      // When switching away, reset recurrence back to neutral defaults.
+      setIsRecurring(false);
+      setShowRecurringSection(false);
+      setRecurrenceType('weekly');
+      setRecurrenceInterval(1);
+      setRecurrenceIntervalText('1');
+      setRecurrenceEndType('never');
+      setRecurrenceEndAfter(null);
+      setRecurrenceEndAfterText('');
+      setRecurrenceEndDate(null);
+      setClassDayDefaultsApplied(false);
+    }
     if (isClassDayTitleAutofilled && title.trim() === 'Class Day') {
       setTitle('');
     }
     setIsClassDayTitleAutofilled(false);
-  }, [isClassDayTitleAutofilled, title]);
+  }, [eventType, isClassDayTitleAutofilled, title]);
   
   // Handle standards selection from modal
   const handleStandardsSelect = useCallback((selectedStandards) => {
@@ -1082,7 +1097,7 @@ export default function TaskCreateModal({
       setStartTime(defaultStartTime && String(defaultStartTime).trim() ? defaultStartTime : DEFAULT_START_TIME);
       setEndTime('');
       // Reset new fields
-      const initialEventType = defaultEventType === 'Schedule Block' ? 'Scheduled Class Day' : (defaultEventType || 'Lesson');
+      const initialEventType = defaultEventType === 'Schedule Block' ? 'Class Day' : (defaultEventType || 'Class Day');
       setIsClassDayTitleAutofilled(false);
       applyEventTypeSelection(initialEventType);
       const initialMaterialId = defaultMaterialId ? String(defaultMaterialId) : null;

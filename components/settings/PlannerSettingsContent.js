@@ -209,6 +209,35 @@ const schoolYearRangeDefaults = (schoolYearLabel) => {
   };
 };
 
+const coerceRangeDatesToSchoolYear = (settings, schoolYearLabel) => {
+  const parsed = parseSchoolYearLabel(schoolYearLabel);
+  const defaults = schoolYearRangeDefaults(schoolYearLabel);
+  if (!parsed) {
+    return {
+      default_year_start_date: defaults.yearStart,
+      default_year_end_date: defaults.yearEnd,
+      default_fall_term_start_date: defaults.fallStart,
+      default_fall_term_end_date: defaults.fallEnd,
+      default_spring_term_start_date: defaults.springStart,
+      default_spring_term_end_date: defaults.springEnd,
+    };
+  }
+  const keepIfYearMatches = (value, expectedYear, fallback) => {
+    const ymd = normalizeYmd(value);
+    if (!ymd) return fallback;
+    const year = Number(ymd.slice(0, 4));
+    return year === expectedYear ? ymd : fallback;
+  };
+  return {
+    default_year_start_date: keepIfYearMatches(settings?.default_year_start_date, parsed.start, defaults.yearStart),
+    default_year_end_date: keepIfYearMatches(settings?.default_year_end_date, parsed.end, defaults.yearEnd),
+    default_fall_term_start_date: keepIfYearMatches(settings?.default_fall_term_start_date, parsed.start, defaults.fallStart),
+    default_fall_term_end_date: keepIfYearMatches(settings?.default_fall_term_end_date, parsed.start, defaults.fallEnd),
+    default_spring_term_start_date: keepIfYearMatches(settings?.default_spring_term_start_date, parsed.end, defaults.springStart),
+    default_spring_term_end_date: keepIfYearMatches(settings?.default_spring_term_end_date, parsed.end, defaults.springEnd),
+  };
+};
+
 const deriveSubjectTargetState = (subjectsList) => {
   const st = {};
   let firstActiveTarget = null;
@@ -253,6 +282,7 @@ export default function PlannerSettingsContent({
   const [error, setError] = useState(null);
   const saveTimeoutRef = useRef(null);
   const subjectTargetSaveTimeoutRef = useRef(null);
+  const loadDefaultsRequestRef = useRef(0);
   const stateRef = useRef({});
 
   // Target scope: overall (one target) vs per_subject
@@ -527,6 +557,7 @@ export default function PlannerSettingsContent({
       && selectedYearLabel === initialDataYearLabel
     );
     const rangeDefaults = schoolYearRangeDefaults(selectedYearLabel);
+    const coercedRangeDates = coerceRangeDatesToSchoolYear(s, selectedYearLabel);
     const resolvedMode = getAttendanceMode({
       academicYearMode: matchesInitialDataYear ? s.attendance_tracking_mode : ATTENDANCE_MODES.CLASS_DAY,
       fallback: ATTENDANCE_MODES.CLASS_DAY,
@@ -566,32 +597,32 @@ export default function PlannerSettingsContent({
     }
     setDefaultYearStartDate(
       matchesInitialDataYear
-        ? (normalizeYmd(s.default_year_start_date) || rangeDefaults.yearStart)
+        ? (coercedRangeDates.default_year_start_date || rangeDefaults.yearStart)
         : rangeDefaults.yearStart
     );
     setDefaultYearEndDate(
       matchesInitialDataYear
-        ? (normalizeYmd(s.default_year_end_date) || rangeDefaults.yearEnd)
+        ? (coercedRangeDates.default_year_end_date || rangeDefaults.yearEnd)
         : rangeDefaults.yearEnd
     );
     setDefaultFallStartDate(
       matchesInitialDataYear
-        ? (normalizeYmd(s.default_fall_term_start_date) || rangeDefaults.fallStart)
+        ? (coercedRangeDates.default_fall_term_start_date || rangeDefaults.fallStart)
         : rangeDefaults.fallStart
     );
     setDefaultFallEndDate(
       matchesInitialDataYear
-        ? (normalizeYmd(s.default_fall_term_end_date) || rangeDefaults.fallEnd)
+        ? (coercedRangeDates.default_fall_term_end_date || rangeDefaults.fallEnd)
         : rangeDefaults.fallEnd
     );
     setDefaultSpringStartDate(
       matchesInitialDataYear
-        ? (normalizeYmd(s.default_spring_term_start_date) || rangeDefaults.springStart)
+        ? (coercedRangeDates.default_spring_term_start_date || rangeDefaults.springStart)
         : rangeDefaults.springStart
     );
     setDefaultSpringEndDate(
       matchesInitialDataYear
-        ? (normalizeYmd(s.default_spring_term_end_date) || rangeDefaults.springEnd)
+        ? (coercedRangeDates.default_spring_term_end_date || rangeDefaults.springEnd)
         : rangeDefaults.springEnd
     );
     const ex = matchesInitialDataYear ? (initialData.exclusions || []) : [];
@@ -674,21 +705,29 @@ export default function PlannerSettingsContent({
 
   const loadDefaults = useCallback(async () => {
     if (!familyId) return;
+    const requestId = ++loadDefaultsRequestRef.current;
+    const requestedSchoolYearLabel = normalizeSchoolYearLabel(
+      isSchoolYearLocked
+        ? normalizedLockedSchoolYearLabel
+        : selectedSchoolYearLabel
+    );
     setLoading(true);
     setError(null);
     try {
       const { settings: s, exclusions: ex, excluded_holiday_dates: excludedDates, error: planErr } = await getPlanDefaultsFromSettings(
         familyId,
-        selectedSchoolYearLabel
+        requestedSchoolYearLabel
       );
       if (planErr) throw planErr;
+      if (requestId !== loadDefaultsRequestRef.current) return;
       let resolvedYearMode = '';
       let hasAcademicYearRecord = false;
+      let resolvedYearId = null;
       try {
         const targetLabel = normalizeSchoolYearLabel(
           isSchoolYearLocked
             ? normalizedLockedSchoolYearLabel
-            : (selectedSchoolYearLabel || s?.default_school_year || '')
+            : (requestedSchoolYearLabel || s?.default_school_year || '')
         );
         const parsedYear = parseSchoolYearLabel(targetLabel);
         if (parsedYear?.start && parsedYear?.end) {
@@ -703,6 +742,7 @@ export default function PlannerSettingsContent({
             .order('updated_at', { ascending: false })
             .limit(1);
           hasAcademicYearRecord = Array.isArray(yearRows) && yearRows.length > 0;
+          resolvedYearId = hasAcademicYearRecord ? String(yearRows[0]?.id || '').trim() || null : null;
           resolvedYearMode = String(
             hasAcademicYearRecord
               ? yearRows[0]?.attendance_tracking_mode
@@ -714,15 +754,24 @@ export default function PlannerSettingsContent({
       }
 
       if (s) {
+        if (requestId !== loadDefaultsRequestRef.current) return;
         const fallbackYearLabel = isSchoolYearLocked
           ? normalizedLockedSchoolYearLabel
-          : (s.default_school_year || selectedSchoolYearLabel);
+          : (s.default_school_year || requestedSchoolYearLabel);
         const rangeDefaults = schoolYearRangeDefaults(fallbackYearLabel);
-        const resolvedMode = getAttendanceMode({
-          academicYearMode: resolvedYearMode,
-          plannerSettingsMode: hasAcademicYearRecord ? s.attendance_tracking_mode : '',
-          fallback: ATTENDANCE_MODES.CLASS_DAY,
-        });
+        const coercedRangeDates = coerceRangeDatesToSchoolYear(s, fallbackYearLabel);
+        const plannerMode = String(s?.attendance_tracking_mode || '').trim();
+        const resolvedMode = hasAcademicYearRecord
+          ? getAttendanceMode({
+              // Planner settings are the source of truth for the selected school year.
+              // Only fall back to academic-year mode when planner settings have no mode saved yet.
+              academicYearMode: plannerMode ? '' : resolvedYearMode,
+              plannerSettingsMode: plannerMode,
+              fallback: ATTENDANCE_MODES.CLASS_DAY,
+            })
+          // If this year has no academic-year row yet, always default to Learning days.
+          // This prevents stale per-subject values from another flow showing in a brand new year.
+          : ATTENDANCE_MODES.CLASS_DAY;
         setAttendanceTrackingMode(resolvedMode);
         setTargetScope(resolveTargetScopeForAttendanceMode(resolvedMode));
         setGoalMode(s.default_constraint_mode || 'days');
@@ -736,12 +785,12 @@ export default function PlannerSettingsContent({
           const normalizedDefaultYear = normalizeSchoolYearLabel(String(s.default_school_year));
           setSelectedSchoolYearLabel((prev) => prev || normalizedDefaultYear);
         }
-        setDefaultYearStartDate(normalizeYmd(s.default_year_start_date) || rangeDefaults.yearStart);
-        setDefaultYearEndDate(normalizeYmd(s.default_year_end_date) || rangeDefaults.yearEnd);
-        setDefaultFallStartDate(normalizeYmd(s.default_fall_term_start_date) || rangeDefaults.fallStart);
-        setDefaultFallEndDate(normalizeYmd(s.default_fall_term_end_date) || rangeDefaults.fallEnd);
-        setDefaultSpringStartDate(normalizeYmd(s.default_spring_term_start_date) || rangeDefaults.springStart);
-        setDefaultSpringEndDate(normalizeYmd(s.default_spring_term_end_date) || rangeDefaults.springEnd);
+        setDefaultYearStartDate(coercedRangeDates.default_year_start_date || rangeDefaults.yearStart);
+        setDefaultYearEndDate(coercedRangeDates.default_year_end_date || rangeDefaults.yearEnd);
+        setDefaultFallStartDate(coercedRangeDates.default_fall_term_start_date || rangeDefaults.fallStart);
+        setDefaultFallEndDate(coercedRangeDates.default_fall_term_end_date || rangeDefaults.fallEnd);
+        setDefaultSpringStartDate(coercedRangeDates.default_spring_term_start_date || rangeDefaults.springStart);
+        setDefaultSpringEndDate(coercedRangeDates.default_spring_term_end_date || rangeDefaults.springEnd);
       }
       setExcludedPublicHolidayDates(Array.isArray(excludedDates) ? excludedDates : []);
       const holidays = (ex || []).filter((e) => e.exclusion_type === 'holiday').map((e) => ({
@@ -757,6 +806,7 @@ export default function PlannerSettingsContent({
       }));
       setCustomHolidays(holidays);
       setCustomBreaks(breaks);
+      if (requestId !== loadDefaultsRequestRef.current) return;
       // Load subjects for Subject Targets section
       const { data: subjectsData } = await supabase
         .from('subject')
@@ -767,11 +817,13 @@ export default function PlannerSettingsContent({
       const { subjectTargetsMap, firstActiveTarget } = deriveSubjectTargetState(subjectsData || []);
       setSubjectTargets(subjectTargetsMap);
       const initialScope = resolveTargetScopeForAttendanceMode(
-        getAttendanceMode({
-          academicYearMode: resolvedYearMode,
-          plannerSettingsMode: hasAcademicYearRecord ? s?.attendance_tracking_mode : '',
-          fallback: ATTENDANCE_MODES.CLASS_DAY,
-        })
+        hasAcademicYearRecord
+          ? getAttendanceMode({
+              academicYearMode: String(s?.attendance_tracking_mode || '').trim() ? '' : resolvedYearMode,
+              plannerSettingsMode: s?.attendance_tracking_mode,
+              fallback: ATTENDANCE_MODES.CLASS_DAY,
+            })
+          : ATTENDANCE_MODES.CLASS_DAY
       );
       if (firstActiveTarget && initialScope === 'per_subject') {
         setGoalMode(firstActiveTarget.mode);
@@ -779,9 +831,12 @@ export default function PlannerSettingsContent({
         if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
       }
     } catch (err) {
+      if (requestId !== loadDefaultsRequestRef.current) return;
       setError(err?.message || 'Failed to load planner settings');
     } finally {
-      setLoading(false);
+      if (requestId === loadDefaultsRequestRef.current) {
+        setLoading(false);
+      }
     }
   }, [familyId, selectedSchoolYearLabel, isSchoolYearLocked, normalizedLockedSchoolYearLabel]);
 
@@ -1129,6 +1184,13 @@ export default function PlannerSettingsContent({
       }
 
       const resolvedScope = resolveTargetScopeForAttendanceMode(normalizedMode);
+      plannerSettingsTrace('manual_attendance_mode_change', {
+        selectedSchoolYearLabel,
+        normalizedMode,
+        resolvedScope,
+        embeddedInModal,
+        lockedSchoolYearLabel: normalizedLockedSchoolYearLabel || null,
+      });
       setAttendanceTrackingMode(normalizedMode);
       setTargetScope(resolvedScope);
 

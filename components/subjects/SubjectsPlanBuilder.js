@@ -2328,6 +2328,12 @@ export default function SubjectsPlanBuilder({
             .map((subject) => String(subject?.name || '').trim())
             .filter(Boolean)
         )];
+        if (allSubjectIds.length === 0) {
+          // Keep Weekly Cadence aligned with other empty-year states:
+          // if no subjects exist for this school year, show empty state
+          // instead of a synthetic aggregate cadence row.
+          return [];
+        }
         return [{
           id: 'overall',
           name: allSubjectNames.join(', ') || 'Class Days',
@@ -2878,7 +2884,8 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         create_calendar_events: true,
         blocks,
-        attendance_tracking_mode: resolvedAttendanceTrackingMode,
+        // New bootstrap plans for Fix Gap should default to Learning days.
+        attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
         run_scope_type: selectedTerm === 'full_year' ? 'full_year' : 'term',
         school_duration_scope: selectedTerm,
         target_instructional_days: 180,
@@ -3080,7 +3087,8 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         blocks,
         year_name: yearDetail?.year_name || undefined,
-        attendance_tracking_mode: resolvedAttendanceTrackingMode,
+        // New bootstrap plans for Fix Gap should default to Learning days.
+        attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
         timezone: getClientTimezone(),
       };
       const { data, error } = await applyToCalendar(payload);
@@ -3092,6 +3100,21 @@ export default function SubjectsPlanBuilder({
         error_code: error?.code || null,
       });
       if (error) throw error;
+      if (suggestionMode === 'overall') {
+        const suggestedSchoolYearLabel = String(displaySchoolYear?.label || '').trim() || null;
+        if (suggestedSchoolYearLabel) {
+          saveFamilyPlannerSettings(
+            familyId,
+            {
+              attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
+              target_scope: 'overall',
+              default_constraint_mode: 'days',
+              default_target_days: 180,
+            },
+            suggestedSchoolYearLabel
+          ).catch(() => {});
+        }
+      }
       patchCoreBlocksLocally(academicYearId, blocks, { startDate, endDate: nextEndDate });
       scheduleCalcDebug('applySuggestedTermExtension:after_local_patch', {
         subjectId,
@@ -3434,7 +3457,9 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         blocks,
         year_name: yearDetail?.year_name || undefined,
-        attendance_tracking_mode: resolvedAttendanceTrackingMode,
+        attendance_tracking_mode: suggestionMode === 'overall'
+          ? ATTENDANCE_MODES.CLASS_DAY
+          : resolvedAttendanceTrackingMode,
         timezone: getClientTimezone(),
       };
       scheduleCalcDebug('applyOverallSuggestedPlanChanges:payload', {
@@ -3622,13 +3647,35 @@ export default function SubjectsPlanBuilder({
   }) => {
     const absGap = Math.abs(Number(gapDays || 0));
     const isShort = Number(gapDays || 0) > 0;
-    const requestedGap = Math.max(0, Number(dryRunPreview?.requestedGap ?? absGap));
-    const assignedCount = Math.max(0, Number(dryRunPreview?.assignedCount ?? 0));
+    const requestedGap = Math.max(
+      0,
+      Number(
+        dryRunPreview?.requestedGap
+        ?? dryRunPreview?.beforeGapDays
+        ?? dryRunPreview?.debugDaysNeeded
+        ?? absGap
+      )
+    );
+    const assignedCount = Math.max(
+      0,
+      Number(
+        dryRunPreview?.assignedCount
+        ?? dryRunPreview?.createdEvents
+        ?? 0
+      )
+    );
     const datesWithCapacity = Math.max(0, Number(dryRunPreview?.datesWithCapacity ?? assignedCount));
     const datesWithoutCapacity = Math.max(0, Number(dryRunPreview?.datesWithoutCapacity ?? 0));
     const totalDaysInWindow = datesWithCapacity + datesWithoutCapacity;
     const partialFixPossible = Boolean(dryRunPreview?.partialFixPossible);
-    const remainingUnfixableGap = Math.max(0, Number(dryRunPreview?.remainingUnfixableGap ?? 0));
+    const remainingUnfixableGap = Math.max(
+      0,
+      Number(
+        dryRunPreview?.remainingUnfixableGap
+        ?? dryRunPreview?.afterGapDays
+        ?? (requestedGap - assignedCount)
+      )
+    );
     const maxAchievableDays = Math.max(
       0,
       Number(
@@ -3819,6 +3866,9 @@ export default function SubjectsPlanBuilder({
         )) || eligibleCores[0] || activeScheduleCore || null
       )
       : (eligibleCores[0] || activeScheduleCore || null);
+    const matchedCoreBlocks = Array.isArray(matchedCore?.row?.blocks) ? matchedCore.row.blocks : [];
+    const activeCoreBlocks = Array.isArray(activeScheduleCore?.row?.blocks) ? activeScheduleCore.row.blocks : [];
+    const hasAnySavedBlocks = matchedCoreBlocks.length > 0 || activeCoreBlocks.length > 0;
     let academicYearId = String(matchedCore?.row?.id || activeScheduleCore?.row?.id || '').trim();
     if (!academicYearId) {
       // Fallback to an existing year plan for the same family/range before bootstrapping a new one.
@@ -3912,7 +3962,8 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         create_calendar_events: true,
         blocks: fallbackBlocks,
-        attendance_tracking_mode: resolvedAttendanceTrackingMode,
+        // New bootstrap plans for Fix Gap should default to Learning days.
+        attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
         run_scope_type: 'full_year',
         school_duration_scope: 'custom_duration',
         target_instructional_days: 180,
@@ -3939,7 +3990,115 @@ export default function SubjectsPlanBuilder({
         toast?.push?.('No saved plan found. Auto-create did not return a plan id.', 'error');
         return;
       }
+      const bootstrapSchoolYearLabel = String(schoolYearLabel || '').trim() || null;
+      if (bootstrapSchoolYearLabel) {
+        saveFamilyPlannerSettings(
+          familyId,
+          {
+            attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
+            target_scope: 'overall',
+            default_constraint_mode: 'days',
+            default_target_days: 180,
+          },
+          bootstrapSchoolYearLabel
+        ).catch(() => {});
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshPlanDefaults', { detail: { schoolYearLabel: bootstrapSchoolYearLabel } }));
+        }
+      }
       toast?.push?.('Created missing plan automatically. Continuing Fix gap...', 'info');
+    }
+
+    if (academicYearId && !hasAnySavedBlocks) {
+      const allChildIds = (children || []).map((c) => c?.id).filter(Boolean);
+      const selectedSubjectsForPlan = (baseSubjects || []).filter((subject) => (
+        requestedSubjectIds.includes(String(subject?.id || '').trim())
+      ));
+      const fallbackBlocks = selectedSubjectsForPlan.map((subject) => {
+        const sid = String(subject?.id || '').trim();
+        const configured = blocksBySubject?.[sid] || {};
+        const configuredWeekdays = Array.isArray(configured?.weekdays)
+          ? configured.weekdays.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+          : [];
+        const assigned = Array.isArray(subject?.assignedChildren) ? subject.assignedChildren.filter(Boolean) : [];
+        return {
+          block_id: undefined,
+          subject_id: sid,
+          child_ids: assigned.length > 0 ? assigned : allChildIds,
+          weekdays: configuredWeekdays.length > 0 ? configuredWeekdays : [1, 3, 5],
+          start_time: /^\d{2}:\d{2}$/.test(String(configured?.start_time || '')) ? configured.start_time : '09:00',
+          end_time: /^\d{2}:\d{2}$/.test(String(configured?.end_time || '')) ? configured.end_time : '10:00',
+          all_day: false,
+        };
+      }).filter((block) => Boolean(block?.subject_id));
+      const fallbackRange = (requestedRangeStartYmd && requestedRangeEndYmd)
+        ? { start_date: requestedRangeStartYmd, end_date: requestedRangeEndYmd }
+        : fullYearRange;
+      if (!fallbackRange?.start_date || !fallbackRange?.end_date || fallbackBlocks.length === 0) {
+        try {
+          fixGapInFlightByRowRef.current.delete(rowId);
+        } catch (_) {}
+        setFixingGapRowId(null);
+        setFixGapSetupContent({
+          title: 'Complete setup before Fix gap',
+          bodyLines: [
+            'This school year has no saved weekly cadence yet.',
+            'Add at least one weekly cadence, then try Fix gap again.',
+          ],
+          primaryLabel: 'Open schedule setup',
+          primaryAction: 'open_preferences',
+        });
+        setShowFixGapSetupModal(true);
+        return;
+      }
+      const bootstrapPayload = {
+        family_id: familyId,
+        start_date: fallbackRange.start_date,
+        end_date: fallbackRange.end_date,
+        follow_public_holidays: true,
+        holiday_region: 'US',
+        subjects: requestedSubjectIds,
+        replace_placeholders: true,
+        create_calendar_events: true,
+        blocks: fallbackBlocks,
+        attendance_tracking_mode: scope === 'overall'
+          ? ATTENDANCE_MODES.CLASS_DAY
+          : resolvedAttendanceTrackingMode,
+        run_scope_type: 'full_year',
+        school_duration_scope: 'custom_duration',
+        target_instructional_days: 180,
+        use_defaults: false,
+        timezone: getClientTimezone(),
+        year_name: `${displaySchoolYear?.label || 'School Year'} · Subjects schedule`,
+      };
+      const { data: bootstrapData, error: bootstrapError } = await applyToCalendar(bootstrapPayload);
+      trackEvent('apply_to_calendar_result', {
+        mode: bootstrapPayload.attendance_tracking_mode,
+        academic_year_id: bootstrapData?.academic_year_id || null,
+        generated_count: Number(bootstrapData?.created || 0),
+        success: !bootstrapError,
+        error_code: bootstrapError?.code || null,
+      });
+      if (bootstrapError) throw bootstrapError;
+      academicYearId = String(bootstrapData?.academic_year_id || '').trim();
+      setOverviewReloadKey((k) => k + 1);
+      const bootstrapSchoolYearLabel = String(schoolYearLabel || '').trim() || null;
+      if (bootstrapSchoolYearLabel) {
+        saveFamilyPlannerSettings(
+          familyId,
+          {
+            attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
+            target_scope: 'overall',
+            default_constraint_mode: 'days',
+            default_target_days: 180,
+          },
+          bootstrapSchoolYearLabel
+        ).catch(() => {});
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshPlanDefaults', { detail: { schoolYearLabel: bootstrapSchoolYearLabel } }));
+        }
+      }
+      toast?.push?.('No weekly cadence was saved yet. Created default cadence and continuing Fix gap...', 'info');
     }
 
     const payloadBase = {
@@ -3974,12 +4133,24 @@ export default function SubjectsPlanBuilder({
         });
         if (dryRunError) throw dryRunError;
         dryRunPreview = dryRunData || null;
-      } catch (_) {
+      } catch (err) {
         try {
           fixGapInFlightByRowRef.current.delete(rowId);
         } catch (_) {}
         setFixingGapRowId(null);
-        toast?.push?.('Could not preview Fix gap right now. Please try again.', 'error');
+        const detail = String(
+          err?.details
+          || err?.detail
+          || err?.message
+          || err?.error
+          || ''
+        ).trim();
+        toast?.push?.(
+          detail
+            ? `Could not preview Fix gap: ${detail}`
+            : 'Could not preview Fix gap right now. Please try again.',
+          'error'
+        );
         return;
       }
     }

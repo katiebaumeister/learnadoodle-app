@@ -639,8 +639,8 @@ const formatTime = (timestamp) => {
 const SUGGESTED_TAGS = ['math', 'reading', 'science', 'writing', 'review', 'test', 'project', 'practice'];
 
 const EVENT_TYPES = [
-  'Lesson',
   'Class Day',
+  'Lesson',
   'Project',
   'Exam',
   'Assignment',

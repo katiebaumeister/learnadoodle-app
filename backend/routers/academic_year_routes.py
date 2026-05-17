@@ -2723,6 +2723,10 @@ async def fix_target_gap(
                 before_gap_days = ui_gap_days
             else:
                 before_gap_days = int(target_days_effective - before_projected_days)
+            # Keep target aligned with the baseline values the UI row is showing.
+            # Without this, a stale/default backend target can drift from the
+            # provided gap and incorrectly report gapAfter as 0 in no-capacity cases.
+            target_days_effective = max(0, int(before_projected_days + before_gap_days))
             projected_days_alignment_offset = int(before_projected_days - backend_before_projected_days)
 
             if before_gap_days <= 0:
@@ -6312,7 +6316,6 @@ async def apply_to_calendar(
                     "defaults_snapshot_json": defaults_snapshot_json,
                     "effective_config_json": effective_config_json,
                     "overrides_json": body.overrides_json,
-                    "attendance_tracking_mode": attendance_tracking_mode,
                 }
                 if body.year_name and body.year_name.strip():
                     year_updates["year_name"] = body.year_name.strip()
