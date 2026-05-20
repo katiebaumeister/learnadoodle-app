@@ -51,7 +51,7 @@ function notifyGradesAndSubjectRefresh(subjectId) {
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
     window.dispatchEvent(
       new CustomEvent('refreshCalendar', {
-        detail: { skipCacheClear: true, skipHomeRefresh: true },
+        detail: { skipCacheClear: true },
       })
     );
     window.dispatchEvent(new CustomEvent('refreshSubjects'));

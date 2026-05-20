@@ -4,6 +4,7 @@ import { Clock, BookOpen, ArrowRight, CheckCircle, Check, FileText, Plus, Calcul
 import { colors, shadows, getCategoryColor } from '../../theme/colors';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 import { safeImageUri } from '../../lib/safeImageUri';
+import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 
 // Avatar sources
 const avatarSources = {
@@ -158,6 +159,8 @@ export default function TodaysLearningTimeGrouped({
     
     const isCurrentlyDone = event.status === 'done';
     const newStatus = isCurrentlyDone ? 'scheduled' : 'done';
+    const cleanEventId = cleanPlannerEventId(String(event.id || ''));
+    if (!cleanEventId) return;
     
     // Optimistically update the event status immediately for instant UI feedback
     const updatedEvent = { ...event, status: newStatus };
@@ -168,31 +171,45 @@ export default function TodaysLearningTimeGrouped({
     if (onEventComplete) {
       onEventComplete(updatedEvent);
     }
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('eventAttendancePatched', {
+          detail: { eventId: cleanEventId, status: newStatus },
+        })
+      );
+    }
     
     try {
       if (isCurrentlyDone) {
         // Mark as not done (scheduled) using API endpoint
-        const result = await updateEventStatus(event.id, 'scheduled');
+        const result = await updateEventStatus(cleanEventId, 'scheduled');
         if (result.error) {
           throw result.error;
         }
       } else {
         // Mark as done using the attendance client (creates attendance record)
-        const result = await completeEvent(event.id);
+        const result = await completeEvent(cleanEventId);
         if (result.error) {
           throw result.error;
         }
       }
       
-      // Dispatch refresh event for other components (skip home refresh since we handle it in parent)
+      // Dispatch refresh event for other components and keep Home cache warm.
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipCacheClear: true } }));
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
       }
     } catch (error) {
       // Revert optimistic update on error
       if (onEventComplete) {
         onEventComplete(event); // Revert to original event
+      }
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('eventAttendancePatched', {
+            detail: { eventId: cleanEventId, status: isCurrentlyDone ? 'done' : 'scheduled' },
+          })
+        );
       }
       if (Platform.OS === 'web') {
         alert(`Failed to ${isCurrentlyDone ? 'unmark' : 'mark'} event as done: ${error.message || error}`);

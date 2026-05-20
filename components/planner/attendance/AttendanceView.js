@@ -3,12 +3,26 @@ import { View, Text, ScrollView, ActivityIndicator, StyleSheet, Platform, Modal,
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 
-/** Notify other views (planner calendar, event modals, subject pages) to refetch so attendance stays in sync.
- *  Uses skipCacheClear + skipHomeRefresh so the page doesn't feel like a full refresh when toggling attendance. */
-function notifyAttendanceUpdated() {
+/** Notify other views (planner calendar, home schedule, subject pages) so attendance stays in sync. */
+function notifyAttendanceUpdated(patchedAttendances = []) {
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const latestByEventId = new Map();
+    (Array.isArray(patchedAttendances) ? patchedAttendances : []).forEach((item) => {
+      const eventId = String(item?.eventId || '').trim();
+      if (!eventId) return;
+      const normalizedStatus = String(item?.status || '').trim().toLowerCase();
+      const status = normalizedStatus === 'completed' ? 'done' : (normalizedStatus || 'scheduled');
+      latestByEventId.set(eventId, status);
+    });
+    latestByEventId.forEach((status, eventId) => {
+      window.dispatchEvent(
+        new CustomEvent('eventAttendancePatched', {
+          detail: { eventId, status },
+        })
+      );
+    });
     window.dispatchEvent(new CustomEvent('refreshCalendar', {
-      detail: { skipCacheClear: true, skipHomeRefresh: true },
+      detail: { skipCacheClear: true },
     }));
     window.dispatchEvent(new CustomEvent('refreshSubjects'));
   }
@@ -570,6 +584,7 @@ export default function AttendanceView({
     const normChildId = viewingAllChildren ? null : String(selectedDay.childId);
     const event = selectedDayEvents.find((e) => e.id === eventId);
     const isUnmark = selectedDayAttendanceByEventId[eventId] === 'present';
+    const patchedAttendances = [];
     try {
       if (isUnmark) {
         const assignedIds = getChildIdsForEvent(event);
@@ -585,6 +600,7 @@ export default function AttendanceView({
             await Promise.all(recordsToUpdate.map((r) => deleteAttendanceLog(r.id)));
             const res = await updateEventStatus(event.id, 'scheduled');
             if (res.error) console.warn('[AttendanceView] Could not unmark event status:', res.error);
+            else patchedAttendances.push({ eventId: event.id, status: 'scheduled' });
           } else {
             await Promise.all(assignedIds.map((cid) => createAttendanceLog({
               family_id: familyIdResolved,
@@ -618,10 +634,11 @@ export default function AttendanceView({
           await Promise.all(recordsToDelete.map((r) => deleteAttendanceLog(r.id)));
           const res = await updateEventStatus(event.id, 'scheduled');
           if (res.error) console.warn('[AttendanceView] Could not unmark event status:', res.error);
+          else patchedAttendances.push({ eventId: event.id, status: 'scheduled' });
         }
         setTimeout(() => {
           setAttendanceRefreshKey((k) => k + 1);
-          notifyAttendanceUpdated();
+          notifyAttendanceUpdated(patchedAttendances);
         }, 150);
         trackEvent('attendance_marked', {
           mode: attendanceTrackingMode,
@@ -655,9 +672,10 @@ export default function AttendanceView({
         await Promise.all(upserts);
         const res = await updateEventStatus(ev.id, 'done');
         if (res.error) console.warn('[AttendanceView] Could not mark event complete:', res.error);
+        else patchedAttendances.push({ eventId: ev.id, status: 'done' });
       }
       setAttendanceRefreshKey((k) => k + 1);
-      notifyAttendanceUpdated();
+      notifyAttendanceUpdated(patchedAttendances);
       trackEvent('attendance_marked', {
         mode: attendanceTrackingMode,
         scope: 'event',
@@ -685,6 +703,7 @@ export default function AttendanceView({
         String(r.child_id) === normChildId &&
         String(r.day_date).slice(0, 10) === normKey
     );
+    const patchedAttendances = [];
 
     // Prefer ClassDay event rows when present in class-day mode; otherwise fallback to manual day-only attendance.
     if (preferredEventRows.length === 0) {
@@ -760,11 +779,12 @@ export default function AttendanceView({
             await Promise.all(recordsToDelete.map((r) => deleteAttendanceLog(r.id)));
             const res = await updateEventStatus(e.id, 'scheduled');
             if (res.error) console.warn('[AttendanceView] Could not unmark event status:', res.error);
+            else patchedAttendances.push({ eventId: e.id, status: 'scheduled' });
           }
         }
         setTimeout(() => {
           setAttendanceRefreshKey((k) => k + 1);
-          notifyAttendanceUpdated();
+          notifyAttendanceUpdated(patchedAttendances);
         }, 150);
         trackEvent('attendance_marked', {
           mode: attendanceTrackingMode,
@@ -820,9 +840,10 @@ export default function AttendanceView({
         await Promise.all(upserts);
         const res = await updateEventStatus(e.id, 'done');
         if (res.error) console.warn('[AttendanceView] Could not mark event complete:', res.error);
+        else patchedAttendances.push({ eventId: e.id, status: 'done' });
       }
       setAttendanceRefreshKey((k) => k + 1);
-      notifyAttendanceUpdated();
+      notifyAttendanceUpdated(patchedAttendances);
       trackEvent('attendance_marked', {
         mode: attendanceTrackingMode,
         scope: 'day',
@@ -841,6 +862,7 @@ export default function AttendanceView({
     if (!familyIdResolved || markingRangeAttended || children.length === 0) return;
     setMarkingRangeAttended(true);
     try {
+      const patchedAttendances = [];
       const dateKeys = getDateKeysInRange(yearRange.start, yearRange.end);
       if (dateKeys.length === 0) return;
 
@@ -913,14 +935,22 @@ export default function AttendanceView({
               }));
             }
           });
-          dayOps.push(updateEventStatus(event.id, 'done'));
+          dayOps.push(
+            updateEventStatus(event.id, 'done').then((res) => {
+              if (res?.error) {
+                console.warn('[AttendanceView] Could not mark event complete:', res.error);
+                return;
+              }
+              patchedAttendances.push({ eventId: event.id, status: 'done' });
+            })
+          );
         }
 
         if (dayOps.length > 0) await Promise.all(dayOps);
       }
 
       setAttendanceRefreshKey((k) => k + 1);
-      notifyAttendanceUpdated();
+      notifyAttendanceUpdated(patchedAttendances);
       trackEvent('attendance_marked', {
         mode: attendanceTrackingMode,
         scope: 'day',
