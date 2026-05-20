@@ -2648,7 +2648,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   }, []);
 
   // Load month view into calendarDataCache and calendarEvents (used by planner/calendar tabs).
-  // Fetches month events and holidays in parallel so holidays appear with other events on load (no delay).
+  // Month events render first; holidays are fetched in parallel and hydrate shortly after.
   // options.preserveEventId: when set (e.g. after drag-drop), keep this event's position from current state
   // so a stale refetch doesn't overwrite the optimistic update and make the event "jump back".
   // options.background: when true (e.g. post-drag refetch), skip loading state so UI stays responsive.
@@ -2679,17 +2679,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const preserveEventId = options.preserveEventId || null;
       const allChildren = options.allChildren === true; // when true, fetch all family events (e.g. for plan summary slot lookup)
       try {
-        const [monthResult, holidaysResult] = await Promise.all([
-          supabase.rpc('get_month_view', {
-            _family_id: familyId,
-            _year: year,
-            _month: month + 1,
-            // Always fetch full family month and apply child filtering client-side in CenterPane.
-            // This prevents family-wide / plan-generated slots from being dropped by server-side child filters.
-            _child_ids: null,
-          }),
-          getHolidaysForRange(familyId, start, end),
-        ]);
+        const holidaysPromise = getHolidaysForRange(familyId, start, end);
+        const monthResult = await supabase.rpc('get_month_view', {
+          _family_id: familyId,
+          _year: year,
+          _month: month + 1,
+          // Always fetch full family month and apply child filtering client-side in CenterPane.
+          // This prevents family-wide / plan-generated slots from being dropped by server-side child filters.
+          _child_ids: null,
+        });
         if (dropStartTime != null && typeof performance !== 'undefined') {
           console.log('[WebContent] [drag-timing] t+' + (performance.now() - dropStartTime).toFixed(0) + 'ms refreshCalendarData fetch done');
         }
@@ -2707,7 +2705,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         });
         const uniqueMonthEventIds = [...new Set(monthEventIds)];
         let attendedEventIds = new Set();
-        if (uniqueMonthEventIds.length > 0) {
+        if (!background && uniqueMonthEventIds.length > 0) {
           try {
             let attendanceRows = null;
             let attendanceError = null;
@@ -2840,9 +2838,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           });
           return merged;
         });
-        const holidays = holidaysResult?.error ? [] : (holidaysResult?.data?.holidays || []);
-        setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: holidays }));
         setIsCalendarDataLoaded(true);
+        holidaysPromise
+          .then((holidaysResult) => {
+            const holidays = holidaysResult?.error ? [] : (holidaysResult?.data?.holidays || []);
+            setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: holidays }));
+          })
+          .catch(() => {});
       } catch (err) {
         if (!isAbortLikeError(err)) {
           console.error('[WebContent] refreshCalendarData failed:', err);
