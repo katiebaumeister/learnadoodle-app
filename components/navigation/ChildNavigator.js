@@ -26,7 +26,7 @@ import WebLayout from '../WebLayout';
 const TABS = [
   { id: 'home', label: 'Home', icon: Home },
   { id: 'calendar', label: 'Calendar', icon: Calendar },
-  { id: 'subjects', label: 'Subjects', icon: BookOpen },
+  { id: 'subjects', label: 'Learning', icon: BookOpen },
   { id: 'assignments', label: 'Assignments', icon: FileText },
 ];
 

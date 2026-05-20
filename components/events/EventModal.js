@@ -78,6 +78,12 @@ export default function EventModal({
         : (typeof ev.recurrence_rule === 'string'
           ? ev.recurrence_rule
           : JSON.stringify(ev.recurrence_rule));
+    const curriculumMetaSig =
+      ev.curriculum_metadata == null
+        ? ''
+        : (typeof ev.curriculum_metadata === 'string'
+          ? ev.curriculum_metadata
+          : JSON.stringify(ev.curriculum_metadata));
     return [
       String(ev.id || ''),
       String(ev.updated_at || ''),
@@ -86,6 +92,7 @@ export default function EventModal({
       String(ev.status || ''),
       String(ev.event_type || ''),
       String(ev.subject_id || ''),
+      curriculumMetaSig,
       String(ev.child_id || ''),
       Array.isArray(ev.child_ids) ? ev.child_ids.map(String).sort().join(',') : '',
       String(ev.material_id || ''),

@@ -3329,7 +3329,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           <View style={styles.mainContentInner}>
             <View style={styles.coursesHeader}>
               <View style={styles.coursesTitleContainer}>
-                <Text style={[styles.mainContentTitle, styles.coursesTitle]}>Courses</Text>
+                <Text style={[styles.mainContentTitle, styles.coursesTitle]}>Subjects</Text>
               </View>
               {!isChildMode && (
                 <TouchableOpacity
@@ -4587,7 +4587,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <Text style={[styles.sidebarButtonText, activeSection === 'members' && styles.sidebarButtonTextActive]}>Family Members</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'courses' && styles.sidebarButtonActive]} onPress={() => setActiveSection('courses')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'courses' && styles.sidebarButtonTextActive]}>Courses</Text>
+              <Text style={[styles.sidebarButtonText, activeSection === 'courses' && styles.sidebarButtonTextActive]}>Subjects</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.sidebarButton, activeSection === 'planner-settings' && styles.sidebarButtonActive]} onPress={() => setActiveSection('planner-settings')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
               <Text style={[styles.sidebarButtonText, activeSection === 'planner-settings' && styles.sidebarButtonTextActive]}>Planning Preferences</Text>

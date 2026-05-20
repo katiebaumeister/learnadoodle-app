@@ -30,6 +30,7 @@ import {
   BarChart3,
   List,
   SlidersHorizontal,
+  Download,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
@@ -63,7 +64,6 @@ import SubjectProgressPlanSection from './SubjectProgressPlanSection';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import MaterialDetailsModal from '../materials/MaterialDetailsModal';
 import { archiveMaterial } from '../../lib/services/materialsClient';
-import { getAttendanceMode, isClassDayMode as resolveClassDayMode } from '../../lib/attendanceMode';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_PROGRESS = false;
@@ -511,7 +511,10 @@ export default function SubjectDetailPage({
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
-    const handleRefresh = () => loadSubjectDetail({ silent: true });
+    const handleRefresh = (e) => {
+      if (e?.detail?.skipSubjectDetailRefresh) return;
+      loadSubjectDetail({ silent: true });
+    };
     const handleSubjectDetailRefresh = (e) => {
       if (e.detail?.subjectId === subjectId) loadSubjectDetail({ silent: true });
     };
@@ -647,8 +650,6 @@ export default function SubjectDetailPage({
 
   // Extract data
   const subject = subjectData?.subject;
-  const attendanceTrackingMode = getAttendanceMode({ academicYearMode: subjectData?.attendance_tracking_mode });
-  const isClassDayMode = resolveClassDayMode(attendanceTrackingMode);
   const materials = subjectData?.materials || [];
   const upcomingItems = subjectData?.upcomingItems || [];
   const overdueItems = subjectData?.overdueItems || [];
@@ -830,7 +831,7 @@ export default function SubjectDetailPage({
       toast.push(`${itemName} deleted`, 'success');
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
       }
     } catch (err) {
       toast.push(err?.message || `Failed to delete ${itemName}`, 'error');
@@ -1622,7 +1623,7 @@ export default function SubjectDetailPage({
       const { error } = await applyToCalendar(payload);
       if (error) throw error;
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
         window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
@@ -1834,6 +1835,13 @@ export default function SubjectDetailPage({
       setExportTooltipKey(null);
     }
   }, []);
+  const handleOpenExportForSection = useCallback((sectionType) => {
+    if (typeof onOpenExportModalForSection === 'function') {
+      onOpenExportModalForSection(sectionType);
+      return;
+    }
+    setShowExportComingSoonModal(true);
+  }, [onOpenExportModalForSection]);
 
   const hasGradesAttention = useMemo(() => {
     if (!isParentViewer || !assignmentAttentionByEventId) return false;
@@ -2140,7 +2148,7 @@ export default function SubjectDetailPage({
       }
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
       }
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed toggling event attendance:', err);
@@ -2210,7 +2218,7 @@ export default function SubjectDetailPage({
       }
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
       }
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed marking day attended:', err);
@@ -2219,13 +2227,16 @@ export default function SubjectDetailPage({
     }
   }, [familyId, subjectEvents, getEventDateKey, resolveChildIdsForAttendanceEvent, getEventMinutes, attendanceRecords, runAttendanceMutation, runEventStatusBestEffort, applyOptimisticProgressByEventIds, loadSubjectDetail, toast]);
 
+  const pendingDayToggleKeysRef = useRef(new Set());
   const handleYearHeatmapDayPress = useCallback(async (dateKey) => {
     if (!familyId || !dateKey) return;
     const normKey = String(dateKey).slice(0, 10);
+    if (pendingDayToggleKeysRef.current.has(normKey)) return;
     if (!canMarkAttendanceForDateKey(normKey)) {
       toast.push('Attendance can only be marked on scheduled subject days.', 'error');
       return;
     }
+    pendingDayToggleKeysRef.current.add(normKey);
     const dayRecords = attendanceRecords.filter((record) => String(record?.day_date || '').slice(0, 10) === normKey);
     const uiDayRecords = attendanceRecordsForUI.filter((record) => String(record?.day_date || '').slice(0, 10) === normKey);
     const dayEventsByDate = (subjectEvents || []).filter((event) => getEventDateKey(event) === normKey);
@@ -2390,12 +2401,14 @@ export default function SubjectDetailPage({
       }
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
       }
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed toggling day attendance:', err);
       toast.push(err?.message || 'Could not update attendance for that day.', 'error');
       await loadSubjectDetail({ silent: true });
+    } finally {
+      pendingDayToggleKeysRef.current.delete(normKey);
     }
   }, [
     familyId,
@@ -2414,6 +2427,7 @@ export default function SubjectDetailPage({
     applyOptimisticProgressByEventIds,
     loadSubjectDetail,
     toast,
+    pendingDayToggleKeysRef,
   ]);
 
   const attendanceInsightsPanel = attendanceViewMode === 'year' || attendanceViewMode === 'month' ? (
@@ -2680,22 +2694,39 @@ export default function SubjectDetailPage({
         ) : null}
 
         {/* Section 2: Attendance */}
-        {!isClassDayMode && (
-          <View id="attendance-section" style={styles.section}>
+        <View id="attendance-section" style={styles.section}>
             <>
               <View style={styles.attendanceSectionHeader}>
                 <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
-                <TouchableOpacity
-                  style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
-                  onPress={() => setShowPastEventsAttendanceModal(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Edit attendance"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Edit2 size={14} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Edit attendance</Text>
-                </TouchableOpacity>
+                <View style={styles.sectionHeaderActions}>
+                  <TouchableOpacity
+                    style={styles.exportIconButton}
+                    onPress={() => handleOpenExportForSection('attendance')}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityLabel="Export attendance"
+                    {...(Platform.OS === 'web'
+                      ? {
+                          cursor: 'pointer',
+                          onMouseEnter: (e) => handleExportHover('attendance', true, e),
+                          onMouseLeave: (e) => handleExportHover('attendance', false, e),
+                        }
+                      : {})}
+                  >
+                    <Download size={14} color="#94A3B8" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+                    onPress={() => setShowPastEventsAttendanceModal(true)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit attendance"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Edit2 size={14} color="#6B7280" />
+                    <Text style={styles.emptyStateButtonText}>Edit attendance</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
               {(attendanceViewMode === 'list' ? attendanceRecordsListUI.length > 0 : attendanceRecordsForUI.length > 0) ? (
                 <View style={styles.emptyStateBox}>
@@ -2767,13 +2798,28 @@ export default function SubjectDetailPage({
               )}
             </>
           </View>
-        )}
 
         {/* Section 3: Grades */}
         <View id="grades-section" style={styles.section}>
           <View style={styles.gradesSectionHeader}>
             <View style={styles.gradesSectionTitleRow}>
               <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
+              <TouchableOpacity
+                style={[styles.exportIconButton, styles.sectionHeaderExportButton]}
+                onPress={() => handleOpenExportForSection('report_card')}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Export grades report card"
+                {...(Platform.OS === 'web'
+                  ? {
+                      cursor: 'pointer',
+                      onMouseEnter: (e) => handleExportHover('grades', true, e),
+                      onMouseLeave: (e) => handleExportHover('grades', false, e),
+                    }
+                  : {})}
+              >
+                <Download size={14} color="#94A3B8" />
+              </TouchableOpacity>
               {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
                 <TouchableOpacity
                   style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
@@ -3726,9 +3772,10 @@ const styles = StyleSheet.create({
     }),
   },
   materialsEmptyText: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginTop: 6,
+    fontSize: 14,
+    color: colors.muted || '#6B7280',
+    lineHeight: 20,
+    marginBottom: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -3941,6 +3988,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
+  },
+  sectionHeaderActions: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sectionHeaderExportButton: {
     marginLeft: 'auto',
   },
   exportIconButton: {

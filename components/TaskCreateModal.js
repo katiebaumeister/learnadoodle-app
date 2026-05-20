@@ -45,6 +45,35 @@ const parseSubjectChildIds = (raw) =>
     .map((id) => id.trim())
     .filter(Boolean);
 
+const withSubjectIdsInCurriculumMetadata = (rawMetadata, subjectIds) => {
+  const normalizedSubjectIds = Array.from(
+    new Set(
+      (Array.isArray(subjectIds) ? subjectIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)
+    )
+  );
+  let base = {};
+  if (rawMetadata && typeof rawMetadata === 'object' && !Array.isArray(rawMetadata)) {
+    base = { ...rawMetadata };
+  } else if (typeof rawMetadata === 'string') {
+    try {
+      const parsed = JSON.parse(rawMetadata);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        base = { ...parsed };
+      }
+    } catch (_) {
+      base = {};
+    }
+  }
+  if (normalizedSubjectIds.length > 0) {
+    base.subject_ids = normalizedSubjectIds;
+  } else {
+    delete base.subject_ids;
+  }
+  return Object.keys(base).length > 0 ? base : null;
+};
+
 const resolveSchoolYearLabelForDate = (date = new Date()) => {
   const normalizedDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
   const month = normalizedDate.getMonth() + 1;
@@ -217,6 +246,15 @@ function fmt(d) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function resolveDefaultAssigneeIds({ defaultChildIds, defaultChildId, familyMembers }) {
+  if (Array.isArray(defaultChildIds) && defaultChildIds.length > 0) return defaultChildIds;
+  if (defaultChildId) return [defaultChildId];
+  const allChildIds = (Array.isArray(familyMembers) ? familyMembers : [])
+    .map((m) => m?.id)
+    .filter(Boolean);
+  return allChildIds;
+}
+
 export default function TaskCreateModal({
   visible,
   onClose,
@@ -248,10 +286,11 @@ export default function TaskCreateModal({
       return new Date();
     }
   });
-  const initialAssigneeIds =
-    Array.isArray(defaultChildIds) && defaultChildIds?.length
-      ? defaultChildIds
-      : (defaultChildId ? [defaultChildId] : []);
+  const initialAssigneeIds = resolveDefaultAssigneeIds({
+    defaultChildIds,
+    defaultChildId,
+    familyMembers,
+  });
 
   const [assigneeIds, setAssigneeIds] = useState(initialAssigneeIds);
   const assigneeIdsSignature = useMemo(
@@ -298,7 +337,8 @@ export default function TaskCreateModal({
   
   // New academic and metadata fields
   const [eventType, setEventType] = useState('Class Day'); // Default to "Class Day" for new events
-  const [subjectId, setSubjectId] = useState(null);
+  const [subjectIds, setSubjectIds] = useState(defaultSubjectId ? [defaultSubjectId] : []);
+  const [subjectId, setSubjectId] = useState(defaultSubjectId || null);
   const [unit, setUnit] = useState('');
   const [grade, setGrade] = useState('');
   const [percentOfTotalGrade, setPercentOfTotalGrade] = useState('');
@@ -315,7 +355,7 @@ export default function TaskCreateModal({
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
   const subjectButtonRef = useRef(null);
   const subjectDropdownRef = useRef(null);
-  const [subjectDropdownPosition, setSubjectDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
+  const [subjectDropdownPosition, setSubjectDropdownPosition] = useState({ top: 0, left: 0, width: 200, maxHeight: 220 });
   const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
   
   // Material selector state
@@ -338,6 +378,18 @@ export default function TaskCreateModal({
 
   const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(false);
 
+  const applySubjectSelection = useCallback((nextSubjectIds) => {
+    const normalized = Array.from(
+      new Set(
+        (Array.isArray(nextSubjectIds) ? nextSubjectIds : [])
+          .map((id) => String(id || '').trim())
+          .filter(Boolean)
+      )
+    );
+    setSubjectIds(normalized);
+    setSubjectId(normalized[0] || null);
+  }, []);
+
   const applyEventTypeSelection = useCallback((nextType) => {
     const isSwitchingAwayFromClassDay = eventType === 'Class Day' && nextType !== 'Class Day';
     setEventType(nextType);
@@ -345,7 +397,7 @@ export default function TaskCreateModal({
       nextType === 'Class Day' ? false : defaultRequiresSubmissionHomeForEventType(nextType)
     );
     if (nextType === 'Class Day') {
-      setSubjectId(null);
+      applySubjectSelection([]);
       setUnit('');
       setGrade('');
       setPercentOfTotalGrade('');
@@ -375,7 +427,7 @@ export default function TaskCreateModal({
       setTitle('');
     }
     setIsClassDayTitleAutofilled(false);
-  }, [eventType, isClassDayTitleAutofilled, title]);
+  }, [eventType, isClassDayTitleAutofilled, title, applySubjectSelection]);
   
   // Handle standards selection from modal
   const handleStandardsSelect = useCallback((selectedStandards) => {
@@ -870,16 +922,30 @@ export default function TaskCreateModal({
           const node = subjectButtonRef.current._nativeNode || subjectButtonRef.current;
           if (node && typeof node.getBoundingClientRect === 'function') {
             const rect = node.getBoundingClientRect();
+            const dropdownMaxHeight = 300;
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+            let top;
+            let maxHeight;
+            if (spaceBelow < 200 && spaceAbove > spaceBelow) {
+              top = rect.top - Math.min(dropdownMaxHeight, Math.max(spaceAbove - 10, 140));
+              maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceAbove - 10, 140));
+            } else {
+              top = rect.bottom + 4;
+              maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceBelow - 10, 140));
+            }
             const newPosition = {
-              top: rect.bottom + 4,
+              top,
               left: rect.left,
               width: Math.max(rect.width, 200),
+              maxHeight,
             };
             setSubjectDropdownPosition((prev) => {
               if (
                 prev?.top === newPosition.top &&
                 prev?.left === newPosition.left &&
-                prev?.width === newPosition.width
+                prev?.width === newPosition.width &&
+                prev?.maxHeight === newPosition.maxHeight
               ) {
                 return prev;
               }
@@ -905,6 +971,30 @@ export default function TaskCreateModal({
       }
       
       return () => clearTimeout(timeoutId);
+    }
+  }, [showSubjectDropdown]);
+
+  // Close subject dropdown when clicking outside (web only)
+  useEffect(() => {
+    if (Platform.OS === 'web' && showSubjectDropdown) {
+      const handleSubjectClickOutside = (event) => {
+        const buttonNode = subjectButtonRef.current?._nativeNode || subjectButtonRef.current;
+        const dropdownNode = subjectDropdownRef.current?._nativeNode || subjectDropdownRef.current;
+        const target = event?.target;
+        if (!buttonNode || !target) return;
+        const clickedButton = typeof buttonNode.contains === 'function' && buttonNode.contains(target);
+        const clickedDropdown =
+          !!dropdownNode &&
+          typeof dropdownNode.contains === 'function' &&
+          dropdownNode.contains(target);
+        if (!clickedButton && !clickedDropdown) {
+          setShowSubjectDropdown(false);
+        }
+      };
+      document.addEventListener('mousedown', handleSubjectClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleSubjectClickOutside);
+      };
     }
   }, [showSubjectDropdown]);
   
@@ -1085,10 +1175,11 @@ export default function TaskCreateModal({
       setTitle(defaultTitle && String(defaultTitle).trim() ? defaultTitle : '');
       setDueDate(defaultDate ?? new Date());
       setEventEndDate(null);
-      const resetAssigneeIds =
-        Array.isArray(defaultChildIds) && defaultChildIds?.length
-          ? defaultChildIds
-          : (defaultChildId ? [defaultChildId] : []);
+      const resetAssigneeIds = resolveDefaultAssigneeIds({
+        defaultChildIds,
+        defaultChildId,
+        familyMembers,
+      });
       setAssigneeIds(resetAssigneeIds);
       setNotes('');
       // Labels removed - no longer used
@@ -1105,7 +1196,7 @@ export default function TaskCreateModal({
       setAttachedMaterialIds(initialMaterialId ? [initialMaterialId] : []);
       setAttachedStandards([]);
       setShowStandardsModal(false);
-      setSubjectId(defaultSubjectId || null);
+      applySubjectSelection(defaultSubjectId ? [defaultSubjectId] : []);
       // Expand academic details if defaultSubjectId is provided
       if (defaultSubjectId) {
         setShowAcademicDetails(true);
@@ -1145,7 +1236,7 @@ export default function TaskCreateModal({
       lastMaterialsLoadKeyRef.current = '';
     }
     wasVisibleRef.current = visible;
-  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId, applyEventTypeSelection]);
+  }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId, familyMembers, applyEventTypeSelection, applySubjectSelection]);
 
   // Keep weekly "On" default aligned with selected date until user manually edits weekday chips.
   useEffect(() => {
@@ -1356,9 +1447,13 @@ export default function TaskCreateModal({
         return prevSig === nextSig ? prev : fetchedSubjects;
       });
       
-      // Clear selected subject if it's no longer valid
-      if (subjectId && !fetchedSubjects.find(s => s.id === subjectId)) {
-        setSubjectId(null);
+      // Drop selected subjects that are no longer valid for current assignees.
+      if (subjectIds.length > 0) {
+        const allowed = new Set((fetchedSubjects || []).map((s) => String(s.id)));
+        const nextSelected = subjectIds.filter((sid) => allowed.has(String(sid)));
+        if (nextSelected.length !== subjectIds.length) {
+          applySubjectSelection(nextSelected);
+        }
       }
     } catch (error) {
       console.error('Error in fetchSubjects:', error);
@@ -1610,7 +1705,8 @@ export default function TaskCreateModal({
         is_flexible: true,
         is_backlog: false,
         event_type: normalizeEventTypeForPersistence(eventType),
-        subject_id: subjectId || null,
+        subject_id: subjectIds[0] || null,
+        curriculum_metadata: withSubjectIdsInCurriculumMetadata(null, subjectIds),
         unit: unit.trim() || null,
         grade: grade.trim() || null,
         location: location.trim() || null,
@@ -1631,7 +1727,7 @@ export default function TaskCreateModal({
       if (insertError) throw insertError;
       return inserted;
     },
-    [attachedMaterialIds, familyId, goalLink, grade, instructor, location, mode, notes, subjectId, unit]
+    [attachedMaterialIds, familyId, goalLink, grade, instructor, location, mode, notes, subjectIds, unit]
   );
 
   // Handle overlap errors by fetching conflicting events and showing conflict warning
@@ -1942,7 +2038,7 @@ export default function TaskCreateModal({
           _is_flexible: true,
           _is_backlog: true,
           _event_type: normalizeEventTypeForPersistence(eventType),
-          _subject_id: subjectId || null,
+          _subject_id: subjectIds[0] || null,
           _unit: unit.trim() || null,
           _grade: grade.trim() || null,
           _percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
@@ -2116,7 +2212,7 @@ export default function TaskCreateModal({
               _tags: null,
               _is_flexible: allDay,
               _event_type: normalizeEventTypeForPersistence(eventType),
-              _subject_id: subjectId || null,
+              _subject_id: subjectIds[0] || null,
               _unit: unit.trim() || null,
               _grade: grade.trim() || null,
               _percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
@@ -2220,7 +2316,7 @@ export default function TaskCreateModal({
             _tags: null,
             _is_flexible: allDay,
             _event_type: normalizeEventTypeForPersistence(eventType),
-            _subject_id: subjectId || null,
+            _subject_id: subjectIds[0] || null,
             _unit: unit.trim() || null,
             _grade: grade.trim() || null,
             _percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
@@ -2359,8 +2455,11 @@ export default function TaskCreateModal({
 
       // Persist fields after create (RPC may omit some columns)
       if (data?.id) {
+        const curriculumMetadata = withSubjectIdsInCurriculumMetadata(data?.curriculum_metadata, subjectIds);
         const updatePayload = {
           requires_submission_home: isClassDayEvent ? false : showRequiresSubmissionHome,
+          subject_id: subjectIds[0] || null,
+          curriculum_metadata: curriculumMetadata,
         };
         await supabase
           .from('events')
@@ -2369,6 +2468,11 @@ export default function TaskCreateModal({
           .then(({ error: updateErr }) => {
             if (updateErr) {
               console.warn('[TaskCreateModal] Failed to patch event after create:', updateErr);
+            } else {
+              data = {
+                ...data,
+                ...updatePayload,
+              };
             }
           });
         if (typeof window !== 'undefined' && placement === 'calendar') {
@@ -2384,7 +2488,7 @@ export default function TaskCreateModal({
             data.id,
             eventDate || new Date().toISOString().split('T')[0],
             assigneeIds.length > 0 ? assigneeIds[0] : null,
-            subjectId
+            subjectIds[0] || null
           );
         } catch (logError) {
         }
@@ -2454,8 +2558,8 @@ export default function TaskCreateModal({
         }
         window.dispatchEvent(new CustomEvent('eventCreated', { detail: refreshDetail }));
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        if (subjectId) {
-          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }));
+        if (subjectIds[0]) {
+          window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subjectIds[0] } }));
         }
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: refreshDetail }));
       }
@@ -2553,25 +2657,29 @@ export default function TaskCreateModal({
               Name <Text style={{ color: '#ef4444' }}>*</Text>
             </Text>
           </View>
-          <TextInput
-            placeholder="Event name"
-            placeholderTextColor={MUTED}
-            value={title}
-            onChangeText={(text) => {
-              setTitle(text);
-              if (isClassDayTitleAutofilled && text.trim() !== 'Class Day') {
-                setIsClassDayTitleAutofilled(false);
-              }
-              if (validationErrors.title) {
-                setValidationErrors({ ...validationErrors, title: null });
-              }
-            }}
+          <View
             style={[
-              styles.titleInput,
-              validationErrors.title && styles.inputError,
+              styles.titleInputRow,
+              validationErrors.title && styles.titleInputRowError,
             ]}
-            autoFocus
-          />
+          >
+            <TextInput
+              placeholder="Event name"
+              placeholderTextColor={MUTED}
+              value={title}
+              onChangeText={(text) => {
+                setTitle(text);
+                if (isClassDayTitleAutofilled && text.trim() !== 'Class Day') {
+                  setIsClassDayTitleAutofilled(false);
+                }
+                if (validationErrors.title) {
+                  setValidationErrors({ ...validationErrors, title: null });
+                }
+              }}
+              style={styles.titleInput}
+              autoFocus
+            />
+          </View>
           {validationErrors.title && (
             <Text style={styles.errorText}>{validationErrors.title}</Text>
           )}
@@ -3669,11 +3777,6 @@ export default function TaskCreateModal({
                         </View>
                       )}
                     </View>
-                    <View style={styles.recurringRecommendationCard}>
-                      <Text style={styles.recurringRecommendationText}>
-                        Add a subject in Academic Details below if you want this event to count towards scheduling goals.
-                      </Text>
-                    </View>
                     {validationErrors.recurrenceEnd ? (
                       <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceEnd}</Text>
                     ) : null}
@@ -3811,7 +3914,7 @@ export default function TaskCreateModal({
               <>
               <SafeFieldRow style={styles.fieldRow}>
                 <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Subject (optional)</Text>
+                  <Text style={styles.fieldLabel}>Subjects (optional)</Text>
                   <View style={styles.selectContainer}>
                     <TouchableOpacity
                       ref={subjectButtonRef}
@@ -3823,11 +3926,15 @@ export default function TaskCreateModal({
                       }}
                       disabled={assigneeIds.length === 0}
                     >
-                      <Text style={[styles.selectText, (!subjectId || assigneeIds.length === 0) && styles.selectPlaceholder]}>
+                      <Text style={[styles.selectText, (subjectIds.length === 0 || assigneeIds.length === 0) && styles.selectPlaceholder]}>
                         {assigneeIds.length === 0 
                           ? 'Select Assignee first' 
-                          : subjectId 
-                            ? subjects.find(s => s.id === subjectId)?.name || 'Select...' 
+                          : subjectIds.length > 0
+                            ? subjects
+                                .filter((s) => subjectIds.includes(s.id))
+                                .map((s) => s.name)
+                                .filter(Boolean)
+                                .join(', ') || 'Select...'
                             : 'Select subject'}
                       </Text>
                       <ChevronDown size={16} color={assigneeIds.length === 0 ? MUTED : SUB} />
@@ -3853,8 +3960,8 @@ export default function TaskCreateModal({
                             borderWidth: 1,
                             borderColor: BORDER,
                             borderRadius: 10,
-                            marginTop: 4,
-                            maxHeight: 200,
+                        marginTop: 0,
+                        maxHeight: subjectDropdownPosition.maxHeight || 220,
                             zIndex: 99999,
                             ...Platform.select({
                               web: {
@@ -3875,7 +3982,7 @@ export default function TaskCreateModal({
                         >
                           <ScrollView 
                             style={{ 
-                              maxHeight: 196,
+                              maxHeight: Math.max(140, (subjectDropdownPosition.maxHeight || 220) - 4),
                               ...(Platform.OS === 'web' && {
                                 overflowY: 'auto',
                                 overflowX: 'hidden',
@@ -3893,28 +4000,38 @@ export default function TaskCreateModal({
                               <>
                                 <TouchableOpacity
                                   onPress={() => {
-                                    setSubjectId(null);
+                                    applySubjectSelection([]);
                                     setShowSubjectDropdown(false);
                                   }}
-                                  style={[styles.selectOption, !subjectId && styles.selectOptionActive]}
+                                  style={[styles.selectOption, subjectIds.length === 0 && styles.selectOptionActive]}
                                 >
-                                  <Text style={[styles.selectOptionText, !subjectId && styles.selectOptionTextActive]}>
+                                  <Text style={[styles.selectOptionText, subjectIds.length === 0 && styles.selectOptionTextActive]}>
                                     None
                                   </Text>
                                 </TouchableOpacity>
                                 {subjects.map((subj) => (
-                                  <TouchableOpacity
-                                    key={subj.id}
-                                    onPress={() => {
-                                      setSubjectId(subj.id);
-                                      setShowSubjectDropdown(false);
-                                    }}
-                                    style={[styles.selectOption, subjectId === subj.id && styles.selectOptionActive]}
-                                  >
-                                    <Text style={[styles.selectOptionText, subjectId === subj.id && styles.selectOptionTextActive]}>
-                                      {subj.name}{subj.child_id === null ? ' (family-wide)' : ''}
-                                    </Text>
-                                  </TouchableOpacity>
+                                  (() => {
+                                    const isSelected = subjectIds.includes(subj.id);
+                                    return (
+                                      <TouchableOpacity
+                                        key={subj.id}
+                                        onPress={() => {
+                                          const nextIds = isSelected
+                                            ? subjectIds.filter((id) => id !== subj.id)
+                                            : [...subjectIds, subj.id];
+                                          applySubjectSelection(nextIds);
+                                        }}
+                                        style={[styles.selectOption, isSelected && styles.selectOptionActive]}
+                                      >
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                          <Text style={[styles.selectOptionText, isSelected && styles.selectOptionTextActive, { flexShrink: 1 }]}>
+                                            {subj.name}{subj.child_id === null ? ' (family-wide)' : ''}
+                                          </Text>
+                                          {isSelected ? <Check size={12} color="#6BB3E8" /> : null}
+                                        </View>
+                                      </TouchableOpacity>
+                                    );
+                                  })()
                                 ))}
                               </>
                             ) : (
@@ -3943,28 +4060,38 @@ export default function TaskCreateModal({
                       <View style={styles.selectOptions}>
                         <TouchableOpacity
                           onPress={() => {
-                            setSubjectId(null);
+                            applySubjectSelection([]);
                             setShowSubjectDropdown(false);
                           }}
-                          style={[styles.selectOption, !subjectId && styles.selectOptionActive]}
+                          style={[styles.selectOption, subjectIds.length === 0 && styles.selectOptionActive]}
                         >
-                          <Text style={[styles.selectOptionText, !subjectId && styles.selectOptionTextActive]}>
+                          <Text style={[styles.selectOptionText, subjectIds.length === 0 && styles.selectOptionTextActive]}>
                             None
                           </Text>
                         </TouchableOpacity>
                         {subjects.map((subj) => (
-                          <TouchableOpacity
-                            key={subj.id}
-                            onPress={() => {
-                              setSubjectId(subj.id);
-                              setShowSubjectDropdown(false);
-                            }}
-                            style={[styles.selectOption, subjectId === subj.id && styles.selectOptionActive]}
-                          >
-                            <Text style={[styles.selectOptionText, subjectId === subj.id && styles.selectOptionTextActive]}>
-                              {subj.name}{subj.child_id === null ? ' (family-wide)' : ''}
-                            </Text>
-                          </TouchableOpacity>
+                          (() => {
+                            const isSelected = subjectIds.includes(subj.id);
+                            return (
+                              <TouchableOpacity
+                                key={subj.id}
+                                onPress={() => {
+                                  const nextIds = isSelected
+                                    ? subjectIds.filter((id) => id !== subj.id)
+                                    : [...subjectIds, subj.id];
+                                  applySubjectSelection(nextIds);
+                                }}
+                                style={[styles.selectOption, isSelected && styles.selectOptionActive]}
+                              >
+                                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <Text style={[styles.selectOptionText, isSelected && styles.selectOptionTextActive, { flexShrink: 1 }]}>
+                                    {subj.name}{subj.child_id === null ? ' (family-wide)' : ''}
+                                  </Text>
+                                  {isSelected ? <Check size={12} color="#6BB3E8" /> : null}
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })()
                         ))}
                       </View>
                     )}
@@ -4989,7 +5116,7 @@ export default function TaskCreateModal({
             fetchSubjects();
             // Select the newly added subject
             if (newSubject?.id) {
-              setSubjectId(newSubject.id);
+              applySubjectSelection([newSubject.id]);
             }
           }}
           familyId={familyId}
@@ -5060,9 +5187,27 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: FG,
+    width: '100%',
+    paddingVertical: 2,
+    paddingHorizontal: 0,
+    ...(Platform.OS === 'web' && {
+      outlineStyle: 'none',
+      borderWidth: 0,
+      backgroundColor: 'transparent',
+    }),
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  titleInputRow: {
+    width: '100%',
+    borderBottomWidth: 0,
+    paddingBottom: 4,
+    marginBottom: 2,
+  },
+  titleInputRowError: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#ef4444',
   },
   calendarConnectionOption: {
     minHeight: 30,

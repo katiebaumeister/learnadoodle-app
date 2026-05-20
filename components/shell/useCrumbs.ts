@@ -12,8 +12,8 @@ type CrumbOptions = {
 
 const LABEL_MAP: Record<string, string> = {
   home: 'Home',
-  calendar: 'Planner',
-  planner: 'Planner',
+  calendar: 'Calendar',
+  planner: 'Calendar',
   records: 'Records',
   documents: 'Documents',
   'children-list': 'Members',
@@ -26,10 +26,10 @@ const LABEL_MAP: Record<string, string> = {
 
 const TOP_LABELS: Record<string, string> = {
   home: 'Home',
-  planner: 'Planner',
+  planner: 'Calendar',
   upcoming: 'Upcoming',
   filters: 'Filters & Labels',
-  family: 'Family',
+  family: 'Settings',
 };
 
 const CHILD_SECTION_LABELS: Record<string, string> = {
@@ -78,8 +78,8 @@ export function useCrumbs({
       activeTop === 'family' || activeTab === 'children-list' || !!activeChildName;
 
     if (showFamily) {
-      if (!crumbs.some((crumb) => crumb.label === 'Family')) {
-        crumbs.push({ label: 'Family' });
+      if (!crumbs.some((crumb) => crumb.label === 'Settings')) {
+        crumbs.push({ label: 'Settings' });
       }
       if (activeChildName) {
         crumbs.push({ label: activeChildName });

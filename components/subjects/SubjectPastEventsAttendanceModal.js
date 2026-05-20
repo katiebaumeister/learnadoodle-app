@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { X, CheckCircle2, Trash2, Plus } from 'lucide-react';
+import { X, CheckCircle2, Trash2 } from 'lucide-react';
 import { completeEvent } from '../../lib/services/attendanceClient';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import { getAttendanceRecordsForEventIds } from '../../lib/services/recordsClient';
@@ -119,7 +119,6 @@ export default function SubjectPastEventsAttendanceModal({
   onCompleted,
   getChildName,
   onOpenEvent,
-  onCreatePlan,
 }) {
   const toast = useToast();
   const scopedSubjectId = String(subjectId || '').trim();
@@ -438,32 +437,6 @@ export default function SubjectPastEventsAttendanceModal({
               <Text style={styles.empty}>
                 {scopedSubjectId ? 'No events added for this subject yet.' : 'No events added yet.'}
               </Text>
-              <View style={styles.emptyActions}>
-                <TouchableOpacity
-                  style={styles.emptyCancelButton}
-                  onPress={handleCancel}
-                  disabled={saving || applyingThrough}
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel"
-                  {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
-                >
-                  <Text style={styles.emptyCancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.emptyCreatePlanButton}
-                  onPress={() => {
-                    onCreatePlan?.();
-                    onClose?.();
-                  }}
-                  disabled={saving || applyingThrough}
-                  accessibilityRole="button"
-                  accessibilityLabel="Create a plan"
-                  {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
-                >
-                  <Plus size={14} color="#ffffff" strokeWidth={2.5} />
-                  <Text style={styles.emptyCreatePlanButtonText}>Create a plan</Text>
-                </TouchableOpacity>
-              </View>
             </>
           ) : (
             <>
@@ -841,49 +814,6 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginBottom: 8,
     lineHeight: 22,
-  },
-  emptyActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 10,
-  },
-  emptyCreatePlanButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    minHeight: 44,
-    borderRadius: 10,
-    backgroundColor: '#93C5FD',
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-  },
-  emptyCreatePlanButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#ffffff',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  emptyCancelButton: {
-    minHeight: 44,
-    borderRadius: 10,
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyCancelButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   list: {
     maxHeight: 280,

@@ -109,8 +109,12 @@ const parseCurriculumMetadata = (ev) => {
 function eventHasAcademicDetailsSection(ev) {
   if (!ev) return false;
   const cm = parseCurriculumMetadata(ev);
+  const subjectIds = Array.isArray(cm?.subject_ids)
+    ? cm.subject_ids.map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
   return !!(
     ev.subject_id ||
+    subjectIds.length > 0 ||
     ((ev.unit || ev.curriculum_unit_title || '') + '').trim() ||
     (ev.lesson && String(ev.lesson).trim()) ||
     (cm.lesson_label && String(cm.lesson_label).trim()) ||
@@ -212,6 +216,16 @@ function initialAssigneeIdsFromEvent(ev) {
     ev.child?.id ||
     null;
   return ev.child_ids && ev.child_ids.length > 0 ? ev.child_ids : childId ? [childId] : [];
+}
+
+function extractSubjectIdsFromEvent(ev) {
+  if (!ev) return [];
+  const cm = parseCurriculumMetadata(ev);
+  const fromMeta = Array.isArray(cm?.subject_ids)
+    ? cm.subject_ids.map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
+  const fallbackSingle = ev?.subject_id ? [String(ev.subject_id)] : [];
+  return Array.from(new Set(fromMeta.length > 0 ? fromMeta : fallbackSingle));
 }
 
 /** Display name(s) for assignees — conflict banner copy. */
@@ -890,7 +904,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   });
   
   // Academic and location fields
-  const [subjectId, setSubjectId] = useState(() => event?.subject_id ?? null);
+  const [subjectIds, setSubjectIds] = useState(() => extractSubjectIdsFromEvent(event));
+  const [subjectId, setSubjectId] = useState(() => extractSubjectIdsFromEvent(event)[0] ?? null);
   const [countsTowardPlan, setCountsTowardPlan] = useState(() => event?.counts_toward_plan !== false);
   const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(() => {
     if (!event) return false;
@@ -1024,6 +1039,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [sendToStudentNote, setSendToStudentNote] = useState('');
   const [sendToStudentSubmitting, setSendToStudentSubmitting] = useState(false);
   const [hasInvitedAssignee, setHasInvitedAssignee] = useState(false);
+
+  const applySubjectSelection = useCallback((nextSubjectIds) => {
+    const normalized = Array.from(
+      new Set(
+        (Array.isArray(nextSubjectIds) ? nextSubjectIds : [])
+          .map((id) => String(id || '').trim())
+          .filter(Boolean)
+      )
+    );
+    setSubjectIds(normalized);
+    setSubjectId(normalized[0] || null);
+  }, []);
 
   const isParentView = useMemo(
     () => session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true,
@@ -2030,7 +2057,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setEventType(normalizeEventTypeForDisplay(event.event_type || 'Lesson'));
     
     // Academic fields
-    setSubjectId(event.subject_id || null);
+    applySubjectSelection(extractSubjectIdsFromEvent(event));
     setCountsTowardPlan(event.counts_toward_plan !== false);
     const loadedType = normalizeEventTypeForDisplay(event.event_type || 'Lesson');
     setShowRequiresSubmissionHome(
@@ -2116,7 +2143,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (!initialSchedulingMode) {
       setSchedulingBacklog(false);
     }
-  }, [event, initialSchedulingMode]);
+  }, [event, initialSchedulingMode, applySubjectSelection]);
 
   // Recurring instances often omit recurrence_rule on the row; load the series master's rule for the toggle + recurrence UI.
   useEffect(() => {
@@ -2475,24 +2502,34 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   const subjectName = event?.subject?.name || event?.subject || event?.subjectName || event?.subject_name || (event?.generated_by === 'plan_year' && event?.title) || null;
 
-  /** Stable subject label: local list → preload → embedded event subject (avoids "Unknown" flash). */
-  const resolvedSubjectLabel = useMemo(() => {
-    if (!subjectId) return null;
-    const fromState = subjects.find((s) => s.id === subjectId)?.name;
-    if (fromState) return fromState;
-    if (Array.isArray(preloadedSubjects)) {
-      const fromPre = preloadedSubjects.find((s) => s.id === subjectId)?.name;
-      if (fromPre) return fromPre;
-    }
-    return (
-      event?.subject?.name ||
-      (typeof event?.subject === 'string' ? event.subject : null) ||
-      event?.subjectName ||
-      event?.subject_name ||
-      (event?.generated_by === 'plan_year' && event?.title) ||
-      null
-    );
-  }, [subjectId, subjects, preloadedSubjects, event?.subject, event?.subjectName, event?.subject_name, event?.generated_by, event?.title]);
+  /** Stable subject labels: local list → preload → embedded event subject fallback. */
+  const resolvedSubjectLabels = useMemo(() => {
+    if (!Array.isArray(subjectIds) || subjectIds.length === 0) return [];
+    const labels = subjectIds
+      .map((sid) => {
+        const fromState = subjects.find((s) => String(s.id) === String(sid))?.name;
+        if (fromState) return fromState;
+        if (Array.isArray(preloadedSubjects)) {
+          const fromPre = preloadedSubjects.find((s) => String(s.id) === String(sid))?.name;
+          if (fromPre) return fromPre;
+        }
+        if (subjectId && String(sid) === String(subjectId)) {
+          return (
+            event?.subject?.name ||
+            (typeof event?.subject === 'string' ? event.subject : null) ||
+            event?.subjectName ||
+            event?.subject_name ||
+            null
+          );
+        }
+        return null;
+      })
+      .filter(Boolean);
+    return Array.from(new Set(labels));
+  }, [subjectIds, subjectId, subjects, preloadedSubjects, event?.subject, event?.subjectName, event?.subject_name]);
+  const resolvedSubjectLabel = resolvedSubjectLabels.length > 0
+    ? resolvedSubjectLabels.join(', ')
+    : ((event?.generated_by === 'plan_year' && event?.title) || subjectName || null);
 
   /** Academic year row for this event's plan — local list first, then shell preload (stable Add to plan? / banners). */
   const resolvedAcademicYearRow = useMemo(() => {
@@ -3516,7 +3553,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         material_id: selectedMaterialId || null,
         materials_attachment_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : null,
         event_type: normalizeEventTypeForPersistence(eventType),
-        subject_id: subjectId || null,
+        subject_id: subjectIds[0] || null,
         unit: (unit && unit.trim()) ? unit.trim() : null,
         // Mirror unit/lesson for APIs that read curriculum_unit_title / events.lesson (subject structure, plan slot labels).
         curriculum_unit_title: (unit && unit.trim()) ? unit.trim() : null,
@@ -3540,6 +3577,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         cmSave.lesson_label = lesson.trim();
       } else {
         delete cmSave.lesson_label;
+      }
+      if (subjectIds.length > 0) {
+        cmSave.subject_ids = subjectIds;
+      } else {
+        delete cmSave.subject_ids;
       }
       if (Object.keys(cmSave).length > 0) {
         updates.curriculum_metadata = cmSave;
@@ -4482,7 +4524,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           )}
 
           {/* Academic Details - keep as is */}
-          {(subjectId || unit || lesson || grade || event?.percent_of_total_grade) && (
+          {(subjectIds.length > 0 || unit || lesson || grade || event?.percent_of_total_grade) && (
             <SafeView style={[styles.academicSection, styles.academicSectionTopSpacing]}>
               <View
                 style={{
@@ -4491,11 +4533,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               >
                 <Text style={styles.sectionLabel}>Academic Details</Text>
               </View>
-              {subjectId && (
+              {subjectIds.length > 0 && (
                 <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
                   <View style={[styles.field, styles.fieldStretch]}>
-                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Subject</Text>
-                    {loadingSubjects && !resolvedSubjectLabel ? (
+                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>
+                      {subjectIds.length > 1 ? 'Subjects' : 'Subject'}
+                    </Text>
+                    {loadingSubjects && resolvedSubjectLabels.length === 0 ? (
                       <View style={{ marginTop: 8, alignItems: 'flex-start' }}>
                         <ActivityIndicator size="small" color={MUTED} />
                       </View>
@@ -5771,7 +5815,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           {/* Subject + Unit row */}
           <SafeFieldRow style={styles.fieldRow}>
             <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Subject (optional)</Text>
+              <Text style={styles.fieldLabel}>Subjects (optional)</Text>
               <View style={styles.selectContainer}>
                 <TouchableOpacity
                   ref={subjectButtonRef}
@@ -5783,10 +5827,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   }}
                   disabled={assigneeIds.length === 0}
                 >
-                  <Text style={[styles.selectText, (!subjectId || assigneeIds.length === 0) && styles.selectPlaceholder]}>
+                  <Text style={[styles.selectText, (subjectIds.length === 0 || assigneeIds.length === 0) && styles.selectPlaceholder]}>
                     {assigneeIds.length === 0 
                       ? 'Select Assignee first' 
-                      : subjectId 
+                      : subjectIds.length > 0
                         ? resolvedSubjectLabel || subjectName || 'Select...' 
                         : 'Select subject'}
                   </Text>
@@ -5853,12 +5897,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                           <>
                             <TouchableOpacity
                               onPress={() => {
-                                setSubjectId(null);
+                                applySubjectSelection([]);
                                 setShowSubjectDropdown(false);
                               }}
-                              style={[styles.selectOption, !subjectId && styles.selectOptionActive]}
+                              style={[styles.selectOption, subjectIds.length === 0 && styles.selectOptionActive]}
                             >
-                              <Text style={[styles.selectOptionText, !subjectId && styles.selectOptionTextActive]}>
+                              <Text style={[styles.selectOptionText, subjectIds.length === 0 && styles.selectOptionTextActive]}>
                                 None
                               </Text>
               </TouchableOpacity>
@@ -5866,12 +5910,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               <TouchableOpacity
                                 key={subj.id}
                 onPress={() => {
-                                  setSubjectId(subj.id);
-                                  setShowSubjectDropdown(false);
+                                  const nextIds = subjectIds.includes(subj.id)
+                                    ? subjectIds.filter((id) => id !== subj.id)
+                                    : [...subjectIds, subj.id];
+                                  applySubjectSelection(nextIds);
                                 }}
-                                style={[styles.selectOption, subjectId === subj.id && styles.selectOptionActive]}
+                                style={[styles.selectOption, subjectIds.includes(subj.id) && styles.selectOptionActive]}
                               >
-                                <Text style={[styles.selectOptionText, subjectId === subj.id && styles.selectOptionTextActive]}>
+                                <Text style={[styles.selectOptionText, subjectIds.includes(subj.id) && styles.selectOptionTextActive]}>
                                   {subj.name}{subj.child_id === null ? ' (family-wide)' : ''}
                                 </Text>
                               </TouchableOpacity>
@@ -5903,12 +5949,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <View style={styles.selectOptions}>
                     <TouchableOpacity
                       onPress={() => {
-                        setSubjectId(null);
+                        applySubjectSelection([]);
                         setShowSubjectDropdown(false);
                       }}
-                      style={[styles.selectOption, !subjectId && styles.selectOptionActive]}
+                      style={[styles.selectOption, subjectIds.length === 0 && styles.selectOptionActive]}
                     >
-                      <Text style={[styles.selectOptionText, !subjectId && styles.selectOptionTextActive]}>
+                      <Text style={[styles.selectOptionText, subjectIds.length === 0 && styles.selectOptionTextActive]}>
                         None
                       </Text>
               </TouchableOpacity>
@@ -5916,12 +5962,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       <TouchableOpacity
                         key={subj.id}
                         onPress={() => {
-                          setSubjectId(subj.id);
-                          setShowSubjectDropdown(false);
+                          const nextIds = subjectIds.includes(subj.id)
+                            ? subjectIds.filter((id) => id !== subj.id)
+                            : [...subjectIds, subj.id];
+                          applySubjectSelection(nextIds);
                         }}
-                        style={[styles.selectOption, subjectId === subj.id && styles.selectOptionActive]}
+                        style={[styles.selectOption, subjectIds.includes(subj.id) && styles.selectOptionActive]}
                       >
-                        <Text style={[styles.selectOptionText, subjectId === subj.id && styles.selectOptionTextActive]}>
+                        <Text style={[styles.selectOptionText, subjectIds.includes(subj.id) && styles.selectOptionTextActive]}>
                           {subj.name}{subj.child_id === null ? ' (family-wide)' : ''}
                         </Text>
                       </TouchableOpacity>
@@ -6704,7 +6752,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               onSubjectAdded={(newSubject) => {
                 fetchSubjects();
                 if (newSubject?.id) {
-                  setSubjectId(newSubject.id);
+                  applySubjectSelection([newSubject.id]);
                 }
               }}
               familyId={familyId}

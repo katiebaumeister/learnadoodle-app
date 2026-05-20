@@ -331,11 +331,6 @@ function AttendanceYearHeatmapFull({ attendanceRecords = [], subjectEvents = [],
                   {...(Platform.OS === 'web' && {
                     role: canPressDay ? 'button' : undefined,
                     cursor: canPressDay ? 'pointer' : 'default',
-                    onClick: canPressDay ? (e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleDayPress();
-                    } : undefined,
                     onMouseDown: canPressDay ? (e) => {
                       e.preventDefault();
                     } : undefined,

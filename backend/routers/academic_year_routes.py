@@ -6538,6 +6538,7 @@ async def apply_to_calendar(
                     "generation_batch_id": generation_batch_id,
                     "counts_toward_plan": True,
                     "instructional_status": "PLAN_PLACEHOLDER",
+                    "curriculum_metadata": {"subject_ids": class_day_subject_ids},
                 })
             if events_to_insert:
                 supabase.table("events").insert(events_to_insert).execute()
@@ -6619,6 +6620,7 @@ async def apply_to_calendar(
                         "generation_batch_id": generation_batch_id,
                         "counts_toward_plan": True,
                         "instructional_status": "PLAN_PLACEHOLDER",
+                        "curriculum_metadata": {"subject_ids": subject_ids_ordered},
                     })
             else:
                 subject_index = 0

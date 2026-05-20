@@ -84,9 +84,9 @@ export default function GeistSidebar({
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
-        { key: 'materials', label: 'Library', icon: BookOpen },
+        { key: 'materials', label: 'Materials', icon: BookOpen },
         { key: 'intelligence', label: 'Intelligence', icon: Brain },
-        { key: 'profile', label: 'Family', icon: UserCircle },
+        { key: 'profile', label: 'Settings', icon: UserCircle },
         // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
         // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
       ];

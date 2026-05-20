@@ -15,14 +15,13 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import { X, Upload, FileText, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Paperclip, Building2, Star } from 'lucide-react';
+import { X, Upload, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Paperclip, Building2, Star } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { createMaterial, linkMaterialToChild, updateMaterial, updateMaterialChildStatus } from '../../lib/services/materialsClient';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import { DOCUMENT_ROLE_CHIPS } from '../../lib/docs/roles';
 import { useModalStackElevation, NESTED_MODAL_STACK_Z } from '../hooks/useModalStackElevation';
-import MaterialScheduleLinksSection from './MaterialScheduleLinksSection';
 import AppModalShell from '../ui/AppModalShell';
 import { ModalFooter } from '../ui/ModalFooter';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
@@ -62,6 +61,14 @@ const CHIP_BORDER = '#e5e7eb';
 
 /** Synthetic id when attaching materials to a subject name before the subject row exists */
 const DRAFT_SUBJECT_MATERIAL_ID = '__draft_subject__';
+const PHOTO_UPLOAD_ROLE = 'photo_uploads';
+
+function isImageUploadFile(file) {
+  const mime = String(file?.type || '').toLowerCase();
+  const name = String(file?.name || '').toLowerCase();
+  if (mime.startsWith('image/')) return true;
+  return /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i.test(name);
+}
 
 function normalizeDraftChildIds(draft) {
   if (!draft) return [];
@@ -131,7 +138,6 @@ export default function AddMaterialModal({
   /** Add mode: after upload we persist a row immediately; keep modal open and treat this like edit for Save. */
   const [postUploadMaterial, setPostUploadMaterial] = useState(null);
   const postUploadMaterialRef = useRef(null);
-  const [scheduleLinksRefresh, setScheduleLinksRefresh] = useState(0);
 
   // Subjects data (filteredSubjects derived via useMemo to avoid setState-in-effect loop)
   const [allSubjects, setAllSubjects] = useState([]);
@@ -682,10 +688,13 @@ export default function AddMaterialModal({
       // Previously only storage ran until the user picked a type and tapped Save; many users stopped after upload.
 
       if (!material) {
+        const roleFromState = (role && String(role).trim()) || '';
+        const roleFromDefault = (defaultRole && String(defaultRole).trim()) || '';
+        const roleFromFile = isImageUploadFile(file) ? PHOTO_UPLOAD_ROLE : 'resource';
         const effectiveRole =
-          (role && String(role).trim()) ||
-          (defaultRole ? String(defaultRole) : '') ||
-          'resource';
+          roleFromState ||
+          roleFromDefault ||
+          roleFromFile;
         const titleForRow =
           (title && title.trim()) ||
           defaultTitle ||
@@ -743,7 +752,6 @@ export default function AddMaterialModal({
               }
             }
             console.log('[AddMaterialModal] Material updated after re-upload:', updatedRow?.id);
-            setScheduleLinksRefresh((x) => x + 1);
             if (onSaved) onSaved(updatedRow, { keepOpen: true });
           } else {
             const { createFileMaterial } = await import('../../lib/services/materialsClient');
@@ -793,7 +801,6 @@ export default function AddMaterialModal({
             }
 
             console.log('[AddMaterialModal] Material saved to library after upload:', created?.id);
-            setScheduleLinksRefresh((x) => x + 1);
             if (onSaved) onSaved(created, { keepOpen: true });
           }
         } catch (persistErr) {
@@ -820,6 +827,8 @@ export default function AddMaterialModal({
   // Check if form is valid (title and type are required, document required only for new materials)
   const isFormValid =
     title.trim() && role && (effectiveMaterial ? true : uploadedFile && uploadedFile.path);
+
+  const showTitleField = !!effectiveMaterial || !!uploadedFile;
 
   const handleSave = async () => {
     if (!title.trim()) {
@@ -1104,7 +1113,6 @@ export default function AddMaterialModal({
       if (onSaved) {
         onSaved(m || created);
       }
-      setScheduleLinksRefresh((x) => x + 1);
       onClose();
     } catch (error) {
       alert(`Failed to ${m ? 'update' : 'save'} material: ${error.message || 'Unknown error'}`);
@@ -1178,42 +1186,26 @@ export default function AddMaterialModal({
                   </>
                 )}
               </TouchableOpacity>
-              {uploadedFile && (
-                <View style={styles.uploadedFileInfo}>
-                  <FileText size={14} color={MUTED} />
-                  <Text style={styles.uploadedFileText}>
-                    {uploadedFile.name} ({(uploadedFile.size / 1024).toFixed(1)} KB)
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setUploadedFile(null);
-                      setUploadedFileUrl('');
-                      // Don't clear providerUrl when removing file - keep it if user entered it
-                    }}
-                    style={styles.removeFileButton}
-                  >
-                    <X size={14} color={MUTED} />
-                  </TouchableOpacity>
-                </View>
-              )}
               </View>
             </View>
 
-            {/* Title - Required */}
-            <View style={styles.fieldRow}>
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>
-                  Title <Text style={{ color: '#ef4444' }}>*</Text>
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  value={title}
-                  onChangeText={setTitle}
-                  placeholder="e.g., Biology Textbook, Grade 4"
-                  placeholderTextColor={MUTED}
-                />
+            {/* Title - required after upload (or always in edit mode) */}
+            {showTitleField ? (
+              <View style={styles.fieldRow}>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>
+                    Title <Text style={{ color: '#ef4444' }}>*</Text>
+                  </Text>
+                  <TextInput
+                    style={styles.input}
+                    value={title}
+                    onChangeText={setTitle}
+                    placeholder="e.g., Biology Textbook, Grade 4"
+                    placeholderTextColor={MUTED}
+                  />
+                </View>
               </View>
-            </View>
+            ) : null}
 
             {/* Type (Role) - Required */}
             <View style={styles.fieldRow}>
@@ -1326,26 +1318,8 @@ export default function AddMaterialModal({
               </View>
             </View>
 
-            {/* Planner linking (same small grey label pattern as Material Metadata below) */}
-            <Text style={[styles.metadataSectionTitle, styles.metadataSectionTitleAfterSubject]}>
-              Planner Linking (optional)
-            </Text>
-            {effectiveMaterial?.id && familyId ? (
-              <MaterialScheduleLinksSection
-                materialId={effectiveMaterial.id}
-                familyId={familyId}
-                refreshToken={scheduleLinksRefresh}
-              />
-            ) : (
-              <View style={styles.scheduleLinksPlaceholder}>
-                <Text style={styles.scheduleLinksPlaceholderText}>
-                  After you upload or save, you will see any calendar events and plan years this attachment is linked to.
-                </Text>
-              </View>
-            )}
-
             {/* Material Metadata Section */}
-            <Text style={[styles.metadataSectionTitle, styles.metadataSectionTitleAfterScheduleBlock]}>
+            <Text style={[styles.metadataSectionTitle, styles.metadataSectionTitleAfterSubject]}>
               Material Metadata (optional)
             </Text>
 
@@ -2104,28 +2078,6 @@ const styles = StyleSheet.create({
     color: SUB,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  uploadedFileInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 8,
-    padding: 12,
-    backgroundColor: '#f9fafb',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  uploadedFileText: {
-    flex: 1,
-    fontSize: 13,
-    color: colors.text,
-  },
-  removeFileButton: {
-    padding: 4,
-    ...Platform.select({
-      web: { cursor: 'pointer' },
     }),
   },
   chipContainer: {

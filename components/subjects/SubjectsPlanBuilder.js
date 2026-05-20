@@ -1289,6 +1289,14 @@ export default function SubjectsPlanBuilder({
   const [fixGapActionRecommendationsByRowId, setFixGapActionRecommendationsByRowId] = useState({});
   const fixGapFailureToastIdsRef = useRef([]);
   const fixGapLastFailureToastMessageRef = useRef('');
+  const shouldSuppressCadenceFallbackToast = useCallback((message) => {
+    const raw = String(message || '').trim();
+    if (!raw) return false;
+    return (
+      /cadence/i.test(raw)
+      && /(default|not set|saved weekly cadence|use[s]?\s+default|using default)/i.test(raw)
+    );
+  }, []);
   const scheduleSupplementRangeOverrideRef = useRef({
     schoolYearLabel: null,
     rangeStartYmd: null,
@@ -1297,6 +1305,7 @@ export default function SubjectsPlanBuilder({
   const rememberFixGapFailureToast = useCallback((message) => {
     const normalizedMessage = String(message || '').trim();
     if (!normalizedMessage) return;
+    if (shouldSuppressCadenceFallbackToast(normalizedMessage)) return;
     // Keep only the newest failure toast visible so older "still short" values
     // cannot linger after retries.
     const idsToClear = [...(fixGapFailureToastIdsRef.current || [])];
@@ -1317,7 +1326,7 @@ export default function SubjectsPlanBuilder({
         fixGapFailureToastIdsRef.current = fixGapFailureToastIdsRef.current.slice(-5);
       }
     }
-  }, [toast]);
+  }, [toast, shouldSuppressCadenceFallbackToast]);
   const clearFixGapFailureToasts = useCallback(() => {
     const ids = [...(fixGapFailureToastIdsRef.current || [])];
     fixGapFailureToastIdsRef.current = [];
@@ -2703,6 +2712,19 @@ export default function SubjectsPlanBuilder({
         .map((row) => String(row?.id || '').trim())
         .filter(Boolean)
     )];
+    const overallEventItems = (() => {
+      const byId = new Map();
+      perRows.forEach((row) => {
+        const items = Array.isArray(row?.eventItems) ? row.eventItems : [];
+        items.forEach((eventItem, idx) => {
+          const eventId = String(eventItem?.id || '').trim();
+          const fallbackKey = `${String(eventItem?.start_ts || eventItem?.startTs || '')}|${String(eventItem?.title || '')}|${idx}`;
+          const key = eventId || fallbackKey;
+          if (!byId.has(key)) byId.set(key, eventItem);
+        });
+      });
+      return [...byId.values()].sort((a, b) => Number(a?.startMs || 0) - Number(b?.startMs || 0));
+    })();
     const overallRangeStartYmd = (
       perRows
         .map((row) => String(row?.rangeStartYmd || '').slice(0, 10))
@@ -2737,6 +2759,7 @@ export default function SubjectsPlanBuilder({
       hasPlan: true,
       isOverall: true,
       subjectIds: overallSubjectIds,
+      eventItems: overallEventItems,
       rangeStartYmd: overallRangeStartYmd,
       rangeEndYmd: overallRangeEndYmd,
     }];
@@ -3769,18 +3792,24 @@ export default function SubjectsPlanBuilder({
       toast?.push?.('Fix gap is already running for this row.', 'info');
       return;
     }
-    const rowName = String(row?.name || 'Subject').trim() || 'Subject';
-    const requestedTargetKind = String(row?.targetMode || 'days').trim().toLowerCase() === 'hours' ? 'hours' : 'days';
+    const liveRow = (Array.isArray(yearTargetsDisplayRows) ? yearTargetsDisplayRows : [])
+      .find((entry) => String(entry?.id || '').trim() === rowId) || null;
+    const sourceRow = {
+      ...(row || {}),
+      ...(liveRow || {}),
+    };
+    const rowName = String(sourceRow?.name || 'Subject').trim() || 'Subject';
+    const requestedTargetKind = String(sourceRow?.targetMode || 'days').trim().toLowerCase() === 'hours' ? 'hours' : 'days';
     const targetDays = requestedTargetKind === 'hours'
-      ? Number(row?.targetHours ?? row?.targetValue ?? 0)
-      : Number(row?.targetDays ?? row?.targetValue ?? 0);
+      ? Number(sourceRow?.targetHours ?? sourceRow?.targetValue ?? 0)
+      : Number(sourceRow?.targetDays ?? sourceRow?.targetValue ?? 0);
     const projectedDays = requestedTargetKind === 'hours'
-      ? Number(row?.projectedHours ?? row?.actualValue ?? 0)
-      : Number(row?.projectedDays ?? row?.actualValue ?? 0);
+      ? Number(sourceRow?.projectedHours ?? sourceRow?.actualValue ?? 0)
+      : Number(sourceRow?.projectedDays ?? sourceRow?.actualValue ?? 0);
     const gapDays = Number(targetDays - projectedDays);
     const daysNeeded = gapDays;
     console.log('[FixGapV3] baseline', { targetKind: requestedTargetKind, targetDays, projectedDays, gapDays });
-    const isOverallRow = rowId === 'overall' || row?.isOverall === true;
+    const isOverallRow = rowId === 'overall' || sourceRow?.isOverall === true;
     const scope = isOverallRow ? 'overall' : 'per_subject';
     const schoolYearLabel = String(displaySchoolYear?.label || '').trim();
     const fixGapTargetKey = `${scope}:${rowId}:${schoolYearLabel || 'unknown'}`;
@@ -3796,8 +3825,8 @@ export default function SubjectsPlanBuilder({
       .filter((subject) => String(subject?.school_year || '').trim() === schoolYearLabel)
       .map((subject) => String(subject?.id || '').trim())
       .filter((id) => isUuidLike(id));
-    const rowSubjectIds = Array.isArray(row?.subjectIds)
-      ? row.subjectIds.map((id) => String(id || '').trim()).filter((id) => isUuidLike(id))
+    const rowSubjectIds = Array.isArray(sourceRow?.subjectIds)
+      ? sourceRow.subjectIds.map((id) => String(id || '').trim()).filter((id) => isUuidLike(id))
       : [];
     const requestedSubjectIds = isOverallRow
       ? [...new Set(
@@ -3828,13 +3857,13 @@ export default function SubjectsPlanBuilder({
       ? formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year')
       : null;
     const requestedRangeStartYmd = String(
-      row?.rangeStartYmd
+      sourceRow?.rangeStartYmd
       || familyPlannerSettings?.default_year_start_date
       || fullYearRange?.start_date
       || ''
     ).slice(0, 10) || null;
     const requestedRangeEndYmd = String(
-      row?.rangeEndYmd
+      sourceRow?.rangeEndYmd
       || familyPlannerSettings?.default_year_end_date
       || fullYearRange?.end_date
       || ''
@@ -3843,7 +3872,117 @@ export default function SubjectsPlanBuilder({
       toast?.push?.('Set a valid target before fixing gaps.', 'info');
       return;
     }
-    if (!Number.isFinite(gapDays) || gapDays <= 0) {
+    if (!Number.isFinite(gapDays)) {
+      toast?.push?.('Already on target.', 'success');
+      return;
+    }
+    if (gapDays < 0) {
+      const overByDays = Math.max(1, Math.ceil(Math.abs(gapDays)));
+      const allRowEvents = Array.isArray(sourceRow?.eventItems) ? sourceRow.eventItems : [];
+      const todayYmd = new Date().toISOString().slice(0, 10);
+      const upcomingDayEventMap = new Map();
+      allRowEvents.forEach((eventItem) => {
+        const eventId = String(eventItem?.id || '').trim();
+        if (!eventId) return;
+        const dayKey = String(eventItem?.start_ts || eventItem?.startTs || eventItem?.due_ts || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey) || dayKey < todayYmd) return;
+        const isAttended = eventItem?.hasAttendancePresent === true
+          || String(eventItem?.status || '').trim().toLowerCase() === 'done'
+          || String(eventItem?.instructional_status || '').trim().toUpperCase() === 'MANUAL_COUNTS';
+        if (isAttended) return;
+        const list = upcomingDayEventMap.get(dayKey) || [];
+        list.push(eventId);
+        upcomingDayEventMap.set(dayKey, list);
+      });
+      const removableDayKeys = [...upcomingDayEventMap.keys()].sort((a, b) => b.localeCompare(a));
+      const daysToRemove = Math.min(overByDays, removableDayKeys.length);
+      const selectedRemovalDayKeys = removableDayKeys.slice(0, daysToRemove);
+      const selectedRemovalEventIds = selectedRemovalDayKeys.flatMap((dayKey) => upcomingDayEventMap.get(dayKey) || []);
+      const canRemoveScheduledDays = selectedRemovalDayKeys.length > 0 && selectedRemovalEventIds.length > 0;
+      const confirmed = await new Promise((resolve) => {
+        fixGapConfirmResolverRef.current = resolve;
+        setFixGapConfirmSelections({
+          lowerTarget: false,
+        });
+        setFixGapConfirmContent({
+          title: canRemoveScheduledDays
+            ? `Remove ${daysToRemove} learning day${daysToRemove === 1 ? '' : 's'}?`
+            : 'Adjust planning preferences',
+          bodyLines: canRemoveScheduledDays
+            ? [
+              `Current: ${toOneDecimal(projectedDays)}/${toOneDecimal(targetDays)} days.`,
+              `You're ${overByDays} day${overByDays === 1 ? '' : 's'} above target. We'll remove the last ${daysToRemove} scheduled day${daysToRemove === 1 ? '' : 's'} from your calendar.`,
+            ]
+            : [
+              `Current: ${toOneDecimal(projectedDays)}/${toOneDecimal(targetDays)} days.`,
+              'No future scheduled learning days are available to remove. Adjust the target or planning range in Planning Preferences.',
+            ],
+          previewLines: [],
+          confirmLabel: canRemoveScheduledDays ? 'Remove days' : 'Open planning preferences',
+          confirmDisabled: !canRemoveScheduledDays,
+          confirmAction: canRemoveScheduledDays ? 'fix_gap' : 'open_preferences',
+          showLowerTargetOption: false,
+          lowerTargetLabel: '',
+        });
+        setShowFixGapConfirmModal(true);
+      });
+      if (!confirmed?.confirmed) return;
+      if (!familyId) {
+        toast?.push?.('Missing family context.', 'error');
+        return;
+      }
+      let deletedCount = 0;
+      let failedCount = 0;
+      for (const eventId of selectedRemovalEventIds) {
+        try {
+          const { error } = await deletePlannerEvent(eventId, familyId);
+          if (error) throw error;
+          deletedCount += 1;
+        } catch (_) {
+          failedCount += 1;
+        }
+      }
+      invalidateScheduleSupplementCache(familyId, schoolYearLabel);
+      const refreshed = await fetchAndCacheScheduleSupplement({
+        familyId,
+        schoolYearLabel,
+        startYear: displaySchoolYear?.start_year,
+        endYear: displaySchoolYear?.end_year,
+        academicYearId: null,
+        rangeStartYmd: requestedRangeStartYmd,
+        rangeEndYmd: requestedRangeEndYmd,
+        subjectIds: requestedSubjectIds,
+        force: true,
+      });
+      setFamilyPlannerSettings(refreshed.familyPlannerSettings || {
+        target_scope: 'overall',
+        default_constraint_mode: 'none',
+        default_target_days: null,
+        default_target_hours: null,
+        allowed_weekdays: [1, 2, 3, 4, 5],
+      });
+      setSubjectTargetSettingsById(refreshed.subjectTargetSettingsById || {});
+      setInstructionalEventsBySubject(refreshed.instructionalEventsBySubject || {});
+      setClassDayInstructionalEvents(Array.isArray(refreshed.classDayInstructionalEvents) ? refreshed.classDayInstructionalEvents : []);
+      setAttendedDayKeysBySubject(refreshed.attendedDayKeysBySubject || {});
+      setYearTargetProjectionBySubject(refreshed.yearTargetProjectionBySubject || {});
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+      }
+      setEventsRefreshKey((prev) => prev + 1);
+      setOverviewReloadKey((prev) => prev + 1);
+      if (deletedCount > 0 && failedCount === 0) {
+        toast?.push?.(`Removed ${selectedRemovalDayKeys.length} learning day${selectedRemovalDayKeys.length === 1 ? '' : 's'}.`, 'success');
+      } else if (deletedCount > 0) {
+        toast?.push?.(`Removed ${selectedRemovalDayKeys.length} learning day${selectedRemovalDayKeys.length === 1 ? '' : 's'} with ${failedCount} event delete failure${failedCount === 1 ? '' : 's'}.`, 'success');
+      } else {
+        toast?.push?.('Could not remove scheduled learning days.', 'error');
+      }
+      return;
+    }
+    if (gapDays === 0) {
       toast?.push?.('Already on target.', 'success');
       return;
     }
@@ -3854,7 +3993,7 @@ export default function SubjectsPlanBuilder({
     fixGapInFlightByRowRef.current.add(rowId);
     setFixingGapRowId(rowId);
     const selectedStartYear = Number(displaySchoolYear?.start_year);
-    const preferredScope = normalizeSubjectTerm(row?.schoolTermId || 'full_year');
+    const preferredScope = normalizeSubjectTerm(sourceRow?.schoolTermId || 'full_year');
     const eligibleCores = (planCores || []).filter((core) => (
       Number(core?.startYear) === selectedStartYear
       && [preferredScope, 'full_year', 'fall_term', 'spring_term'].includes(String(core?.scopeId || '').trim())
@@ -4006,7 +4145,7 @@ export default function SubjectsPlanBuilder({
           window.dispatchEvent(new CustomEvent('refreshPlanDefaults', { detail: { schoolYearLabel: bootstrapSchoolYearLabel } }));
         }
       }
-      toast?.push?.('Created missing plan automatically. Continuing Fix gap...', 'info');
+      // Keep pre-confirmation flow quiet: show the Fix Gap confirmation modal first.
     }
 
     if (academicYearId && !hasAnySavedBlocks) {
@@ -4098,7 +4237,7 @@ export default function SubjectsPlanBuilder({
           window.dispatchEvent(new CustomEvent('refreshPlanDefaults', { detail: { schoolYearLabel: bootstrapSchoolYearLabel } }));
         }
       }
-      toast?.push?.('No weekly cadence was saved yet. Created default cadence and continuing Fix gap...', 'info');
+      // Keep pre-confirmation flow quiet: show the Fix Gap confirmation modal first.
     }
 
     const payloadBase = {
@@ -4145,9 +4284,10 @@ export default function SubjectsPlanBuilder({
           || err?.error
           || ''
         ).trim();
+        const safeDetail = shouldSuppressCadenceFallbackToast(detail) ? '' : detail;
         toast?.push?.(
-          detail
-            ? `Could not preview Fix gap: ${detail}`
+          safeDetail
+            ? `Could not preview Fix gap: ${safeDetail}`
             : 'Could not preview Fix gap right now. Please try again.',
           'error'
         );
@@ -4285,16 +4425,16 @@ export default function SubjectsPlanBuilder({
       clearFixGapFailureToasts();
       const gapLabel = `0 ${requestedTargetKind === 'hours' ? 'hours' : 'days'} gap`;
       const fixOutcomePrefix = 'Fixed';
-      if (requestedTargetKind === 'days' && requestedGapFromResult > 0 && successfulInsertCount >= requestedGapFromResult) {
-        toast?.push?.('Added all missing days.', 'success');
-        return;
-      }
       toast?.push?.(
         `${fixOutcomePrefix} ${scope === 'overall' ? 'overall' : rowName} gap: ${toOneDecimal(afterProjectedValue)}/${toOneDecimal(targetDays)} ${requestedTargetKind === 'hours' ? 'hours' : 'days'} (${gapLabel}).`,
         'success'
       );
     } catch (err) {
-      toast?.push?.(err?.message || 'Failed to fix target gap.', 'error');
+      const rawMessage = String(err?.message || '').trim();
+      const safeMessage = shouldSuppressCadenceFallbackToast(rawMessage)
+        ? ''
+        : rawMessage;
+      toast?.push?.(safeMessage || 'Failed to fix target gap.', 'error');
     } finally {
       try {
         fixGapInFlightByRowRef.current.delete(rowId);
@@ -4318,6 +4458,7 @@ export default function SubjectsPlanBuilder({
     familyPlannerSettings?.default_year_end_date,
     toast,
     confirmFixGapAction,
+    yearTargetsDisplayRows,
   ]);
 
   const openPlannerView = () => {
@@ -5284,9 +5425,40 @@ export default function SubjectsPlanBuilder({
                               : Number(row?.upcomingDays || 0)
                           )
                           : Number(row?.upcomingDays || 0);
-                        const rowGapValue = Number.isFinite(Number(row?.gapHours))
+                        const rawRowGapValue = Number.isFinite(Number(row?.gapHours))
                           ? Number(row.gapHours)
                           : Number(row?.gapDays || 0);
+                        const removableFutureDayCount = (() => {
+                          if (rowTargetUnit !== 'days' || rawRowGapValue >= 0) return 0;
+                          const eventItems = Array.isArray(row?.eventItems) ? row.eventItems : [];
+                          if (!eventItems.length) return 0;
+                          const todayYmd = new Date().toISOString().slice(0, 10);
+                          const dayKeys = new Set();
+                          eventItems.forEach((eventItem) => {
+                            const dayKey = String(
+                              eventItem?.start_ts
+                              || eventItem?.startTs
+                              || eventItem?.start_local
+                              || eventItem?.due_ts
+                              || ''
+                            ).slice(0, 10);
+                            if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey) || dayKey < todayYmd) return;
+                            const status = String(eventItem?.status || '').trim().toLowerCase();
+                            const instructionalStatus = String(eventItem?.instructional_status || '').trim().toUpperCase();
+                            const isAttended = eventItem?.hasAttendancePresent === true
+                              || status === 'done'
+                              || status === 'completed'
+                              || instructionalStatus === 'MANUAL_COUNTS';
+                            if (isAttended) return;
+                            dayKeys.add(dayKey);
+                          });
+                          return dayKeys.size;
+                        })();
+                        const rowGapValue = (
+                          rawRowGapValue < 0 && removableFutureDayCount <= 0
+                        )
+                          ? 0
+                          : rawRowGapValue;
                         const isOverallRow = rowId === 'overall' || row?.isOverall === true;
                         const isOverallScopeTable = String(yearTargetSummary?.trackingMode || '').trim().toLowerCase() === 'overall';
                         const overallSuggestedChanges = (() => {
@@ -5861,6 +6033,8 @@ export default function SubjectsPlanBuilder({
                         )
                           ? noSavedSubjectLearningDaysHint
                           : rawSuggestionSummary;
+                        const hasApplyAction = Boolean(catchUpRowResolved?.suggestedEndYmd)
+                          || (Array.isArray(catchUpRowResolved?.suggestedPlanChanges) && catchUpRowResolved.suggestedPlanChanges.length > 0);
                         const suggestedDaysText = (() => {
                           const numericGap = Number(rowGapValue || 0);
                           if (rowTargetUnit === 'hours') {
@@ -5873,14 +6047,14 @@ export default function SubjectsPlanBuilder({
                           }
                           if (numericGap < 0) {
                             const daysToRemove = Math.max(1, Math.ceil(Math.abs(numericGap)));
-                            return `Remove ${daysToRemove} day${daysToRemove === 1 ? '' : 's'}`;
+                            return hasApplyAction
+                              ? `Remove ${daysToRemove} day${daysToRemove === 1 ? '' : 's'}`
+                              : 'Open planning preferences';
                           }
                           return 'On target';
                         })();
                         const fixGapActionRecommendation = fixGapActionRecommendationsByRowId?.[rowId] || null;
                         const canFixGap = Math.abs(Number(rowGapValue || 0)) > 0;
-                        const hasApplyAction = Boolean(catchUpRowResolved?.suggestedEndYmd)
-                          || (Array.isArray(catchUpRowResolved?.suggestedPlanChanges) && catchUpRowResolved.suggestedPlanChanges.length > 0);
                         const isExpanded = expandedYearTargetSuggestionId === rowId;
                         const chevronAnim = showSuggestion ? getYearTargetChevronAnim(rowId) : null;
                         const suggestionAnim = showSuggestion ? getYearTargetSuggestionAnim(rowId) : null;
@@ -6023,7 +6197,10 @@ export default function SubjectsPlanBuilder({
                                   {`Suggestion: ${suggestedDaysText}`}
                                 </Text>
                                 <TouchableOpacity
-                                  onPress={() => fixYearTargetGap(row)}
+                                  onPress={() => fixYearTargetGap({
+                                    ...row,
+                                    ...(catchUpRowResolved || {}),
+                                  })}
                                   activeOpacity={0.85}
                                   disabled={fixingGapRowId === rowId || !canFixGap}
                                   style={[

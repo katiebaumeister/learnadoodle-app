@@ -11,7 +11,7 @@ import {
   Platform,
   TextInput,
 } from 'react-native';
-import { CalendarCheck2, Eraser, Plus, Save, X } from 'lucide-react';
+import { CalendarCheck2, Eraser, Save, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
 
@@ -70,7 +70,6 @@ export default function SubjectPastEventsGradesModal({
   eventOutcomes = [],
   getChildName,
   onOpenEvent,
-  onCreatePlan,
   onCompleted,
 }) {
   const toast = useToast();
@@ -314,32 +313,6 @@ export default function SubjectPastEventsGradesModal({
           {!hasPastEvents ? (
             <>
               <Text style={styles.empty}>No events added for this subject yet.</Text>
-              <View style={styles.emptyActions}>
-                <TouchableOpacity
-                  style={styles.emptyCancelButton}
-                  onPress={handleCancel}
-                  disabled={saving}
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel"
-                  {...(Platform.OS === 'web' && { cursor: saving ? 'default' : 'pointer' })}
-                >
-                  <Text style={styles.emptyCancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.emptyCreatePlanButton}
-                  onPress={() => {
-                    onCreatePlan?.();
-                    onClose?.();
-                  }}
-                  disabled={saving}
-                  accessibilityRole="button"
-                  accessibilityLabel="Create a plan"
-                  {...(Platform.OS === 'web' && { cursor: saving ? 'default' : 'pointer' })}
-                >
-                  <Plus size={14} color="#ffffff" strokeWidth={2.5} />
-                  <Text style={styles.emptyCreatePlanButtonText}>Create a plan</Text>
-                </TouchableOpacity>
-              </View>
             </>
           ) : (
             <>
@@ -590,49 +563,6 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginBottom: 8,
     lineHeight: 22,
-  },
-  emptyActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 10,
-  },
-  emptyCreatePlanButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    minHeight: 44,
-    borderRadius: 10,
-    backgroundColor: '#93C5FD',
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-  },
-  emptyCreatePlanButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#ffffff',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  emptyCancelButton: {
-    minHeight: 44,
-    borderRadius: 10,
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 18,
-    paddingVertical: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyCancelButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   list: {
     maxHeight: 360,

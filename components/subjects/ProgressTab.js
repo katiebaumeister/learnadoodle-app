@@ -27,6 +27,7 @@ const WEB_BODY_FONT = Platform.OS === 'web'
   ? { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
   : {};
 const ATTENDANCE_LIST_LIMIT = 5;
+const EMPTY_SUBJECT_MODAL_ID = '__empty_subject__';
 
 function getChildLabel(child) {
   return child?.first_name || child?.name || child?.full_name || child?.display_name || 'Student';
@@ -263,7 +264,17 @@ export default function ProgressTab({
     return byAction[String(subjectPickerAction || '').trim().toLowerCase()] || 'Select a subject';
   }, [subjectPickerAction]);
   const openSubjectPicker = (action) => {
-    if (!hasSubjectOptions) return;
+    if (!hasSubjectOptions) {
+      if (action === 'attendance_edit') {
+        setAttendanceModalSubjectId(EMPTY_SUBJECT_MODAL_ID);
+        return;
+      }
+      if (action === 'grades_add') {
+        setGradesModalSubjectId(EMPTY_SUBJECT_MODAL_ID);
+        return;
+      }
+      return;
+    }
     setSubjectPickerAction(action);
   };
   const closeSubjectPicker = () => setSubjectPickerAction(null);
@@ -285,6 +296,10 @@ export default function ProgressTab({
     const sid = String(item?.subjectId || '').trim();
     if (!sid) return;
     const action = String(item?.actionType || '').trim().toLowerCase();
+    if (action === 'no_events_scheduled') {
+      onOpenSubject?.(sid);
+      return;
+    }
     if (action === 'plan_no_plan') {
       onOpenSubject?.(sid);
       return;
@@ -828,15 +843,15 @@ export default function ProgressTab({
         return count + 1;
       }, 0);
       const hasPlan = subjectPlannedDays > 0;
+      const noEventsScheduled = subjectPlannedDays === 0;
       const statusNeeds = [];
-      if (!hasPlan) statusNeeds.push('needs a plan');
       if (ungradedPastEvents > 0) statusNeeds.push('needs grading');
       if (paceLabel === 'Behind') statusNeeds.push('is behind pace');
-      if (!useOverallTargetMode && shortfallDays > 0) statusNeeds.push("won't complete saved target by end of term with current plan");
-      if (units.length === 0) statusNeeds.push('needs units');
+      if (!useOverallTargetMode && shortfallDays > 0) statusNeeds.push("won't complete saved attendance target by end of term");
       if (avgPercent != null && avgPercent < 75) statusNeeds.push('has a low grade trend');
-      const statusLabel = statusNeeds.length > 0 ? 'Needs attention' : 'On track';
+      const statusLabel = noEventsScheduled || statusNeeds.length > 0 ? 'Needs attention' : 'On track';
       const statusDetail = (() => {
+        if (noEventsScheduled) return 'No events scheduled yet for this subject';
         if (statusNeeds.length > 0) return formatNeedsSentence(statusNeeds);
         if (paceLabel === 'Ahead') return `Give ${encouragementName} free time, ${encouragementName} is ahead of schedule`;
         return `Let ${encouragementName} know they're doing great`;
@@ -863,61 +878,15 @@ export default function ProgressTab({
   }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays, familyTargetScope, familyOverallTargetDays]);
   const needsAttention = useMemo(() => {
     const candidates = [];
-    const overallProjectedDays = subjectProgressRows.reduce((sum, row) => sum + Math.max(0, Number(row?.plannedDays || 0)), 0);
-    const overallMissingDays = (familyTargetScope === 'overall' && familyOverallTargetDays != null)
-      ? Math.max(0, familyOverallTargetDays - overallProjectedDays)
-      : 0;
-    if (overallMissingDays > 0) {
-      const weeksNeeded = Math.max(1, Math.ceil(overallMissingDays / 2));
-      candidates.push({
-        id: 'overall-gap',
-        subjectId: String(subjectProgressRows?.[0]?.id || 'overall'),
-        actionType: 'plan_overall_gap',
-        priority: 95,
-        title: `Overall attendance gap: ${overallMissingDays} day${overallMissingDays === 1 ? '' : 's'}`,
-        fixText: `Add class days across subjects or extend term about ${weeksNeeded} week${weeksNeeded === 1 ? '' : 's'}.`,
-      });
-    }
     subjectProgressRows.forEach((row) => {
       if (!row.hasPlan) {
         candidates.push({
-          id: `no-plan-${row.id}`,
+          id: `no-events-${row.id}`,
           subjectId: row.id,
-          actionType: 'plan_no_plan',
+          actionType: 'no_events_scheduled',
           priority: 100,
-          title: `${row.subject} has no plan`,
-          fixText: 'Set weekly rhythm in Schedule and Planning Preferences.',
-        });
-      }
-      if (familyTargetScope !== 'overall' && row.missingDays > 0) {
-        const weeksNeeded = Math.max(1, Math.ceil(row.missingDays / Math.max(1, row.classDaysPerWeek)));
-        candidates.push({
-          id: `gap-${row.id}`,
-          subjectId: row.id,
-          actionType: 'plan_attendance_gap',
-          priority: 90,
-          title: `${row.subject} attendance gap: ${row.missingDays} day${row.missingDays === 1 ? '' : 's'}`,
-          fixText: `Add ${row.missingDays} class day${row.missingDays === 1 ? '' : 's'} or extend term about ${weeksNeeded} week${weeksNeeded === 1 ? '' : 's'}.`,
-        });
-      }
-      if (row.unitsCompleted === 0) {
-        candidates.push({
-          id: `no-units-${row.id}`,
-          subjectId: row.id,
-          actionType: 'add_units',
-          priority: 70,
-          title: `${row.subject} has no units`,
-          fixText: 'Add at least 1 unit with lessons.',
-        });
-      }
-      if (row.ungradedPastEvents > 0) {
-        candidates.push({
-          id: `ungraded-${row.id}`,
-          subjectId: row.id,
-          actionType: 'add_grades',
-          priority: 60,
-          title: `${row.subject} has ${row.ungradedPastEvents} ungraded event${row.ungradedPastEvents === 1 ? '' : 's'}`,
-          fixText: 'Add grades for past events that are missing scores.',
+          title: `${row.subject} has nothing scheduled`,
+          fixText: 'No events scheduled yet for this subject.',
         });
       }
     });
@@ -930,7 +899,7 @@ export default function ProgressTab({
     }
     return candidates
       .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
-  }, [subjectProgressRows, familyTargetScope, familyOverallTargetDays]);
+  }, [subjectProgressRows]);
   const savedProfileGrade = useMemo(() => {
     const raw = selectedStudentRecord?.grade
       ?? selectedStudentRecord?.grade_level
@@ -952,6 +921,10 @@ export default function ProgressTab({
     )];
     return names.length ? names.join(', ') : 'No subjects for this school year';
   }, [subjectProgressRows]);
+  const gradeAndSubjectsLine = useMemo(
+    () => `${savedProfileGradeLabel || 'No saved grade'} - ${subjectsForYearLabel}`,
+    [savedProfileGradeLabel, subjectsForYearLabel]
+  );
   const learningHighlights = useMemo(() => {
     const now = Date.now();
     const futureUnits = new Set();
@@ -1060,13 +1033,13 @@ export default function ProgressTab({
   const isWeb = Platform.OS === 'web';
   const getNeedsAttentionToneStyle = (item) => {
     const action = String(item?.actionType || '').trim().toLowerCase();
+    if (action === 'no_events_scheduled') return styles.needsAttentionDotPlan;
     if (action === 'plan_no_plan') return styles.needsAttentionDotPlan;
     if (action === 'plan_attendance_gap') return styles.needsAttentionDotGap;
     if (action === 'add_units') return styles.needsAttentionDotUnits;
     if (action === 'add_grades') return styles.needsAttentionDotGrades;
     return null;
   };
-  const hasLearningUnits = overviewStats.totalUnits > 0;
   const needsAttentionPanel = (
     <View style={[styles.needsAttentionCard, isWeb && styles.needsAttentionCardStatic]}>
       <Text style={styles.needsAttentionTitle}>Needs attention</Text>
@@ -1128,42 +1101,32 @@ export default function ProgressTab({
                 />
                 <Text style={styles.childProgressTitle}>{`${selectedStudent?.name || 'Student'}'s Progress`}</Text>
               </View>
-              <Text style={styles.childProgressLine}>{savedProfileGradeLabel || 'No saved grade'}</Text>
-              <Text style={styles.childProgressLine}>{subjectsForYearLabel}</Text>
+              <Text style={styles.childProgressLine}>{gradeAndSubjectsLine}</Text>
             </View>
             <View style={[styles.progressActionsStack, !isWeb && styles.progressActionsStackStacked]}>
               <Text style={[styles.progressActionsTitle, !isWeb && styles.progressActionsTitleStacked]}>Actions</Text>
               <TouchableOpacity
                 onPress={() => openSubjectPicker('attendance_edit')}
                 activeOpacity={0.75}
-                {...(Platform.OS === 'web' ? { cursor: hasSubjectOptions ? 'pointer' : 'default' } : {})}
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
               >
                 <Text style={[styles.progressActionLine, !isWeb && styles.progressActionLineStacked]}>Add/Edit attendance</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => openSubjectPicker('grades_add')}
                 activeOpacity={0.75}
-                {...(Platform.OS === 'web' ? { cursor: hasSubjectOptions ? 'pointer' : 'default' } : {})}
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
               >
                 <Text style={[styles.progressActionLine, !isWeb && styles.progressActionLineStacked]}>Add/Edit grades</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => openSubjectPicker(hasLearningUnits ? 'learning_goals_edit' : 'learning_goals_add')}
-                activeOpacity={0.75}
-                {...(Platform.OS === 'web' ? { cursor: hasSubjectOptions ? 'pointer' : 'default' } : {})}
-              >
-                <Text style={[styles.progressActionLine, !isWeb && styles.progressActionLineStacked]}>Add/Edit units</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
         <View style={styles.subjectRowsCard}>
           {subjectProgressRows.length === 0 ? (
-            <View style={styles.emptyStateBox}>
-              <Text style={styles.emptyStateText}>
-                {`No subjects found for ${selectedStudent?.name || 'this student'} in ${selectedAcademicYearLabel}. Add a subject for this school year to see progress details here.`}
-              </Text>
-            </View>
+            <Text style={styles.emptyStateText}>
+              {`No subjects found for ${selectedStudent?.name || 'this student'} in ${selectedAcademicYearLabel}. Add a subject for this school year to see progress details here.`}
+            </Text>
           ) : (
             subjectProgressRows.map((row) => (
               <TouchableOpacity
@@ -1176,8 +1139,6 @@ export default function ProgressTab({
                 <Text style={styles.subjectRowTitle}>{row.subject}</Text>
                 <Text style={styles.subjectRowLine}>Attendance: {row.attendedDays} attended</Text>
                 <Text style={styles.subjectRowLine}>Grades: {row.gradeAverageLetter} average</Text>
-                <Text style={styles.subjectRowLine}>Units achieved: {row.unitsCompleted} completed</Text>
-                <Text style={styles.subjectRowLine}>Latest unit: {row.latestUnit}</Text>
                 <Text style={[styles.subjectRowStatus, row.statusLabel === 'Needs attention' && styles.subjectRowStatusAlert]}>
                   Status: {row.statusDetail}
                 </Text>
@@ -1205,7 +1166,7 @@ export default function ProgressTab({
         onCreatePlan={() => {}}
         onCompleted={async () => {
           const sid = attendanceModalSubjectId;
-          if (sid) await onRefreshSubjectDetail?.(sid);
+          if (sid && sid !== EMPTY_SUBJECT_MODAL_ID) await onRefreshSubjectDetail?.(sid);
         }}
       />
       <SubjectPastEventsGradesModal
@@ -1220,7 +1181,7 @@ export default function ProgressTab({
         onCreatePlan={() => {}}
         onCompleted={async () => {
           const sid = gradesModalSubjectId;
-          if (sid) await onRefreshSubjectDetail?.(sid);
+          if (sid && sid !== EMPTY_SUBJECT_MODAL_ID) await onRefreshSubjectDetail?.(sid);
         }}
       />
       <Modal
@@ -1495,8 +1456,7 @@ const styles = StyleSheet.create({
   attendanceGapLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', color: '#B45353', ...WEB_HEADING_FONT },
   attendanceGapChipButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: 'rgba(239, 68, 68, 0.12)' },
   attendanceGapChipText: { fontSize: 13, fontWeight: '700', color: '#B91C1C', ...WEB_BODY_FONT },
-  emptyStateBox: { backgroundColor: '#FFFFFF', borderRadius: 8, padding: 24, borderWidth: 1, borderColor: '#E5E7EB' },
-  emptyStateText: { fontSize: 14, color: '#6B7280', lineHeight: 20, marginBottom: 20, ...WEB_BODY_FONT },
+  emptyStateText: { fontSize: 14, color: '#6B7280', lineHeight: 20, ...WEB_BODY_FONT },
   attendanceList: { gap: 8 },
   attendanceItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: '#F9FAFB', borderRadius: 8 },
   attendanceItemDate: { fontSize: 12, color: '#6B7280', width: 80, ...WEB_BODY_FONT },

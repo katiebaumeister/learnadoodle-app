@@ -2092,7 +2092,7 @@ export default function SubjectsPage({
                     ]}
                     numberOfLines={1}
                   >
-                    Courses
+                    Subjects
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity

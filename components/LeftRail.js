@@ -150,12 +150,12 @@ export default function LeftRail({
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
-        { key: 'subjects', label: 'Subjects', icon: Brain },
-        { key: 'materials', label: 'Library', icon: BookOpen },
-        { key: 'profile', label: 'Family', icon: UserCircle },
+        { key: 'subjects', label: 'Learning', icon: Brain },
+        { key: 'materials', label: 'Materials', icon: BookOpen },
+        { key: 'profile', label: 'Settings', icon: UserCircle },
         // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
         // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
-        // { key: 'subjects', label: 'Subjects', icon: null }, // Hidden from sidebar
+        // { key: 'subjects', label: 'Learning', icon: null }, // Hidden from sidebar
       ];
 
       // Same sidebar structure for parent and child (exact same UI); content is child-scoped in WebContent
@@ -173,7 +173,7 @@ export default function LeftRail({
           { key: 'home', label: 'Home', icon: Home },
           { key: 'tutor-students', label: 'My students', icon: Users },
           { key: 'planner', label: 'Planner', icon: CalendarDays },
-          { key: 'materials', label: 'Library', icon: BookOpen },
+          { key: 'materials', label: 'Materials', icon: BookOpen },
         ];
       } else {
         // Parents see everything except archived items

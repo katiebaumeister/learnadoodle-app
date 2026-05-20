@@ -3025,7 +3025,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       crumbs.push({ label: 'Home' });
     } else if (activeTab === 'planner' || activeTab === 'calendar') {
       crumbs.push({ 
-        label: 'Planner',
+        label: 'Calendar',
         onPress: () => handleTabChange('planner'),
       });
       
@@ -3052,12 +3052,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }
       }
     } else if (activeTab === 'materials') {
-      crumbs.push({ label: 'Library' });
+      crumbs.push({ label: 'Materials' });
     } else if (activeTab === 'subjects') {
-      crumbs.push({ label: 'Subjects' });
+      crumbs.push({ label: 'Learning' });
     } else if (activeTab && activeTab.startsWith('subject-')) {
       crumbs.push({ 
-        label: 'Subjects',
+        label: 'Learning',
         onPress: () => handleTabChange('subjects'),
       });
       // Try to get subject name from subjects list
@@ -3077,7 +3077,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } else if (activeTab === 'profile') {
       crumbs.push({ label: 'Profile' });
     } else if (activeTab && activeTab.startsWith('child-')) {
-      crumbs.push({ label: 'Family' });
+      crumbs.push({ label: 'Settings' });
       if (activeChildName) {
         crumbs.push({ label: activeChildName });
       }
@@ -3162,8 +3162,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 {/* Left: Date & Term/School Year */}
                 <View style={{ 
                   flexDirection: 'row', 
-                  alignItems: 'center', 
-                  gap: 12,
+                  alignItems: 'center',
+                  width: 236,
+                  maxWidth: '100%',
                   flexShrink: 0,
                 }}>
                   <TouchableOpacity
@@ -3201,13 +3202,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         }
                       }
                     }}
+                    style={{
+                      flex: 1,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
                   >
-                    <View>
+                    <View style={{ width: '100%', alignItems: 'center' }}>
                       <Text style={{
                         fontSize: 26,
                         color: '#1E293B',
                         fontWeight: '600',
                         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        textAlign: 'center',
                       }}>
                         {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                       </Text>
