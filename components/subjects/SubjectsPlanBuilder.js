@@ -46,6 +46,7 @@ const TERM_OPTIONS = [
 const OVERVIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const overviewCacheByFamily = new Map();
 const overviewInflightByFamily = new Map();
+const OVERVIEW_SESSION_PREFIX = 'ld_subjects_schedule_overview_v1::';
 const SCHEDULE_SUPPLEMENT_TTL_MS = 10 * 60 * 1000;
 const scheduleSupplementCacheByKey = new Map();
 const scheduleSupplementInflightByKey = new Map();
@@ -426,6 +427,37 @@ function normalizeFamilyKey(familyId) {
   return String(familyId || '').trim();
 }
 
+function buildOverviewSessionKey(familyId) {
+  const familyKey = normalizeFamilyKey(familyId);
+  if (!familyKey) return '';
+  return `${OVERVIEW_SESSION_PREFIX}${familyKey}`;
+}
+
+function readOverviewSession(familyId) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  const key = buildOverviewSessionKey(familyId);
+  if (!key) return null;
+  try {
+    const raw = window.sessionStorage?.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeOverviewSession(familyId, payload) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  const key = buildOverviewSessionKey(familyId);
+  if (!key || !payload || typeof payload !== 'object') return;
+  try {
+    window.sessionStorage?.setItem(key, JSON.stringify(payload));
+  } catch (_) {
+    // ignore session cache write failures
+  }
+}
+
 function buildScheduleSupplementKey(familyId, schoolYearLabel) {
   const familyKey = normalizeFamilyKey(familyId);
   const yearKey = String(schoolYearLabel || '').trim();
@@ -721,7 +753,14 @@ function extractSubjectNamesFromBlock(block) {
 function getCachedOverview(familyId, { allowStale = true } = {}) {
   const key = normalizeFamilyKey(familyId);
   if (!key) return null;
-  const cached = overviewCacheByFamily.get(key);
+  let cached = overviewCacheByFamily.get(key);
+  if (!cached) {
+    const persisted = readOverviewSession(key);
+    if (persisted) {
+      overviewCacheByFamily.set(key, persisted);
+      cached = persisted;
+    }
+  }
   if (!cached) return null;
   if (allowStale) return cached;
   if (Date.now() - Number(cached.updatedAt || 0) > OVERVIEW_CACHE_TTL_MS) return null;
@@ -965,6 +1004,7 @@ async function fetchAndCacheOverview(familyId, { force = false } = {}) {
       updatedAt: Date.now(),
     };
     overviewCacheByFamily.set(key, payload);
+    writeOverviewSession(key, payload);
     return payload;
   })().finally(() => {
     overviewInflightByFamily.delete(key);

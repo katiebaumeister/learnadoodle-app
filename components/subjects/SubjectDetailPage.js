@@ -719,10 +719,37 @@ export default function SubjectDetailPage({
     `${totalLearningGoalUnits} ${totalLearningGoalUnits === 1 ? 'unit' : 'units'} · ${totalLearningGoalLessons} ${totalLearningGoalLessons === 1 ? 'lesson' : 'lessons'} built`
   ), [totalLearningGoalUnits, totalLearningGoalLessons]);
   const openSubjectUnitsEditorForMethod = useCallback(
-    () => {
+    (method = 'manual') => {
+      const subjectIdForUnits = subjectData?.subject?.id || subject?.id || null;
+      if (!subjectIdForUnits) return;
+      const requestedMethod = String(method || '').trim().toLowerCase();
+      const routedMethod = requestedMethod === 'paste' ? 'paste_plain' : requestedMethod;
+      const safeMethod = ['manual', 'generate', 'upload', 'paste_plain'].includes(routedMethod)
+        ? routedMethod
+        : 'manual';
+      const yearIdForUnits = (subjectEvents || []).find((ev) => ev?.academic_year_id)?.academic_year_id || null;
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('openPlanYearModal', {
+            detail: {
+              from: 'subject_detail',
+              subjectId: subjectIdForUnits,
+              academicYearId: yearIdForUnits,
+              subjectName: subject?.name?.trim() || subjectData?.subject?.name || null,
+              childIds: assignedChildren,
+              openAsModal: true,
+              openToEditList: false,
+              skipPlanSummary: true,
+              openDirectlyToScope: true,
+              initialUnitStructureMethod: safeMethod,
+            },
+          })
+        );
+        return;
+      }
       if (onEditSubject && subjectData?.subject) onEditSubject(subjectData.subject);
     },
-    [subjectData, onEditSubject]
+    [subjectData, subject?.id, subject?.name, subjectEvents, assignedChildren, onEditSubject]
   );
   const openSubjectUnitsEditor = useCallback(() => {
     const sourceToMethod = {
@@ -2791,7 +2818,7 @@ export default function SubjectDetailPage({
                   {attendanceViewMode === 'list' ? null : attendanceInsightsPanel}
                   {attendanceViewMode === 'list' ? (
                     <Text style={styles.emptyStateText}>
-                      Attendance appears once you complete an event attached to this subject.
+                      Attendance appears once you add an event attached to this subject.
                     </Text>
                   ) : null}
                 </View>
@@ -2936,10 +2963,10 @@ export default function SubjectDetailPage({
           )}
         </View>
 
-        {/* Section: Learning Goals */}
+        {/* Section: Units and Lessons */}
         <View id="learning-goals-section" style={styles.section}>
           <View style={styles.attendanceSectionHeader}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Learning Goals</Text>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Units and Lessons</Text>
             {onEditSubject ? (
               <View style={styles.learningGoalsHeaderActions}>
                 <TouchableOpacity
@@ -2972,7 +2999,7 @@ export default function SubjectDetailPage({
           <View style={styles.emptyStateBox}>
             {!hasLearningGoalsContent ? (
               <Text style={styles.emptyStateText}>
-                Learning Goals appear once you add class lessons or units.
+                Units and lessons appear once you add class lessons or units.
               </Text>
             ) : null}
             {learningGoalsLoading ? (
