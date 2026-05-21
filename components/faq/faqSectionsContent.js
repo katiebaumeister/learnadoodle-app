@@ -33,22 +33,22 @@ export const FAMILY_FAQ_SECTIONS = [
       {
         id: 'gs-1',
         q: 'How do I begin with Learnadoodle?',
-        a: 'A clear setup sequence is: (1) go to Family Members and add each child, (2) go to Subjects and create core subjects, (3) open Planner and add your first week of events, (4) open Subjects > Schedule to set recurring cadence and learner metrics, and (5) open Family > Planning Preferences to set family-wide defaults such as learning days and date ranges.',
+        a: 'A clear setup sequence is: (1) open Settings > Family Members and add each child, (2) open Learning > Subjects and create core subjects, (3) open Planner and add your first week of events, (4) open Learning > Subjects > Schedule to set recurring cadence and learner metrics, and (5) open Settings > Planning Preferences to set household defaults such as total class days and date ranges.',
       },
       {
         id: 'gs-2',
         q: 'Do I need a curriculum before using Learnadoodle?',
-        a: 'No. Many families start with a lightweight plan: a few subjects, a few events, and a basic weekly rhythm. You can add curriculum details, materials, and structure gradually as your routine and goals become clearer.',
+        a: 'No. Many families start with a lightweight setup: a few subjects, a few events, and a basic weekly rhythm. You can add curriculum details, materials, and structure gradually as your routine and goals become clearer.',
       },
       {
         id: 'gs-3',
         q: 'How do I manage multiple children with different schedules?',
-        a: 'Set each child up individually, then layer in shared items where needed. A practical flow is: assign subjects per child, schedule child-specific events in Planner, use shared events for combined activities, and refine each learner\'s cadence in Subjects > Schedule. This preserves learner-specific attendance and progress while still allowing family-level planning.',
+        a: 'Set each child up individually, then layer in shared items where needed. A practical flow is: assign subjects per child, schedule child-specific events in Planner, use shared events for combined activities, and refine each learner\'s cadence in Learning > Subjects > Schedule. This preserves learner-specific attendance and progress while still allowing shared household coordination.',
       },
       {
         id: 'gs-4',
         q: 'Where do I go in the app for common tasks?',
-        a: 'Use Home for daily status and quick review, Planner for creating and editing events, Subjects for curriculum structure and schedule settings, Library for storing and reusing materials, Family Members for invites and permissions, and Family > Planning Preferences for family-wide scheduling rules that may be buried from day-to-day planning screens.',
+        a: 'Use Home for daily status and quick review, Planner for creating and editing events, Learning > Subjects for curriculum structure and schedule settings, Materials for storing and reusing resources, Settings > Family Members for invites and permissions, and Settings > Planning Preferences for household scheduling defaults.',
       },
     ],
   },
@@ -79,7 +79,7 @@ export const FAMILY_FAQ_SECTIONS = [
       {
         id: 'uc-4',
         q: 'What does each tutor permission level do?',
-        a: 'Tutor levels typically progress from Viewer to Teaching to Lead Tutor. Higher levels allow broader management of assigned learner planning and coursework, while account ownership, billing, and family administration stay parent-controlled.',
+        a: 'Tutor levels typically progress from Viewer to Teaching to Lead Tutor. Higher levels allow broader management of assigned learner scheduling and subject work, while account ownership, billing, and family administration stay parent-controlled.',
       },
       {
         id: 'uc-5',
@@ -105,7 +105,7 @@ export const FAMILY_FAQ_SECTIONS = [
       {
         id: 'sub-3',
         q: 'What types of materials can I upload?',
-        a: 'You can upload practical learning resources such as lesson plans, readings, assignments, syllabi, assessments, and reference documents. A common workflow is to upload to Library first, then attach those materials to relevant subjects and events.',
+        a: 'You can upload practical learning resources such as lesson plans, readings, assignments, syllabi, assessments, and reference documents. A common workflow is to upload to Materials first, then attach those resources to relevant subjects and events.',
       },
     ],
   },
@@ -121,7 +121,7 @@ export const FAMILY_FAQ_SECTIONS = [
       {
         id: 'rec-2',
         q: 'How do I track progress?',
-        a: 'Use this flow for clarity: (1) mark event completion and attendance in Planner, (2) review learner cadence and progress indicators in Subjects > Schedule, and (3) attach notes or materials so records include meaningful context, not only completion status.',
+        a: 'Use this flow for clarity: (1) mark event completion and attendance in Planner, (2) review learner indicators in Learning > Subjects (Progress and Schedule tabs), and (3) attach notes or materials so records include meaningful context, not only completion status.',
       },
       {
         id: 'rec-3',
@@ -137,7 +137,7 @@ export const FAMILY_FAQ_SECTIONS = [
       {
         id: 'acc-1',
         q: 'Who owns my data?',
-        a: 'You do. Your family\'s plans, materials, and records remain under your account ownership. You can manage, export, or remove data through account management workflows.',
+        a: 'You do. Your family\'s schedules, materials, and records remain under your account ownership. You can manage, export, or remove data through account management workflows.',
       },
       {
         id: 'acc-2',
