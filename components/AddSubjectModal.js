@@ -502,6 +502,7 @@ export default function AddSubjectModal({
 
   const handleCloseWithDraftCleanup = useCallback(async () => {
     if (!onClose) return;
+    setError(null);
     const currentDraftId = draftSubjectIdRef.current;
     if (subject?.id || !currentDraftId || finalizedSubjectSaveRef.current) {
       onClose();
@@ -521,6 +522,7 @@ export default function AddSubjectModal({
 
   useEffect(() => {
     // Fallback cleanup path for external close/hide flows that bypass the modal close handler.
+    if (!visible) setError(null);
     if (visible) return;
     if (subject?.id || finalizedSubjectSaveRef.current) return;
     const currentDraftId = draftSubjectIdRef.current;
@@ -1231,6 +1233,21 @@ export default function AddSubjectModal({
 
   const canSubmit = subjectName.trim().length > 0 && selectedChildIds.length > 0 && !isSubmitting;
 
+  const handleBlockedSubmit = useCallback(() => {
+    if (!subjectName.trim()) {
+      setError('Please enter a subject name');
+      return;
+    }
+    if (selectedChildIds.length === 0) {
+      setError('Please select at least one student');
+      return;
+    }
+    if (!familyId) {
+      setError('Family ID not found. Please refresh and try again.');
+      return;
+    }
+  }, [subjectName, selectedChildIds.length, familyId]);
+
   return (
     <>
     <RNModal
@@ -1262,6 +1279,7 @@ export default function AddSubjectModal({
                 primaryLabel={isSubmitting ? 'Saving...' : (subject ? 'Save changes' : 'Save Subject')}
                 onCancel={handleCloseWithDraftCleanup}
                 onPrimary={handleSubmit}
+                onBlockedPrimary={handleBlockedSubmit}
                 accent="#45A29E"
                 disabled={!canSubmit || isSubmitting}
                 loading={isSubmitting}

@@ -171,7 +171,12 @@ export default function ProgressTab({
     () => ((today.getMonth() + 1 >= 8) ? today.getFullYear() : today.getFullYear() - 1),
     [today]
   );
-  const [selectedAcademicYearStart, setSelectedAcademicYearStart] = useState(presentAcademicYearStart);
+  const [selectedAcademicYearStart, setSelectedAcademicYearStart] = useState(() => {
+    const raw = String(selectedYearFilter || '').trim();
+    const m = raw.match(/^(\d{4})\/\d{2}$/);
+    const parsed = m ? Number(m[1]) : NaN;
+    return Number.isFinite(parsed) ? parsed : presentAcademicYearStart;
+  });
   useEffect(() => {
     const raw = String(selectedYearFilter || '').trim();
     const m = raw.match(/^(\d{4})\/\d{2}$/);
@@ -729,6 +734,7 @@ export default function ProgressTab({
     const encouragementName = String(selectedStudent?.name || 'your student').trim().split(/\s+/)[0] || 'your student';
     return subjectDetails.map(({ subject, detail }) => {
       const sid = String(subject?.id || '');
+      const detailReady = Boolean(detail);
       const subjectEvents = (detail?.events || []).filter((event) => {
         const matchesChild = selectedStudentId
           ? (
@@ -843,14 +849,17 @@ export default function ProgressTab({
         return count + 1;
       }, 0);
       const hasPlan = subjectPlannedDays > 0;
-      const noEventsScheduled = subjectPlannedDays === 0;
+      const noEventsScheduled = detailReady && subjectPlannedDays === 0;
       const statusNeeds = [];
       if (ungradedPastEvents > 0) statusNeeds.push('needs grading');
       if (paceLabel === 'Behind') statusNeeds.push('is behind pace');
       if (!useOverallTargetMode && shortfallDays > 0) statusNeeds.push("won't complete saved attendance target by end of term");
       if (avgPercent != null && avgPercent < 75) statusNeeds.push('has a low grade trend');
-      const statusLabel = noEventsScheduled || statusNeeds.length > 0 ? 'Needs attention' : 'On track';
+      const statusLabel = !detailReady
+        ? 'Loading'
+        : (noEventsScheduled || statusNeeds.length > 0 ? 'Needs attention' : 'On track');
       const statusDetail = (() => {
+        if (!detailReady) return 'Loading subject activity...';
         if (noEventsScheduled) return 'No events scheduled yet for this subject';
         if (statusNeeds.length > 0) return formatNeedsSentence(statusNeeds);
         if (paceLabel === 'Ahead') return `Give ${encouragementName} free time, ${encouragementName} is ahead of schedule`;
@@ -870,15 +879,21 @@ export default function ProgressTab({
         latestUnit,
         ungradedPastEvents,
         hasPlan,
+        detailReady,
         statusLabel,
         statusDetail,
         paceLabel,
       };
     }).filter((row) => row.id);
   }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays, familyTargetScope, familyOverallTargetDays]);
+  const unresolvedSubjectCount = useMemo(
+    () => (subjectProgressRows || []).filter((row) => row?.detailReady === false).length,
+    [subjectProgressRows]
+  );
   const needsAttention = useMemo(() => {
     const candidates = [];
     subjectProgressRows.forEach((row) => {
+      if (row?.detailReady === false) return;
       if (!row.hasPlan) {
         candidates.push({
           id: `no-events-${row.id}`,
@@ -890,6 +905,13 @@ export default function ProgressTab({
         });
       }
     });
+    if (candidates.length === 0 && unresolvedSubjectCount > 0) {
+      return [{
+        id: 'loading',
+        title: 'Refreshing progress data',
+        fixText: 'Checking scheduled events and targets for this school year.',
+      }];
+    }
     if (!candidates.length) {
       return [{
         id: 'clear',
@@ -899,7 +921,7 @@ export default function ProgressTab({
     }
     return candidates
       .sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
-  }, [subjectProgressRows]);
+  }, [subjectProgressRows, unresolvedSubjectCount]);
   const savedProfileGrade = useMemo(() => {
     const raw = selectedStudentRecord?.grade
       ?? selectedStudentRecord?.grade_level

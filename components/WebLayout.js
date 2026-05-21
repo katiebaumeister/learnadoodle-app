@@ -311,6 +311,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         timerId = null;
         preloadSubjectsPlanOverview(familyId, { force: true }).catch(() => {});
         warmSubjectsScheduleCaches({ force: true });
+        if (Array.isArray(subjects) && subjects.length > 0) {
+          prefetchAllSubjectProgressPlans(familyId, subjects, { concurrency: 3 }).catch(() => {});
+        }
       }, 500);
     };
     window.addEventListener('eventCreated', queueWarm);
@@ -324,7 +327,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       window.removeEventListener('eventDeleted', queueWarm);
       window.removeEventListener('refreshSubjects', queueWarm);
     };
-  }, [familyId, warmSubjectsScheduleCaches]);
+  }, [familyId, warmSubjectsScheduleCaches, subjects]);
 
   // Warm subject progress/unit-structure cache once subjects are known, so Edit Subject can render stable units actions immediately.
   useEffect(() => {

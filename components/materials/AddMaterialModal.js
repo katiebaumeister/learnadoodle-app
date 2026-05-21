@@ -2,7 +2,7 @@
  * Add Material Modal
  * Form for adding a new material to the library
  */
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -121,6 +121,7 @@ export default function AddMaterialModal({
 }) {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [validationError, setValidationError] = useState('');
   
   // Form fields
   const [title, setTitle] = useState('');
@@ -828,27 +829,73 @@ export default function AddMaterialModal({
   const isFormValid =
     title.trim() && role && (effectiveMaterial ? true : uploadedFile && uploadedFile.path);
 
+  const getBlockedSaveMessage = useCallback(() => {
+    const missing = [];
+    if (!effectiveMaterial && !(uploadedFile && uploadedFile.path)) {
+      missing.push('upload a document');
+    }
+    if (!role) {
+      missing.push('select a type');
+    }
+    const requiresTitle = Boolean(effectiveMaterial || uploadedFile);
+    if (requiresTitle && !title.trim()) {
+      missing.push('enter a title');
+    }
+    if (missing.length === 0) return 'Please complete required fields before saving.';
+    if (missing.length === 1) return `Please ${missing[0]} before saving.`;
+    if (missing.length === 2) return `Please ${missing[0]} and ${missing[1]} before saving.`;
+    return `Please ${missing.join(', ')} before saving.`;
+  }, [effectiveMaterial, uploadedFile, role, title]);
+
+  const showBlockedSaveFeedback = useCallback(() => {
+    setValidationError(getBlockedSaveMessage());
+  }, [getBlockedSaveMessage]);
+
   const showTitleField = !!effectiveMaterial || !!uploadedFile;
 
+  const handleDismiss = useCallback(() => {
+    setValidationError('');
+    onClose?.();
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!validationError) return;
+    const requiredFieldsReady = (
+      Boolean(title.trim())
+      && Boolean(role)
+      && (effectiveMaterial ? true : Boolean(uploadedFile && uploadedFile.path))
+      && Boolean(familyId)
+    );
+    if (requiredFieldsReady) {
+      setValidationError('');
+    }
+  }, [validationError, title, role, effectiveMaterial, uploadedFile, familyId]);
+
   const handleSave = async () => {
-    if (!title.trim()) {
-      alert('Please enter a title');
+    const m = material || postUploadMaterial;
+    if (!m && (!uploadedFile || !uploadedFile.path)) {
+      const needsType = !role;
+      setValidationError(
+        needsType
+          ? 'Please upload a document and select a type.'
+          : 'Please upload a document.'
+      );
       return;
     }
     if (!role) {
-      alert('Please select a type');
+      setValidationError('Please select a type.');
       return;
     }
-    const m = material || postUploadMaterial;
-    if (!m && (!uploadedFile || !uploadedFile.path)) {
-      alert('Please upload a document');
+    if (!title.trim()) {
+      setValidationError('Please enter a title.');
       return;
     }
     if (!familyId) {
-      alert('Missing family ID');
+      setValidationError('Family ID is missing. Please refresh and try again.');
       return;
     }
 
+    setValidationError('');
     setLoading(true);
     try {
       const tags = [];
@@ -1113,7 +1160,7 @@ export default function AddMaterialModal({
       if (onSaved) {
         onSaved(m || created);
       }
-      onClose();
+      handleDismiss();
     } catch (error) {
       alert(`Failed to ${m ? 'update' : 'save'} material: ${error.message || 'Unknown error'}`);
     } finally {
@@ -1128,13 +1175,13 @@ export default function AddMaterialModal({
       visible={visible}
       transparent={true}
       animationType="fade"
-      onRequestClose={onClose}
+      onRequestClose={handleDismiss}
     >
       <View ref={overlayRef} style={styles.overlay}>
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
           activeOpacity={1}
-          onPress={onClose}
+          onPress={handleDismiss}
         />
         <View style={[styles.modalWrap, { pointerEvents: 'box-none' }]}>
           <AppModalShell
@@ -1144,7 +1191,7 @@ export default function AddMaterialModal({
             accent="#E39A4B"
             accentSoft="#FFF7EE"
             HeroIcon={Paperclip}
-            onClose={onClose}
+            onClose={handleDismiss}
             contentContainerStyle={styles.contentContainer}
             bodyStyle={styles.shellBody}
             footer={(
@@ -1152,15 +1199,21 @@ export default function AddMaterialModal({
                 mode={effectiveMaterial ? 'edit' : 'add'}
                 primaryLabel={loading ? 'Saving...' : (effectiveMaterial ? 'Save changes' : 'Add Material')}
                 destructiveLabel={effectiveMaterial && typeof onDelete === 'function' ? 'Delete Material' : undefined}
-                onCancel={onClose}
+                onCancel={handleDismiss}
                 onDelete={effectiveMaterial && typeof onDelete === 'function' ? () => onDelete(effectiveMaterial) : undefined}
                 onPrimary={handleSave}
+                onBlockedPrimary={showBlockedSaveFeedback}
                 accent="#E39A4B"
                 disabled={loading || !isFormValid}
                 loading={loading}
               />
             )}
           >
+            {validationError ? (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorText}>{validationError}</Text>
+              </View>
+            ) : null}
             {/* Document Upload */}
             <View style={styles.fieldRow}>
               <View style={styles.field}>
@@ -1876,6 +1929,22 @@ const styles = StyleSheet.create({
   },
   required: {
     color: '#ef4444',
+  },
+  errorContainer: {
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fef2f2',
+    borderRadius: 8,
+    padding: 12,
+  },
+  errorText: {
+    color: '#dc2626',
+    fontSize: 14,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   input: {
     borderWidth: 1,

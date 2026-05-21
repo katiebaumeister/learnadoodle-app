@@ -8,7 +8,7 @@ import {
   mapChildrenForConflict,
   sharedConflictBannerStyles as cb,
 } from '../planner/conflictBannerShared';
-import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText } from 'lucide-react';
+import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2 } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { formatDate, apiRequest, pushEventToGoogleCalendar } from '../../lib/apiClient';
@@ -1313,6 +1313,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   // Validation
   const [validationErrors, setValidationErrors] = useState({});
+  const [validationBanner, setValidationBanner] = useState('');
   
   // Conflict warning state
   const [conflictWarning, setConflictWarning] = useState(null); // { event: {...}, message: "..." }
@@ -1515,7 +1516,28 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return eventType && ['Appointment', 'Activity'].includes(eventType);
   };
 
-  const validateFields = () => {
+  const buildValidationBannerMessage = useCallback((errors) => {
+    const messagesByKey = {
+      title: 'enter an event name',
+      eventType: 'select an event type',
+      date: 'choose a date',
+      assignee: 'select at least one assignee',
+      time: 'enter a start time',
+      endDate: 'set a valid end date',
+      recurrenceEnd: 'set a valid recurrence end',
+    };
+    const orderedKeys = ['title', 'eventType', 'date', 'assignee', 'time', 'endDate', 'recurrenceEnd'];
+    const missing = orderedKeys
+      .filter((key) => Boolean(errors?.[key]))
+      .map((key) => messagesByKey[key])
+      .filter(Boolean);
+    if (missing.length === 0) return '';
+    if (missing.length === 1) return `Please ${missing[0]} before saving.`;
+    if (missing.length === 2) return `Please ${missing[0]} and ${missing[1]} before saving.`;
+    return `Please ${missing.slice(0, -1).join(', ')}, and ${missing[missing.length - 1]} before saving.`;
+  }, []);
+
+  const validateFields = ({ showBanner = false } = {}) => {
     const errors = {};
     
     if (!draftTitle.trim()) {
@@ -1568,6 +1590,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
 
     setValidationErrors(errors);
+    if (showBanner) {
+      setValidationBanner(Object.keys(errors).length > 0 ? buildValidationBannerMessage(errors) : '');
+    }
     return Object.keys(errors).length === 0;
   };
 
@@ -1592,6 +1617,35 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
     return true;
   };
+
+  const handleDismissEventModal = useCallback(() => {
+    setValidationErrors({});
+    setValidationBanner('');
+    setPercentValidationError(null);
+    onClose?.();
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!validationBanner) return;
+    if (isFormValid()) {
+      setValidationBanner('');
+    }
+  }, [
+    validationBanner,
+    draftTitle,
+    dueDate,
+    eventEndDate,
+    placement,
+    allDay,
+    startTime,
+    eventType,
+    assigneeIds,
+    isRecurring,
+    recurrenceEndType,
+    recurrenceEndAfter,
+    recurrenceEndAfterText,
+    recurrenceEndDate,
+  ]);
 
   useEffect(() => {
     if (!dueDate) return;
@@ -4084,7 +4138,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }
       
       // Close the modal after saving
-      onClose?.();
+      handleDismissEventModal();
       
       onEventPatched?.({
         id: event.id,
@@ -4184,12 +4238,25 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
         {/* Header / Title */}
         <View style={styles.header}>
-          <View style={styles.headerBadge}>
-            <Text style={styles.headerBadgeText}>EVENT DETAILS</Text>
+          <View style={styles.headerContent}>
+            <View style={styles.headerTextWrap}>
+              <View style={styles.headerBadge}>
+                <Text style={styles.headerBadgeText}>EVENT DETAILS</Text>
+              </View>
+              <Text style={styles.headerTitleLarge}>
+                {draftTitle || event?.title || 'Untitled Event'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={handleDismissEventModal}
+              style={styles.headerCloseButton}
+              accessibilityRole="button"
+              accessibilityLabel="Close event details"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <X size={18} color="#64748B" />
+            </TouchableOpacity>
           </View>
-          <Text style={styles.headerTitleLarge}>
-            {draftTitle || event?.title || 'Untitled Event'}
-          </Text>
         </View>
 
         {/* Scrollable Content */}
@@ -4285,7 +4352,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 activeOpacity={0.85}
                 onPress={() => {
                   if (typeof window !== 'undefined') {
-                    onClose?.();
+                    handleDismissEventModal();
                     window.dispatchEvent(
                       new CustomEvent('openPlanYearModal', {
                         detail: {
@@ -4838,21 +4905,31 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </SafeView>
         </ScrollView>
 
-        {/* Footer: Cancel left; Delete Event (neutral) + Edit Event (primary) */}
-        <SafeView style={[styles.footer, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }]}>
-          <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10, paddingHorizontal: 20 }}>
-            <Text style={styles.cancelText}>Cancel</Text>
-          </TouchableOpacity>
-          {!readOnly && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        {/* Footer: Cancel + Delete + Edit grouped on right */}
+        <SafeView style={styles.footer}>
+          <View style={styles.footerActionGroup}>
+            <TouchableOpacity
+              onPress={handleDismissEventModal}
+              style={styles.cancelButtonFilled}
+              activeOpacity={0.9}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.cancelButtonFilledText}>Cancel</Text>
+            </TouchableOpacity>
+            {!readOnly && (
+            <>
             {event?.id && (
               <TouchableOpacity
                 {...(Platform.OS === 'web' && { type: 'button' })}
                 onPress={() => handleDelete()}
                 disabled={deleting}
-                style={{ paddingVertical: 10, paddingHorizontal: 20, ...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' }) }}
+                style={[
+                  styles.deleteEventButton,
+                  deleting && styles.deleteEventButtonDisabled,
+                ]}
               >
-                <Text style={[styles.deleteEventText, deleting && { opacity: 0.6 }]}>
+                <Trash2 size={17} color="#FFFFFF" />
+                <Text style={[styles.deleteEventButtonText, deleting && { opacity: 0.8 }]}>
                   {deleting ? 'Deleting…' : 'Delete Event'}
                 </Text>
               </TouchableOpacity>
@@ -4869,8 +4946,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               <Edit2 size={16} color="#FFF" />
               <Text style={styles.createButtonText}>Edit Event</Text>
             </TouchableOpacity>
+            </>
+            )}
           </View>
-          )}
         </SafeView>
       </SafeView>
     );
@@ -4908,6 +4986,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         )}
       </View>
       <View style={styles.headerDivider} />
+      {validationBanner ? (
+        <View style={styles.validationBannerContainer}>
+          <Text style={styles.validationBannerText}>{validationBanner}</Text>
+        </View>
+      ) : null}
 
       {/* Scrollable Content */}
       <ScrollView 
@@ -5010,7 +5093,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             activeOpacity={0.85}
             onPress={() => {
               if (typeof window !== 'undefined') {
-                onClose?.();
+                handleDismissEventModal();
                 window.dispatchEvent(
                   new CustomEvent('openPlanYearModal', {
                     detail: {
@@ -6322,22 +6405,30 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       <View style={styles.footerDivider} />
       {/* Footer with Cancel, Delete Event (when editing), and Save */}
       <View style={styles.footerEditEvent}>
-        <TouchableOpacity
-          {...(Platform.OS === 'web' && { type: 'button' })}
-          onPress={() => {
-          onClose?.();
-        }}>
-          <Text style={styles.cancelText}>Cancel</Text>
-        </TouchableOpacity>
         <View style={styles.footerEditEventRight}>
+          <TouchableOpacity
+            {...(Platform.OS === 'web' && { type: 'button' })}
+            onPress={() => {
+              handleDismissEventModal();
+            }}
+            style={styles.cancelButtonFilled}
+            activeOpacity={0.9}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={styles.cancelButtonFilledText}>Cancel</Text>
+          </TouchableOpacity>
           {event?.id && !readOnly && (
             <TouchableOpacity
               {...(Platform.OS === 'web' && { type: 'button' })}
               onPress={() => handleDelete()}
               disabled={deleting}
-              style={Platform.OS === 'web' ? { cursor: deleting ? 'not-allowed' : 'pointer' } : undefined}
+              style={[
+                styles.deleteEventButton,
+                deleting && styles.deleteEventButtonDisabled,
+              ]}
             >
-              <Text style={[styles.deleteEventText, deleting && { opacity: 0.6 }]}>
+              <Trash2 size={17} color="#FFFFFF" />
+              <Text style={[styles.deleteEventButtonText, deleting && { opacity: 0.8 }]}>
                 {deleting ? 'Deleting…' : 'Delete Event'}
               </Text>
             </TouchableOpacity>
@@ -6345,7 +6436,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           <TouchableOpacity
           onPress={() => {
             if (saving) return;
-            if (!validateFields()) return;
+            if (!validateFields({ showBanner: true })) return;
             handleSave();
           }}
           disabled={saving}
@@ -8344,6 +8435,16 @@ const styles = StyleSheet.create({
     borderBottomColor: '#EEF0F5',
     backgroundColor: '#FAF9FF',
   },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  headerTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
   headerEditEvent: {
     paddingHorizontal: 24,
     paddingTop: 18,
@@ -8374,6 +8475,16 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  headerCloseButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   googleConnectChip: {
     alignSelf: 'flex-start',
     marginTop: 10,
@@ -8399,6 +8510,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#EEF0F5',
     marginHorizontal: 0,
     marginTop: 0,
+  },
+  validationBannerContainer: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 8,
+    padding: 12,
+    marginHorizontal: 24,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  validationBannerText: {
+    color: '#dc2626',
+    fontSize: 14,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   footerDivider: {
     height: 1,
@@ -8787,7 +8916,7 @@ const styles = StyleSheet.create({
   },
   footer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     minHeight: 64,
     paddingHorizontal: 24,
@@ -8797,23 +8926,52 @@ const styles = StyleSheet.create({
   },
   footerEditEvent: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     minHeight: 64,
     paddingHorizontal: 24,
     paddingVertical: 14,
+  },
+  footerActionGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   footerEditEventRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
   },
-  deleteEventText: {
-    color: '#EF4444',
-    fontWeight: '600',
+  deleteEventButton: {
+    minHeight: 50,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    backgroundColor: '#EF4444',
+    borderWidth: 1,
+    borderColor: '#EF4444',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      boxShadow: '0 4px 12px rgba(239,68,68,0.24)',
       cursor: 'pointer',
+    }),
+  },
+  deleteEventButtonDisabled: {
+    backgroundColor: '#FCA5A5',
+    borderColor: '#FCA5A5',
+    ...(Platform.OS === 'web' && {
+      cursor: 'not-allowed',
+    }),
+  },
+  deleteEventButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
     }),
   },
   cancelText: {
@@ -8821,6 +8979,28 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  cancelButtonFilled: {
+    minHeight: 50,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  cancelButtonFilledText: {
+    color: '#374151',
+    fontWeight: '700',
+    fontSize: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
     }),
   },
   createButton: {

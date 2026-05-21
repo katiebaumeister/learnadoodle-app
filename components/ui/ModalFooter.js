@@ -13,14 +13,19 @@ export function ModalFooter({
   disabled,
   visuallyDisabled = false,
   loading = false,
+  onBlockedPrimary,
 }) {
+  const isPrimaryBlocked = Boolean(disabled || visuallyDisabled);
   return (
     <View style={styles.row}>
-      <TouchableOpacity onPress={onCancel} disabled={loading}>
-        <Text style={styles.cancel}>Cancel</Text>
-      </TouchableOpacity>
-
       <View style={styles.right}>
+        <TouchableOpacity
+          onPress={onCancel}
+          disabled={loading}
+          style={[styles.cancelButton, loading && styles.cancelButtonDisabled]}
+        >
+          <Text style={styles.cancelButtonText}>Cancel</Text>
+        </TouchableOpacity>
         {mode === 'edit' && !!destructiveLabel && (
           <TouchableOpacity onPress={onDelete} disabled={loading}>
             <Text style={styles.delete}>{destructiveLabel}</Text>
@@ -28,11 +33,18 @@ export function ModalFooter({
         )}
 
         <TouchableOpacity
-          onPress={onPrimary}
-          disabled={disabled || loading}
+          onPress={() => {
+            if (loading) return;
+            if (isPrimaryBlocked) {
+              onBlockedPrimary?.();
+              return;
+            }
+            onPrimary?.();
+          }}
+          disabled={loading}
           style={[
             styles.primary,
-            { backgroundColor: disabled || loading || visuallyDisabled ? '#B7BFCD' : accent },
+            { backgroundColor: isPrimaryBlocked || loading ? '#B7BFCD' : accent },
           ]}
         >
           {mode === 'edit' ? (
@@ -53,17 +65,35 @@ const styles = StyleSheet.create({
     minHeight: 64,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
   },
   right: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
+    gap: 12,
   },
-  cancel: {
+  cancelButton: {
+    minHeight: 50,
+    borderRadius: 16,
+    paddingHorizontal: 28,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  cancelButtonDisabled: {
+    opacity: 0.65,
+    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
+  },
+  cancelButtonText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#4A556B',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
   delete: {
     fontSize: 16,

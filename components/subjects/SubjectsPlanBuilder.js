@@ -49,6 +49,7 @@ const overviewInflightByFamily = new Map();
 const SCHEDULE_SUPPLEMENT_TTL_MS = 10 * 60 * 1000;
 const scheduleSupplementCacheByKey = new Map();
 const scheduleSupplementInflightByKey = new Map();
+const SCHEDULE_SUPPLEMENT_SESSION_PREFIX = 'ld_subjects_schedule_supplement_v2::';
 let schoolYearTemplateCache = null;
 // Debug toggle for schedule/target calculations. Set to false to remove logs quickly.
 const ENABLE_SCHEDULE_CALC_DEBUG_LOGS = false;
@@ -85,16 +86,30 @@ function buildSchoolYearOptionFromScope(scope) {
   };
 }
 
-function getInitialSchoolYearState(now = new Date()) {
+function getInitialSchoolYearState(now = new Date(), preferredYearLabel = '') {
   const present = getPresentAcademicScope(now);
   const fallbackOption = buildSchoolYearOptionFromScope(present);
+  const preferredParsed = String(preferredYearLabel || '').trim().match(/^(\d{4})\/(\d{2})$/);
+  const preferredStart = preferredParsed ? Number(preferredParsed[1]) : NaN;
+  const preferredOption = Number.isFinite(preferredStart)
+    ? {
+      id: `${preferredStart}-${preferredStart + 1}`,
+      label: `${preferredStart}/${String(preferredStart + 1).slice(-2)}`,
+      start_year: preferredStart,
+      end_year: preferredStart + 1,
+    }
+    : null;
   const cachedOptions = Array.isArray(schoolYearTemplateCache) && schoolYearTemplateCache.length > 0
     ? schoolYearTemplateCache
-    : (fallbackOption ? [fallbackOption] : []);
+    : ([preferredOption, fallbackOption].filter(Boolean));
+  const normalizedPreferredLabel = String(preferredYearLabel || '').trim();
+  const preferredMatch = normalizedPreferredLabel
+    ? cachedOptions.find((opt) => String(opt?.label || '').trim() === normalizedPreferredLabel)
+    : null;
   const matching = cachedOptions.find(
     (opt) => Number(opt?.start_year) === present.startYear && Number(opt?.end_year) === present.endYear
   );
-  const selectedOption = matching || cachedOptions[0] || fallbackOption || null;
+  const selectedOption = preferredMatch || matching || cachedOptions[0] || fallbackOption || null;
   return {
     options: cachedOptions,
     selectedId: selectedOption?.id || null,
@@ -418,6 +433,48 @@ function buildScheduleSupplementKey(familyId, schoolYearLabel) {
   return `${familyKey}|${yearKey}`;
 }
 
+function buildScheduleSupplementSessionKey(familyId, schoolYearLabel) {
+  const cacheKey = buildScheduleSupplementKey(familyId, schoolYearLabel);
+  if (!cacheKey) return '';
+  return `${SCHEDULE_SUPPLEMENT_SESSION_PREFIX}${cacheKey}`;
+}
+
+function readScheduleSupplementSession(familyId, schoolYearLabel) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  const key = buildScheduleSupplementSessionKey(familyId, schoolYearLabel);
+  if (!key) return null;
+  try {
+    const raw = window.sessionStorage?.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeScheduleSupplementSession(familyId, schoolYearLabel, payload) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  const key = buildScheduleSupplementSessionKey(familyId, schoolYearLabel);
+  if (!key || !payload || typeof payload !== 'object') return;
+  try {
+    window.sessionStorage?.setItem(key, JSON.stringify(payload));
+  } catch (_) {
+    // ignore session cache write failures
+  }
+}
+
+function clearScheduleSupplementSession(familyId, schoolYearLabel) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  const key = buildScheduleSupplementSessionKey(familyId, schoolYearLabel);
+  if (!key) return;
+  try {
+    window.sessionStorage?.removeItem(key);
+  } catch (_) {
+    // ignore session cache remove failures
+  }
+}
+
 function buildAttendanceModeBootstrapKey(familyId, schoolYearLabel) {
   const familyKey = normalizeFamilyKey(familyId);
   const yearKey = String(schoolYearLabel || '').trim();
@@ -494,7 +551,14 @@ function writeBootstrappedAttendanceMode(familyId, schoolYearLabel, mode) {
 function getCachedScheduleSupplement(familyId, schoolYearLabel, { allowStale = true } = {}) {
   const key = buildScheduleSupplementKey(familyId, schoolYearLabel);
   if (!key) return null;
-  const cached = scheduleSupplementCacheByKey.get(key);
+  let cached = scheduleSupplementCacheByKey.get(key);
+  if (!cached) {
+    const persisted = readScheduleSupplementSession(familyId, schoolYearLabel);
+    if (persisted) {
+      scheduleSupplementCacheByKey.set(key, persisted);
+      cached = persisted;
+    }
+  }
   if (!cached) return null;
   if (allowStale) return cached;
   if (Date.now() - Number(cached.updatedAt || 0) > SCHEDULE_SUPPLEMENT_TTL_MS) return null;
@@ -506,6 +570,14 @@ function invalidateScheduleSupplementCache(familyId, schoolYearLabel) {
   if (!key) return;
   scheduleSupplementCacheByKey.delete(key);
   scheduleSupplementInflightByKey.delete(key);
+  clearScheduleSupplementSession(familyId, schoolYearLabel);
+}
+
+function isScheduleSupplementAcademicYearCompatible(requestedAcademicYearId, cachedAcademicYearId) {
+  const requestedId = String(requestedAcademicYearId || '').trim();
+  const cachedId = String(cachedAcademicYearId || '').trim();
+  if (!requestedId) return true;
+  return cachedId === requestedId;
 }
 
 function isUuidLike(value) {
@@ -951,7 +1023,7 @@ async function fetchAndCacheScheduleSupplement({
     if (
       fresh
       && String(fresh.subjectIdsSignature || '') === subjectIdsSignature
-      && String(fresh.academicYearId || '') === normalizedAcademicYearId
+      && isScheduleSupplementAcademicYearCompatible(normalizedAcademicYearId, fresh?.academicYearId)
     ) {
       return fresh;
     }
@@ -1271,6 +1343,7 @@ async function fetchAndCacheScheduleSupplement({
       subjectIdsSignature,
     });
     scheduleSupplementCacheByKey.set(key, payload);
+    writeScheduleSupplementSession(familyId, schoolYearLabel, payload);
     return payload;
   })().finally(() => {
     scheduleSupplementInflightByKey.delete(key);
@@ -1320,7 +1393,13 @@ export default function SubjectsPlanBuilder({
 }) {
   const toast = useToast();
   const presentScope = useMemo(() => getPresentAcademicScope(new Date()), []);
-  const initialSchoolYearState = useMemo(() => getInitialSchoolYearState(new Date()), []);
+  const initialSchoolYearState = useMemo(
+    () => getInitialSchoolYearState(
+      new Date(),
+      selectedYearFilter === 'all' ? '' : selectedYearFilter
+    ),
+    [selectedYearFilter]
+  );
   const [surfaceMode, setSurfaceMode] = useState('home'); // home | builder
   const [overviewReloadKey, setOverviewReloadKey] = useState(0);
   const [overviewLoading, setOverviewLoading] = useState(() => !getCachedOverview(familyId));
@@ -1569,10 +1648,18 @@ export default function SubjectsPlanBuilder({
     () => schoolYearOptions.find((opt) => String(opt.id) === String(selectedSchoolYearId || '')) || null,
     [schoolYearOptions, selectedSchoolYearId]
   );
+  const schoolYearFromFilter = useMemo(() => {
+    const scopeYearKey = String(selectedYearFilter || '').trim();
+    if (!scopeYearKey || scopeYearKey === 'all') return null;
+    return schoolYearOptions.find((opt) => String(opt?.label || '').trim() === scopeYearKey) || null;
+  }, [selectedYearFilter, schoolYearOptions]);
   const selectedTermOption = useMemo(() => TERM_OPTIONS.find((x) => x.id === selectedTerm) || TERM_OPTIONS[0], [selectedTerm]);
   const currentUserMode = useMemo(() => normalizePlanningMode(planningMode), [planningMode]);
   const isHomeschoolMode = currentUserMode === 'homeschool';
-  const displaySchoolYear = useMemo(() => selectedSchoolYear, [selectedSchoolYear]);
+  const displaySchoolYear = useMemo(
+    () => schoolYearFromFilter || selectedSchoolYear,
+    [schoolYearFromFilter, selectedSchoolYear]
+  );
   const resolvedSchoolYearLabelForBootstrap = useMemo(
     () => String(
       displaySchoolYear?.label
@@ -1744,7 +1831,7 @@ export default function SubjectsPlanBuilder({
 
     const hydrateFromCache = () => {
       const cached = getCachedScheduleSupplement(familyId, schoolYearLabel);
-      if (!cached) return false;
+      if (!cached) return { cacheMatchesSubjects: false, hasCachedEvents: false };
       setFamilyPlannerSettings(
         normalizeFamilyPlannerSettingsWithBootstrap(
           cached.familyPlannerSettings,
@@ -1757,10 +1844,15 @@ export default function SubjectsPlanBuilder({
       setClassDayInstructionalEvents(Array.isArray(cached.classDayInstructionalEvents) ? cached.classDayInstructionalEvents : []);
       setAttendedDayKeysBySubject(cached.attendedDayKeysBySubject || {});
       setYearTargetProjectionBySubject(cached.yearTargetProjectionBySubject || {});
-      return (
-        String(cached.subjectIdsSignature || '') === subjectIdsSignature
-        && String(cached.academicYearId || '') === String(activeScheduleCore?.row?.id || '').trim()
+      const hasCachedEvents = (
+        Object.values(cached.instructionalEventsBySubject || {}).some((events) => Array.isArray(events) && events.length > 0)
+        || (Array.isArray(cached.classDayInstructionalEvents) && cached.classDayInstructionalEvents.length > 0)
       );
+      const cacheMatchesSubjects = (
+        String(cached.subjectIdsSignature || '') === subjectIdsSignature
+        && isScheduleSupplementAcademicYearCompatible(activeScheduleCore?.row?.id, cached.academicYearId)
+      );
+      return { cacheMatchesSubjects, hasCachedEvents };
     };
 
     const sync = async ({ force = false } = {}) => {
@@ -1775,11 +1867,11 @@ export default function SubjectsPlanBuilder({
       const activeRangeStartYmd = String(activeScheduleCore?.row?.start_date || '').slice(0, 10) || null;
       const activeRangeEndYmd = String(activeScheduleCore?.row?.end_date || '').slice(0, 10) || null;
       const rangeStartYmd = hasMatchingOverride
-        ? (String(override?.rangeStartYmd || '').slice(0, 10) || activeRangeStartYmd || fullYearRange?.start_date || null)
-        : (activeRangeStartYmd || fullYearRange?.start_date || null);
+        ? (String(override?.rangeStartYmd || '').slice(0, 10) || fullYearRange?.start_date || activeRangeStartYmd || null)
+        : (fullYearRange?.start_date || activeRangeStartYmd || null);
       const rangeEndYmd = hasMatchingOverride
-        ? (String(override?.rangeEndYmd || '').slice(0, 10) || activeRangeEndYmd || fullYearRange?.end_date || null)
-        : (activeRangeEndYmd || fullYearRange?.end_date || null);
+        ? (String(override?.rangeEndYmd || '').slice(0, 10) || fullYearRange?.end_date || activeRangeEndYmd || null)
+        : (fullYearRange?.end_date || activeRangeEndYmd || null);
       const payload = await fetchAndCacheScheduleSupplement({
         familyId,
         schoolYearLabel,
@@ -1822,9 +1914,9 @@ export default function SubjectsPlanBuilder({
         setYearTargetProjectionBySubject({});
         return;
       }
-      const cacheMatchesSubjects = hydrateFromCache();
-      const hasSyncedCurrentContext = scheduleSupplementSyncedKeysRef.current.has(scheduleSyncKey);
-      const mustForce = overviewReloadKey > 0 || eventsRefreshKey > 0 || !cacheMatchesSubjects || !hasSyncedCurrentContext;
+      const { cacheMatchesSubjects, hasCachedEvents } = hydrateFromCache();
+      const shouldForceEmptyCacheRefresh = cacheMatchesSubjects && !hasCachedEvents && subjectIds.length > 0;
+      const mustForce = overviewReloadKey > 0 || eventsRefreshKey > 0 || !cacheMatchesSubjects || shouldForceEmptyCacheRefresh;
       try {
         await sync({ force: mustForce });
         if (!cancelled) {
@@ -2538,7 +2630,7 @@ export default function SubjectsPlanBuilder({
 
     return [{
       id: 'school_year',
-      title: 'Weekly Cadence',
+      title: 'Class Days',
       status,
       plannedDays,
       completedDays,
@@ -4417,8 +4509,8 @@ export default function SubjectsPlanBuilder({
         setFixGapSetupContent({
           title: 'Complete setup before Fix gap',
           bodyLines: [
-            'This school year has no saved weekly cadence yet.',
-            'Add at least one weekly cadence, then try Fix gap again.',
+            'This school year has no saved class-day schedule yet.',
+            'Add at least one class day, then try Fix gap again.',
           ],
           primaryLabel: 'Open schedule setup',
           primaryAction: 'open_preferences',
@@ -5382,7 +5474,6 @@ export default function SubjectsPlanBuilder({
                               </Text>
                             ) : null}
                             <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusStudentsCol, isClassDayAggregateTable && styles.cadenceStatusStudentsColClassDay]}>Students</Text>
-                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusSavedCol, isClassDayAggregateTable && styles.cadenceStatusSavedColClassDay]}>Cadence</Text>
                             <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusProgressCol, isClassDayAggregateTable && styles.cadenceStatusProgressColClassDay]}>Progress vs. Target</Text>
                             <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay, styles.cadenceStatusActionsHeaderText]}>Actions</Text>
                           </View>
@@ -5400,10 +5491,9 @@ export default function SubjectsPlanBuilder({
                             termSection.subjectPlans.map((row, index) => {
                               const isClassDayAggregateTable = (termSection.subjectPlans || []).some((entry) => entry?.isClassDayAggregate);
                               const hasCadence = Boolean(String(row?.cadenceText || '').trim());
-                              const cadenceTime = extractCadenceTimeLabel(row?.cadenceText || '');
-                              const cadenceSummary = hasCadence
-                                ? [row.schoolTermLabel || null, row.cadenceCompactLabel || null, cadenceTime || null].filter(Boolean).join(' · ')
-                                : 'No saved weekly cadence yet';
+                              const matchedYearTargetsRow = (yearTargetsDisplayRows || []).find((targetRow) => (
+                                String(targetRow?.id || '').trim() === String(row?.id || '').trim()
+                              )) || null;
                               const overallYearTargetsRow = row?.isClassDayAggregate
                                 ? (
                                   (yearTargetsDisplayRows || []).find((targetRow) => (
@@ -5411,37 +5501,56 @@ export default function SubjectsPlanBuilder({
                                   )) || null
                                 )
                                 : null;
-                              const targetDays = row.targetUnit === 'days'
+                              const targetRowForStatus = overallYearTargetsRow || matchedYearTargetsRow || row;
+                              const targetDays = String(targetRowForStatus?.targetUnit || row?.targetUnit || 'days').trim().toLowerCase() === 'days'
                                 ? (
-                                  Number.isFinite(Number(overallYearTargetsRow?.targetValue))
-                                    ? Number(overallYearTargetsRow.targetValue)
+                                  Number.isFinite(Number(targetRowForStatus?.targetValue))
+                                    ? Number(targetRowForStatus.targetValue)
                                     : (
-                                      Number.isFinite(Number(row.targetValue))
-                                        ? Number(row.targetValue)
-                                        : null
+                                      Number.isFinite(Number(targetRowForStatus?.targetDays))
+                                        ? Number(targetRowForStatus.targetDays)
+                                        : (
+                                          Number.isFinite(Number(row.targetValue))
+                                            ? Number(row.targetValue)
+                                            : null
+                                        )
                                     )
                                 )
                                 : null;
                               const completedDays = Math.max(
                                 0,
-                                Number.isFinite(Number(overallYearTargetsRow?.completedDays))
-                                  ? Number(overallYearTargetsRow.completedDays)
-                                  : Number(row.actualDays || 0)
+                                Number.isFinite(Number(targetRowForStatus?.completedDays))
+                                  ? Number(targetRowForStatus.completedDays)
+                                  : (
+                                    Number.isFinite(Number(overallYearTargetsRow?.completedDays))
+                                      ? Number(overallYearTargetsRow.completedDays)
+                                      : Number(row.actualDays || 0)
+                                  )
                               );
                               const upcomingDays = Math.max(
                                 0,
-                                Number.isFinite(Number(overallYearTargetsRow?.upcomingDays))
-                                  ? Number(overallYearTargetsRow.upcomingDays)
+                                Number.isFinite(Number(targetRowForStatus?.upcomingDays))
+                                  ? Number(targetRowForStatus.upcomingDays)
                                   : (
-                                    Number.isFinite(Number(row?.upcomingDays))
-                                      ? Number(row.upcomingDays)
-                                      : Math.max(0, Number(row?.projectedDays || 0) - completedDays)
+                                    Number.isFinite(Number(overallYearTargetsRow?.upcomingDays))
+                                      ? Number(overallYearTargetsRow.upcomingDays)
+                                      : (
+                                        Number.isFinite(Number(row?.upcomingDays))
+                                          ? Number(row.upcomingDays)
+                                          : Math.max(0, Number(row?.projectedDays || 0) - completedDays)
+                                      )
                                   )
+                              );
+                              const projectedDaysForStatus = Math.max(
+                                completedDays + upcomingDays,
+                                Number.isFinite(Number(targetRowForStatus?.projectedDays))
+                                  ? Number(targetRowForStatus.projectedDays)
+                                  : Number(row?.projectedDays || 0)
                               );
                               const progressSummary = targetDays != null
                                 ? `${completedDays} completed / ${upcomingDays} upcoming / ${targetDays} target`
-                                : `${completedDays} completed / ${upcomingDays} upcoming / ${Math.max(completedDays + upcomingDays, Number(row.projectedDays || 0))} planned`;
-                              const deltaDays = targetDays != null ? (completedDays - targetDays) : null;
+                                : `${completedDays} completed / ${upcomingDays} upcoming / ${projectedDaysForStatus} planned`;
+                              const deltaDays = targetDays != null ? (projectedDaysForStatus - targetDays) : null;
                               const statusLabel = !hasCadence
                                 ? 'No plan'
                                 : (deltaDays == null
@@ -5493,12 +5602,6 @@ export default function SubjectsPlanBuilder({
                                     ) : (
                                       <Text style={styles.subjectMeta}>Whole family</Text>
                                     )}
-                                  </View>
-
-                                  <View style={[styles.subjectCadence, styles.cadenceStatusSavedCol, isClassDayAggregateTable && styles.cadenceStatusSavedColClassDay]}>
-                                    <View style={styles.subjectCadencePill}>
-                                      <Text style={styles.subjectCadenceText}>{cadenceSummary}</Text>
-                                    </View>
                                   </View>
 
                                   <View style={[styles.subjectProgressCol, styles.cadenceStatusProgressCol, isClassDayAggregateTable && styles.cadenceStatusProgressColClassDay]}>
@@ -5585,7 +5688,7 @@ export default function SubjectsPlanBuilder({
                         </View>
                         <View style={styles.weeklyCadencePreferencesHintRow}>
                           <Text style={styles.weeklyCadencePreferencesHintText}>
-                            To make changes to your saved target{' '}
+                            To update class days and yearly targets{' '}
                           </Text>
                           <TouchableOpacity
                             onPress={openPlanningPreferences}
@@ -6827,7 +6930,6 @@ export default function SubjectsPlanBuilder({
           onDeleteAllEvents={deleteAllEventsFromAllEventsModal}
           onMarkAllPastEventsAttended={markAllPastEventsAsAttendedFromAllEventsModal}
           onOpenEventDetails={(eventItem) => {
-            setShowUpcomingEventsModal(false);
             openEventDetails(eventItem?.id, eventItem);
           }}
           onMarkEventAttended={markEventAsAttendedFromAllEventsModal}
@@ -8418,36 +8520,30 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   cadenceStatusSubjectCol: {
-    flex: 1.1,
-    minWidth: 140,
+    flex: 1.45,
+    minWidth: 190,
   },
   cadenceStatusStudentsCol: {
-    flex: 1.2,
-    minWidth: 170,
+    flex: 1.6,
+    minWidth: 210,
+    paddingLeft: 8,
   },
   cadenceStatusStudentsColClassDay: {
-    flex: 1.55,
-    minWidth: 230,
-  },
-  cadenceStatusSavedCol: {
-    flex: 2.1,
-    minWidth: 250,
-  },
-  cadenceStatusSavedColClassDay: {
-    flex: 1.7,
-    minWidth: 220,
+    flex: 2.35,
+    minWidth: 300,
+    paddingLeft: 10,
   },
   cadenceStatusProgressCol: {
-    flex: 1.7,
-    minWidth: 220,
+    flex: 1.25,
+    minWidth: 170,
   },
   cadenceStatusProgressColClassDay: {
-    flex: 1.9,
-    minWidth: 250,
+    flex: 1.15,
+    minWidth: 170,
   },
   cadenceStatusActionsCol: {
-    flex: 1.3,
-    minWidth: 200,
+    flex: 1.35,
+    minWidth: 190,
   },
   cadenceStatusActionsColClassDay: {
     flex: 1.05,

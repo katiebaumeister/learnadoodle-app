@@ -303,6 +303,7 @@ export default function TaskCreateModal({
   const [showLogisticDetails, setShowLogisticDetails] = useState(false); // Collapsed by default
   const [submitting, setSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
+  const [validationBanner, setValidationBanner] = useState('');
   const [placement, setPlacement] = useState(defaultPlacement || 'calendar');
   const [showCalendarPicker, setShowCalendarPicker] = useState(false);
   const [calendarViewMonth, setCalendarViewMonth] = useState(defaultDate ?? new Date());
@@ -328,6 +329,7 @@ export default function TaskCreateModal({
       setCalendarViewMonth(dueDate);
       // Clear validation errors when modal opens
       setValidationErrors({});
+      setValidationBanner('');
     }
   }, [visible, defaultPlacement]);
   
@@ -1896,6 +1898,39 @@ export default function TaskCreateModal({
   };
 
   /** Single source of truth for required-field validation (inline errors + Add button state). */
+  const buildValidationBannerMessage = useCallback((errors) => {
+    const messagesByKey = {
+      title: 'enter an event name',
+      eventType: 'select an event type',
+      date: 'choose a date',
+      assignee: 'select at least one assignee',
+      time: 'enter a start time',
+      endDate: 'set a valid end date',
+      recurrenceWeekdays: 'select at least one weekday',
+      recurrenceInterval: 'enter a recurrence interval',
+      recurrenceEnd: 'set a valid recurrence end',
+    };
+    const orderedKeys = [
+      'title',
+      'eventType',
+      'date',
+      'assignee',
+      'time',
+      'endDate',
+      'recurrenceWeekdays',
+      'recurrenceInterval',
+      'recurrenceEnd',
+    ];
+    const missing = orderedKeys
+      .filter((key) => Boolean(errors?.[key]))
+      .map((key) => messagesByKey[key])
+      .filter(Boolean);
+    if (missing.length === 0) return '';
+    if (missing.length === 1) return `Please ${missing[0]} before saving.`;
+    if (missing.length === 2) return `Please ${missing[0]} and ${missing[1]} before saving.`;
+    return `Please ${missing.slice(0, -1).join(', ')}, and ${missing[missing.length - 1]} before saving.`;
+  }, []);
+
   const computeFieldErrors = () => {
     const errors = {};
 
@@ -1963,19 +1998,54 @@ export default function TaskCreateModal({
     return errors;
   };
 
-  const validateFields = () => {
+  const validateFields = ({ showBanner = false } = {}) => {
     const errors = computeFieldErrors();
     setValidationErrors(errors);
+    if (showBanner) {
+      setValidationBanner(Object.keys(errors).length > 0 ? buildValidationBannerMessage(errors) : '');
+    }
     return Object.keys(errors).length === 0;
   };
 
   const isFormValid = () => Object.keys(computeFieldErrors()).length === 0;
 
+  useEffect(() => {
+    if (!validationBanner) return;
+    if (isFormValid()) {
+      setValidationBanner('');
+    }
+  }, [
+    validationBanner,
+    title,
+    dueDate,
+    eventEndDate,
+    placement,
+    allDay,
+    startTime,
+    eventType,
+    assigneeIds,
+    isRecurring,
+    recurrenceType,
+    recurrenceWeekdays,
+    recurrenceInterval,
+    recurrenceIntervalText,
+    recurrenceEndType,
+    recurrenceEndAfter,
+    recurrenceEndAfterText,
+    recurrenceEndDate,
+  ]);
+
+  const handleDismiss = useCallback(() => {
+    setValidationErrors({});
+    setValidationBanner('');
+    setPercentValidationError(null);
+    onClose?.();
+  }, [onClose]);
+
   const handleCreate = async (skipConflictValidation = false, allowOverlaps = false) => {
     // Always validate required fields (including when continuing from conflict UI). skipConflictValidation
     // only affects overlap handling later, not whether we run field validation.
-    if (!validateFields()) {
-      toast.push('Fix the highlighted fields below.', 'error');
+    if (!validateFields({ showBanner: true })) {
       return;
     }
 
@@ -2630,7 +2700,7 @@ export default function TaskCreateModal({
       
       // If "Adjust automatically" was selected, open Quick Reschedule after closing modal
       if (shouldAutoAdjust && data?.id && conflictWarning) {
-      onClose();
+      handleDismiss();
         // Open Quick Reschedule modal with the created event
         setTimeout(() => {
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2643,7 +2713,7 @@ export default function TaskCreateModal({
           }
         }, 100);
       } else {
-        onClose();
+        handleDismiss();
       }
       
       // Reset shouldAutoAdjust flag
@@ -2662,7 +2732,7 @@ export default function TaskCreateModal({
       animationType="fade"
       transparent={true}
       visible={visible}
-      onRequestClose={onClose}
+      onRequestClose={handleDismiss}
     >
       <Animated.View
         style={[
@@ -2680,7 +2750,7 @@ export default function TaskCreateModal({
               setShowSubjectDropdown(false);
               setShowGoalDropdown(false);
             } else {
-              onClose();
+              handleDismiss();
             }
           }}
         />
@@ -2699,7 +2769,7 @@ export default function TaskCreateModal({
             accent="#7C70F4"
             accentSoft="#FAF9FF"
             HeroIcon={Calendar}
-            onClose={onClose}
+            onClose={handleDismiss}
             disableShellScroll
             contentContainerStyle={styles.bodyContent}
             bodyStyle={styles.shellBody}
@@ -2707,8 +2777,11 @@ export default function TaskCreateModal({
               <ModalFooter
                 mode="add"
                 primaryLabel={submitting ? 'Adding…' : 'Add Event'}
-                onCancel={onClose}
+                onCancel={handleDismiss}
                 onPrimary={handleCreate}
+                onBlockedPrimary={() => {
+                  validateFields({ showBanner: true });
+                }}
                 accent="#7C70F4"
                 disabled={submitting}
                 visuallyDisabled={!isFormValid()}
@@ -2716,6 +2789,11 @@ export default function TaskCreateModal({
               />
             )}
           >
+          {validationBanner ? (
+            <View style={styles.validationBannerContainer}>
+              <Text style={styles.validationBannerText}>{validationBanner}</Text>
+            </View>
+          ) : null}
           <View style={{ marginBottom: 8 }}>
             <Text style={styles.fieldLabel}>
               Name <Text style={{ color: '#ef4444' }}>*</Text>
@@ -5688,6 +5766,22 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderRadius: 8,
     padding: 4,
+  },
+  validationBannerContainer: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  validationBannerText: {
+    color: '#dc2626',
+    fontSize: 14,
+    fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   errorText: {
     color: '#ef4444',

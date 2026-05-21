@@ -157,26 +157,36 @@ export default function SubjectEventsModal({
                             <Text style={styles.subjectEventRowLinkText}>Open event details</Text>
                           </TouchableOpacity>
                         ) : null}
-                        {isPastEvent && !isAttended && typeof onMarkEventAttended === 'function' ? (
+                        {isPastEvent && typeof onMarkEventAttended === 'function' ? (
                           <TouchableOpacity
                             onPress={() => onMarkEventAttended(eventItem)}
                             activeOpacity={0.8}
-                            disabled={markingAttendanceEventId === eventItem.id}
-                            {...(Platform.OS === 'web' && { cursor: markingAttendanceEventId === eventItem.id ? 'default' : 'pointer' })}
+                            disabled={markingAttendanceEventId === eventItem.id || isAttended}
+                            {...(Platform.OS === 'web' && { cursor: (markingAttendanceEventId === eventItem.id || isAttended) ? 'default' : 'pointer' })}
                           >
-                            <Text style={styles.subjectEventRowLinkText}>
+                            <Text
+                              style={[
+                                styles.subjectEventRowLinkText,
+                                (markingAttendanceEventId === eventItem.id || isAttended) && styles.subjectEventRowLinkTextDisabled,
+                              ]}
+                            >
                               {markingAttendanceEventId === eventItem.id ? 'Marking...' : 'Mark attended'}
                             </Text>
                           </TouchableOpacity>
                         ) : null}
-                        {isPastEvent && isAttended && typeof onMarkEventUnattended === 'function' ? (
+                        {isPastEvent && typeof onMarkEventUnattended === 'function' ? (
                           <TouchableOpacity
                             onPress={() => onMarkEventUnattended(eventItem)}
                             activeOpacity={0.8}
-                            disabled={markingAttendanceEventId === eventItem.id}
-                            {...(Platform.OS === 'web' && { cursor: markingAttendanceEventId === eventItem.id ? 'default' : 'pointer' })}
+                            disabled={markingAttendanceEventId === eventItem.id || !isAttended}
+                            {...(Platform.OS === 'web' && { cursor: (markingAttendanceEventId === eventItem.id || !isAttended) ? 'default' : 'pointer' })}
                           >
-                            <Text style={styles.subjectEventRowLinkText}>
+                            <Text
+                              style={[
+                                styles.subjectEventRowLinkText,
+                                (markingAttendanceEventId === eventItem.id || !isAttended) && styles.subjectEventRowLinkTextDisabled,
+                              ]}
+                            >
                               {markingAttendanceEventId === eventItem.id ? 'Marking...' : 'Mark unattended'}
                             </Text>
                           </TouchableOpacity>
@@ -521,5 +531,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  subjectEventRowLinkTextDisabled: {
+    color: '#94A3B8',
+    textDecorationLine: 'none',
   },
 });
