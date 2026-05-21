@@ -19,7 +19,7 @@ import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { supabase } from '../../lib/supabase';
-import { createAttendanceLog, updateAttendanceLog } from '../../lib/services/recordsClient';
+import { createAttendanceLog, deleteAttendanceLog, updateAttendanceLog } from '../../lib/services/recordsClient';
 
 const WEB_HEADING_FONT = Platform.OS === 'web'
   ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
@@ -30,6 +30,7 @@ const WEB_BODY_FONT = Platform.OS === 'web'
 const ATTENDANCE_LIST_LIMIT = 5;
 const EMPTY_SUBJECT_MODAL_ID = '__empty_subject__';
 const PROGRESS_ATTENDANCE_VIEW_STORAGE_PREFIX = 'ld_progress_attendance_view_v1::';
+const ATTENDANCE_OVERRIDE_CLEAR = '__clear__';
 
 function normalizeAttendanceViewMode(value) {
   const raw = String(value || '').trim().toLowerCase();
@@ -431,6 +432,8 @@ export default function ProgressTab({
   const attendanceRecordsForUI = useMemo(() => {
     const rows = [];
     const byEvent = new Set();
+    const nowMs = Date.now();
+    const todayYmd = new Date().toISOString().slice(0, 10);
     subjectDetails.forEach(({ subject, detail }) => {
       (detail?.attendanceRecords || []).forEach((record) => {
         if (
@@ -440,6 +443,9 @@ export default function ProgressTab({
         ) return;
         const dayDate = String(record?.day_date || '').slice(0, 10);
         if (!dayDate) return;
+        const normalizedStatus = String(record?.status || '').toLowerCase();
+        // Future lessons should not surface as unattended; without attendance they are Upcoming.
+        if (normalizedStatus === 'absent' && dayDate > todayYmd) return;
         const day = new Date(`${dayDate}T12:00:00`);
         if (Number.isNaN(day.getTime())) return;
         if (day < academicYearStartDate || day > academicYearEndDate) return;
@@ -450,7 +456,7 @@ export default function ProgressTab({
           subjectName: subject?.name || 'Subject',
           title: subject?.name || 'Lesson',
           dayDate,
-          status: String(record?.status || '').toLowerCase(),
+          status: normalizedStatus,
           minutes: Number(record?.minutes || 0),
           eventId: record?.event_id || null,
           attendanceLogId: record?.id || null,
@@ -469,6 +475,10 @@ export default function ProgressTab({
         if (!event?.id || byEvent.has(String(event.id))) return;
         const dayDate = getEventStartYmd(event);
         if (!dayDate) return;
+        const eventTsRaw = event?.start_ts || event?.due_ts || event?.end_ts || null;
+        const eventTsMs = eventTsRaw ? new Date(eventTsRaw).getTime() : NaN;
+        // Future lessons without explicit attendance logs should remain Upcoming.
+        if (Number.isFinite(eventTsMs) && eventTsMs > nowMs) return;
         const day = new Date(`${dayDate}T12:00:00`);
         if (Number.isNaN(day.getTime())) return;
         if (day < academicYearStartDate || day > academicYearEndDate) return;
@@ -493,10 +503,15 @@ export default function ProgressTab({
       const idx = rows.findIndex((row) => (
         buildAttendanceOverrideKey(row?.eventId, row?.dayDate, row?.childId || selectedStudentId) === key
       ));
+      const overrideStatus = String(entry?.status || '').toLowerCase();
+      if (overrideStatus === ATTENDANCE_OVERRIDE_CLEAR) {
+        if (idx >= 0) rows.splice(idx, 1);
+        return;
+      }
       if (idx >= 0) {
         rows[idx] = {
           ...rows[idx],
-          status: String(entry?.status || rows[idx]?.status || '').toLowerCase() || rows[idx]?.status || 'absent',
+          status: overrideStatus || String(rows[idx]?.status || '').toLowerCase() || 'absent',
           minutes: Number(entry?.minutes || rows[idx]?.minutes || 60),
         };
       } else {
@@ -570,12 +585,12 @@ export default function ProgressTab({
         if (attendanceMeta?.hasAttended) {
           statusLabel = 'Attended';
           statusTone = 'attended';
-        } else if (attendanceMeta?.hasUnattended) {
-          statusLabel = 'Unattended';
-          statusTone = 'unattended';
         } else if (isUpcoming) {
           statusLabel = 'Upcoming';
           statusTone = 'upcoming';
+        } else if (attendanceMeta?.hasUnattended) {
+          statusLabel = 'Unattended';
+          statusTone = 'unattended';
         }
         const eventMinutes = (() => {
           if (Number.isFinite(attendanceMeta?.minutes) && attendanceMeta.minutes > 0) return attendanceMeta.minutes;
@@ -680,34 +695,63 @@ export default function ProgressTab({
       && (!row?.childId || String(row.childId) === String(selectedStudentId))
     ));
     const hasPresent = existingRows.some((row) => ['present', 'partial'].includes(String(row?.status || '').toLowerCase()));
-    const nextStatus = hasPresent ? 'absent' : 'present';
+    const todayYmd = new Date().toISOString().slice(0, 10);
+    const isFutureDate = normKey > todayYmd;
+    // Future unmark should return to Upcoming (no explicit attendance row), not Absent.
+    const nextStatus = hasPresent ? (isFutureDate ? null : 'absent') : 'present';
     const minutes = getEventMinutes(event);
     const targetChildIds = resolveChildIdsForAttendanceEvent(event);
     const subjectMatch = subjectDetails.find(({ subject }) => String(subject?.id || '') === String(event?.subject_id || event?.subjectId || ''));
     if (targetChildIds.length > 0) {
-      const nextOverrides = {};
-      targetChildIds.forEach((childId) => {
-        const overrideKey = buildAttendanceOverrideKey(eid, normKey, childId);
-        if (!overrideKey) return;
-        nextOverrides[overrideKey] = {
-          eventId: eid,
-          dayDate: normKey,
-          childId,
-          status: nextStatus,
-          minutes,
-          subjectId: subjectMatch?.subject?.id || null,
-          subjectName: subjectMatch?.subject?.name || 'Subject',
-          title: event?.title || subjectMatch?.subject?.name || 'Lesson',
-        };
-      });
-      if (Object.keys(nextOverrides).length > 0) {
-        setOptimisticAttendanceByKey((prev) => ({ ...prev, ...nextOverrides }));
+      if (nextStatus == null) {
+        const nextOverrides = {};
+        targetChildIds.forEach((childId) => {
+          const overrideKey = buildAttendanceOverrideKey(eid, normKey, childId);
+          if (!overrideKey) return;
+          nextOverrides[overrideKey] = {
+            eventId: eid,
+            dayDate: normKey,
+            childId,
+            status: ATTENDANCE_OVERRIDE_CLEAR,
+            minutes: 0,
+            subjectId: subjectMatch?.subject?.id || null,
+            subjectName: subjectMatch?.subject?.name || 'Subject',
+            title: event?.title || subjectMatch?.subject?.name || 'Lesson',
+          };
+        });
+        if (Object.keys(nextOverrides).length > 0) {
+          setOptimisticAttendanceByKey((prev) => ({ ...prev, ...nextOverrides }));
+        }
+      } else {
+        const nextOverrides = {};
+        targetChildIds.forEach((childId) => {
+          const overrideKey = buildAttendanceOverrideKey(eid, normKey, childId);
+          if (!overrideKey) return;
+          nextOverrides[overrideKey] = {
+            eventId: eid,
+            dayDate: normKey,
+            childId,
+            status: nextStatus,
+            minutes,
+            subjectId: subjectMatch?.subject?.id || null,
+            subjectName: subjectMatch?.subject?.name || 'Subject',
+            title: event?.title || subjectMatch?.subject?.name || 'Lesson',
+          };
+        });
+        if (Object.keys(nextOverrides).length > 0) {
+          setOptimisticAttendanceByKey((prev) => ({ ...prev, ...nextOverrides }));
+        }
       }
     }
     try {
       await Promise.all(targetChildIds.map(async (childId) => {
         const lookupKey = buildAttendanceOverrideKey(eid, normKey, childId);
         const existingLogId = lookupKey ? attendanceLogIdByEventDayChild.get(lookupKey) : null;
+        if (nextStatus == null) {
+          if (!existingLogId) return;
+          await deleteAttendanceLog(existingLogId);
+          return;
+        }
         if (existingLogId) {
           await updateAttendanceLog(existingLogId, { status: nextStatus, minutes });
           return;
@@ -721,14 +765,15 @@ export default function ProgressTab({
           minutes,
         });
       }));
+      // Refresh in background so toggles stay snappy.
       if (event?.subject_id || event?.subjectId) {
-        await onRefreshSubjectDetail?.(event.subject_id || event.subjectId);
+        Promise.resolve(onRefreshSubjectDetail?.(event.subject_id || event.subjectId)).catch(() => {});
       } else if (typeof onRefreshSubjectDetail === 'function') {
-        await Promise.all(
+        Promise.all(
           (subjectDetails || []).map(({ subject }) => (
             subject?.id ? onRefreshSubjectDetail(subject.id) : null
           )).filter(Boolean)
-        );
+        ).catch(() => {});
       }
     } catch (err) {
       if (targetChildIds.length > 0) {
@@ -793,6 +838,7 @@ export default function ProgressTab({
   }, [canMarkAttendanceForDateKey, attendanceEvents, attendanceRecordsForUI, handleToggleEventAttendanceForDate]);
   const attendanceDayCounts = useMemo(() => {
     const byDay = new Map();
+    const todayYmd = new Date().toISOString().slice(0, 10);
     attendanceRecordsForUI.forEach((record) => {
       const dayKey = String(record?.dayDate || '').slice(0, 10);
       if (!dayKey) return;
@@ -800,7 +846,7 @@ export default function ProgressTab({
       if (!byDay.has(dayKey)) byDay.set(dayKey, { hasPresent: false, hasAbsent: false });
       const bucket = byDay.get(dayKey);
       if (status === 'present' || status === 'partial') bucket.hasPresent = true;
-      if (status === 'absent') bucket.hasAbsent = true;
+      if (status === 'absent' && dayKey <= todayYmd) bucket.hasAbsent = true;
     });
     let present = 0;
     let absent = 0;
@@ -808,8 +854,17 @@ export default function ProgressTab({
       if (bucket.hasPresent) present += 1;
       else if (bucket.hasAbsent) absent += 1;
     });
-    return { present, absent };
-  }, [attendanceRecordsForUI]);
+    const upcomingDaySet = new Set();
+    (attendanceEvents || []).forEach((event) => {
+      if (String(event?.status || '').toLowerCase() === 'canceled') return;
+      const dayKey = String(getEventStartYmd(event) || '').slice(0, 10);
+      if (!dayKey || dayKey <= todayYmd) return;
+      const bucket = byDay.get(dayKey);
+      if (bucket?.hasPresent || bucket?.hasAbsent) return;
+      upcomingDaySet.add(dayKey);
+    });
+    return { present, absent, upcoming: upcomingDaySet.size };
+  }, [attendanceRecordsForUI, attendanceEvents]);
 
   useEffect(() => {
     setShowAttendanceExpanded(false);
@@ -1184,12 +1239,12 @@ export default function ProgressTab({
     if (rowsWithTargets.length > 0) {
       const projected = rowsWithTargets.reduce((sum, row) => sum + Number(row?.plannedDays || 0), 0);
       const target = rowsWithTargets.reduce((sum, row) => sum + Number(row?.targetDays || 0), 0);
-      return projected - target;
+      return target - projected;
     }
     const useOverallTargetMode = familyTargetScope === 'overall' && familyOverallTargetDays != null;
     if (!useOverallTargetMode) return null;
     const projectedUniqueDays = new Set((attendanceEvents || []).map((event) => getEventStartYmd(event)).filter(Boolean)).size;
-    return Number(projectedUniqueDays || 0) - Number(familyOverallTargetDays || 0);
+    return Number(familyOverallTargetDays || 0) - Number(projectedUniqueDays || 0);
   }, [familyTargetScope, familyOverallTargetDays, attendanceEvents, subjectProgressRows]);
   const attendanceTargetGapLabel = useMemo(() => {
     if (!Number.isFinite(Number(attendanceTargetGapDays))) return '—';
@@ -1316,12 +1371,16 @@ export default function ProgressTab({
             <Text style={styles.attendanceCountLabel}>Count</Text>
             <View style={styles.attendanceChips}>
               <View style={styles.attendanceChip}>
-                <CheckCircle size={14} color="#10B981" />
+                <CheckCircle size={14} color="#6BB3E8" />
                 <Text style={styles.attendanceChipText}>{attendanceDayCounts.present} Attended</Text>
               </View>
               <View style={styles.attendanceChip}>
                 <XCircle size={14} color="#EF4444" />
                 <Text style={styles.attendanceChipText}>{attendanceDayCounts.absent} Unattended</Text>
+              </View>
+              <View style={styles.attendanceChip}>
+                <CheckCircle size={14} color="#C7DDF6" />
+                <Text style={styles.attendanceChipText}>{attendanceDayCounts.upcoming || 0} Upcoming</Text>
               </View>
             </View>
           </View>
@@ -1329,8 +1388,8 @@ export default function ProgressTab({
         <TouchableOpacity
           style={[
             styles.attendanceGapShell,
-            Number(attendanceTargetGapDays) > 0 && styles.attendanceGapShellAhead,
-            Number(attendanceTargetGapDays) < 0 && styles.attendanceGapShellBehind,
+            Number(attendanceTargetGapDays) > 0 && styles.attendanceGapShellBehind,
+            Number(attendanceTargetGapDays) < 0 && styles.attendanceGapShellAhead,
             Number(attendanceTargetGapDays) === 0 && styles.attendanceGapShellOnTrack,
           ]}
           onPress={() => onOpenScheduleTab?.()}
@@ -1342,8 +1401,8 @@ export default function ProgressTab({
             <Text
               style={[
                 styles.attendanceGapLabel,
-                Number(attendanceTargetGapDays) > 0 && styles.attendanceGapLabelAhead,
-                Number(attendanceTargetGapDays) < 0 && styles.attendanceGapLabelBehind,
+                Number(attendanceTargetGapDays) > 0 && styles.attendanceGapLabelBehind,
+                Number(attendanceTargetGapDays) < 0 && styles.attendanceGapLabelAhead,
               ]}
             >
               Gap
@@ -1351,16 +1410,16 @@ export default function ProgressTab({
             <View
               style={[
                 styles.attendanceGapChipButton,
-                Number(attendanceTargetGapDays) > 0 && styles.attendanceGapChipButtonAhead,
-                Number(attendanceTargetGapDays) < 0 && styles.attendanceGapChipButtonBehind,
+                Number(attendanceTargetGapDays) > 0 && styles.attendanceGapChipButtonBehind,
+                Number(attendanceTargetGapDays) < 0 && styles.attendanceGapChipButtonAhead,
                 Number(attendanceTargetGapDays) === 0 && styles.attendanceGapChipButtonOnTrack,
               ]}
             >
               <Text
                 style={[
                   styles.attendanceGapChipText,
-                  Number(attendanceTargetGapDays) > 0 && styles.attendanceGapChipTextAhead,
-                  Number(attendanceTargetGapDays) < 0 && styles.attendanceGapChipTextBehind,
+                  Number(attendanceTargetGapDays) > 0 && styles.attendanceGapChipTextBehind,
+                  Number(attendanceTargetGapDays) < 0 && styles.attendanceGapChipTextAhead,
                 ]}
               >
                 {attendanceTargetGapLabel}

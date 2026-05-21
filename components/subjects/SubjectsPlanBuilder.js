@@ -5133,6 +5133,9 @@ export default function SubjectsPlanBuilder({
           .sort((a, b) => a[0].localeCompare(b[0]))
           .map(([dayKey, dayEvents], index) => {
             const sample = dayEvents[0] || {};
+            const sourceEventIds = dayEvents
+              .map((item) => String(item?.id || '').trim())
+              .filter(Boolean);
             const attendedCount = dayEvents.filter((item) => (
               item?.hasAttendancePresent === true
               || String(item?.status || '').toLowerCase() === 'done'
@@ -5151,6 +5154,7 @@ export default function SubjectsPlanBuilder({
               isDayAggregate: true,
               dayEventCount: totalCount,
               attendedEventCount: attendedCount,
+              sourceEventIds,
             };
           });
       })()
@@ -5281,16 +5285,21 @@ export default function SubjectsPlanBuilder({
 
   const markAllPastEventsAsAttendedFromAllEventsModal = useCallback(async () => {
     const events = Array.isArray(upcomingEventsModalData?.events) ? upcomingEventsModalData.events : [];
-    const targetEvents = events.filter((eventItem) => {
-      if (eventItem?.isDayAggregate) return false;
-      const eventId = String(eventItem?.id || '').trim();
+    const targetEventIds = [...new Set(events.flatMap((eventItem) => {
       const isAttended = eventItem?.hasAttendancePresent === true
         || String(eventItem?.status || '').toLowerCase() === 'done'
         || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
-      return Boolean(eventId) && !isAttended;
-    });
-    if (!targetEvents.length) return;
-    const targetCount = targetEvents.length;
+      if (isAttended) return [];
+      if (eventItem?.isDayAggregate) {
+        return (Array.isArray(eventItem?.sourceEventIds) ? eventItem.sourceEventIds : [])
+          .map((id) => String(id || '').trim())
+          .filter(Boolean);
+      }
+      const eventId = String(eventItem?.id || '').trim();
+      return eventId ? [eventId] : [];
+    }))];
+    if (!targetEventIds.length) return;
+    const targetCount = targetEventIds.length;
     const confirmMessage = `Mark all ${targetCount} unattended event${targetCount === 1 ? '' : 's'} as attended?`;
     const confirmed = await new Promise((resolve) => {
       if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
@@ -5312,9 +5321,7 @@ export default function SubjectsPlanBuilder({
     const succeededIds = [];
     let failedCount = 0;
     try {
-      for (const eventItem of targetEvents) {
-        const eventId = String(eventItem?.id || '').trim();
-        if (!eventId) continue;
+      for (const eventId of targetEventIds) {
         try {
           const { error } = await completeEvent(eventId, null, { requirePersist: true });
           if (error) throw error;
@@ -5324,12 +5331,37 @@ export default function SubjectsPlanBuilder({
         }
       }
       if (succeededIds.length > 0) {
+        const succeededIdSet = new Set(succeededIds.map((id) => String(id)));
         setUpcomingEventsModalData((prev) => ({
           ...prev,
           events: (prev?.events || []).map((entry) => (
-            succeededIds.includes(String(entry?.id || ''))
-              ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS', hasAttendancePresent: true }
-              : entry
+            entry?.isDayAggregate
+              ? (() => {
+                const sourceIds = (Array.isArray(entry?.sourceEventIds) ? entry.sourceEventIds : [])
+                  .map((id) => String(id || '').trim())
+                  .filter(Boolean);
+                if (!sourceIds.length) return entry;
+                const addedAttended = sourceIds.reduce(
+                  (sum, id) => (succeededIdSet.has(id) ? (sum + 1) : sum),
+                  0
+                );
+                if (addedAttended <= 0) return entry;
+                const totalCount = Math.max(0, Number(entry?.dayEventCount || sourceIds.length));
+                const currentAttended = Math.max(0, Number(entry?.attendedEventCount || 0));
+                const attendedEventCount = Math.min(totalCount, currentAttended + addedAttended);
+                return {
+                  ...entry,
+                  attendedEventCount,
+                  hasAttendancePresent: attendedEventCount > 0,
+                  status: attendedEventCount > 0 ? 'done' : 'scheduled',
+                  instructional_status: attendedEventCount > 0 ? 'MANUAL_COUNTS' : '',
+                };
+              })()
+              : (
+                succeededIdSet.has(String(entry?.id || ''))
+                  ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS', hasAttendancePresent: true }
+                  : entry
+              )
           )),
         }));
         setEventsRefreshKey((prev) => prev + 1);
@@ -5856,11 +5888,14 @@ export default function SubjectsPlanBuilder({
                           });
                           return dayKeys.size;
                         })();
-                        const rowGapValue = (
+                        const actionableRowGapValue = (
                           rawRowGapValue < 0 && removableFutureDayCount <= 0
                         )
                           ? 0
                           : rawRowGapValue;
+                        // Always display the mathematical target gap in the chip, even when no automatic
+                        // removal action is available (e.g. all extra days are already attended).
+                        const rowGapValue = rawRowGapValue;
                         const isOverallRow = rowId === 'overall' || row?.isOverall === true;
                         const isOverallScopeTable = String(yearTargetSummary?.trackingMode || '').trim().toLowerCase() === 'overall';
                         const overallSuggestedChanges = (() => {
@@ -6409,8 +6444,8 @@ export default function SubjectsPlanBuilder({
                           : (yearTargetCatchUpById[rowId] || null);
                         const catchUpRowResolved = catchUpRow || {
                           id: rowId,
-                          mode: rowGapValue < 0 ? 'overload' : 'shortfall',
-                          shortDays: Math.abs(rowGapValue),
+                          mode: actionableRowGapValue < 0 ? 'overload' : 'shortfall',
+                          shortDays: Math.abs(actionableRowGapValue),
                           lowSessionsPerWeek: 0,
                           highSessionsPerWeek: 0,
                           suggestionSummaryText: 'No automatic suggestion yet. Expand to review saved target details or use Fix gap.',
@@ -6438,7 +6473,7 @@ export default function SubjectsPlanBuilder({
                         const hasApplyAction = Boolean(catchUpRowResolved?.suggestedEndYmd)
                           || (Array.isArray(catchUpRowResolved?.suggestedPlanChanges) && catchUpRowResolved.suggestedPlanChanges.length > 0);
                         const suggestedDaysText = (() => {
-                          const numericGap = Number(rowGapValue || 0);
+                          const numericGap = Number(actionableRowGapValue || 0);
                           if (numericGap > 0) {
                             const daysToAdd = Math.max(1, Math.ceil(numericGap));
                             return `Add ${daysToAdd} day${daysToAdd === 1 ? '' : 's'}`;
@@ -6450,7 +6485,7 @@ export default function SubjectsPlanBuilder({
                           return null;
                         })();
                         const fixGapActionRecommendation = fixGapActionRecommendationsByRowId?.[rowId] || null;
-                        const canFixGap = Math.abs(Number(rowGapValue || 0)) > 0;
+                        const canFixGap = Math.abs(Number(actionableRowGapValue || 0)) > 0;
                         const isExpanded = expandedYearTargetSuggestionId === rowId;
                         const chevronAnim = showSuggestion ? getYearTargetChevronAnim(rowId) : null;
                         const suggestionAnim = showSuggestion ? getYearTargetSuggestionAnim(rowId) : null;

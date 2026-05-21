@@ -37,6 +37,12 @@ function isPastEvent(e, nowMs = Date.now()) {
   return t < nowMs;
 }
 
+function isFutureEvent(e, nowMs = Date.now()) {
+  const t = eventPrimaryMs(e);
+  if (t == null) return false;
+  return t > nowMs;
+}
+
 function eventDedupKey(e) {
   if (!e) return '';
   const sourceBlockId = String(e?.source_block_id || '').trim();
@@ -83,6 +89,8 @@ function attendanceLabel(key) {
       return 'Absent';
     case 'mixed':
       return 'Mixed';
+    case 'upcoming':
+      return 'Upcoming';
     default:
       return 'Pending';
   }
@@ -130,14 +138,26 @@ export default function SubjectPastEventsAttendanceModal({
   const [hoveredRowIndex, setHoveredRowIndex] = useState(null);
 
   const pastEvents = useMemo(() => {
+    const matchesScopedSubject = (eventItem) => {
+      if (!scopedSubjectId) return true;
+      if (String(eventItem?.subject_id || '').trim() === scopedSubjectId) return true;
+      const metadata = eventItem?.curriculum_metadata;
+      const metadataSubjectIds = Array.isArray(metadata?.subject_ids)
+        ? metadata.subject_ids
+        : [];
+      if (metadataSubjectIds.some((id) => String(id || '').trim() === scopedSubjectId)) return true;
+      const directSubjectIds = Array.isArray(eventItem?.subject_ids) ? eventItem.subject_ids : [];
+      if (directSubjectIds.some((id) => String(id || '').trim() === scopedSubjectId)) return true;
+      return false;
+    };
     const list = (events || []).filter((e) => {
       if (!e || e.is_backlog || e.status === 'canceled') return false;
-      if (!scopedSubjectId) return true;
-      return String(e.subject_id) === scopedSubjectId;
+      return matchesScopedSubject(e);
     });
-    const past = list.filter((e) => isPastEvent(e));
-    past.sort((a, b) => (eventPrimaryMs(b) || 0) - (eventPrimaryMs(a) || 0));
-    return past;
+    // Show full timeline in this modal so families can pick a future cutoff date
+    // and mark all earlier lessons complete/attended through that point.
+    list.sort((a, b) => (eventPrimaryMs(b) || 0) - (eventPrimaryMs(a) || 0));
+    return list;
   }, [events, scopedSubjectId]);
 
   /** Oldest → newest (same as progress check-in) for “mark through here”. */
@@ -335,7 +355,7 @@ export default function SubjectPastEventsAttendanceModal({
       const ok =
         Platform.OS === 'web' && typeof window !== 'undefined'
           ? window.confirm(
-              `Delete all ${n} past scheduled lesson${n !== 1 ? 's' : ''}${scopedSubjectId ? ' for this subject' : ''}? They will be removed from your calendar. This cannot be undone.`
+              `Delete all ${n} scheduled lesson${n !== 1 ? 's' : ''}${scopedSubjectId ? ' for this subject' : ''}? They will be removed from your calendar. This cannot be undone.`
             )
           : true;
       if (!ok) return;
@@ -419,7 +439,7 @@ export default function SubjectPastEventsAttendanceModal({
         />
         <View style={styles.card}>
           <View style={styles.header}>
-            <Text style={styles.title}>Mark past attendance</Text>
+            <Text style={styles.title}>Mark attendance</Text>
             <TouchableOpacity
               onPress={handleCancel}
               style={styles.closeCircle}
@@ -441,14 +461,14 @@ export default function SubjectPastEventsAttendanceModal({
           ) : (
             <>
               <Text style={styles.headline}>Select the last lesson completed</Text>
-              <Text style={styles.subhead}>We’ll mark all earlier lessons as attended.</Text>
+              <Text style={styles.subhead}>We’ll mark all earlier lessons as attended, even when you select a future date.</Text>
 
               {hasPendingChanges ? (
                 <View style={styles.pendingBanner}>
                   <Text style={styles.pendingBannerText}>
                     {pendingAction === 'markAll'
-                      ? `Ready to mark ${pastEventGroupsChronological.length} past lesson${pastEventGroupsChronological.length !== 1 ? 's' : ''} complete and attended.`
-                      : `Ready to remove ${pastEventGroupsChronological.length} past lesson${pastEventGroupsChronological.length !== 1 ? 's' : ''} from your calendar.`}
+                      ? `Ready to mark ${pastEventGroupsChronological.length} lesson${pastEventGroupsChronological.length !== 1 ? 's' : ''} complete and attended.`
+                      : `Ready to remove ${pastEventGroupsChronological.length} lesson${pastEventGroupsChronological.length !== 1 ? 's' : ''} from your calendar.`}
                   </Text>
                 </View>
               ) : null}
@@ -456,6 +476,7 @@ export default function SubjectPastEventsAttendanceModal({
               <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
                 {pastEventGroupsChronological.map((group, idx) => {
                   const ev = group.representative;
+                  const representativeIsFuture = isFutureEvent(ev);
                   const att = summarizeAttendanceForEvents(group.events, attendanceLogs);
                   const when = ev.start_ts
                     ? new Date(ev.start_ts).toLocaleString(undefined, {
@@ -480,7 +501,11 @@ export default function SubjectPastEventsAttendanceModal({
                   const previewWillMarkAttended =
                     (pendingAction == null && cutoffIndex != null && idx <= cutoffIndex) ||
                     pendingAction === 'markAll';
-                  const displayAttendance = previewWillMarkAttended ? 'present' : att;
+                  let displayAttendance = previewWillMarkAttended ? 'present' : att;
+                  if (representativeIsFuture && displayAttendance !== 'present') {
+                    // Unmarking a future lesson should return it to Upcoming, not Absent.
+                    displayAttendance = 'upcoming';
+                  }
                   const attendedByHistory =
                     pendingAction == null &&
                     cutoffIndex == null &&
@@ -539,6 +564,7 @@ export default function SubjectPastEventsAttendanceModal({
                             style={[
                               styles.badge,
                               displayAttendance === 'present' && styles.badgeOk,
+                              displayAttendance === 'upcoming' && styles.badgeUpcoming,
                               displayAttendance === 'none' && styles.badgeMuted,
                             ]}
                           >
@@ -621,7 +647,7 @@ export default function SubjectPastEventsAttendanceModal({
                   }}
                   disabled={saving || applyingThrough}
                   accessibilityRole="button"
-                  accessibilityLabel="Mark all past lessons as attended"
+                  accessibilityLabel="Mark all listed lessons as attended"
                   {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
                 >
                   <CheckCircle2 size={18} color="#64748b" strokeWidth={2} />
@@ -642,7 +668,7 @@ export default function SubjectPastEventsAttendanceModal({
                   }}
                   disabled={saving || applyingThrough}
                   accessibilityRole="button"
-                  accessibilityLabel="Delete all past events for this subject"
+                  accessibilityLabel="Delete all listed events for this subject"
                   {...(Platform.OS === 'web' && { cursor: saving || applyingThrough ? 'default' : 'pointer' })}
                 >
                   <Trash2
@@ -658,7 +684,7 @@ export default function SubjectPastEventsAttendanceModal({
                     ]}
                     numberOfLines={2}
                   >
-                    Delete past events
+                    Delete all events
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1005,6 +1031,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'none',
     letterSpacing: 0,
+  },
+  badgeUpcoming: {
+    color: '#5b90c5',
+    backgroundColor: '#edf4fd',
+    fontWeight: '700',
   },
   rowMeta: {
     fontSize: 12,

@@ -47,11 +47,17 @@ export default function SubjectEventsModal({
   const events = Array.isArray(data?.events) ? data.events : [];
   const isClassDayAggregateModal = data?.isClassDayAggregate === true;
   const hasUnattendedEvents = events.some((eventItem) => {
-    if (eventItem?.isDayAggregate) return false;
     const isAttended = eventItem?.hasAttendancePresent === true
       || String(eventItem?.status || '').toLowerCase() === 'done'
       || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
-    return !isAttended && String(eventItem?.id || '').trim() !== '';
+    if (isAttended) return false;
+    if (eventItem?.isDayAggregate) {
+      return (Array.isArray(eventItem?.sourceEventIds) ? eventItem.sourceEventIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)
+        .length > 0;
+    }
+    return String(eventItem?.id || '').trim() !== '';
   });
   const isBulkMarking = markingAttendanceEventId === '__bulk_mark_all_attended__';
   const hasAnyEvents = !isClassDayAggregateModal && events.length > 0;
