@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Download } from 'lucide-react';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Download, Bell } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
@@ -96,6 +96,7 @@ const EXPLORER_PARENT_STEPS = [
 
 const EXPORT_CALENDAR_WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY = 'ld_pending_subject_schedule_plan_open';
+const DISMISSED_CONFLICTS_STORAGE_KEY = 'ld_planner_dismissed_conflicts';
 function toLocalYYYYMMDD(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -274,7 +275,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Subjects page then hydrates immediately from cache when opened.
   useEffect(() => {
     if (!familyId) return;
-    preloadSubjectsPlanOverview(familyId, { force: true }).catch(() => {});
+    preloadSubjectsPlanOverview(familyId, { force: false }).catch(() => {});
   }, [familyId]);
 
   const warmSubjectsScheduleCaches = useCallback(({ force = true } = {}) => {
@@ -296,7 +297,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Warm schedule supplemental data (settings + target defaults + attendance/projection events)
   // across all known subject years so year/term switching in Subjects > Schedule stays instant.
   useEffect(() => {
-    warmSubjectsScheduleCaches({ force: true });
+    warmSubjectsScheduleCaches({ force: false });
   }, [warmSubjectsScheduleCaches]);
 
   // Keep subjects schedule cache warm after event mutations so Schedule numbers stay current
@@ -496,7 +497,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
   const topToolbarFiltersButtonRef = useRef(null);
   const helpButtonRef = useRef(null);
+  const conflictNotificationsButtonRef = useRef(null);
+  const conflictNotificationsPopoverRef = useRef(null);
+  const conflictNotificationsCloseTimerRef = useRef(null);
   const [showHelpPopover, setShowHelpPopover] = useState(false);
+  const [showConflictNotificationsPopover, setShowConflictNotificationsPopover] = useState(false);
+  const [dismissedConflictNotifications, setDismissedConflictNotifications] = useState([]);
   const [helpPopoverPosition, setHelpPopoverPosition] = useState({ top: 0, left: 0 });
   const helpPopoverRef = useRef(null);
   const helpPopoverCloseTimerRef = useRef(null);
@@ -562,6 +568,27 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, []);
 
+  const clearConflictNotificationsCloseTimer = useCallback(() => {
+    if (conflictNotificationsCloseTimerRef.current) {
+      clearTimeout(conflictNotificationsCloseTimerRef.current);
+      conflictNotificationsCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const openConflictNotificationsPopover = useCallback(() => {
+    clearConflictNotificationsCloseTimer();
+    if (dismissedConflictNotifications.length === 0) return;
+    setShowConflictNotificationsPopover(true);
+  }, [clearConflictNotificationsCloseTimer, dismissedConflictNotifications.length]);
+
+  const scheduleConflictNotificationsClose = useCallback(() => {
+    clearConflictNotificationsCloseTimer();
+    conflictNotificationsCloseTimerRef.current = setTimeout(() => {
+      setShowConflictNotificationsPopover(false);
+      conflictNotificationsCloseTimerRef.current = null;
+    }, 140);
+  }, [clearConflictNotificationsCloseTimer]);
+
   const updateHelpPopoverPosition = useCallback(() => {
     if (Platform.OS === 'web' && helpButtonRef.current) {
       const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
@@ -591,6 +618,75 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [clearHelpPopoverCloseTimer]);
 
   useEffect(() => () => clearHelpPopoverCloseTimer(), [clearHelpPopoverCloseTimer]);
+  useEffect(() => () => clearConflictNotificationsCloseTimer(), [clearConflictNotificationsCloseTimer]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    try {
+      const raw = window.sessionStorage.getItem(DISMISSED_CONFLICTS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const normalized = parsed
+        .filter((item) => item && item.eventId)
+        .slice(0, 12)
+        .map((item) => ({
+          eventId: String(item.eventId),
+          eventTitle: item.eventTitle || 'Event',
+          conflictCount: Number(item.conflictCount || 0),
+          conflictMessage: item.conflictMessage || null,
+          movedEvent: item.movedEvent || null,
+          conflictEvent: item.conflictEvent || null,
+          timestamp: Number(item.timestamp || Date.now()),
+        }));
+      setDismissedConflictNotifications(normalized);
+    } catch (_) {
+    }
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem(
+        DISMISSED_CONFLICTS_STORAGE_KEY,
+        JSON.stringify((dismissedConflictNotifications || []).slice(0, 12)),
+      );
+    } catch (_) {
+    }
+  }, [dismissedConflictNotifications]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const handlePageHide = () => {
+      const active = window.__ldActiveConflictBanner;
+      if (!active?.visible || !active?.eventId) return;
+      try {
+        const raw = window.sessionStorage.getItem(DISMISSED_CONFLICTS_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        const current = Array.isArray(parsed) ? parsed : [];
+        const key = String(active.eventId);
+        const remaining = current.filter((item) => String(item?.eventId || '') !== key);
+        const next = [
+          {
+            eventId: key,
+            eventTitle: active.eventTitle || 'Event',
+            conflictCount: Number(active.conflictCount || 0),
+            conflictMessage: active.conflictMessage || null,
+            movedEvent: active.movedEvent || null,
+            conflictEvent: active.conflictEvent || null,
+            timestamp: Date.now(),
+          },
+          ...remaining,
+        ].slice(0, 12);
+        window.sessionStorage.setItem(DISMISSED_CONFLICTS_STORAGE_KEY, JSON.stringify(next));
+      } catch (_) {
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    return () => window.removeEventListener('pagehide', handlePageHide);
+  }, []);
   const plannerConnectedProviderIds = useMemo(() => {
     const found = [];
     if (googleCalendarConnected) found.push('google');
@@ -974,6 +1070,65 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       return () => document.removeEventListener('click', handleClickOutside, true);
     }
   }, [showHelpPopover]);
+
+  // Handle click outside conflict notifications popover
+  useEffect(() => {
+    if (showConflictNotificationsPopover && Platform.OS === 'web' && typeof document !== 'undefined') {
+      const handleClickOutside = (event) => {
+        const buttonNode = conflictNotificationsButtonRef.current?._nativeNode || conflictNotificationsButtonRef.current;
+        const popoverNode = conflictNotificationsPopoverRef.current?._nativeNode || conflictNotificationsPopoverRef.current;
+        const target = event.target;
+        const isInsideButton = buttonNode && (buttonNode === target || buttonNode.contains(target));
+        const isInsidePopover = popoverNode && (popoverNode === target || popoverNode.contains(target));
+        if (!isInsideButton && !isInsidePopover) {
+          setShowConflictNotificationsPopover(false);
+        }
+      };
+      document.addEventListener('click', handleClickOutside, true);
+      return () => document.removeEventListener('click', handleClickOutside, true);
+    }
+  }, [showConflictNotificationsPopover]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handleConflictDismissed = (event) => {
+      const detail = event?.detail || {};
+      if (!detail?.eventId) return;
+      const key = String(detail.eventId);
+      setDismissedConflictNotifications((prev) => {
+        const remaining = prev.filter((item) => String(item.eventId) !== key);
+        const next = [
+          {
+            eventId: key,
+            eventTitle: detail.eventTitle || 'Event',
+            conflictCount: Number(detail.conflictCount || 0),
+            conflictMessage: detail.conflictMessage || null,
+            movedEvent: detail.movedEvent || null,
+            conflictEvent: detail.conflictEvent || null,
+            timestamp: detail.timestamp || Date.now(),
+          },
+          ...remaining,
+        ];
+        return next.slice(0, 12);
+      });
+      setShowConflictNotificationsPopover(false);
+    };
+    window.addEventListener('plannerDragConflictDismissed', handleConflictDismissed);
+    return () => window.removeEventListener('plannerDragConflictDismissed', handleConflictDismissed);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handleConflictResolved = (event) => {
+      const resolvedId = String(event?.detail?.eventId || '').trim();
+      if (!resolvedId) return;
+      setDismissedConflictNotifications((prev) =>
+        (prev || []).filter((item) => String(item?.eventId || '') !== resolvedId),
+      );
+    };
+    window.addEventListener('plannerDragConflictResolved', handleConflictResolved);
+    return () => window.removeEventListener('plannerDragConflictResolved', handleConflictResolved);
+  }, []);
 
   // Handle click outside Planner Settings popover
   const plannerSettingsPopoverRef = useRef(null);
@@ -3779,7 +3934,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   </View>
                   
                   {/* Help + Export icons - right of Filters */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0, position: 'relative' }}>
                     <TouchableOpacity
                       ref={helpButtonRef}
                       onPress={() => {
@@ -3837,6 +3992,128 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     >
                       <Download size={20} color="rgba(15,23,42,0.7)" />
                     </TouchableOpacity>
+                    <View style={{ position: 'relative' }}>
+                      <TouchableOpacity
+                        ref={conflictNotificationsButtonRef}
+                        onPress={() => {}}
+                        style={{ padding: 4, opacity: dismissedConflictNotifications.length > 0 ? 1 : 0.45 }}
+                        {...(Platform.OS === 'web' && {
+                          cursor: dismissedConflictNotifications.length > 0 ? 'pointer' : 'default',
+                          onMouseEnter: () => {
+                            if (dismissedConflictNotifications.length > 0) {
+                              openConflictNotificationsPopover();
+                            }
+                          },
+                          onMouseLeave: () => {
+                            if (dismissedConflictNotifications.length > 0) {
+                              scheduleConflictNotificationsClose();
+                            }
+                          },
+                        })}
+                      >
+                        <Bell size={20} color={dismissedConflictNotifications.length > 0 ? '#B45309' : 'rgba(15,23,42,0.5)'} />
+                        {dismissedConflictNotifications.length > 0 ? (
+                          <View
+                            style={{
+                              position: 'absolute',
+                              top: -2,
+                              right: -4,
+                              minWidth: 16,
+                              height: 16,
+                              borderRadius: 8,
+                              backgroundColor: '#F59E0B',
+                              paddingHorizontal: 4,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
+                              {dismissedConflictNotifications.length > 9 ? '9+' : dismissedConflictNotifications.length}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </TouchableOpacity>
+                      {showConflictNotificationsPopover && dismissedConflictNotifications.length > 0 ? (
+                        <View
+                          ref={conflictNotificationsPopoverRef}
+                          onMouseEnter={clearConflictNotificationsCloseTimer}
+                          onMouseLeave={scheduleConflictNotificationsClose}
+                          style={{
+                            position: 'absolute',
+                            top: 30,
+                            left: 4,
+                            width: 340,
+                            maxHeight: 280,
+                            backgroundColor: '#FFFFFF',
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: 'rgba(15,23,42,0.1)',
+                            boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
+                            zIndex: 1200,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <View style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(15,23,42,0.06)' }}>
+                            <Text style={{
+                              color: '#0F172A',
+                              fontSize: 13,
+                              fontWeight: '700',
+                              ...(Platform.OS === 'web' && {
+                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                              }),
+                            }}>Dismissed conflicts</Text>
+                          </View>
+                          <ScrollView style={{ maxHeight: 220 }}>
+                            {dismissedConflictNotifications.map((item) => (
+                              <TouchableOpacity
+                                key={`${item.eventId}-${item.timestamp}`}
+                                onPress={() => {
+                                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                                    window.dispatchEvent(
+                                      new CustomEvent('plannerDragConflictReopen', {
+                                        detail: {
+                                          eventId: item.eventId,
+                                          conflictCount: item.conflictCount || 0,
+                                          eventTitle: item.eventTitle || 'Event',
+                                          conflictMessage: item.conflictMessage || null,
+                                          conflictEvent: item.conflictEvent || null,
+                                          movedEvent: item.movedEvent || null,
+                                          timestamp: Date.now(),
+                                        },
+                                      }),
+                                    );
+                                  }
+                                  setShowConflictNotificationsPopover(false);
+                                }}
+                                style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(15,23,42,0.05)' }}
+                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                              >
+                                <Text style={{
+                                  fontSize: 13,
+                                  color: '#0F172A',
+                                  fontWeight: '600',
+                                  ...(Platform.OS === 'web' && {
+                                    fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                                  }),
+                                }} numberOfLines={1}>
+                                  {item.eventTitle || 'Event'}
+                                </Text>
+                                <Text style={{
+                                  fontSize: 12,
+                                  color: '#6B7280',
+                                  marginTop: 2,
+                                  ...(Platform.OS === 'web' && {
+                                    fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                                  }),
+                                }} numberOfLines={2}>
+                                  {item.conflictMessage || `Conflicts: ${item.conflictCount || 1}`}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        </View>
+                      ) : null}
+                    </View>
                   </View>
                   
                   {/* Plan health notification icon */}

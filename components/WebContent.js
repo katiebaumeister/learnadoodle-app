@@ -1572,27 +1572,35 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             (updatedEvent.date_local && String(updatedEvent.date_local).trim().slice(0, 10)) ||
             localDateKeyFromTs(updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local) ||
             eventDate.toISOString().split('T')[0];
-          // child_id might be nested or missing on whole-family events (use first of child_ids)
-          const fromChildIds = (ids) =>
-            Array.isArray(ids) && ids.length > 0 && ids[0] != null ? ids[0] : null;
-          const childId =
-            updatedEvent.child_id ||
-            updatedEvent.childId ||
-            updatedEvent.student_id ||
-            fromChildIds(updatedEvent.child_ids) ||
-            (updatedEvent.data &&
-              (updatedEvent.data.child_id ||
-                updatedEvent.data.childId ||
-                updatedEvent.data.student_id ||
-                fromChildIds(updatedEvent.data.child_ids)));
+          const collectChildIds = (candidate) => {
+            const ids = [];
+            if (!candidate || typeof candidate !== 'object') return ids;
+            if (candidate.child_id) ids.push(String(candidate.child_id));
+            if (candidate.childId) ids.push(String(candidate.childId));
+            if (candidate.student_id) ids.push(String(candidate.student_id));
+            if (Array.isArray(candidate.child_ids)) {
+              candidate.child_ids.forEach((id) => {
+                if (id != null) ids.push(String(id));
+              });
+            }
+            return ids;
+          };
+          const movedChildIds = Array.from(
+            new Set([
+              ...collectChildIds(updatedEvent),
+              ...collectChildIds(updatedEvent.data || null),
+            ].filter(Boolean))
+          );
+          const childId = movedChildIds[0] || null;
           
           // Try to get familyId from event if not available from state
           const eventFamilyId = familyId || updatedEvent.family_id || updatedEvent.familyId ||
                                (updatedEvent.data && (updatedEvent.data.family_id || updatedEvent.data.familyId));
           
-          if (!childId || !dateKey || !eventFamilyId) {
+          if (movedChildIds.length === 0 || !dateKey || !eventFamilyId) {
             console.log('[WebContent] Missing required data for conflict detection:', { 
-              childId, 
+              childId,
+              movedChildIds,
               dateKey, 
               familyId,
               eventFamilyId,
@@ -1604,11 +1612,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           }
           
           // Fetch from database to ensure we have the latest (including the just-moved event)
+          const childMatchOr = movedChildIds
+            .map((id) => `child_id.eq.${id},child_ids.cs.{${id}}`)
+            .join(',');
           const { data: dbEvents, error } = await supabase
             .from('events')
             .select('*')
             .eq('family_id', eventFamilyId)
-            .eq('child_id', childId)
+            .or(childMatchOr)
             .gte('start_ts', new Date(dateKey + 'T00:00:00').toISOString())
             .lt('start_ts', new Date(dateKey + 'T23:59:59').toISOString())
             .neq('status', 'canceled')
@@ -1639,6 +1650,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             movedEvent = {
               id: eventId,
               child_id: updatedEvent.child_id,
+              child_ids: Array.isArray(updatedEvent.child_ids) ? updatedEvent.child_ids : movedChildIds,
               start_ts: optimisticStart,
               end_ts: optimisticEnd,
               title: updatedEvent.title || 'Event',
@@ -1674,11 +1686,21 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             // Find the first conflicting event for the banner
             const movedStart = new Date(movedEvent.start_ts || movedEvent.start);
             const movedEnd = new Date(movedEvent.end_ts || movedEvent.end);
-            const movedChildId = movedEvent.child_id;
+            const overlapOnMovedAssignee = (candidateEvent) => {
+              if (!candidateEvent) return false;
+              const candidateIds = [];
+              if (candidateEvent.child_id) candidateIds.push(String(candidateEvent.child_id));
+              if (Array.isArray(candidateEvent.child_ids)) {
+                candidateEvent.child_ids.forEach((id) => {
+                  if (id != null) candidateIds.push(String(id));
+                });
+              }
+              return candidateIds.some((id) => movedChildIds.includes(String(id)));
+            };
             
             let firstConflictEvent = null;
             for (const event of eventsForConflictDetection || []) {
-              if (!event || event.id === eventId || event.child_id !== movedChildId) continue;
+              if (!event || event.id === eventId || !overlapOnMovedAssignee(event)) continue;
               if (event.status === 'canceled' || event.canceled_at || event.deleted_at) continue;
               
               const eventStart = new Date(event.start_ts || event.start);
@@ -1707,6 +1729,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               // The user will decide what to do via the conflict banner
               // Don't fetch database state here - let the user interact with the banner first
               pendingOptimisticUpdatesRef.current.add(eventId);
+              // If this conflict came from a failed API save, persist the overlap move automatically
+              // so a refresh does not snap the event back while the warning/icon UX is still shown.
+              if (apiError && typeof window !== 'undefined') {
+                window.dispatchEvent(
+                  new CustomEvent('persistConflictDragMove', {
+                    detail: { eventId, movedEvent },
+                  }),
+                );
+              }
             } else if (apiError && conflictCount === 0) {
               console.log('[WebContent] No conflicts but API error - fetching database state for event:', eventId);
               // Clear the pending optimistic update flag so merge doesn't preserve the failed optimistic update
@@ -2154,7 +2185,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                       const evStart = new Date(ev.start_ts || ev.start);
                       const evEnd = new Date(ev.end_ts || ev.end);
                       if (isNaN(evStart.getTime()) || isNaN(evEnd.getTime())) continue;
-                      if (candidateStart < evEnd && evStart < candidateEnd && ev.child_id === movedChildId) {
+                      if (candidateStart < evEnd && evStart < candidateEnd && overlapOnMovedAssignee(ev)) {
                         hasConflict = true;
                         break;
                       }
@@ -2264,6 +2295,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               }
               return prev;
             });
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(
+                new CustomEvent('plannerDragConflictResolved', {
+                  detail: { eventId },
+                }),
+              );
+            }
           }
         } catch (err) {
           console.error('[WebContent] Error in conflict detection:', err);
@@ -4454,6 +4492,21 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     }
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.__ldActiveConflictBanner = conflictBanner;
+      if (conflictBanner.visible && conflictBanner.eventId) {
+        window.dispatchEvent(
+          new CustomEvent('plannerDragConflictActive', {
+            detail: {
+              eventId: conflictBanner.eventId,
+              conflictCount: conflictBanner.conflictCount || 0,
+              eventTitle: conflictBanner.eventTitle || 'Event',
+              conflictMessage: conflictBanner.conflictMessage || null,
+              conflictEvent: conflictBanner.conflictEvent || null,
+              movedEvent: conflictBanner.movedEvent || null,
+              timestamp: Date.now(),
+            },
+          }),
+        );
+      }
     }
   }, [conflictBanner.visible, conflictBanner.eventId, conflictBanner.conflictCount]);
 
@@ -4483,41 +4536,109 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
   }, []);
 
+  // Reopen top conflict banner from dismissed-conflicts notifications list.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handleReopenConflictBanner = (event) => {
+      const detail = event?.detail || {};
+      if (!detail?.eventId) return;
+      setConflictBanner({
+        visible: true,
+        eventId: detail.eventId,
+        conflictCount: Number(detail.conflictCount || 0),
+        eventTitle: detail.eventTitle || 'Event',
+        conflictEvent: detail.conflictEvent || null,
+        movedEvent: detail.movedEvent || null,
+        conflictMessage: detail.conflictMessage || null,
+        suggestedChange: null,
+        dismissed: false,
+        timestamp: Date.now(),
+      });
+    };
+    window.addEventListener('plannerDragConflictReopen', handleReopenConflictBanner);
+    return () => {
+      window.removeEventListener('plannerDragConflictReopen', handleReopenConflictBanner);
+    };
+  }, []);
+
   const persistFlexibleConflictMove = useCallback(
     async (id, moved) => {
-      if (!id || !familyId || !moved?.start_ts) return false;
+      if (!id || !moved) return false;
+      const cleanId = cleanPlannerEventId(String(id || ''));
+      if (!cleanId) throw new Error('Missing event id');
       const nextStart = moved.start_ts || moved.start || null;
       const nextEnd = moved.end_ts || moved.end || null;
-      const childIds =
-        Array.isArray(moved.child_ids) && moved.child_ids.length > 0
-          ? moved.child_ids
-          : moved.child_id
-            ? [moved.child_id]
-            : [];
+      if (!nextStart) return false;
+      const collectIds = (value) =>
+        (Array.isArray(value) ? value : [])
+          .map((v) => String(v || '').trim())
+          .filter(Boolean);
+      const childIds = Array.from(
+        new Set([
+          ...collectIds(moved.child_ids),
+          ...collectIds(moved.assignees),
+          ...collectIds(moved?.data?.child_ids),
+          ...collectIds(moved?.data?.assignees),
+        ]),
+      );
+      const primaryChildId =
+        moved.child_id ||
+        moved.childId ||
+        moved.student_id ||
+        moved.assignee ||
+        moved?.data?.child_id ||
+        moved?.data?.childId ||
+        moved?.data?.student_id ||
+        moved?.data?.assignee ||
+        childIds[0] ||
+        null;
+      if (primaryChildId && !childIds.includes(String(primaryChildId))) {
+        childIds.push(String(primaryChildId));
+      }
       const rpcResult = await supabase.rpc('update_event_with_overlap_handling', {
-        _event_id: id,
+        _event_id: cleanId,
         _updates: {
           start_ts: nextStart,
           end_ts: nextEnd,
-          child_id: moved.child_id ?? null,
+          child_id: primaryChildId,
           child_ids: childIds,
           is_flexible: true,
         },
         _allow_overlaps: true,
       });
-      if (rpcResult.error) throw rpcResult.error;
-      if (!rpcResult.data?.ok) {
-        throw new Error(rpcResult.data?.error || 'Could not save overlap change');
+      if (rpcResult.error || !rpcResult.data?.ok) {
+        console.warn('[WebContent] overlap RPC failed, attempting direct flexible update fallback', {
+          rpcError: rpcResult.error,
+          rpcData: rpcResult.data,
+          eventId: cleanId,
+        });
+        let fallbackQuery = supabase
+          .from('events')
+          .update({
+            start_ts: nextStart,
+            end_ts: nextEnd,
+            is_flexible: true,
+            child_id: null,
+            child_ids: childIds,
+          })
+          .eq('id', cleanId);
+        if (familyId) {
+          fallbackQuery = fallbackQuery.eq('family_id', familyId);
+        }
+        const { error: fallbackError } = await fallbackQuery;
+        if (fallbackError) {
+          throw fallbackError;
+        }
       }
 
-      const cleanId = cleanPlannerEventId(String(id || ''));
-      if (!cleanId) throw new Error('Missing event id');
-      const { data: savedEvent, error: fetchError } = await supabase
+      let fetchQuery = supabase
         .from('events')
         .select('*')
-        .eq('id', cleanId)
-        .eq('family_id', familyId)
-        .single();
+        .eq('id', cleanId);
+      if (familyId) {
+        fetchQuery = fetchQuery.eq('family_id', familyId);
+      }
+      const { data: savedEvent, error: fetchError } = await fetchQuery.single();
       if (fetchError) throw fetchError;
 
       pendingOptimisticUpdatesRef.current.delete(id);
@@ -4558,8 +4679,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const handleDragConflictDismiss = useCallback(async () => {
     const id = conflictBanner.eventId;
     const moved = conflictBanner.movedEvent;
+    const hasMovedStart = !!(moved?.start_ts || moved?.start || moved?.start_local);
 
-    if (!id || !familyId || !moved?.start_ts) {
+    if (!id || !familyId || !hasMovedStart) {
       setConflictBanner((prev) => ({
         ...prev,
         visible: false,
@@ -4585,6 +4707,53 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       Alert.alert('Could not save change', err?.message || 'Please try again.');
     }
   }, [conflictBanner.eventId, conflictBanner.movedEvent, familyId, persistFlexibleConflictMove]);
+
+  const handleDragConflictDismissToNotifications = useCallback(async () => {
+    const id = conflictBanner.eventId;
+    const moved = conflictBanner.movedEvent;
+    const hasMovedStart = !!(moved?.start_ts || moved?.start || moved?.start_local);
+    const emitDismissed = () => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && id) {
+        window.dispatchEvent(
+          new CustomEvent('plannerDragConflictDismissed', {
+            detail: {
+              eventId: id,
+              conflictCount: conflictBanner.conflictCount || 0,
+              eventTitle: conflictBanner.eventTitle || 'Event',
+              conflictMessage: conflictBanner.conflictMessage || null,
+              conflictEvent: conflictBanner.conflictEvent || null,
+              movedEvent: moved || null,
+              timestamp: Date.now(),
+            },
+          }),
+        );
+      }
+    };
+
+    // Keep previous UX: dismiss hides banner immediately.
+    setConflictBanner((prev) => ({
+      ...prev,
+      visible: false,
+      dismissed: true,
+      timestamp: Date.now(),
+    }));
+    emitDismissed();
+
+    if (!id || !familyId || !hasMovedStart) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+      }
+      return;
+    }
+
+    try {
+      // Dismiss should keep the dragged placement, same persistence semantics as "Save anyway".
+      await persistFlexibleConflictMove(id, moved);
+    } catch (err) {
+      console.error('[WebContent] Failed to persist dismissed conflict drag move:', err);
+      Alert.alert('Could not save change', err?.message || 'Please try again.');
+    }
+  }, [conflictBanner, familyId, persistFlexibleConflictMove]);
 
   const handleDragConflictQuickReschedule = useCallback(() => {
     const ev = conflictBanner.movedEvent;
@@ -8724,6 +8893,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             familyId={familyId}
             onQuickReschedule={handleDragConflictQuickReschedule}
             onDismiss={handleDragConflictDismiss}
+            onDismissToNotifications={handleDragConflictDismissToNotifications}
             onSuggestionAccepted={handleDragConflictSuggestionAccepted}
         onSuggestionComputed={(suggestedChange) => {
           setConflictBanner((prev) =>

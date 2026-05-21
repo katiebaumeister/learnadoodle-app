@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
 import { AlertCircle, Check } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { colors } from '../../theme/colors';
 import {
   LearnerPill,
   resolveLearnerChild,
@@ -28,6 +29,7 @@ export default function DragDropConflictBanner({
   familyId, // Family ID for fetching events
   onQuickReschedule,
   onDismiss,
+  onDismissToNotifications,
   onSuggestionAccepted, // Callback when suggestion is accepted: (newStart, newEnd) => void
   onSuggestionComputed,
 }) {
@@ -365,30 +367,45 @@ export default function DragDropConflictBanner({
             </>
           )}
         </View>
-        <View style={cb.bannerActionsRow}>
+        <View style={styles.actionsWrap}>
           <TouchableOpacity
             {...(Platform.OS === 'web' && { type: 'button' })}
-            style={cb.primaryButton}
-            onPress={handleAdjustAutomatically}
-            disabled={loading}
-          >
-            <Text style={cb.primaryButtonText}>
-              {loading ? 'Calculating...' : 'Adjust automatically'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            {...(Platform.OS === 'web' && { type: 'button' })}
-            style={cb.ghostButton}
+            style={styles.dismissInlineButton}
             onPress={(e) => {
               if (Platform.OS === 'web' && e) {
                 e.preventDefault();
                 e.stopPropagation();
               }
-              onDismiss();
+              onDismissToNotifications?.();
             }}
           >
-            <Text style={cb.ghostButtonText}>Save anyway</Text>
+            <Text style={styles.dismissInlineText}>Dismiss</Text>
           </TouchableOpacity>
+          <View style={cb.bannerActionsRow}>
+            <TouchableOpacity
+              {...(Platform.OS === 'web' && { type: 'button' })}
+              style={cb.primaryButton}
+              onPress={handleAdjustAutomatically}
+              disabled={loading}
+            >
+              <Text style={cb.primaryButtonText}>
+                {loading ? 'Calculating...' : 'Adjust automatically'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              {...(Platform.OS === 'web' && { type: 'button' })}
+              style={[cb.primaryButton, styles.primaryPurpleButton]}
+              onPress={(e) => {
+                if (Platform.OS === 'web' && e) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+                onDismiss();
+              }}
+            >
+              <Text style={cb.primaryButtonText}>Save anyway</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </Animated.View>
@@ -396,6 +413,30 @@ export default function DragDropConflictBanner({
 }
 
 const styles = StyleSheet.create({
+  actionsWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
+    marginLeft: 'auto',
+  },
+  dismissInlineButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+  },
+  dismissInlineText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  primaryPurpleButton: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
   suggestedBanner: {
     backgroundColor: '#F4FAF7',
     borderRadius: 12,

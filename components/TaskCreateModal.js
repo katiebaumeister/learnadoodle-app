@@ -1690,9 +1690,9 @@ export default function TaskCreateModal({
   );
 
   const createOverlapAllowedEventFallback = useCallback(
-    async ({ title, startDate, endDate, childIds, eventType, minutes, recurrenceRule }) => {
+    async ({ title, startDate, endDate, childIds, eventType, minutes, recurrenceRule, resolvedFamilyId }) => {
       const insertPayload = {
-        family_id: familyId,
+        family_id: resolvedFamilyId || familyId,
         child_id: null,
         child_ids: childIds && childIds.length > 0 ? childIds : [],
         title: title.trim(),
@@ -2302,15 +2302,14 @@ export default function TaskCreateModal({
           }
         } else {
           // Single day event (original logic)
-          // Use RPC function to bypass RLS issues
-          const rpcParams = {
+          const buildRpcParams = (eventStart, eventEnd, ruleOverride = recurrenceRule) => ({
             _family_id: userFamilyId,
             _child_id: childId,
             _child_ids: childIds,
             _title: title.trim(),
-            _start_ts: startDate.toISOString(),
+            _start_ts: eventStart.toISOString(),
             _description: notes.trim() || null,
-            _end_ts: endDate?.toISOString(),
+            _end_ts: eventEnd?.toISOString(),
             _status: 'scheduled',
             _source: 'manual',
             _tags: null,
@@ -2329,32 +2328,96 @@ export default function TaskCreateModal({
             _goal_link: goalLink || null,
             _minutes: minutes,
             _materials_attachment_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : null,
-            _recurrence_rule: recurrenceRule ? JSON.stringify(recurrenceRule) : null,
-          };
-          
-          // Only include _allow_overlaps if we need to allow overlaps (backward compatibility)
-          if (shouldAllowOverlaps && createTaskEventAllowOverlapsSupported) {
-            rpcParams._allow_overlaps = true;
-            console.log('[TaskCreateModal] Allowing overlaps - _allow_overlaps=true, shouldAllowOverlaps=', shouldAllowOverlaps);
-          }
-          
-          console.log('[TaskCreateModal] Calling create_task_event with params:', { ...rpcParams, _tags: rpcParams._tags?.length || 0 });
-          let { data: rpcData, error: rpcError } = await supabase.rpc('create_task_event', rpcParams);
+            _recurrence_rule: ruleOverride ? JSON.stringify(ruleOverride) : null,
+          });
 
-          // If function not found error and we're trying to allow overlaps, retry without the parameter
-          // This handles the case where the migration hasn't been run yet
-          if (rpcError && rpcError.message && rpcError.message.includes('Could not find the function') && shouldAllowOverlaps) {
-            createTaskEventAllowOverlapsSupported = false;
-            console.warn('[TaskCreateModal] Function does not support _allow_overlaps yet, retrying without it');
-            delete rpcParams._allow_overlaps;
-            const retryResult = await supabase.rpc('create_task_event', rpcParams);
-            rpcData = retryResult.data;
-            rpcError = retryResult.error;
-            // If it still fails with overlap error, show a message that migration is needed
-            if (rpcError && rpcError.message && rpcError.message.includes('overlap')) {
-              error = { message: 'Event overlaps with existing event. Please run the database migration to enable "Save anyway" functionality, or use "Adjust automatically" instead.' };
-              data = null;
+          const invokeCreateTaskEvent = async (rawParams) => {
+            const rpcParams = { ...rawParams };
+            // Only include _allow_overlaps if we need to allow overlaps (backward compatibility)
+            if (shouldAllowOverlaps && createTaskEventAllowOverlapsSupported) {
+              rpcParams._allow_overlaps = true;
+              console.log('[TaskCreateModal] Allowing overlaps - _allow_overlaps=true, shouldAllowOverlaps=', shouldAllowOverlaps);
             }
+            console.log('[TaskCreateModal] Calling create_task_event with params:', { ...rpcParams, _tags: rpcParams._tags?.length || 0 });
+            let { data: rpcData, error: rpcError } = await supabase.rpc('create_task_event', rpcParams);
+
+            // If function not found error and we're trying to allow overlaps, retry without the parameter
+            // This handles the case where the migration hasn't been run yet
+            if (rpcError && rpcError.message && rpcError.message.includes('Could not find the function') && shouldAllowOverlaps) {
+              createTaskEventAllowOverlapsSupported = false;
+              console.warn('[TaskCreateModal] Function does not support _allow_overlaps yet, retrying without it');
+              delete rpcParams._allow_overlaps;
+              const retryResult = await supabase.rpc('create_task_event', rpcParams);
+              rpcData = retryResult.data;
+              rpcError = retryResult.error;
+            }
+
+            return { rpcData, rpcError };
+          };
+
+          let rpcData;
+          let rpcError;
+
+          const selectedWeekdays = recurrenceType === 'weekly'
+            ? Array.from(
+              new Set(
+                (Array.isArray(recurrenceWeekdays) ? recurrenceWeekdays : [])
+                  .map((d) => Number(d))
+                  .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+              )
+            )
+            : [];
+          const shouldSplitWeeklySeries = !!(
+            recurrenceRule
+            && recurrenceType === 'weekly'
+            && selectedWeekdays.length > 1
+            && !(Number.isFinite(Number(recurrenceRule?.count)) && Number(recurrenceRule?.count) > 0)
+          );
+
+          if (shouldSplitWeeklySeries) {
+            console.log('[TaskCreateModal] Weekly recurrence has multiple weekdays; creating one recurring series per selected weekday.');
+            const durationMs = Math.max((endDate?.getTime?.() || 0) - startDate.getTime(), DEFAULT_DURATION_MINUTES * 60 * 1000);
+            const createdSeriesIds = [];
+
+            for (const weekday of selectedWeekdays) {
+              const daysUntilWeekday = (weekday - startDate.getDay() + 7) % 7;
+              const seriesStart = new Date(startDate);
+              seriesStart.setDate(seriesStart.getDate() + daysUntilWeekday);
+              const seriesEnd = new Date(seriesStart.getTime() + durationMs);
+              const weekdayRrule = WEEKDAY_OPTIONS.find((opt) => opt.value === weekday)?.rrule || null;
+              const seriesRule = {
+                ...recurrenceRule,
+                byweekday: weekdayRrule ? [weekdayRrule] : undefined,
+              };
+              if (!weekdayRrule) {
+                delete seriesRule.byweekday;
+              }
+
+              const seriesResult = await invokeCreateTaskEvent(buildRpcParams(seriesStart, seriesEnd, seriesRule));
+              rpcData = seriesResult.rpcData;
+              rpcError = seriesResult.rpcError;
+              if (rpcError || !rpcData?.ok) {
+                break;
+              }
+              if (rpcData?.id) {
+                createdSeriesIds.push(rpcData.id);
+              }
+            }
+
+            if (!rpcError && createdSeriesIds.length > 0) {
+              // Return the first created series event for downstream patching and callbacks.
+              rpcData = { ok: true, id: createdSeriesIds[0] };
+            }
+          } else {
+            const singleResult = await invokeCreateTaskEvent(buildRpcParams(startDate, endDate, recurrenceRule));
+            rpcData = singleResult.rpcData;
+            rpcError = singleResult.rpcError;
+          }
+
+          // If it still fails with overlap error, show a message that migration is needed
+          if (rpcError && rpcError.message && rpcError.message.includes('overlap') && shouldAllowOverlaps) {
+            error = { message: 'Event overlaps with existing event. Please run the database migration to enable "Save anyway" functionality, or use "Adjust automatically" instead.' };
+            data = null;
           }
 
           if (rpcError || !rpcData?.ok) {
@@ -2373,6 +2436,7 @@ export default function TaskCreateModal({
                   eventType,
                   minutes,
                   recurrenceRule: recurrenceRule ? recurrenceRule : null,
+                  resolvedFamilyId: userFamilyId,
                 });
                 error = null;
               } catch (fallbackError) {

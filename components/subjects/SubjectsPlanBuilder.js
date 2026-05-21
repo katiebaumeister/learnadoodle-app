@@ -73,6 +73,35 @@ function getPresentAcademicScope(now = new Date()) {
   };
 }
 
+function buildSchoolYearOptionFromScope(scope) {
+  const startYear = Number(scope?.startYear);
+  const endYear = Number(scope?.endYear);
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return null;
+  return {
+    id: `${startYear}-${endYear}`,
+    label: `${startYear}/${String(endYear).slice(-2)}`,
+    start_year: startYear,
+    end_year: endYear,
+  };
+}
+
+function getInitialSchoolYearState(now = new Date()) {
+  const present = getPresentAcademicScope(now);
+  const fallbackOption = buildSchoolYearOptionFromScope(present);
+  const cachedOptions = Array.isArray(schoolYearTemplateCache) && schoolYearTemplateCache.length > 0
+    ? schoolYearTemplateCache
+    : (fallbackOption ? [fallbackOption] : []);
+  const matching = cachedOptions.find(
+    (opt) => Number(opt?.start_year) === present.startYear && Number(opt?.end_year) === present.endYear
+  );
+  const selectedOption = matching || cachedOptions[0] || fallbackOption || null;
+  return {
+    options: cachedOptions,
+    selectedId: selectedOption?.id || null,
+    selectedLabel: String(selectedOption?.label || '').trim() || null,
+  };
+}
+
 function formatScheduleScopeLabel(scopeId) {
   if (scopeId === 'fall_term') return 'Fall Term';
   if (scopeId === 'spring_term') return 'Spring Term';
@@ -1206,6 +1235,7 @@ export default function SubjectsPlanBuilder({
 }) {
   const toast = useToast();
   const presentScope = useMemo(() => getPresentAcademicScope(new Date()), []);
+  const initialSchoolYearState = useMemo(() => getInitialSchoolYearState(new Date()), []);
   const [surfaceMode, setSurfaceMode] = useState('home'); // home | builder
   const [overviewReloadKey, setOverviewReloadKey] = useState(0);
   const [overviewLoading, setOverviewLoading] = useState(() => !getCachedOverview(familyId));
@@ -1217,16 +1247,8 @@ export default function SubjectsPlanBuilder({
   const [planSubjectIdsBySlot, setPlanSubjectIdsBySlot] = useState(() => getCachedOverview(familyId)?.planSubjectIdsBySlot || {});
   const [planSubjectNamesBySlot, setPlanSubjectNamesBySlot] = useState(() => getCachedOverview(familyId)?.planSubjectNamesBySlot || {});
   const hasValidFamilyId = useMemo(() => isUuidLike(familyId), [familyId]);
-  const [loadingYears, setLoadingYears] = useState(() => !Array.isArray(schoolYearTemplateCache) || schoolYearTemplateCache.length === 0);
-  const [schoolYearOptions, setSchoolYearOptions] = useState(() => (Array.isArray(schoolYearTemplateCache) ? schoolYearTemplateCache : []));
-  const [selectedSchoolYearId, setSelectedSchoolYearId] = useState(() => {
-    if (!Array.isArray(schoolYearTemplateCache) || schoolYearTemplateCache.length === 0) return null;
-    const present = getPresentAcademicScope(new Date());
-    const matching = schoolYearTemplateCache.find(
-      (opt) => Number(opt?.start_year) === present.startYear && Number(opt?.end_year) === present.endYear
-    );
-    return matching?.id || schoolYearTemplateCache[0]?.id || null;
-  });
+  const [schoolYearOptions, setSchoolYearOptions] = useState(() => initialSchoolYearState.options);
+  const [selectedSchoolYearId, setSelectedSchoolYearId] = useState(() => initialSchoolYearState.selectedId);
   const [selectedTerm, setSelectedTerm] = useState(() => presentScope.termId);
   const lastAppliedScopeYearFilterRef = useRef(null);
   const [buildWithDefaults, setBuildWithDefaults] = useState(true);
@@ -1242,10 +1264,22 @@ export default function SubjectsPlanBuilder({
   const yearTargetChevronAnimByIdRef = useRef({});
   const yearTargetSuggestionAnimByIdRef = useRef({});
   const [blocksBySubject, setBlocksBySubject] = useState({});
-  const [instructionalEventsBySubject, setInstructionalEventsBySubject] = useState({});
-  const [classDayInstructionalEvents, setClassDayInstructionalEvents] = useState([]);
-  const [attendedDayKeysBySubject, setAttendedDayKeysBySubject] = useState({});
-  const [yearTargetProjectionBySubject, setYearTargetProjectionBySubject] = useState({});
+  const [instructionalEventsBySubject, setInstructionalEventsBySubject] = useState(() => {
+    const cached = getCachedScheduleSupplement(familyId, initialSchoolYearState.selectedLabel);
+    return cached?.instructionalEventsBySubject || {};
+  });
+  const [classDayInstructionalEvents, setClassDayInstructionalEvents] = useState(() => {
+    const cached = getCachedScheduleSupplement(familyId, initialSchoolYearState.selectedLabel);
+    return Array.isArray(cached?.classDayInstructionalEvents) ? cached.classDayInstructionalEvents : [];
+  });
+  const [attendedDayKeysBySubject, setAttendedDayKeysBySubject] = useState(() => {
+    const cached = getCachedScheduleSupplement(familyId, initialSchoolYearState.selectedLabel);
+    return cached?.attendedDayKeysBySubject || {};
+  });
+  const [yearTargetProjectionBySubject, setYearTargetProjectionBySubject] = useState(() => {
+    const cached = getCachedScheduleSupplement(familyId, initialSchoolYearState.selectedLabel);
+    return cached?.yearTargetProjectionBySubject || {};
+  });
   const [showSubjectEventsModal, setShowSubjectEventsModal] = useState(false);
   const [subjectEventsModalData, setSubjectEventsModalData] = useState({
     subjectName: '',
@@ -1353,15 +1387,21 @@ export default function SubjectsPlanBuilder({
   const [eventsRefreshKey, setEventsRefreshKey] = useState(0);
   const consumedPendingScheduleRequestRef = useRef(null);
   const scheduleSupplementSyncedKeysRef = useRef(new Set());
-  const [familyPlannerSettings, setFamilyPlannerSettings] = useState({
-    target_scope: 'overall',
-    default_constraint_mode: 'none',
-    default_target_days: null,
-    default_target_hours: null,
-    allowed_weekdays: [1, 2, 3, 4, 5],
+  const [familyPlannerSettings, setFamilyPlannerSettings] = useState(() => {
+    const cached = getCachedScheduleSupplement(familyId, initialSchoolYearState.selectedLabel);
+    return cached?.familyPlannerSettings || {
+      target_scope: 'overall',
+      default_constraint_mode: 'none',
+      default_target_days: null,
+      default_target_hours: null,
+      allowed_weekdays: [1, 2, 3, 4, 5],
+    };
   });
   const [uiAttendanceModeOverride, setUiAttendanceModeOverride] = useState(null);
-  const [subjectTargetSettingsById, setSubjectTargetSettingsById] = useState({});
+  const [subjectTargetSettingsById, setSubjectTargetSettingsById] = useState(() => {
+    const cached = getCachedScheduleSupplement(familyId, initialSchoolYearState.selectedLabel);
+    return cached?.subjectTargetSettingsById || {};
+  });
 
   const baseSubjects = useMemo(() => {
     if (Array.isArray(allSubjects) && allSubjects.length > 0) return allSubjects;
@@ -1373,8 +1413,6 @@ export default function SubjectsPlanBuilder({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const hasCachedYears = Array.isArray(schoolYearTemplateCache) && schoolYearTemplateCache.length > 0;
-      if (!hasCachedYears) setLoadingYears(true);
       const { data, error } = await supabase
         .from('school_year_templates')
         .select('id, start_year, end_year, label')
@@ -1387,7 +1425,6 @@ export default function SubjectsPlanBuilder({
         schoolYearTemplateCache = fallback;
         setSchoolYearOptions(fallback);
         setSelectedSchoolYearId(fallback[0].id);
-        setLoadingYears(false);
         return;
       }
       const mapped = data.map((row) => ({
@@ -1405,7 +1442,6 @@ export default function SubjectsPlanBuilder({
         );
         return matching?.id || mapped[0]?.id || null;
       });
-      setLoadingYears(false);
     })();
     return () => { cancelled = true; };
   }, [presentScope.startYear, presentScope.endYear]);
@@ -1465,13 +1501,13 @@ export default function SubjectsPlanBuilder({
   }, [activeScheduleCore?.row?.start_date, activeScheduleCore?.row?.attendance_tracking_mode, selectedYearStart]);
   const resolvedAttendanceTrackingMode = useMemo(() => (
     getAttendanceMode({
-      // Source of truth is the selected academic year mode.
-      // family_planner_settings is compatibility fallback only.
+      // Keep this aligned with Planning Preferences:
+      // use saved planner settings for the selected school year first.
       academicYearMode: uiAttendanceModeOverride
+        || familyPlannerSettings?.attendance_tracking_mode
         || selectedYearAcademicMode
         || displaySchoolYear?.attendance_tracking_mode
-        || activeCoreModeForSelectedYear
-        || familyPlannerSettings?.attendance_tracking_mode,
+        || activeCoreModeForSelectedYear,
       plannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode,
     })
   ), [
@@ -1483,10 +1519,10 @@ export default function SubjectsPlanBuilder({
   ]);
   const resolvedAttendanceTrackingModeSource = useMemo(() => {
     if (uiAttendanceModeOverride) return 'ui_override';
+    if (familyPlannerSettings?.attendance_tracking_mode) return 'family_planner_settings';
     if (selectedYearAcademicMode) return 'selected_year_academic_year';
     if (displaySchoolYear?.attendance_tracking_mode) return 'display_school_year';
     if (activeCoreModeForSelectedYear) return 'active_schedule_core_selected_year';
-    if (familyPlannerSettings?.attendance_tracking_mode) return 'family_planner_settings';
     return 'default';
   }, [
     uiAttendanceModeOverride,
@@ -2644,16 +2680,31 @@ export default function SubjectsPlanBuilder({
         return 180;
       })();
       const fallbackSubjects = Array.isArray(homeSlotScopedSubjects) ? homeSlotScopedSubjects : [];
-      const fallbackSubjectNames = [...new Set(
-        fallbackSubjects
+      const selectedStartYear = Number(displaySchoolYear?.start_year);
+      const selectedScopeId = normalizeSubjectTerm(displayTerm);
+      const fallbackSlotKey = buildPlanSlotKey(selectedStartYear, selectedScopeId);
+      const fallbackFullYearSlotKey = buildPlanSlotKey(selectedStartYear, 'full_year');
+      const slotScopedSubjectNames = [
+        ...(Array.isArray(planSubjectNamesBySlot?.[fallbackSlotKey]) ? planSubjectNamesBySlot[fallbackSlotKey] : []),
+        ...(Array.isArray(planSubjectNamesBySlot?.[fallbackFullYearSlotKey]) ? planSubjectNamesBySlot[fallbackFullYearSlotKey] : []),
+      ].map((name) => String(name || '').trim()).filter(Boolean);
+      const slotScopedSubjectIds = [
+        ...(Array.isArray(planSubjectIdsBySlot?.[fallbackSlotKey]) ? planSubjectIdsBySlot[fallbackSlotKey] : []),
+        ...(Array.isArray(planSubjectIdsBySlot?.[fallbackFullYearSlotKey]) ? planSubjectIdsBySlot[fallbackFullYearSlotKey] : []),
+      ].map((id) => String(id || '').trim()).filter(Boolean);
+      const fallbackSubjectNames = [...new Set([
+        ...fallbackSubjects
           .map((subject) => String(subject?.name || '').trim())
-          .filter(Boolean)
-      )];
-      const fallbackSubjectIds = [...new Set(
-        fallbackSubjects
+          .filter(Boolean),
+        ...slotScopedSubjectNames,
+        ...(Array.isArray(subjectsWithAnyPlanNames) ? subjectsWithAnyPlanNames.map((name) => String(name || '').trim()).filter(Boolean) : []),
+      ])];
+      const fallbackSubjectIds = [...new Set([
+        ...fallbackSubjects
           .map((subject) => String(subject?.id || '').trim())
-          .filter(Boolean)
-      )];
+          .filter(Boolean),
+        ...slotScopedSubjectIds,
+      ])];
       const fallbackRangeStartYmd = String(
         familyPlannerSettings?.default_year_start_date
         || ''
@@ -2768,7 +2819,16 @@ export default function SubjectsPlanBuilder({
       rows: overallRows,
     });
     return overallRows;
-  }, [yearTargetSummary, familyPlannerSettings, homeSlotScopedSubjects]);
+  }, [
+    yearTargetSummary,
+    familyPlannerSettings,
+    homeSlotScopedSubjects,
+    planSubjectNamesBySlot,
+    planSubjectIdsBySlot,
+    displaySchoolYear?.start_year,
+    displayTerm,
+    subjectsWithAnyPlanNames,
+  ]);
 
   const subjectPlans = useMemo(() => {
     const selectedStartYear = Number(displaySchoolYear?.start_year);
@@ -6618,11 +6678,11 @@ export default function SubjectsPlanBuilder({
                   activeOpacity={0.85}
                 >
                   <Text style={styles.planningModeHeaderTriggerText}>
-                    {loadingYears ? 'School Year' : (selectedSchoolYear?.label || 'School Year')}
+                    {selectedSchoolYear?.label || initialSchoolYearState.selectedLabel || 'School Year'}
                   </Text>
                   {showYearDropdown ? <ChevronUp size={16} color={SUB} /> : <ChevronDown size={16} color={SUB} />}
                 </TouchableOpacity>
-                {showYearDropdown && !loadingYears ? (
+                {showYearDropdown ? (
                   <View style={styles.dropdownOptions}>
                     {schoolYearOptions.map((opt) => {
                       const active = String(opt.id) === String(selectedSchoolYearId || '');
