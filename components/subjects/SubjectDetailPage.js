@@ -411,7 +411,6 @@ export default function SubjectDetailPage({
   const [loading, setLoading] = useState(!preloadedSubjectData);
   const [error, setError] = useState(null);
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
-  const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showExportComingSoonModal, setShowExportComingSoonModal] = useState(false);
   const [showPastEventsAttendanceModal, setShowPastEventsAttendanceModal] = useState(false);
   const [showPastEventsGradesModal, setShowPastEventsGradesModal] = useState(false);
@@ -431,6 +430,7 @@ export default function SubjectDetailPage({
   const [subjectPlanYearId, setSubjectPlanYearId] = useState(null);
   const [subjectPlanData, setSubjectPlanData] = useState(null);
   const [attendanceViewMode, setAttendanceViewMode] = useState('list');
+  const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showAttendanceGapSuggestion, setShowAttendanceGapSuggestion] = useState(false);
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
   const [applyingAttendanceSuggestion, setApplyingAttendanceSuggestion] = useState(false);
@@ -589,7 +589,12 @@ export default function SubjectDetailPage({
 
   const formatDate = useCallback((dateString) => {
     if (!dateString) return null;
+    const ymd = String(dateString || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+      return formatDateDisplayYmd(ymd);
+    }
     const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return String(dateString).slice(0, 10);
     return date.toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
@@ -1153,6 +1158,7 @@ export default function SubjectDetailPage({
   // Process attendance at day-level so attendance chips align with day-based targets.
   const attendance30Days = useMemo(() => {
     const byDay = new Map();
+    const todayYmd = new Date().toISOString().slice(0, 10);
     attendanceRecordsForUI.forEach((record) => {
       const dayKey = String(record?.day_date || '').slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
@@ -1162,7 +1168,7 @@ export default function SubjectDetailPage({
       }
       const bucket = byDay.get(dayKey);
       if (status === 'present') bucket.hasPresent = true;
-      if (status === 'absent') bucket.hasAbsent = true;
+      if (status === 'absent' && dayKey <= todayYmd) bucket.hasAbsent = true;
     });
 
     let present = 0;
@@ -1172,8 +1178,22 @@ export default function SubjectDetailPage({
       if (bucket.hasPresent) present += 1;
       else if (bucket.hasAbsent) absent += 1;
     });
-    return { present, absent, total: byDay.size };
-  }, [attendanceRecordsForUI]);
+    const upcomingDaySet = new Set();
+    (subjectEvents || []).forEach((event) => {
+      if (String(event?.status || '').toLowerCase() === 'canceled') return;
+      const dayKey = String(getEventDateKey(event) || '').slice(0, 10);
+      if (!dayKey || dayKey <= todayYmd) return;
+      const bucket = byDay.get(dayKey);
+      if (bucket?.hasPresent || bucket?.hasAbsent) return;
+      upcomingDaySet.add(dayKey);
+    });
+    return {
+      present,
+      absent,
+      upcoming: upcomingDaySet.size,
+      total: present + absent,
+    };
+  }, [attendanceRecordsForUI, subjectEvents, getEventDateKey]);
   const attendanceRate30Display = useMemo(() => {
     if (attendanceRate30 !== null && attendanceRate30 !== undefined && !isNaN(attendanceRate30)) {
       return attendanceRate30;
@@ -1188,6 +1208,22 @@ export default function SubjectDetailPage({
   const attendanceRecordsListUI = useMemo(() => {
     const records = Array.isArray(attendanceRecordsForUI) ? attendanceRecordsForUI : [];
     const attendanceByEventId = new Map();
+    const recordPreviewByEventId = new Map();
+    const resolveStatusPresentation = ({ hasAttended = false, hasUnattended = false, isUpcoming = false } = {}) => {
+      if (hasAttended) return { statusLabel: 'Attended', statusTone: 'attended' };
+      if (hasUnattended) return { statusLabel: 'Unattended', statusTone: 'unattended' };
+      if (isUpcoming) return { statusLabel: 'Upcoming', statusTone: 'upcoming' };
+      return { statusLabel: 'Unattended', statusTone: 'unattended' };
+    };
+    const normalizeMinutes = (value, fallback = 60) => {
+      const mins = Number(value);
+      return Number.isFinite(mins) && mins > 0 ? mins : fallback;
+    };
+    const statusPriority = {
+      attended: 3,
+      unattended: 2,
+      upcoming: 1,
+    };
     records.forEach((record) => {
       const eventId = String(record?.event_id || '').trim();
       if (!eventId) return;
@@ -1202,8 +1238,11 @@ export default function SubjectDetailPage({
       const mins = Number(record?.minutes);
       if (Number.isFinite(mins) && mins > prev.minutes) prev.minutes = mins;
       attendanceByEventId.set(eventId, prev);
+      if (!recordPreviewByEventId.has(eventId)) recordPreviewByEventId.set(eventId, record);
     });
 
+    const nowMs = Date.now();
+    const todayYmd = new Date(nowMs).toISOString().slice(0, 10);
     const eventRows = (subjectEvents || [])
       .filter((event) => event && event?.is_backlog !== true && String(event?.status || '').toLowerCase() !== 'canceled')
       .map((event) => {
@@ -1211,20 +1250,13 @@ export default function SubjectDetailPage({
         const tsRaw = event?.start_ts || event?.due_ts || event?.end_ts || null;
         const tsMs = tsRaw ? new Date(tsRaw).getTime() : NaN;
         const dayKey = tsRaw && Number.isFinite(tsMs) ? String(tsRaw).slice(0, 10) : '';
-        const isUpcoming = Number.isFinite(tsMs) && tsMs > Date.now();
+        const isUpcoming = Number.isFinite(tsMs) && tsMs > nowMs;
         const attendanceMeta = attendanceByEventId.get(eventId);
-        let statusLabel = 'Unattended';
-        let statusTone = 'unattended';
-        if (attendanceMeta?.hasAttended) {
-          statusLabel = 'Attended';
-          statusTone = 'attended';
-        } else if (attendanceMeta?.hasUnattended) {
-          statusLabel = 'Unattended';
-          statusTone = 'unattended';
-        } else if (isUpcoming) {
-          statusLabel = 'Upcoming';
-          statusTone = 'upcoming';
-        }
+        const { statusLabel, statusTone } = resolveStatusPresentation({
+          hasAttended: attendanceMeta?.hasAttended === true,
+          hasUnattended: attendanceMeta?.hasUnattended === true,
+          isUpcoming,
+        });
         const eventMinutes = (() => {
           if (Number.isFinite(attendanceMeta?.minutes) && attendanceMeta.minutes > 0) return attendanceMeta.minutes;
           const durationMinutes = Number(event?.duration_minutes);
@@ -1246,11 +1278,80 @@ export default function SubjectDetailPage({
           statusTone,
           sortTs: Number.isFinite(tsMs) ? tsMs : 0,
         };
-      })
-      .sort((a, b) => Number(a.sortTs || 0) - Number(b.sortTs || 0));
+      });
 
-    return eventRows;
+    const listedEventIds = new Set(
+      eventRows.map((row) => String(row?.event_id || '').trim()).filter(Boolean)
+    );
+    const orphanRows = [...attendanceByEventId.entries()]
+      .filter(([eventId]) => !listedEventIds.has(String(eventId || '').trim()))
+      .map(([eventId, attendanceMeta]) => {
+        const preview = recordPreviewByEventId.get(eventId) || {};
+        const dayKey = String(preview?.day_date || '').slice(0, 10);
+        const tsMs = /^\d{4}-\d{2}-\d{2}$/.test(dayKey)
+          ? new Date(`${dayKey}T12:00:00`).getTime()
+          : NaN;
+        const isUpcoming = Number.isFinite(tsMs) && tsMs > nowMs;
+        const { statusLabel, statusTone } = resolveStatusPresentation({
+          hasAttended: attendanceMeta?.hasAttended === true,
+          hasUnattended: attendanceMeta?.hasUnattended === true,
+          isUpcoming,
+        });
+        return {
+          id: `orphan-event-row-${eventId}`,
+          event_id: eventId,
+          day_date: dayKey,
+          minutes: normalizeMinutes(attendanceMeta?.minutes, 60),
+          title: String(preview?.title || 'Lesson').trim() || 'Lesson',
+          statusLabel,
+          statusTone,
+          sortTs: Number.isFinite(tsMs) ? tsMs : 0,
+        };
+      });
+
+    const recordOnlyRowsByKey = new Map();
+    records.forEach((record, idx) => {
+      const eventId = String(record?.event_id || '').trim();
+      if (eventId) return;
+      const dayKey = String(record?.day_date || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
+      const title = 'Lesson';
+      const rowKey = `${dayKey}|${title}`;
+      const status = String(record?.status || '').toLowerCase();
+      const { statusLabel: nextLabel, statusTone: nextTone } = resolveStatusPresentation({
+        hasAttended: status === 'present' || status === 'partial',
+        hasUnattended: status === 'absent',
+        isUpcoming: dayKey > todayYmd,
+      });
+      const nextMinutes = normalizeMinutes(record?.minutes, 60);
+      const tsMs = new Date(`${dayKey}T12:00:00`).getTime();
+      const existing = recordOnlyRowsByKey.get(rowKey);
+      if (!existing) {
+        recordOnlyRowsByKey.set(rowKey, {
+          id: `record-only-row-${rowKey}-${idx}`,
+          event_id: null,
+          day_date: dayKey,
+          minutes: nextMinutes,
+          title,
+          statusLabel: nextLabel,
+          statusTone: nextTone,
+          sortTs: Number.isFinite(tsMs) ? tsMs : 0,
+        });
+        return;
+      }
+      if ((statusPriority[nextTone] || 0) > (statusPriority[existing.statusTone] || 0)) {
+        existing.statusTone = nextTone;
+        existing.statusLabel = nextLabel;
+      }
+      if (nextMinutes > Number(existing.minutes || 0)) existing.minutes = nextMinutes;
+    });
+
+    return [...eventRows, ...orphanRows, ...recordOnlyRowsByKey.values()]
+      .sort((a, b) => Number(b.sortTs || 0) - Number(a.sortTs || 0));
   }, [attendanceRecordsForUI, subjectEvents]);
+  useEffect(() => {
+    setShowAttendanceExpanded(false);
+  }, [attendanceViewMode, subject?.id]);
 
   const attendanceTargetProgress = useMemo(() => {
     const sid = String(subject?.id || '').trim();
@@ -1837,7 +1938,7 @@ export default function SubjectDetailPage({
               <Text style={styles.attendanceCountLabel}>Count</Text>
               <View style={styles.attendanceChips}>
                 <View style={styles.attendanceChip}>
-                  <CheckCircle size={14} color="#10B981" />
+                  <CheckCircle size={14} color="#6BB3E8" />
                   <Text style={styles.attendanceChipText}>
                     {attendance30Days.present} Attended
                   </Text>
@@ -1846,6 +1947,12 @@ export default function SubjectDetailPage({
                   <XCircle size={14} color="#EF4444" />
                   <Text style={styles.attendanceChipText}>
                     {attendance30Days.absent} Unattended
+                  </Text>
+                </View>
+                <View style={styles.attendanceChip}>
+                  <CheckCircle size={14} color="#C7DDF6" />
+                  <Text style={styles.attendanceChipText}>
+                    {attendance30Days.upcoming || 0} Upcoming
                   </Text>
                 </View>
               </View>
@@ -2919,7 +3026,7 @@ export default function SubjectDetailPage({
                           );
                         })}
                       </View>
-                      {attendanceRecordsListUI.length > ATTENDANCE_LIST_LIMIT && (
+                      {attendanceRecordsListUI.length > ATTENDANCE_LIST_LIMIT ? (
                         <TouchableOpacity
                           style={styles.attendanceShowMoreBtn}
                           onPress={() => setShowAttendanceExpanded((v) => !v)}
@@ -2931,7 +3038,7 @@ export default function SubjectDetailPage({
                               : `Show more (${attendanceRecordsListUI.length - ATTENDANCE_LIST_LIMIT} more)`}
                           </Text>
                         </TouchableOpacity>
-                      )}
+                      ) : null}
                     </>
                   ) : (
                     <>

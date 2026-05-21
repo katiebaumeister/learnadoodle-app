@@ -1143,9 +1143,27 @@ async function fetchAndCacheScheduleSupplement({
       const explicitStart = String(rangeStartYmd || '').slice(0, 10);
       const explicitEnd = String(rangeEndYmd || '').slice(0, 10);
       const hasExplicitRange = /^\d{4}-\d{2}-\d{2}$/.test(explicitStart) && /^\d{4}-\d{2}-\d{2}$/.test(explicitEnd) && explicitEnd >= explicitStart;
+      const familySettings = await familySettingsPromise;
+      const savedRangeStart = String(familySettings?.default_year_start_date || '').slice(0, 10);
+      const savedRangeEnd = String(familySettings?.default_year_end_date || '').slice(0, 10);
+      const hasSavedRange = /^\d{4}-\d{2}-\d{2}$/.test(savedRangeStart)
+        && /^\d{4}-\d{2}-\d{2}$/.test(savedRangeEnd)
+        && savedRangeEnd >= savedRangeStart;
+      const templateRange = formatYmdFromTemplateYear(startYear, endYear, 'full_year');
+      const widenedTemplateRange = (
+        templateRange
+        && /^\d{4}-05-31$/.test(String(templateRange?.end_date || ''))
+        && Number.isFinite(Number(endYear))
+      )
+        ? { ...templateRange, end_date: `${Number(endYear)}-06-30` }
+        : templateRange;
       const schoolYearRange = hasExplicitRange
         ? { start_date: explicitStart, end_date: explicitEnd }
-        : formatYmdFromTemplateYear(startYear, endYear, 'full_year');
+        : (
+          hasSavedRange
+            ? { start_date: savedRangeStart, end_date: savedRangeEnd }
+            : widenedTemplateRange
+        );
       if (!schoolYearRange?.start_date || !schoolYearRange?.end_date) {
         return { instructionalEventsBySubject: {}, classDayInstructionalEvents: [], attendedDayKeysBySubject: {} };
       }
@@ -1185,13 +1203,31 @@ async function fetchAndCacheScheduleSupplement({
       });
       const data = [...mergedRowsById.values()];
       const eventMetaById = {};
+      const resolveSubjectIdsForEventRow = (row) => {
+        const ids = new Set();
+        const primaryId = String(row?.subject_id || '').trim();
+        if (primaryId) ids.add(primaryId);
+        const directSubjectIds = Array.isArray(row?.subject_ids) ? row.subject_ids : [];
+        directSubjectIds.forEach((id) => {
+          const normalized = String(id || '').trim();
+          if (normalized) ids.add(normalized);
+        });
+        const metadataSubjectIds = Array.isArray(row?.curriculum_metadata?.subject_ids)
+          ? row.curriculum_metadata.subject_ids
+          : [];
+        metadataSubjectIds.forEach((id) => {
+          const normalized = String(id || '').trim();
+          if (normalized) ids.add(normalized);
+        });
+        return [...ids].filter((id) => normalizedSubjectIds.includes(id));
+      };
       (data || []).forEach((row) => {
         if (!isInstructionalEvent(row)) return;
         const eventId = row?.id ? String(row.id) : '';
-        const subjectId = String(row?.subject_id || '').trim();
+        const subjectIds = resolveSubjectIdsForEventRow(row);
         if (!eventId) return;
         eventMetaById[eventId] = {
-          subjectId,
+          subjectIds,
           startDay: String(row?.start_ts || row?.due_ts || '').slice(0, 10),
         };
       });
@@ -1210,19 +1246,22 @@ async function fetchAndCacheScheduleSupplement({
       attendanceRows.forEach((row) => {
         const eventId = String(row?.event_id || '').trim();
         const meta = eventMetaById[eventId];
-        if (!meta?.subjectId) return;
+        const subjectIds = Array.isArray(meta?.subjectIds) ? meta.subjectIds : [];
+        if (subjectIds.length === 0) return;
         const status = String(row?.status || '').trim().toLowerCase();
         if (!(status === 'present' || status === 'partial')) return;
         attendedEventIds.add(eventId);
         const dayKey = String(row?.day_date || meta.startDay || '').slice(0, 10);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
-        if (!attendedSetsBySubject[meta.subjectId]) attendedSetsBySubject[meta.subjectId] = new Set();
-        attendedSetsBySubject[meta.subjectId].add(dayKey);
+        subjectIds.forEach((subjectId) => {
+          if (!attendedSetsBySubject[subjectId]) attendedSetsBySubject[subjectId] = new Set();
+          attendedSetsBySubject[subjectId].add(dayKey);
+        });
       });
       (data || []).forEach((row) => {
         if (!isInstructionalEvent(row)) return;
-        const subjectId = String(row?.subject_id || '').trim();
-        if (!subjectId) return;
+        const subjectIds = resolveSubjectIdsForEventRow(row);
+        if (subjectIds.length === 0) return;
         const tsMs = new Date(row?.start_ts || '').getTime();
         if (!Number.isFinite(tsMs)) return;
         const unitName = String(
@@ -1231,30 +1270,32 @@ async function fetchAndCacheScheduleSupplement({
         const fromPlan = row?.generated_by === 'plan_year'
           || row?.instructional_status === 'PLAN_PLACEHOLDER'
           || Boolean(row?.source_block_id);
-        if (!nextBySubject[subjectId]) nextBySubject[subjectId] = [];
-        nextBySubject[subjectId].push({
-          id: row?.id ? String(row.id) : `ev-${subjectId}-${tsMs}-${nextBySubject[subjectId].length}`,
-          subject_id: subjectId,
-          title: String(row?.title || row?.lesson_name || row?.event_type || 'Event').trim(),
-          startTs: row?.start_ts || row?.due_ts || null,
-          start_ts: row?.start_ts || row?.due_ts || null,
-          due_ts: row?.due_ts || row?.start_ts || null,
-          end_ts: row?.end_ts || null,
-          startMs: tsMs,
-          status: String(row?.status || '').trim().toLowerCase(),
-          instructional_status: String(row?.instructional_status || '').trim().toUpperCase(),
-          hasAttendancePresent: attendedEventIds.has(String(row?.id || '')),
-          is_backlog: row?.is_backlog === true,
-          sourceBlockId: String(row?.source_block_id || '').trim() || null,
-          durationHours: Number.isFinite(Number(row?.duration_minutes)) && Number(row.duration_minutes) > 0
-            ? Number(row.duration_minutes) / 60
-            : (
-              row?.start_ts && row?.end_ts
-                ? Math.max(0, (new Date(row.end_ts).getTime() - new Date(row.start_ts).getTime()) / 3600000)
-                : 0
-            ),
-          fromPlan,
-          unitName: unitName || null,
+        subjectIds.forEach((subjectId) => {
+          if (!nextBySubject[subjectId]) nextBySubject[subjectId] = [];
+          nextBySubject[subjectId].push({
+            id: row?.id ? String(row.id) : `ev-${subjectId}-${tsMs}-${nextBySubject[subjectId].length}`,
+            subject_id: subjectId,
+            title: String(row?.title || row?.lesson_name || row?.event_type || 'Event').trim(),
+            startTs: row?.start_ts || row?.due_ts || null,
+            start_ts: row?.start_ts || row?.due_ts || null,
+            due_ts: row?.due_ts || row?.start_ts || null,
+            end_ts: row?.end_ts || null,
+            startMs: tsMs,
+            status: String(row?.status || '').trim().toLowerCase(),
+            instructional_status: String(row?.instructional_status || '').trim().toUpperCase(),
+            hasAttendancePresent: attendedEventIds.has(String(row?.id || '')),
+            is_backlog: row?.is_backlog === true,
+            sourceBlockId: String(row?.source_block_id || '').trim() || null,
+            durationHours: Number.isFinite(Number(row?.duration_minutes)) && Number(row.duration_minutes) > 0
+              ? Number(row.duration_minutes) / 60
+              : (
+                row?.start_ts && row?.end_ts
+                  ? Math.max(0, (new Date(row.end_ts).getTime() - new Date(row.start_ts).getTime()) / 3600000)
+                  : 0
+              ),
+            fromPlan,
+            unitName: unitName || null,
+          });
         });
       });
       Object.keys(nextBySubject).forEach((subjectId) => {
@@ -2303,6 +2344,25 @@ export default function SubjectsPlanBuilder({
       const subjectId = String(subject?.id || '');
       const normalizedName = normalizeSubjectName(subject?.name);
       const subjectTermId = normalizeSubjectTerm(subject?.school_term);
+      const schoolTermId = subjectTermId;
+      const templateSubjectRange = clampToSavedRange(
+        templateScopeRangeById[schoolTermId]
+        || templateScopeRangeById.full_year
+        || yearRange
+      );
+      const subjectRange = isOverallTargetScope
+        ? (effectiveYearRange || yearRange)
+        : (
+          // Prefer the saved template term window for per-subject rows so
+          // spring-term subjects keep June coverage even if an active core
+          // was temporarily narrowed.
+          templateSubjectRange
+          || clampToSavedRange(scopeRangeById[schoolTermId] || yearRange)
+          || fullYearRange
+          || yearRange
+        );
+      const rowRangeStartMs = subjectRange?.start_date ? new Date(`${subjectRange.start_date}T00:00:00`).getTime() : null;
+      const rowRangeEndMs = subjectRange?.end_date ? new Date(`${subjectRange.end_date}T23:59:59`).getTime() : null;
       const subjectSettings = subjectTargetSettingsById?.[subjectId] || null;
       const blocksForSubject = blocks.filter((block) =>
         Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
@@ -2351,16 +2411,16 @@ export default function SubjectsPlanBuilder({
         if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey || ''))) return;
         const dayMs = new Date(`${String(dayKey).slice(0, 10)}T12:00:00`).getTime();
         if (!Number.isFinite(dayMs)) return;
-        if (Number.isFinite(rangeStartMs) && dayMs < rangeStartMs) return;
-        if (Number.isFinite(rangeEndMs) && dayMs > rangeEndMs) return;
+        if (Number.isFinite(rowRangeStartMs) && dayMs < rowRangeStartMs) return;
+        if (Number.isFinite(rowRangeEndMs) && dayMs > rowRangeEndMs) return;
         completedDaySet.add(String(dayKey).slice(0, 10));
       });
       const todayYmd = new Date(nowMs).toISOString().slice(0, 10);
       eventItems.forEach((eventItem) => {
         const eventMs = Number(eventItem?.startMs);
         if (!Number.isFinite(eventMs)) return;
-        if (Number.isFinite(rangeStartMs) && eventMs < rangeStartMs) return;
-        if (Number.isFinite(rangeEndMs) && eventMs > rangeEndMs) return;
+        if (Number.isFinite(rowRangeStartMs) && eventMs < rowRangeStartMs) return;
+        if (Number.isFinite(rowRangeEndMs) && eventMs > rowRangeEndMs) return;
         const dayKey = new Date(eventMs).toISOString().slice(0, 10);
         if (!dayKey) return;
         const eventId = String(eventItem?.id || '').trim();
@@ -2478,8 +2538,8 @@ export default function SubjectsPlanBuilder({
         settingsScope,
         targetMode: statusMode,
         targetValue,
-        rangeStart: (isOverallTargetScope ? (effectiveYearRange || yearRange) : (scopeRangeById[subjectTermId] || yearRange))?.start_date || null,
-        rangeEnd: (isOverallTargetScope ? (effectiveYearRange || yearRange) : (scopeRangeById[subjectTermId] || yearRange))?.end_date || null,
+        rangeStart: subjectRange?.start_date || null,
+        rangeEnd: subjectRange?.end_date || null,
         doneUniqueDays,
         upcomingUniqueDays,
         projectedUniqueDays,
@@ -2525,23 +2585,6 @@ export default function SubjectsPlanBuilder({
           statusLabel = 'Unrecoverable at current cadence';
         }
       }
-      const schoolTermId = subjectTermId;
-      const templateSubjectRange = clampToSavedRange(
-        templateScopeRangeById[schoolTermId]
-        || templateScopeRangeById.full_year
-        || yearRange
-      );
-      const subjectRange = isOverallTargetScope
-        ? (effectiveYearRange || yearRange)
-        : (
-          // Prefer the saved template term window for per-subject rows so
-          // spring-term subjects keep June coverage even if an active core
-          // was temporarily narrowed.
-          templateSubjectRange
-          || clampToSavedRange(scopeRangeById[schoolTermId] || yearRange)
-          || fullYearRange
-          || yearRange
-        );
       const schoolTermLabel = schoolTermId === 'full_year' ? '' : formatScheduleScopeLabel(schoolTermId);
       return {
         id: subjectId,
@@ -2693,9 +2736,20 @@ export default function SubjectsPlanBuilder({
         const subjectId = String(row?.id || '').trim();
         const strictProjection = strictProjectionBySubject[subjectId] || {};
         const targetDays = Number(row.targetValue);
-        const completedDays = Math.max(0, Number((strictProjection?.doneDays ?? row.actualDays) || 0));
-        const upcomingDays = Math.max(0, Number((strictProjection?.upcomingDays ?? row.upcomingDays) || 0));
-        const projectedDays = Math.max(0, Number((strictProjection?.projectedDays ?? row.projectedDays) || 0));
+        const completedDays = Math.max(0, Number(
+          Number.isFinite(Number(row?.pastEventsCount))
+            ? row.pastEventsCount
+            : (strictProjection?.doneDays ?? row.actualDays)
+        ) || 0);
+        const upcomingDays = Math.max(0, Number(
+          Number.isFinite(Number(row?.plannedEventsCount))
+            ? row.plannedEventsCount
+            : (strictProjection?.upcomingDays ?? row.upcomingDays)
+        ) || 0);
+        const projectedDays = Math.max(
+          completedDays + upcomingDays,
+          Math.max(0, Number((strictProjection?.projectedDays ?? row.projectedDays) || 0))
+        );
         const gapDays = targetDays - projectedDays;
         const requiredPace = Number(row.requiredPaceDaysPerWeek || 0);
         const currentPace = Number(row.currentPaceDaysPerWeek || 0);
@@ -5074,26 +5128,111 @@ export default function SubjectsPlanBuilder({
     );
   }, []);
 
-  const openAttendanceBulkActionsModal = useCallback((row) => {
+  const openAttendanceBulkActionsModal = useCallback(async (row) => {
     const subjectId = String(row?.id || '').trim();
     const isAggregate = row?.isAggregate === true;
-    const normalizedEvents = (Array.isArray(row?.eventItems) ? row.eventItems : []).map((eventItem) => ({
-      id: eventItem?.id ? String(eventItem.id) : null,
-      subject_id: eventItem?.subject_id ? String(eventItem.subject_id) : (subjectId || null),
-      title: eventItem?.title || 'Event',
-      start_ts: eventItem?.start_ts || eventItem?.startTs || null,
-      due_ts: eventItem?.due_ts || eventItem?.start_ts || eventItem?.startTs || null,
-      end_ts: eventItem?.end_ts || null,
-      status: eventItem?.status || null,
-      is_backlog: eventItem?.is_backlog === true,
-    })).filter((eventItem) => Boolean(eventItem?.id));
+    const normalizeEventsForAttendanceModal = (events = [], fallbackSubjectId = null) => (
+      (Array.isArray(events) ? events : []).map((eventItem) => ({
+        id: eventItem?.id ? String(eventItem.id) : null,
+        subject_id: eventItem?.subject_id ? String(eventItem.subject_id) : (fallbackSubjectId || null),
+        subject_ids: Array.isArray(eventItem?.subject_ids)
+          ? eventItem.subject_ids.map((id) => String(id || '').trim()).filter(Boolean)
+          : [],
+        curriculum_metadata: (
+          eventItem?.curriculum_metadata
+          && typeof eventItem.curriculum_metadata === 'object'
+          && !Array.isArray(eventItem.curriculum_metadata)
+        )
+          ? {
+            ...eventItem.curriculum_metadata,
+            subject_ids: Array.isArray(eventItem.curriculum_metadata?.subject_ids)
+              ? eventItem.curriculum_metadata.subject_ids.map((id) => String(id || '').trim()).filter(Boolean)
+              : [],
+          }
+          : {},
+        title: eventItem?.title || 'Event',
+        start_ts: eventItem?.start_ts || eventItem?.startTs || null,
+        due_ts: eventItem?.due_ts || eventItem?.start_ts || eventItem?.startTs || null,
+        end_ts: eventItem?.end_ts || null,
+        status: eventItem?.status || null,
+        is_backlog: eventItem?.is_backlog === true,
+      })).filter((eventItem) => Boolean(eventItem?.id))
+    );
+    const fallbackEvents = normalizeEventsForAttendanceModal(row?.eventItems, subjectId);
+    let modalEvents = fallbackEvents;
+    if (!isAggregate && subjectId && familyId) {
+      try {
+        const templateRange = displaySchoolYear
+          ? formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year')
+          : null;
+        const configuredStart = String(familyPlannerSettings?.default_year_start_date || '').slice(0, 10);
+        const configuredEnd = String(familyPlannerSettings?.default_year_end_date || '').slice(0, 10);
+        const fallbackStart = String(templateRange?.start_date || '').slice(0, 10);
+        const fallbackEnd = String(templateRange?.end_date || '').slice(0, 10);
+        const queryStart = /^\d{4}-\d{2}-\d{2}$/.test(configuredStart) ? configuredStart : fallbackStart;
+        let queryEnd = /^\d{4}-\d{2}-\d{2}$/.test(configuredEnd) ? configuredEnd : fallbackEnd;
+        if (/^\d{4}-05-31$/.test(queryEnd) && Number.isFinite(Number(displaySchoolYear?.end_year))) {
+          queryEnd = `${Number(displaySchoolYear.end_year)}-06-30`;
+        }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(queryStart) && /^\d{4}-\d{2}-\d{2}$/.test(queryEnd) && queryEnd >= queryStart) {
+          const [subjectRowsResult, subjectlessRowsResult] = await Promise.all([
+            supabase
+              .from('events')
+              .select('*')
+              .eq('family_id', familyId)
+              .eq('subject_id', subjectId)
+              .gte('start_ts', `${queryStart}T00:00:00`)
+              .lte('start_ts', `${queryEnd}T23:59:59`)
+              .is('deleted_at', null)
+              .neq('is_backlog', true)
+              .neq('status', 'canceled'),
+            supabase
+              .from('events')
+              .select('*')
+              .eq('family_id', familyId)
+              .is('subject_id', null)
+              .gte('start_ts', `${queryStart}T00:00:00`)
+              .lte('start_ts', `${queryEnd}T23:59:59`)
+              .is('deleted_at', null)
+              .neq('is_backlog', true)
+              .neq('status', 'canceled'),
+          ]);
+          const subjectRows = Array.isArray(subjectRowsResult?.data) ? subjectRowsResult.data : [];
+          const subjectlessRows = Array.isArray(subjectlessRowsResult?.data) ? subjectlessRowsResult.data : [];
+          const linkedSubjectlessRows = subjectlessRows.filter((eventItem) => {
+            const linkedIds = new Set();
+            (Array.isArray(eventItem?.subject_ids) ? eventItem.subject_ids : []).forEach((id) => {
+              const normalized = String(id || '').trim();
+              if (normalized) linkedIds.add(normalized);
+            });
+            (Array.isArray(eventItem?.curriculum_metadata?.subject_ids) ? eventItem.curriculum_metadata.subject_ids : []).forEach((id) => {
+              const normalized = String(id || '').trim();
+              if (normalized) linkedIds.add(normalized);
+            });
+            return linkedIds.has(subjectId);
+          });
+          const mergedById = new Map();
+          [...subjectRows, ...linkedSubjectlessRows].forEach((eventItem) => {
+            const eventId = String(eventItem?.id || '').trim();
+            if (!eventId || mergedById.has(eventId)) return;
+            mergedById.set(eventId, eventItem);
+          });
+          const refreshedEvents = normalizeEventsForAttendanceModal([...mergedById.values()], subjectId);
+          if (refreshedEvents.length > 0) {
+            modalEvents = refreshedEvents;
+          }
+        }
+      } catch (_) {
+        // Fall back to already-available row events if the refresh query fails.
+      }
+    }
     setAttendanceModalData({
       subjectId: isAggregate ? null : subjectId,
       subjectName: row?.name || (isAggregate ? 'All subjects' : 'Subject'),
-      events: normalizedEvents,
+      events: modalEvents,
     });
     setShowPastEventsAttendanceModal(true);
-  }, []);
+  }, [displaySchoolYear, familyId, familyPlannerSettings]);
 
   const formatLearningDaysOwnerLabel = useCallback((row) => {
     const namesFromIds = (Array.isArray(row?.attachedStudentIds) ? row.attachedStudentIds : [])
@@ -5614,25 +5753,33 @@ export default function SubjectsPlanBuilder({
                                 : null;
                               const completedDays = Math.max(
                                 0,
-                                Number.isFinite(Number(targetRowForStatus?.completedDays))
-                                  ? Number(targetRowForStatus.completedDays)
+                                Number.isFinite(Number(row?.pastEventsCount))
+                                  ? Number(row.pastEventsCount)
                                   : (
-                                    Number.isFinite(Number(overallYearTargetsRow?.completedDays))
-                                      ? Number(overallYearTargetsRow.completedDays)
-                                      : Number(row.actualDays || 0)
+                                    Number.isFinite(Number(targetRowForStatus?.completedDays))
+                                      ? Number(targetRowForStatus.completedDays)
+                                      : (
+                                        Number.isFinite(Number(overallYearTargetsRow?.completedDays))
+                                          ? Number(overallYearTargetsRow.completedDays)
+                                          : Number(row.actualDays || 0)
+                                      )
                                   )
                               );
                               const upcomingDays = Math.max(
                                 0,
-                                Number.isFinite(Number(targetRowForStatus?.upcomingDays))
-                                  ? Number(targetRowForStatus.upcomingDays)
+                                Number.isFinite(Number(row?.plannedEventsCount))
+                                  ? Number(row.plannedEventsCount)
                                   : (
-                                    Number.isFinite(Number(overallYearTargetsRow?.upcomingDays))
-                                      ? Number(overallYearTargetsRow.upcomingDays)
+                                    Number.isFinite(Number(targetRowForStatus?.upcomingDays))
+                                      ? Number(targetRowForStatus.upcomingDays)
                                       : (
-                                        Number.isFinite(Number(row?.upcomingDays))
-                                          ? Number(row.upcomingDays)
-                                          : Math.max(0, Number(row?.projectedDays || 0) - completedDays)
+                                        Number.isFinite(Number(overallYearTargetsRow?.upcomingDays))
+                                          ? Number(overallYearTargetsRow.upcomingDays)
+                                          : (
+                                            Number.isFinite(Number(row?.upcomingDays))
+                                              ? Number(row.upcomingDays)
+                                              : Math.max(0, Number(row?.projectedDays || 0) - completedDays)
+                                          )
                                       )
                                   )
                               );

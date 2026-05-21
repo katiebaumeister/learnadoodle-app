@@ -85,6 +85,17 @@ function getEventStartYmd(event) {
 
 function formatDate(dateValue) {
   if (!dateValue) return '—';
+  const ymd = String(dateValue || '').slice(0, 10);
+  const ymdMatch = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ymdMatch) {
+    const monthIdx = Number(ymdMatch[2]) - 1;
+    const day = Number(ymdMatch[3]);
+    const year = Number(ymdMatch[1]);
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (monthIdx >= 0 && monthIdx <= 11 && Number.isFinite(day) && Number.isFinite(year)) {
+      return `${monthNames[monthIdx]} ${day}, ${year}`;
+    }
+  }
   const d = new Date(dateValue);
   if (Number.isNaN(d.getTime())) return String(dateValue).slice(0, 10);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -182,7 +193,6 @@ export default function ProgressTab({
   onOpenSubject,
   onRefreshSubjectDetail,
   onEditChild = null,
-  onOpenScheduleTab = null,
 }) {
   const students = useMemo(
     () => (Array.isArray(children) ? children : [])
@@ -280,13 +290,29 @@ export default function ProgressTab({
       setFamilyOverallTargetDays(null);
       return () => { cancelled = true; };
     }
-    supabase
-      .from('family_planner_settings')
-      .select('target_scope, default_constraint_mode, default_target_days')
-      .eq('family_id', familyId)
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => {
+    (async () => {
+      try {
+        const selectedYearLabel = String(selectedAcademicYearLabel || '').trim();
+        let data = null;
+        if (selectedYearLabel) {
+          const yearScopedResult = await supabase
+            .from('family_planner_settings')
+            .select('target_scope, default_constraint_mode, default_target_days')
+            .eq('family_id', familyId)
+            .eq('school_year_label', selectedYearLabel)
+            .limit(1)
+            .maybeSingle();
+          data = yearScopedResult?.data || null;
+        }
+        if (!data) {
+          const fallbackResult = await supabase
+            .from('family_planner_settings')
+            .select('target_scope, default_constraint_mode, default_target_days')
+            .eq('family_id', familyId)
+            .limit(1)
+            .maybeSingle();
+          data = fallbackResult?.data || null;
+        }
         if (cancelled) return;
         const scope = String(data?.target_scope || 'overall').trim().toLowerCase();
         const mode = String(data?.default_constraint_mode || '').trim().toLowerCase();
@@ -297,16 +323,16 @@ export default function ProgressTab({
         const canUsePerSubjectDays = normalizedScope === 'per_subject' && (mode === 'days' || (!mode && defaultDays != null));
         setFamilyOverallTargetDays(canUseOverallDays ? defaultDays : null);
         setFamilyDefaultTargetDays(canUsePerSubjectDays ? defaultDays : null);
-      })
-      .catch(() => {
+      } catch (_) {
         if (!cancelled) {
           setFamilyTargetScope('overall');
           setFamilyDefaultTargetDays(null);
           setFamilyOverallTargetDays(null);
         }
-      });
+      }
+    })();
     return () => { cancelled = true; };
-  }, [familyId]);
+  }, [familyId, selectedAcademicYearLabel]);
   useEffect(() => {
     let cancelled = false;
     if (!familyId || !selectedAcademicYearLabel) {
@@ -428,6 +454,9 @@ export default function ProgressTab({
   useEffect(() => {
     setOptimisticAttendanceByKey({});
   }, [familyId, selectedStudentId, selectedAcademicYearStart]);
+  useEffect(() => {
+    setShowAttendanceExpanded(false);
+  }, [attendanceViewMode, selectedStudentId]);
 
   const attendanceRecordsForUI = useMemo(() => {
     const rows = [];
@@ -560,6 +589,22 @@ export default function ProgressTab({
   }, [subjectDetails, selectedStudentId, academicYearStartDate, academicYearEndDate]);
   const attendanceRecordsListUI = useMemo(() => {
     const attendanceByEventId = new Map();
+    const recordPreviewByEventId = new Map();
+    const resolveStatusPresentation = ({ hasAttended = false, hasUnattended = false, isUpcoming = false } = {}) => {
+      if (hasAttended) return { statusLabel: 'Attended', statusTone: 'attended' };
+      if (hasUnattended) return { statusLabel: 'Unattended', statusTone: 'unattended' };
+      if (isUpcoming) return { statusLabel: 'Upcoming', statusTone: 'upcoming' };
+      return { statusLabel: 'Unattended', statusTone: 'unattended' };
+    };
+    const normalizeMinutes = (value, fallback = 60) => {
+      const mins = Number(value);
+      return Number.isFinite(mins) && mins > 0 ? mins : fallback;
+    };
+    const statusPriority = {
+      attended: 3,
+      unattended: 2,
+      upcoming: 1,
+    };
     attendanceRecordsForUI.forEach((record) => {
       const eventId = String(record?.eventId || '').trim();
       if (!eventId) return;
@@ -570,28 +615,24 @@ export default function ProgressTab({
       const mins = Number(record?.minutes);
       if (Number.isFinite(mins) && mins > prev.minutes) prev.minutes = mins;
       attendanceByEventId.set(eventId, prev);
+      if (!recordPreviewByEventId.has(eventId)) recordPreviewByEventId.set(eventId, record);
     });
-    return (attendanceEvents || [])
+    const nowMs = Date.now();
+    const todayYmd = new Date(nowMs).toISOString().slice(0, 10);
+    const eventRows = (attendanceEvents || [])
       .filter((event) => event && String(event?.status || '').toLowerCase() !== 'canceled')
       .map((event) => {
         const eventId = String(event?.id || '').trim();
         const tsRaw = event?.start_ts || event?.due_ts || event?.end_ts || null;
         const tsMs = tsRaw ? new Date(tsRaw).getTime() : NaN;
         const dayKey = tsRaw && Number.isFinite(tsMs) ? String(tsRaw).slice(0, 10) : '';
-        const isUpcoming = Number.isFinite(tsMs) && tsMs > Date.now();
+        const isUpcoming = Number.isFinite(tsMs) && tsMs > nowMs;
         const attendanceMeta = attendanceByEventId.get(eventId);
-        let statusLabel = 'Unattended';
-        let statusTone = 'unattended';
-        if (attendanceMeta?.hasAttended) {
-          statusLabel = 'Attended';
-          statusTone = 'attended';
-        } else if (isUpcoming) {
-          statusLabel = 'Upcoming';
-          statusTone = 'upcoming';
-        } else if (attendanceMeta?.hasUnattended) {
-          statusLabel = 'Unattended';
-          statusTone = 'unattended';
-        }
+        const { statusLabel, statusTone } = resolveStatusPresentation({
+          hasAttended: attendanceMeta?.hasAttended === true,
+          hasUnattended: attendanceMeta?.hasUnattended === true,
+          isUpcoming,
+        });
         const eventMinutes = (() => {
           if (Number.isFinite(attendanceMeta?.minutes) && attendanceMeta.minutes > 0) return attendanceMeta.minutes;
           const durationMinutes = Number(event?.duration_minutes);
@@ -610,12 +651,83 @@ export default function ProgressTab({
           day_date: dayKey,
           minutes: eventMinutes,
           title: String(event?.title || 'Lesson').trim() || 'Lesson',
+          subjectName: String(event?.subjectName || '').trim() || null,
           statusLabel,
           statusTone,
           sortTs: Number.isFinite(tsMs) ? tsMs : 0,
         };
-      })
-      .sort((a, b) => Number(a.sortTs || 0) - Number(b.sortTs || 0));
+      });
+    const listedEventIds = new Set(
+      eventRows.map((row) => String(row?.event_id || '').trim()).filter(Boolean)
+    );
+    const orphanRows = [...attendanceByEventId.entries()]
+      .filter(([eventId]) => !listedEventIds.has(String(eventId || '').trim()))
+      .map(([eventId, attendanceMeta]) => {
+        const preview = recordPreviewByEventId.get(eventId) || {};
+        const dayKey = String(preview?.dayDate || '').slice(0, 10);
+        const tsMs = /^\d{4}-\d{2}-\d{2}$/.test(dayKey)
+          ? new Date(`${dayKey}T12:00:00`).getTime()
+          : NaN;
+        const isUpcoming = Number.isFinite(tsMs) && tsMs > nowMs;
+        const { statusLabel, statusTone } = resolveStatusPresentation({
+          hasAttended: attendanceMeta?.hasAttended === true,
+          hasUnattended: attendanceMeta?.hasUnattended === true,
+          isUpcoming,
+        });
+        return {
+          id: `orphan-event-row-${eventId}`,
+          event_id: eventId,
+          subjectId: preview?.subjectId || null,
+          day_date: dayKey,
+          minutes: normalizeMinutes(attendanceMeta?.minutes, 60),
+          title: String(preview?.title || preview?.subjectName || 'Lesson').trim() || 'Lesson',
+          subjectName: String(preview?.subjectName || 'Subject').trim() || 'Subject',
+          statusLabel,
+          statusTone,
+          sortTs: Number.isFinite(tsMs) ? tsMs : 0,
+        };
+      });
+    const recordOnlyRowsByKey = new Map();
+    attendanceRecordsForUI.forEach((record, idx) => {
+      const eventId = String(record?.eventId || '').trim();
+      if (eventId) return;
+      const dayKey = String(record?.dayDate || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) return;
+      const subjectId = String(record?.subjectId || '').trim();
+      const title = String(record?.title || record?.subjectName || 'Lesson').trim() || 'Lesson';
+      const rowKey = `${dayKey}|${subjectId}|${title.toLowerCase()}`;
+      const status = String(record?.status || '').toLowerCase();
+      const { statusLabel: nextLabel, statusTone: nextTone } = resolveStatusPresentation({
+        hasAttended: status === 'present' || status === 'partial',
+        hasUnattended: status === 'absent',
+        isUpcoming: dayKey > todayYmd,
+      });
+      const nextMinutes = normalizeMinutes(record?.minutes, 60);
+      const tsMs = new Date(`${dayKey}T12:00:00`).getTime();
+      const existing = recordOnlyRowsByKey.get(rowKey);
+      if (!existing) {
+        recordOnlyRowsByKey.set(rowKey, {
+          id: `record-only-row-${rowKey}-${idx}`,
+          event_id: null,
+          subjectId: subjectId || null,
+          day_date: dayKey,
+          minutes: nextMinutes,
+          title,
+          subjectName: String(record?.subjectName || 'Subject').trim() || 'Subject',
+          statusLabel: nextLabel,
+          statusTone: nextTone,
+          sortTs: Number.isFinite(tsMs) ? tsMs : 0,
+        });
+        return;
+      }
+      if ((statusPriority[nextTone] || 0) > (statusPriority[existing.statusTone] || 0)) {
+        existing.statusTone = nextTone;
+        existing.statusLabel = nextLabel;
+      }
+      if (nextMinutes > Number(existing.minutes || 0)) existing.minutes = nextMinutes;
+    });
+    return [...eventRows, ...orphanRows, ...recordOnlyRowsByKey.values()]
+      .sort((a, b) => Number(b.sortTs || 0) - Number(a.sortTs || 0));
   }, [attendanceRecordsForUI, attendanceEvents]);
   const attendanceEventById = useMemo(() => {
     const map = new Map();
@@ -866,10 +978,6 @@ export default function ProgressTab({
     return { present, absent, upcoming: upcomingDaySet.size };
   }, [attendanceRecordsForUI, attendanceEvents]);
 
-  useEffect(() => {
-    setShowAttendanceExpanded(false);
-  }, [attendanceViewMode, selectedStudentId]);
-
   const gradeRows = useMemo(() => {
     const byEvent = new Set();
     const rows = [];
@@ -1078,9 +1186,10 @@ export default function ProgressTab({
           : true;
         return matchesChild && String(event?.status || '').toLowerCase() !== 'canceled';
       });
-      const subjectEventDaySet = new Set();
-      const pastDaySet = new Set();
+      const completedDaySet = new Set();
       const upcomingDaySet = new Set();
+      const projectedDaySet = new Set();
+      const todayYmd = new Date(nowTs).toISOString().slice(0, 10);
       subjectEvents.forEach((event) => {
         const rawTs = event?.start_ts || event?.start || event?.start_local || event?.due_ts || null;
         const eventTs = rawTs ? new Date(rawTs).getTime() : NaN;
@@ -1088,14 +1197,27 @@ export default function ProgressTab({
         if (eventTs < academicYearStartDate.getTime() || eventTs > academicYearEndDate.getTime()) return;
         const dayKey = new Date(eventTs).toISOString().slice(0, 10);
         if (!dayKey) return;
-        subjectEventDaySet.add(dayKey);
-        if (eventTs < nowTs) pastDaySet.add(dayKey);
-        else upcomingDaySet.add(dayKey);
+        const status = String(event?.status || '').trim().toLowerCase();
+        const instructionalStatus = String(event?.instructional_status || '').trim().toUpperCase();
+        const isAttended = event?.hasAttendancePresent === true
+          || status === 'done'
+          || status === 'completed'
+          || instructionalStatus === 'MANUAL_COUNTS';
+        if (isAttended || dayKey < todayYmd) {
+          completedDaySet.add(dayKey);
+          projectedDaySet.add(dayKey);
+        } else {
+          upcomingDaySet.add(dayKey);
+          projectedDaySet.add(dayKey);
+        }
       });
-      const subjectPlannedDays = subjectEventDaySet.size;
-      const completedProjectedDays = Math.max(0, pastDaySet.size);
-      const upcomingProjectedDays = Math.max(0, upcomingDaySet.size);
-      const projectedDays = completedProjectedDays + upcomingProjectedDays;
+      const subjectPlannedDays = projectedDaySet.size;
+      const completedProjectedDays = Math.max(0, completedDaySet.size);
+      const upcomingProjectedDays = Math.max(
+        0,
+        [...upcomingDaySet].filter((dayKey) => !completedDaySet.has(dayKey)).length
+      );
+      const projectedDays = projectedDaySet.size;
       const weekdaySet = new Set(
         subjectEvents
           .map((event) => {
@@ -1234,25 +1356,6 @@ export default function ProgressTab({
       };
     }).filter((row) => row.id);
   }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays, familyTargetScope, familyOverallTargetDays, yearSubjectTargetsById]);
-  const attendanceTargetGapDays = useMemo(() => {
-    const rowsWithTargets = (subjectProgressRows || []).filter((row) => Number.isFinite(Number(row?.targetDays)));
-    if (rowsWithTargets.length > 0) {
-      const projected = rowsWithTargets.reduce((sum, row) => sum + Number(row?.plannedDays || 0), 0);
-      const target = rowsWithTargets.reduce((sum, row) => sum + Number(row?.targetDays || 0), 0);
-      return target - projected;
-    }
-    const useOverallTargetMode = familyTargetScope === 'overall' && familyOverallTargetDays != null;
-    if (!useOverallTargetMode) return null;
-    const projectedUniqueDays = new Set((attendanceEvents || []).map((event) => getEventStartYmd(event)).filter(Boolean)).size;
-    return Number(familyOverallTargetDays || 0) - Number(projectedUniqueDays || 0);
-  }, [familyTargetScope, familyOverallTargetDays, attendanceEvents, subjectProgressRows]);
-  const attendanceTargetGapLabel = useMemo(() => {
-    if (!Number.isFinite(Number(attendanceTargetGapDays))) return '—';
-    const value = Number(attendanceTargetGapDays);
-    const absDays = Math.abs(value);
-    const sign = value > 0 ? '+' : (value < 0 ? '-' : '');
-    return `${sign}${absDays} ${absDays === 1 ? 'day' : 'days'}`;
-  }, [attendanceTargetGapDays]);
   const savedProfileGrade = useMemo(() => {
     const raw = selectedStudentRecord?.grade
       ?? selectedStudentRecord?.grade_level
@@ -1385,48 +1488,6 @@ export default function ProgressTab({
             </View>
           </View>
         </View>
-        <TouchableOpacity
-          style={[
-            styles.attendanceGapShell,
-            Number(attendanceTargetGapDays) > 0 && styles.attendanceGapShellBehind,
-            Number(attendanceTargetGapDays) < 0 && styles.attendanceGapShellAhead,
-            Number(attendanceTargetGapDays) === 0 && styles.attendanceGapShellOnTrack,
-          ]}
-          onPress={() => onOpenScheduleTab?.()}
-          activeOpacity={0.8}
-          disabled={typeof onOpenScheduleTab !== 'function'}
-          {...(Platform.OS === 'web' && { cursor: typeof onOpenScheduleTab === 'function' ? 'pointer' : 'default' })}
-        >
-          <View style={styles.attendanceGapContainer}>
-            <Text
-              style={[
-                styles.attendanceGapLabel,
-                Number(attendanceTargetGapDays) > 0 && styles.attendanceGapLabelBehind,
-                Number(attendanceTargetGapDays) < 0 && styles.attendanceGapLabelAhead,
-              ]}
-            >
-              Gap
-            </Text>
-            <View
-              style={[
-                styles.attendanceGapChipButton,
-                Number(attendanceTargetGapDays) > 0 && styles.attendanceGapChipButtonBehind,
-                Number(attendanceTargetGapDays) < 0 && styles.attendanceGapChipButtonAhead,
-                Number(attendanceTargetGapDays) === 0 && styles.attendanceGapChipButtonOnTrack,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.attendanceGapChipText,
-                  Number(attendanceTargetGapDays) > 0 && styles.attendanceGapChipTextBehind,
-                  Number(attendanceTargetGapDays) < 0 && styles.attendanceGapChipTextAhead,
-                ]}
-              >
-                {attendanceTargetGapLabel}
-              </Text>
-            </View>
-          </View>
-        </TouchableOpacity>
       </View>
     </View>
   );
@@ -2042,21 +2103,6 @@ const styles = StyleSheet.create({
   attendanceKeyDotUpcoming: { backgroundColor: '#C7DDF6' },
   attendanceKeyDotNoEvents: { backgroundColor: '#E5E7EB' },
   attendanceKeyText: { fontSize: 12, color: '#6B7280', ...WEB_BODY_FONT },
-  attendanceGapShell: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
-  attendanceGapShellAhead: { borderColor: '#BFE5CF', backgroundColor: '#F1FAF4' },
-  attendanceGapShellBehind: { borderColor: '#F3D4D4', backgroundColor: '#FFF7F7' },
-  attendanceGapShellOnTrack: { borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' },
-  attendanceGapContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  attendanceGapLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', color: '#6B7280', ...WEB_HEADING_FONT },
-  attendanceGapLabelAhead: { color: '#1F7A3B' },
-  attendanceGapLabelBehind: { color: '#B45353' },
-  attendanceGapChipButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
-  attendanceGapChipButtonAhead: { backgroundColor: 'rgba(34, 197, 94, 0.15)' },
-  attendanceGapChipButtonBehind: { backgroundColor: 'rgba(239, 68, 68, 0.12)' },
-  attendanceGapChipButtonOnTrack: { backgroundColor: 'rgba(107, 114, 128, 0.12)' },
-  attendanceGapChipText: { fontSize: 13, fontWeight: '700', color: '#374151', ...WEB_BODY_FONT },
-  attendanceGapChipTextAhead: { color: '#166534' },
-  attendanceGapChipTextBehind: { color: '#B91C1C' },
   emptyStateText: { fontSize: 14, color: '#6B7280', lineHeight: 20, ...WEB_BODY_FONT },
   attendanceList: { gap: 8 },
   attendanceItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: '#F9FAFB', borderRadius: 8 },
