@@ -225,6 +225,7 @@ export default function SubjectsPage({
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [pendingScheduleModalRequest, setPendingScheduleModalRequest] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
+  const subjectDetailCacheRef = useRef(preloadedSubjectDetailCache || {});
   const [pendingScrollToSectionId, setPendingScrollToSectionId] = useState(null);
   const [pendingOpenMaterialId, setPendingOpenMaterialId] = useState(null);
   const [pendingProgressAction, setPendingProgressAction] = useState(null);
@@ -381,6 +382,9 @@ export default function SubjectsPage({
       setSubjectDetailCache(preloadedSubjectDetailCache);
     }
   }, [preloadedSubjectDetailCache]);
+  useEffect(() => {
+    subjectDetailCacheRef.current = subjectDetailCache || {};
+  }, [subjectDetailCache]);
 
   // Load subjects
   const loadSubjects = useCallback(async () => {
@@ -419,17 +423,16 @@ export default function SubjectsPage({
         Promise.all(
           data.map(async (subject) => {
             // Skip if already cached
-            if (subjectDetailCache[subject.id]) return;
+            if (subjectDetailCacheRef.current?.[subject.id]) return;
             
             try {
               // Pass session for role-based filtering
               const detailData = await getSubjectDetail(subject.id, familyId, null, session);
               if (detailData == null) return;
-              const updatedCache = {
-                ...subjectDetailCache,
+              setSubjectDetailCache((prev) => ({
+                ...(prev || {}),
                 [subject.id]: detailData,
-              };
-              setSubjectDetailCache(updatedCache);
+              }));
               
               // Update parent cache if callback provided
               if (onSubjectDetailUpdate) {
@@ -519,7 +522,34 @@ export default function SubjectsPage({
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     
-    const handleSubjectUpdate = () => {
+    const handleSubjectUpdate = (event) => {
+      const removedEventIds = new Set(
+        (Array.isArray(event?.detail?.removedEventIds) ? event.detail.removedEventIds : [])
+          .map((id) => String(id || '').trim())
+          .filter(Boolean)
+      );
+      if (removedEventIds.size > 0) {
+        setSubjectDetailCache((prev) => {
+          const next = { ...(prev || {}) };
+          Object.keys(next).forEach((sid) => {
+            const detail = next[sid];
+            if (!detail || typeof detail !== 'object') return;
+            next[sid] = {
+              ...detail,
+              events: (Array.isArray(detail?.events) ? detail.events : [])
+                .filter((item) => !removedEventIds.has(String(item?.id || '').trim())),
+              attendanceRecords: (Array.isArray(detail?.attendanceRecords) ? detail.attendanceRecords : [])
+                .filter((item) => !removedEventIds.has(String(item?.event_id || '').trim())),
+              eventOutcomes: (Array.isArray(detail?.eventOutcomes) ? detail.eventOutcomes : [])
+                .filter((item) => !removedEventIds.has(String(item?.event_id || '').trim())),
+            };
+          });
+          return next;
+        });
+      } else {
+        // No targeted IDs supplied, so force all subject details to refresh.
+        setSubjectDetailCache({});
+      }
       loadSubjects();
     };
 

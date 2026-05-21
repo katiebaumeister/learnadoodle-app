@@ -4405,7 +4405,9 @@ export default function SubjectsPlanBuilder({
       setAttendedDayKeysBySubject(refreshed.attendedDayKeysBySubject || {});
       setYearTargetProjectionBySubject(refreshed.yearTargetProjectionBySubject || {});
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects', {
+          detail: { removedEventIds: selectedRemovalEventIds },
+        }));
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
       }
@@ -5521,7 +5523,9 @@ export default function SubjectsPlanBuilder({
         }));
         setEventsRefreshKey((prev) => prev + 1);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          window.dispatchEvent(new CustomEvent('refreshSubjects', {
+            detail: { removedEventIds: succeededIds },
+          }));
           window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
         }
       }
