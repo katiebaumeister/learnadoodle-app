@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { CheckCircle2, Trash2, X } from 'lucide-react';
+import { Check, CheckCircle2, Trash2, X } from 'lucide-react';
 
 function fallbackFormatEventDateTime(ts) {
   const d = new Date(ts || '');
@@ -46,16 +46,14 @@ export default function SubjectEventsModal({
 }) {
   const events = Array.isArray(data?.events) ? data.events : [];
   const isClassDayAggregateModal = data?.isClassDayAggregate === true;
-  const hasPendingPastEvents = events.some((eventItem) => {
+  const hasUnattendedEvents = events.some((eventItem) => {
     if (eventItem?.isDayAggregate) return false;
-    const startMs = Number(eventItem?.startMs || 0);
-    const isPastEvent = startMs > 0 && startMs < Date.now();
     const isAttended = eventItem?.hasAttendancePresent === true
       || String(eventItem?.status || '').toLowerCase() === 'done'
       || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
-    return isPastEvent && !isAttended;
+    return !isAttended && String(eventItem?.id || '').trim() !== '';
   });
-  const isBulkMarking = markingAttendanceEventId === '__bulk_mark_all_past_attended__';
+  const isBulkMarking = markingAttendanceEventId === '__bulk_mark_all_attended__';
   const hasAnyEvents = !isClassDayAggregateModal && events.length > 0;
 
   return (
@@ -94,12 +92,40 @@ export default function SubjectEventsModal({
                 const isAttended = eventItem?.hasAttendancePresent === true
                   || String(eventItem?.status || '').toLowerCase() === 'done'
                   || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
+                const canMarkAttended = typeof onMarkEventAttended === 'function' && !isAttended;
+                const canMarkUnattended = typeof onMarkEventUnattended === 'function' && isAttended;
+                const canToggleAttendance = (canMarkAttended || canMarkUnattended) && markingAttendanceEventId !== eventItem.id;
                 return (
                   <View key={eventItem.id} style={styles.subjectEventRow}>
                     <View style={styles.subjectEventRowTop}>
-                      <Text style={styles.subjectEventRowTitle}>
-                        {eventItem?.isDayAggregate ? 'Class day' : (eventItem.title || 'Event')}
-                      </Text>
+                      <View style={styles.subjectEventRowTitleWrap}>
+                        {!eventItem?.isDayAggregate ? (
+                          <TouchableOpacity
+                            style={[
+                              styles.subjectEventToggleCircle,
+                              isAttended && styles.subjectEventToggleCircleAttended,
+                              !canToggleAttendance && styles.subjectEventToggleCircleDisabled,
+                            ]}
+                            onPress={() => {
+                              if (!canToggleAttendance) return;
+                              if (isAttended) {
+                                onMarkEventUnattended?.(eventItem);
+                                return;
+                              }
+                              onMarkEventAttended?.(eventItem);
+                            }}
+                            activeOpacity={0.8}
+                            disabled={!canToggleAttendance}
+                            hitSlop={8}
+                            {...(Platform.OS === 'web' && { cursor: canToggleAttendance ? 'pointer' : 'default' })}
+                          >
+                            {isAttended ? <Check size={14} color="#16a34a" strokeWidth={2.5} /> : null}
+                          </TouchableOpacity>
+                        ) : null}
+                        <Text style={styles.subjectEventRowTitle}>
+                          {eventItem?.isDayAggregate ? 'Class day' : (eventItem.title || 'Event')}
+                        </Text>
+                      </View>
                       <View style={styles.subjectEventRowMetaRight}>
                         {Number(eventItem?.startMs || 0) > 0 ? (
                           <View style={[styles.subjectEventRowStatusChips, styles.subjectEventRowStatusChipsRight]}>
@@ -157,40 +183,6 @@ export default function SubjectEventsModal({
                             <Text style={styles.subjectEventRowLinkText}>Open event details</Text>
                           </TouchableOpacity>
                         ) : null}
-                        {isPastEvent && typeof onMarkEventAttended === 'function' ? (
-                          <TouchableOpacity
-                            onPress={() => onMarkEventAttended(eventItem)}
-                            activeOpacity={0.8}
-                            disabled={markingAttendanceEventId === eventItem.id || isAttended}
-                            {...(Platform.OS === 'web' && { cursor: (markingAttendanceEventId === eventItem.id || isAttended) ? 'default' : 'pointer' })}
-                          >
-                            <Text
-                              style={[
-                                styles.subjectEventRowLinkText,
-                                (markingAttendanceEventId === eventItem.id || isAttended) && styles.subjectEventRowLinkTextDisabled,
-                              ]}
-                            >
-                              {markingAttendanceEventId === eventItem.id ? 'Marking...' : 'Mark attended'}
-                            </Text>
-                          </TouchableOpacity>
-                        ) : null}
-                        {isPastEvent && typeof onMarkEventUnattended === 'function' ? (
-                          <TouchableOpacity
-                            onPress={() => onMarkEventUnattended(eventItem)}
-                            activeOpacity={0.8}
-                            disabled={markingAttendanceEventId === eventItem.id || !isAttended}
-                            {...(Platform.OS === 'web' && { cursor: (markingAttendanceEventId === eventItem.id || !isAttended) ? 'default' : 'pointer' })}
-                          >
-                            <Text
-                              style={[
-                                styles.subjectEventRowLinkText,
-                                (markingAttendanceEventId === eventItem.id || !isAttended) && styles.subjectEventRowLinkTextDisabled,
-                              ]}
-                            >
-                              {markingAttendanceEventId === eventItem.id ? 'Marking...' : 'Mark unattended'}
-                            </Text>
-                          </TouchableOpacity>
-                        ) : null}
                       </View>
                     ) : null}
                   </View>
@@ -199,13 +191,26 @@ export default function SubjectEventsModal({
             )}
           </ScrollView>
           <View style={styles.subjectEventsFooter}>
+            <Text style={styles.subjectEventsFooterBulkLabel}>Bulk actions</Text>
             <View style={styles.subjectEventsFooterButtonsRow}>
               <TouchableOpacity
-                onPress={onClose}
-                style={styles.subjectEventsFooterCancelButton}
+                onPress={onMarkAllPastEventsAttended}
+                style={[
+                  styles.subjectEventsFooterActionButton,
+                  (!hasUnattendedEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function') && styles.subjectEventsFooterActionButtonDisabled,
+                ]}
                 activeOpacity={0.85}
+                disabled={!hasUnattendedEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function'}
               >
-                <Text style={styles.subjectEventsFooterCancelButtonText}>Cancel</Text>
+                <CheckCircle2 size={17} color={!hasUnattendedEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function' ? '#94A3B8' : '#111827'} strokeWidth={2} />
+                <Text
+                  style={[
+                    styles.subjectEventsFooterActionButtonText,
+                    (!hasUnattendedEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function') && styles.subjectEventsFooterActionButtonTextDisabled,
+                  ]}
+                >
+                  {isBulkMarking ? 'Marking...' : 'Mark all as attended'}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={onDeleteAllEvents}
@@ -216,7 +221,7 @@ export default function SubjectEventsModal({
                 activeOpacity={0.85}
                 disabled={!hasAnyEvents || deletingAllEvents || typeof onDeleteAllEvents !== 'function'}
               >
-                <Trash2 size={18} color={!hasAnyEvents || deletingAllEvents || typeof onDeleteAllEvents !== 'function' ? '#94A3B8' : '#FFFFFF'} strokeWidth={2} />
+                <Trash2 size={17} color={!hasAnyEvents || deletingAllEvents || typeof onDeleteAllEvents !== 'function' ? '#94A3B8' : '#DC2626'} strokeWidth={2} />
                 <Text
                   style={[
                     styles.subjectEventsFooterDeleteButtonText,
@@ -226,26 +231,14 @@ export default function SubjectEventsModal({
                   {deletingAllEvents ? 'Deleting...' : 'Delete all events'}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                onPress={onMarkAllPastEventsAttended}
-                style={[
-                  styles.subjectEventsFooterActionButton,
-                  (!hasPendingPastEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function') && styles.subjectEventsFooterActionButtonDisabled,
-                ]}
-                activeOpacity={0.85}
-                disabled={!hasPendingPastEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function'}
-              >
-                <CheckCircle2 size={18} color={!hasPendingPastEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function' ? '#94A3B8' : '#FFFFFF'} strokeWidth={2} />
-                <Text
-                  style={[
-                    styles.subjectEventsFooterActionButtonText,
-                    (!hasPendingPastEvents || isBulkMarking || deletingAllEvents || typeof onMarkAllPastEventsAttended !== 'function') && styles.subjectEventsFooterActionButtonTextDisabled,
-                  ]}
-                >
-                  {isBulkMarking ? 'Marking...' : 'Mark all as attended'}
-                </Text>
-              </TouchableOpacity>
             </View>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.subjectEventsFooterCancelButton}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.subjectEventsFooterCancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -313,21 +306,34 @@ const styles = StyleSheet.create({
   },
   subjectEventsFooter: {
     paddingHorizontal: 18,
-    paddingTop: 10,
+    paddingTop: 12,
     paddingBottom: 16,
     backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+  },
+  subjectEventsFooterBulkLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   subjectEventsFooterButtonsRow: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     alignItems: 'center',
     gap: 10,
   },
   subjectEventsFooterCancelButton: {
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 20,
+    marginTop: 12,
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
@@ -335,17 +341,18 @@ const styles = StyleSheet.create({
   subjectEventsFooterCancelButtonText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#374151',
+    color: '#6B7280',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   subjectEventsFooterActionButton: {
-    height: 40,
+    height: 42,
+    flex: 1,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#9ECFFB',
-    backgroundColor: '#9ECFFB',
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
@@ -361,7 +368,7 @@ const styles = StyleSheet.create({
   subjectEventsFooterActionButtonText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#111827',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -370,11 +377,12 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
   },
   subjectEventsFooterDeleteButton: {
-    height: 40,
+    height: 42,
+    flex: 1,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#EF4444',
-    backgroundColor: '#EF4444',
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
@@ -390,7 +398,7 @@ const styles = StyleSheet.create({
   subjectEventsFooterDeleteButtonText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: '#DC2626',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -427,6 +435,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
+  },
+  subjectEventRowTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    minWidth: 0,
+  },
+  subjectEventToggleCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.14)',
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  subjectEventToggleCircleAttended: {
+    borderColor: 'rgba(34,197,94,0.35)',
+    backgroundColor: 'rgba(34,197,94,0.12)',
+  },
+  subjectEventToggleCircleDisabled: {
+    opacity: 0.6,
   },
   subjectEventRowMetaRight: {
     alignItems: 'flex-end',

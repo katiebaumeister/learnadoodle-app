@@ -2072,23 +2072,36 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     const eventId = String(eventItem?.id || '').trim();
     if (!eventId) return;
     setCourseScheduleMarkingEventId(eventId);
+    setCourseScheduleModalData((prev) => ({
+      ...prev,
+      events: (Array.isArray(prev?.events) ? prev.events : []).map((entry) => (
+        String(entry?.id || '') === eventId
+          ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS', hasAttendancePresent: true }
+          : entry
+      )),
+    }));
     try {
       const { error } = await completeEvent(eventId, null, { requirePersist: true });
       if (error) throw error;
-      setCourseScheduleModalData((prev) => ({
-        ...prev,
-        events: (Array.isArray(prev?.events) ? prev.events : []).map((entry) => (
-          String(entry?.id || '') === eventId
-            ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS', hasAttendancePresent: true }
-            : entry
-        )),
-      }));
       toast.push('Marked as attended.', 'success');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
       }
     } catch (error) {
+      setCourseScheduleModalData((prev) => ({
+        ...prev,
+        events: (Array.isArray(prev?.events) ? prev.events : []).map((entry) => (
+          String(entry?.id || '') === eventId
+            ? {
+                ...entry,
+                status: eventItem?.status || 'scheduled',
+                instructional_status: eventItem?.instructional_status || null,
+                hasAttendancePresent: eventItem?.hasAttendancePresent === true,
+              }
+            : entry
+        )),
+      }));
       toast.push(error?.message || 'Could not mark attended.', 'error');
     } finally {
       setCourseScheduleMarkingEventId(null);
@@ -2099,23 +2112,36 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     const eventId = String(eventItem?.id || '').trim();
     if (!eventId) return;
     setCourseScheduleMarkingEventId(eventId);
+    setCourseScheduleModalData((prev) => ({
+      ...prev,
+      events: (Array.isArray(prev?.events) ? prev.events : []).map((entry) => (
+        String(entry?.id || '') === eventId
+          ? { ...entry, status: 'scheduled', instructional_status: null, hasAttendancePresent: false }
+          : entry
+      )),
+    }));
     try {
       const { error } = await updateEventStatus(eventId, 'scheduled');
       if (error) throw error;
-      setCourseScheduleModalData((prev) => ({
-        ...prev,
-        events: (Array.isArray(prev?.events) ? prev.events : []).map((entry) => (
-          String(entry?.id || '') === eventId
-            ? { ...entry, status: 'scheduled', instructional_status: null, hasAttendancePresent: false }
-            : entry
-        )),
-      }));
       toast.push('Marked as unattended.', 'success');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
       }
     } catch (error) {
+      setCourseScheduleModalData((prev) => ({
+        ...prev,
+        events: (Array.isArray(prev?.events) ? prev.events : []).map((entry) => (
+          String(entry?.id || '') === eventId
+            ? {
+                ...entry,
+                status: eventItem?.status || 'done',
+                instructional_status: eventItem?.instructional_status || null,
+                hasAttendancePresent: eventItem?.hasAttendancePresent === true,
+              }
+            : entry
+        )),
+      }));
       toast.push(error?.message || 'Could not mark unattended.', 'error');
     } finally {
       setCourseScheduleMarkingEventId(null);
@@ -2165,26 +2191,24 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   }, [familyId, courseScheduleModalData, courseScheduleDeletingAllEvents, toast]);
 
   const markAllPastEventsAsAttendedFromCourseScheduleModal = useCallback(async () => {
-    const BULK_MARK_ID = '__bulk_mark_all_past_attended__';
+    const BULK_MARK_ID = '__bulk_mark_all_attended__';
     if (courseScheduleDeletingAllEvents || courseScheduleMarkingEventId === BULK_MARK_ID) return;
-    const pastUnattendedEvents = (Array.isArray(courseScheduleModalData?.events) ? courseScheduleModalData.events : [])
+    const unattendedEvents = (Array.isArray(courseScheduleModalData?.events) ? courseScheduleModalData.events : [])
       .filter((eventItem) => {
-        const startMs = Number(eventItem?.startMs || 0);
-        const isPastEvent = startMs > 0 && startMs < Date.now();
         const isAttended = eventItem?.hasAttendancePresent === true
           || String(eventItem?.status || '').toLowerCase() === 'done'
           || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
-        return isPastEvent && !isAttended && String(eventItem?.id || '').trim() !== '';
+        return !isAttended && String(eventItem?.id || '').trim() !== '';
       });
-    if (pastUnattendedEvents.length === 0) return;
+    if (unattendedEvents.length === 0) return;
     setCourseScheduleMarkingEventId(BULK_MARK_ID);
     try {
       await Promise.all(
-        pastUnattendedEvents.map((eventItem) =>
+        unattendedEvents.map((eventItem) =>
           completeEvent(eventItem.id, null, { requirePersist: true })
         )
       );
-      const completedIdSet = new Set(pastUnattendedEvents.map((eventItem) => String(eventItem?.id || '').trim()));
+      const completedIdSet = new Set(unattendedEvents.map((eventItem) => String(eventItem?.id || '').trim()));
       setCourseScheduleModalData((prev) => ({
         ...prev,
         events: (Array.isArray(prev?.events) ? prev.events : []).map((eventItem) => (
@@ -2198,7 +2222,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             : eventItem
         )),
       }));
-      toast.push('Marked all past events as attended.', 'success');
+      toast.push('Marked all unattended events as attended.', 'success');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
         window.dispatchEvent(new CustomEvent('refreshSubjects'));

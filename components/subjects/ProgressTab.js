@@ -269,6 +269,7 @@ export default function ProgressTab({
   const [familyTargetScope, setFamilyTargetScope] = useState('overall');
   const [familyDefaultTargetDays, setFamilyDefaultTargetDays] = useState(null);
   const [familyOverallTargetDays, setFamilyOverallTargetDays] = useState(null);
+  const [yearSubjectTargetsById, setYearSubjectTargetsById] = useState({});
   const hasSubjectOptions = subjectOptions.length > 0;
   useEffect(() => {
     let cancelled = false;
@@ -305,6 +306,35 @@ export default function ProgressTab({
       });
     return () => { cancelled = true; };
   }, [familyId]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!familyId || !selectedAcademicYearLabel) {
+      setYearSubjectTargetsById({});
+      return () => { cancelled = true; };
+    }
+    supabase
+      .from('academic_years')
+      .select('subject_targets, subject_targets_override')
+      .eq('family_id', familyId)
+      .eq('school_year_label', selectedAcademicYearLabel)
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return;
+        const raw = (
+          data?.subject_targets && typeof data.subject_targets === 'object' && !Array.isArray(data.subject_targets)
+            ? data.subject_targets
+            : data?.subject_targets_override && typeof data.subject_targets_override === 'object' && !Array.isArray(data.subject_targets_override)
+              ? data.subject_targets_override
+              : {}
+        );
+        setYearSubjectTargetsById(raw || {});
+      })
+      .catch(() => {
+        if (!cancelled) setYearSubjectTargetsById({});
+      });
+    return () => { cancelled = true; };
+  }, [familyId, selectedAcademicYearLabel]);
   const subjectPickerPrompt = useMemo(() => {
     const byAction = {
       attendance_edit: 'Select a subject to edit attendance',
@@ -973,6 +1003,17 @@ export default function ProgressTab({
     return subjectDetails.map(({ subject, detail }) => {
       const sid = String(subject?.id || '');
       const detailReady = Boolean(detail);
+      const plan = detail?.plan || {};
+      const subjectTargetsRaw =
+        plan?.subject_targets && typeof plan.subject_targets === 'object' && !Array.isArray(plan.subject_targets)
+          ? plan.subject_targets
+          : plan?.subject_targets_override && typeof plan.subject_targets_override === 'object' && !Array.isArray(plan.subject_targets_override)
+            ? plan.subject_targets_override
+            : null;
+      const subjectTargetEntry =
+        subjectTargetsRaw && typeof subjectTargetsRaw[sid] === 'object' ? subjectTargetsRaw[sid] : null;
+      const yearSubjectTargetEntry =
+        yearSubjectTargetsById && typeof yearSubjectTargetsById[sid] === 'object' ? yearSubjectTargetsById[sid] : null;
       const subjectEvents = (detail?.events || []).filter((event) => {
         const matchesChild = selectedStudentId
           ? (
@@ -1030,7 +1071,15 @@ export default function ProgressTab({
       const targetDays = useOverallTargetMode
         ? null
         : parsePositiveInt(
-          detail?.settings?.default_target_days
+          yearSubjectTargetEntry?.target_days
+          ?? yearSubjectTargetEntry?.targetDays
+          ?? yearSubjectTargetEntry?.target_instructional_days
+          ?? yearSubjectTargetEntry?.targetInstructionalDays
+          ?? subjectTargetEntry?.target_days
+          ?? subjectTargetEntry?.targetDays
+          ?? subjectTargetEntry?.target_instructional_days
+          ?? subjectTargetEntry?.targetInstructionalDays
+          ?? detail?.settings?.default_target_days
           ?? detail?.settings?.defaultTargetDays
           ?? detail?.settings?.target_days
           ?? detail?.settings?.targetDays
@@ -1129,18 +1178,18 @@ export default function ProgressTab({
         paceLabel,
       };
     }).filter((row) => row.id);
-  }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays, familyTargetScope, familyOverallTargetDays]);
+  }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays, familyTargetScope, familyOverallTargetDays, yearSubjectTargetsById]);
   const attendanceTargetGapDays = useMemo(() => {
-    const useOverallTargetMode = familyTargetScope === 'overall' && familyOverallTargetDays != null;
-    if (useOverallTargetMode) {
-      const projectedUniqueDays = new Set((attendanceEvents || []).map((event) => getEventStartYmd(event)).filter(Boolean)).size;
-      return Number(projectedUniqueDays || 0) - Number(familyOverallTargetDays || 0);
-    }
     const rowsWithTargets = (subjectProgressRows || []).filter((row) => Number.isFinite(Number(row?.targetDays)));
-    if (!rowsWithTargets.length) return null;
-    const projected = rowsWithTargets.reduce((sum, row) => sum + Number(row?.plannedDays || 0), 0);
-    const target = rowsWithTargets.reduce((sum, row) => sum + Number(row?.targetDays || 0), 0);
-    return projected - target;
+    if (rowsWithTargets.length > 0) {
+      const projected = rowsWithTargets.reduce((sum, row) => sum + Number(row?.plannedDays || 0), 0);
+      const target = rowsWithTargets.reduce((sum, row) => sum + Number(row?.targetDays || 0), 0);
+      return projected - target;
+    }
+    const useOverallTargetMode = familyTargetScope === 'overall' && familyOverallTargetDays != null;
+    if (!useOverallTargetMode) return null;
+    const projectedUniqueDays = new Set((attendanceEvents || []).map((event) => getEventStartYmd(event)).filter(Boolean)).size;
+    return Number(projectedUniqueDays || 0) - Number(familyOverallTargetDays || 0);
   }, [familyTargetScope, familyOverallTargetDays, attendanceEvents, subjectProgressRows]);
   const attendanceTargetGapLabel = useMemo(() => {
     if (!Number.isFinite(Number(attendanceTargetGapDays))) return '—';

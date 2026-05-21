@@ -402,6 +402,10 @@ export default function SubjectDetailPage({
   initialOpenMaterialId = null,
   initialProgressAction = null,
 }) {
+  const preloadedSubjectId = preloadedSubjectData?.subject?.id;
+  const preloadedProgressCache = preloadedSubjectId
+    ? getSubjectProgressCache(familyId, preloadedSubjectId)
+    : null;
   const session = useSession();
   const toast = useToast();
   const [loading, setLoading] = useState(!preloadedSubjectData);
@@ -431,9 +435,12 @@ export default function SubjectDetailPage({
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
   const [applyingAttendanceSuggestion, setApplyingAttendanceSuggestion] = useState(false);
   const [showLearningGoalsMethodModal, setShowLearningGoalsMethodModal] = useState(false);
-  const [learningGoalsUnits, setLearningGoalsUnits] = useState([]);
-  const [learningGoalsSource, setLearningGoalsSource] = useState(null);
-  const [learningGoalsLoading, setLearningGoalsLoading] = useState(false);
+  const [learningGoalsUnits, setLearningGoalsUnits] = useState(
+    Array.isArray(preloadedProgressCache?.curriculumUnits) ? preloadedProgressCache.curriculumUnits : []
+  );
+  const [learningGoalsSource, setLearningGoalsSource] = useState(
+    preloadedProgressCache?.curriculumSavedContentSource || null
+  );
   const loadingRef = useRef(false);
   const autoOpenedMaterialKeyRef = useRef(null);
   const autoOpenedProgressActionRef = useRef(null);
@@ -446,18 +453,25 @@ export default function SubjectDetailPage({
       setLearningGoalsSource(null);
       return;
     }
-    setLearningGoalsLoading(true);
     try {
       const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, sid, null);
       if (error) throw error;
-      setLearningGoalsUnits(Array.isArray(data?.units) ? data.units : []);
-      setLearningGoalsSource(data?.saved_content_source || null);
+      const nextUnits = Array.isArray(data?.units) ? data.units : [];
+      const nextSource = data?.saved_content_source || null;
+      setLearningGoalsUnits(nextUnits);
+      setLearningGoalsSource(nextSource);
+      mergeSubjectProgressCache(familyId, sid, {
+        curriculumUnits: nextUnits,
+        curriculumSavedContentSource: nextSource,
+      });
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed loading learning goals structure:', err);
       setLearningGoalsUnits([]);
       setLearningGoalsSource(null);
-    } finally {
-      setLearningGoalsLoading(false);
+      mergeSubjectProgressCache(familyId, sid, {
+        curriculumUnits: [],
+        curriculumSavedContentSource: null,
+      });
     }
   }, [familyId, subjectData?.subject?.id]);
   /** Parent often passes inline callbacks; keep loadSubjectDetail stable so mount effect does not loop. */
@@ -1032,12 +1046,18 @@ export default function SubjectDetailPage({
     if (!familyId || !subject?.id) {
       setSubjectPlanYearId(null);
       setSubjectPlanData(null);
+      setLearningGoalsUnits([]);
+      setLearningGoalsSource(null);
       return;
     }
     const cached = getSubjectProgressCache(familyId, subject.id);
     const nextPlanYearId = cached?.academicYearId || subjectPlanYearIdFromEvents || null;
     setSubjectPlanYearId(nextPlanYearId);
     setSubjectPlanData(cached?.planData || null);
+    if (Array.isArray(cached?.curriculumUnits)) {
+      setLearningGoalsUnits(cached.curriculumUnits);
+    }
+    setLearningGoalsSource(cached?.curriculumSavedContentSource || null);
   }, [familyId, subject?.id, subjectPlanYearIdFromEvents]);
 
   useEffect(() => {
@@ -1075,6 +1095,10 @@ export default function SubjectDetailPage({
       const cached = getSubjectProgressCache(familyId, subject.id);
       setSubjectPlanYearId(cached?.academicYearId || subjectPlanYearIdFromEvents || null);
       setSubjectPlanData(cached?.planData || null);
+      if (Array.isArray(cached?.curriculumUnits)) {
+        setLearningGoalsUnits(cached.curriculumUnits);
+      }
+      setLearningGoalsSource(cached?.curriculumSavedContentSource || null);
     };
     window.addEventListener('subjectProgressPlanCacheUpdated', onCacheUpdate);
     return () => window.removeEventListener('subjectProgressPlanCacheUpdated', onCacheUpdate);
@@ -2732,7 +2756,83 @@ export default function SubjectDetailPage({
           </View>
         ) : null}
 
-        {/* Section 2: Attendance */}
+        {/* Section 2: Units and Lessons */}
+        <View id="learning-goals-section" style={styles.section}>
+          <View style={styles.attendanceSectionHeader}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Units and Lessons</Text>
+            {onEditSubject ? (
+              <View style={styles.learningGoalsHeaderActions}>
+                <TouchableOpacity
+                  style={styles.emptyStateButton}
+                  onPress={openLearningGoalsMethodModal}
+                  activeOpacity={0.8}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.learningGoalsActionInner}>
+                    <Plus size={14} color="#6B7280" />
+                    <Text style={styles.emptyStateButtonText}>Add new units</Text>
+                  </View>
+                </TouchableOpacity>
+                {hasLearningGoalsContent ? (
+                  <TouchableOpacity
+                    style={styles.learningGoalsEditCurrentButton}
+                    onPress={openSubjectUnitsEditor}
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.learningGoalsActionInner}>
+                      <Edit2 size={14} color="#5E6C84" />
+                      <Text style={styles.learningGoalsEditCurrentText}>Edit current units</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
+          <View style={styles.emptyStateBox}>
+            {!hasLearningGoalsContent ? (
+              <Text style={styles.emptyStateText}>
+                Units and lessons appear once you add class lessons or units.
+              </Text>
+            ) : null}
+            {hasLearningGoalsContent ? (
+              <>
+                <View style={styles.learningGoalsMethodHeader}>
+                  <Text style={styles.learningGoalsMethodHeaderTitle}>{learningGoalsMethodTitle}</Text>
+                  <Text style={styles.learningGoalsMethodHeaderSubtitle}>
+                    {learningGoalsBuildSummaryLine}
+                  </Text>
+                </View>
+                <View style={styles.learningGoalsMethodHeaderDivider} />
+                <View style={styles.learningGoalsList}>
+                  {learningGoalsUnits.map((unit, unitIndex) => {
+                    const lessonTitles = (unit?.lessons || [])
+                      .map((lesson) => String(lesson?.title || '').trim())
+                      .filter(Boolean);
+                    return (
+                      <View key={`${unit?.title || 'unit'}-${unitIndex}`} style={styles.learningGoalsUnitCard}>
+                        <Text style={styles.learningGoalsUnitTitle}>{unit?.title || `Unit ${unitIndex + 1}`}</Text>
+                        <Text style={styles.learningGoalsUnitMeta}>
+                          {(unit?.lessons || []).length} {(unit?.lessons || []).length === 1 ? 'lesson' : 'lessons'}
+                        </Text>
+                        {lessonTitles.slice(0, 4).map((lessonTitle, lessonIndex) => (
+                          <Text key={`${lessonTitle}-${lessonIndex}`} style={styles.learningGoalsLessonRow}>
+                            • {lessonTitle}
+                          </Text>
+                        ))}
+                        {lessonTitles.length > 4 ? (
+                          <Text style={styles.learningGoalsMoreText}>+{lessonTitles.length - 4} more lessons</Text>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
+              </>
+            ) : null}
+          </View>
+        </View>
+
+        {/* Section 3: Attendance */}
         <View id="attendance-section" style={styles.section}>
             <>
               <View style={styles.attendanceSectionHeader}>
@@ -2853,7 +2953,7 @@ export default function SubjectDetailPage({
             </>
           </View>
 
-        {/* Section 3: Grades */}
+        {/* Section 4: Grades */}
         <View id="grades-section" style={styles.section}>
           <View style={styles.gradesSectionHeader}>
             <View style={styles.gradesSectionTitleRow}>
@@ -2974,84 +3074,6 @@ export default function SubjectDetailPage({
           )}
         </View>
 
-        {/* Section: Units and Lessons */}
-        <View id="learning-goals-section" style={styles.section}>
-          <View style={styles.attendanceSectionHeader}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Units and Lessons</Text>
-            {onEditSubject ? (
-              <View style={styles.learningGoalsHeaderActions}>
-                <TouchableOpacity
-                  style={styles.emptyStateButton}
-                  onPress={openLearningGoalsMethodModal}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.learningGoalsActionInner}>
-                    <Plus size={14} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Add new units</Text>
-                  </View>
-                </TouchableOpacity>
-                {hasLearningGoalsContent ? (
-                  <TouchableOpacity
-                    style={styles.learningGoalsEditCurrentButton}
-                    onPress={openSubjectUnitsEditor}
-                    activeOpacity={0.8}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View style={styles.learningGoalsActionInner}>
-                      <Edit2 size={14} color="#5E6C84" />
-                      <Text style={styles.learningGoalsEditCurrentText}>Edit current units</Text>
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            ) : null}
-          </View>
-          <View style={styles.emptyStateBox}>
-            {!hasLearningGoalsContent ? (
-              <Text style={styles.emptyStateText}>
-                Units and lessons appear once you add class lessons or units.
-              </Text>
-            ) : null}
-            {learningGoalsLoading ? (
-              <Text style={styles.learningGoalsLoadingText}>Loading current units...</Text>
-            ) : null}
-            {hasLearningGoalsContent ? (
-              <>
-                <View style={styles.learningGoalsMethodHeader}>
-                  <Text style={styles.learningGoalsMethodHeaderTitle}>{learningGoalsMethodTitle}</Text>
-                  <Text style={styles.learningGoalsMethodHeaderSubtitle}>
-                    {learningGoalsBuildSummaryLine}
-                  </Text>
-                </View>
-                <View style={styles.learningGoalsMethodHeaderDivider} />
-                <View style={styles.learningGoalsList}>
-                  {learningGoalsUnits.map((unit, unitIndex) => {
-                    const lessonTitles = (unit?.lessons || [])
-                      .map((lesson) => String(lesson?.title || '').trim())
-                      .filter(Boolean);
-                    return (
-                      <View key={`${unit?.title || 'unit'}-${unitIndex}`} style={styles.learningGoalsUnitCard}>
-                        <Text style={styles.learningGoalsUnitTitle}>{unit?.title || `Unit ${unitIndex + 1}`}</Text>
-                        <Text style={styles.learningGoalsUnitMeta}>
-                          {(unit?.lessons || []).length} {(unit?.lessons || []).length === 1 ? 'lesson' : 'lessons'}
-                        </Text>
-                        {lessonTitles.slice(0, 4).map((lessonTitle, lessonIndex) => (
-                          <Text key={`${lessonTitle}-${lessonIndex}`} style={styles.learningGoalsLessonRow}>
-                            • {lessonTitle}
-                          </Text>
-                        ))}
-                        {lessonTitles.length > 4 ? (
-                          <Text style={styles.learningGoalsMoreText}>+{lessonTitles.length - 4} more lessons</Text>
-                        ) : null}
-                      </View>
-                    );
-                  })}
-                </View>
-              </>
-            ) : null}
-          </View>
-        </View>
       </ScrollView>
       <Modal
         visible={showLearningGoalsMethodModal}
@@ -3352,7 +3374,8 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingTop: 60,
     ...(Platform.OS === 'web' && {
-      maxWidth: 1200,
+      maxWidth: 1400,
+      paddingHorizontal: 12,
       marginHorizontal: 'auto',
       width: '100%',
     }),
@@ -3436,6 +3459,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'flex-start',
     marginLeft: 16,
+    marginRight: 10,
   },
   actionButton: {
     flexDirection: 'row',
@@ -4245,14 +4269,6 @@ const styles = StyleSheet.create({
     color: colors.muted || '#6B7280',
     lineHeight: 20,
     marginBottom: 20,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  learningGoalsLoadingText: {
-    fontSize: 13,
-    color: '#64748B',
-    marginBottom: 14,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

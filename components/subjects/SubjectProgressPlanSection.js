@@ -215,13 +215,20 @@ export default function SubjectProgressPlanSection({
       }
       if (error) {
         setCurriculumUnits([]);
-        mergeSubjectProgressCache(reqFamilyId, reqSubjectId, { curriculumUnits: [] });
+        mergeSubjectProgressCache(reqFamilyId, reqSubjectId, {
+          curriculumUnits: [],
+          curriculumSavedContentSource: null,
+        });
         return;
       }
       const units = data?.units;
       const nextUnits = Array.isArray(units) ? units : [];
+      const nextSource = data?.saved_content_source ?? null;
       setCurriculumUnits(nextUnits);
-      mergeSubjectProgressCache(reqFamilyId, reqSubjectId, { curriculumUnits: nextUnits });
+      mergeSubjectProgressCache(reqFamilyId, reqSubjectId, {
+        curriculumUnits: nextUnits,
+        curriculumSavedContentSource: nextSource,
+      });
     } catch (e) {
       if (
         String(subjectIdLiveRef.current) !== String(reqSubjectId) ||
@@ -230,7 +237,10 @@ export default function SubjectProgressPlanSection({
         return;
       }
       setCurriculumUnits([]);
-      mergeSubjectProgressCache(reqFamilyId, reqSubjectId, { curriculumUnits: [] });
+      mergeSubjectProgressCache(reqFamilyId, reqSubjectId, {
+        curriculumUnits: [],
+        curriculumSavedContentSource: null,
+      });
     } finally {
       if (
         String(subjectIdLiveRef.current) === String(reqSubjectId) &&

@@ -5201,17 +5201,17 @@ export default function SubjectsPlanBuilder({
     const eventId = String(eventItem?.id || '').trim();
     if (!eventId) return;
     setMarkingAttendanceEventId(eventId);
+    setUpcomingEventsModalData((prev) => ({
+      ...prev,
+      events: (prev?.events || []).map((entry) => (
+        String(entry?.id || '') === eventId
+          ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS', hasAttendancePresent: true }
+          : entry
+      )),
+    }));
     try {
       const { error } = await completeEvent(eventId, null, { requirePersist: true });
       if (error) throw error;
-      setUpcomingEventsModalData((prev) => ({
-        ...prev,
-        events: (prev?.events || []).map((entry) => (
-          String(entry?.id || '') === eventId
-            ? { ...entry, status: 'done', instructional_status: 'MANUAL_COUNTS', hasAttendancePresent: true }
-            : entry
-        )),
-      }));
       setEventsRefreshKey((prev) => prev + 1);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
@@ -5219,6 +5219,19 @@ export default function SubjectsPlanBuilder({
       }
       toast?.push?.('Marked as attended.', 'success');
     } catch (err) {
+      setUpcomingEventsModalData((prev) => ({
+        ...prev,
+        events: (prev?.events || []).map((entry) => (
+          String(entry?.id || '') === eventId
+            ? {
+                ...entry,
+                status: eventItem?.status || 'scheduled',
+                instructional_status: eventItem?.instructional_status || null,
+                hasAttendancePresent: eventItem?.hasAttendancePresent === true,
+              }
+            : entry
+        )),
+      }));
       toast?.push?.(err?.message || 'Could not mark attended.', 'error');
     } finally {
       setMarkingAttendanceEventId(null);
@@ -5229,17 +5242,17 @@ export default function SubjectsPlanBuilder({
     const eventId = String(eventItem?.id || '').trim();
     if (!eventId) return;
     setMarkingAttendanceEventId(eventId);
+    setUpcomingEventsModalData((prev) => ({
+      ...prev,
+      events: (prev?.events || []).map((entry) => (
+        String(entry?.id || '') === eventId
+          ? { ...entry, status: 'scheduled', instructional_status: null, hasAttendancePresent: false }
+          : entry
+      )),
+    }));
     try {
       const { error } = await updateEventStatus(eventId, 'scheduled');
       if (error) throw error;
-      setUpcomingEventsModalData((prev) => ({
-        ...prev,
-        events: (prev?.events || []).map((entry) => (
-          String(entry?.id || '') === eventId
-            ? { ...entry, status: 'scheduled', instructional_status: null, hasAttendancePresent: false }
-            : entry
-        )),
-      }));
       setEventsRefreshKey((prev) => prev + 1);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
@@ -5247,6 +5260,19 @@ export default function SubjectsPlanBuilder({
       }
       toast?.push?.('Marked as unattended.', 'success');
     } catch (err) {
+      setUpcomingEventsModalData((prev) => ({
+        ...prev,
+        events: (prev?.events || []).map((entry) => (
+          String(entry?.id || '') === eventId
+            ? {
+                ...entry,
+                status: eventItem?.status || 'done',
+                instructional_status: eventItem?.instructional_status || null,
+                hasAttendancePresent: eventItem?.hasAttendancePresent === true,
+              }
+            : entry
+        )),
+      }));
       toast?.push?.(err?.message || 'Could not mark unattended.', 'error');
     } finally {
       setMarkingAttendanceEventId(null);
@@ -5254,21 +5280,18 @@ export default function SubjectsPlanBuilder({
   }, [toast]);
 
   const markAllPastEventsAsAttendedFromAllEventsModal = useCallback(async () => {
-    const nowMs = Date.now();
     const events = Array.isArray(upcomingEventsModalData?.events) ? upcomingEventsModalData.events : [];
     const targetEvents = events.filter((eventItem) => {
       if (eventItem?.isDayAggregate) return false;
       const eventId = String(eventItem?.id || '').trim();
-      const startMs = Number(eventItem?.startMs || 0);
-      const isPastEvent = startMs > 0 && startMs < nowMs;
       const isAttended = eventItem?.hasAttendancePresent === true
         || String(eventItem?.status || '').toLowerCase() === 'done'
         || String(eventItem?.instructional_status || '').toUpperCase() === 'MANUAL_COUNTS';
-      return Boolean(eventId) && isPastEvent && !isAttended;
+      return Boolean(eventId) && !isAttended;
     });
     if (!targetEvents.length) return;
     const targetCount = targetEvents.length;
-    const confirmMessage = `Mark all ${targetCount} past event${targetCount === 1 ? '' : 's'} as attended?`;
+    const confirmMessage = `Mark all ${targetCount} unattended event${targetCount === 1 ? '' : 's'} as attended?`;
     const confirmed = await new Promise((resolve) => {
       if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
         resolve(window.confirm(confirmMessage));
@@ -5285,7 +5308,7 @@ export default function SubjectsPlanBuilder({
       );
     });
     if (!confirmed) return;
-    setMarkingAttendanceEventId('__bulk_mark_all_past_attended__');
+    setMarkingAttendanceEventId('__bulk_mark_all_attended__');
     const succeededIds = [];
     let failedCount = 0;
     try {
@@ -5316,11 +5339,11 @@ export default function SubjectsPlanBuilder({
         }
       }
       if (succeededIds.length > 0 && failedCount === 0) {
-        toast?.push?.(`Marked ${succeededIds.length} past event${succeededIds.length === 1 ? '' : 's'} as attended.`, 'success');
+        toast?.push?.(`Marked ${succeededIds.length} unattended event${succeededIds.length === 1 ? '' : 's'} as attended.`, 'success');
       } else if (succeededIds.length > 0) {
-        toast?.push?.(`Marked ${succeededIds.length} past event${succeededIds.length === 1 ? '' : 's'} as attended. ${failedCount} failed.`, 'success');
+        toast?.push?.(`Marked ${succeededIds.length} unattended event${succeededIds.length === 1 ? '' : 's'} as attended. ${failedCount} failed.`, 'success');
       } else {
-        toast?.push?.('Could not mark past events as attended.', 'error');
+        toast?.push?.('Could not mark unattended events as attended.', 'error');
       }
     } finally {
       setMarkingAttendanceEventId(null);
@@ -6416,21 +6439,15 @@ export default function SubjectsPlanBuilder({
                           || (Array.isArray(catchUpRowResolved?.suggestedPlanChanges) && catchUpRowResolved.suggestedPlanChanges.length > 0);
                         const suggestedDaysText = (() => {
                           const numericGap = Number(rowGapValue || 0);
-                          if (rowTargetUnit === 'hours') {
-                            const hoursToAdd = Math.max(0, Math.abs(numericGap));
-                            return `Add ${toOneDecimal(hoursToAdd)} hour${hoursToAdd === 1 ? '' : 's'}`;
-                          }
                           if (numericGap > 0) {
                             const daysToAdd = Math.max(1, Math.ceil(numericGap));
                             return `Add ${daysToAdd} day${daysToAdd === 1 ? '' : 's'}`;
                           }
                           if (numericGap < 0) {
                             const daysToRemove = Math.max(1, Math.ceil(Math.abs(numericGap)));
-                            return hasApplyAction
-                              ? `Remove ${daysToRemove} day${daysToRemove === 1 ? '' : 's'}`
-                              : 'Open planning preferences';
+                            return `Remove ${daysToRemove} day${daysToRemove === 1 ? '' : 's'}`;
                           }
-                          return 'On target';
+                          return null;
                         })();
                         const fixGapActionRecommendation = fixGapActionRecommendationsByRowId?.[rowId] || null;
                         const canFixGap = Math.abs(Number(rowGapValue || 0)) > 0;
@@ -6571,34 +6588,36 @@ export default function SubjectsPlanBuilder({
                                   ) : null}
                                 </View>
                               ) : null}
-                              <View style={styles.yearTargetsExpandedSuggestionLineRow}>
-                                <Text style={styles.yearTargetsPredictiveSuggestionLine}>
-                                  {`Suggestion: ${suggestedDaysText}`}
-                                </Text>
-                                <TouchableOpacity
-                                  onPress={() => fixYearTargetGap({
-                                    ...row,
-                                    ...(catchUpRowResolved || {}),
-                                  })}
-                                  activeOpacity={0.85}
-                                  disabled={fixingGapRowId === rowId || !canFixGap}
-                                  style={[
-                                    styles.yearTargetsPredictiveSuggestionButton,
-                                    styles.yearTargetsPredictiveFixGapButton,
-                                    (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonDisabled,
-                                  ]}
-                                  {...(Platform.OS === 'web' && { cursor: (fixingGapRowId === rowId || !canFixGap) ? 'default' : 'pointer' })}
-                                >
-                                  <Text
-                                    style={[
-                                      styles.yearTargetsPredictiveSuggestionButtonText,
-                                      (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
-                                    ]}
-                                  >
-                                    {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
+                              {suggestedDaysText ? (
+                                <View style={styles.yearTargetsExpandedSuggestionLineRow}>
+                                  <Text style={styles.yearTargetsPredictiveSuggestionLine}>
+                                    {suggestedDaysText}
                                   </Text>
-                                </TouchableOpacity>
-                              </View>
+                                  <TouchableOpacity
+                                    onPress={() => fixYearTargetGap({
+                                      ...row,
+                                      ...(catchUpRowResolved || {}),
+                                    })}
+                                    activeOpacity={0.85}
+                                    disabled={fixingGapRowId === rowId || !canFixGap}
+                                    style={[
+                                      styles.yearTargetsPredictiveSuggestionButton,
+                                      styles.yearTargetsPredictiveFixGapButton,
+                                      (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonDisabled,
+                                    ]}
+                                    {...(Platform.OS === 'web' && { cursor: (fixingGapRowId === rowId || !canFixGap) ? 'default' : 'pointer' })}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.yearTargetsPredictiveSuggestionButtonText,
+                                        (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
+                                      ]}
+                                    >
+                                      {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                </View>
+                              ) : null}
                             </View>
                             </Animated.View>
                           </View>
