@@ -2641,7 +2641,7 @@ export default function SubjectsPlanBuilder({
         }
         return [{
           id: 'overall',
-          name: allSubjectNames.join(', ') || 'Class Days',
+          name: allSubjectNames.join(', ') || 'Subject Days',
           schoolTermId: 'full_year',
           schoolTermLabel: '',
           rangeStartYmd: effectiveYearRange?.start_date || yearRange?.start_date || null,
@@ -2670,7 +2670,7 @@ export default function SubjectsPlanBuilder({
 
     return [{
       id: 'school_year',
-      title: 'Class Days',
+      title: 'Subject Days',
       status,
       plannedDays,
       completedDays,

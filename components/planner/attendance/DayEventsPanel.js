@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Check, ChevronRight } from 'lucide-react';
+import { Check, ChevronRight, Plus } from 'lucide-react';
 import { TOKENS } from './constants';
 
 function timeStr(e) {
@@ -20,23 +20,6 @@ function duration(e, getEventMinutes) {
   return `${mins} min`;
 }
 
-function dayStatusFromEvents(events = [], attendanceByEventId = {}) {
-  if (!events.length) return 'unmarked';
-  let present = 0;
-  events.forEach((e) => {
-    if (attendanceByEventId[e.id] === 'present') present++;
-  });
-  if (present >= 1) return 'present';
-  if (events.every((e) => attendanceByEventId[e.id] === 'absent')) return 'absent';
-  return 'unmarked';
-}
-
-const STATUS_PILL = {
-  present: 'Attended',
-  absent: 'Unattended',
-  unmarked: 'Upcoming',
-};
-
 export default function DayEventsPanel({
   dateLabel,
   childName,
@@ -47,6 +30,7 @@ export default function DayEventsPanel({
   onEventPress,
   getEventMinutes,
   compactEventRows = false,
+  onAddEventForDate = null,
 }) {
   const [pressedEventId, setPressedEventId] = useState(null);
   const sortedEvents = [...events].sort((a, b) => {
@@ -54,7 +38,6 @@ export default function DayEventsPanel({
     const tb = (b.start_ts || b.start || b.start_local) ? new Date(b.start_ts || b.start || b.start_local).getTime() : 0;
     return ta - tb;
   });
-  const dayStatus = dayStatusFromEvents(events, attendanceByEventId);
   const totalMins = events.reduce((sum, e) => sum + (getEventMinutes ? getEventMinutes(e) : 0), 0);
 
   return (
@@ -71,9 +54,18 @@ export default function DayEventsPanel({
           <View style={styles.headerBlock}>
             <View style={styles.headerRow1}>
               <Text style={styles.dateLabel}>{dateLabel}</Text>
-              <View style={styles.statusPill}>
-                <Text style={styles.statusPillText}>{STATUS_PILL[dayStatus] || STATUS_PILL.unmarked}</Text>
-              </View>
+              {onAddEventForDate && (
+                <TouchableOpacity
+                  onPress={onAddEventForDate}
+                  style={styles.addEventBtn}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add event for selected day"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={14} color={TOKENS.textMuted} />
+                </TouchableOpacity>
+              )}
             </View>
             <View style={styles.headerRow2}>
               <Text style={styles.headerMeta} numberOfLines={1}>
@@ -195,14 +187,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   dateLabel: { fontSize: 16, fontWeight: '600', color: TOKENS.text },
-  statusPill: {
+  addEventBtn: {
     height: 24,
-    paddingHorizontal: 10,
+    width: 24,
     borderRadius: 999,
     backgroundColor: 'rgba(15,23,42,0.05)',
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  statusPillText: { fontSize: TOKENS.fontSizeCaption, color: TOKENS.textMuted },
   headerRow2: {
     flexDirection: 'row',
     alignItems: 'center',

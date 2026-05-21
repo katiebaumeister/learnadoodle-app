@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
   Modal,
@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { BarChart3, Calendar, CheckCircle, ChevronLeft, ChevronRight, Edit2, List, Plus, XCircle } from 'lucide-react';
+import { BarChart3, Calendar, Check, CheckCircle, ChevronLeft, ChevronRight, Edit2, List, Plus, XCircle } from 'lucide-react';
 import {
   SubjectAttendanceMonthDrilldown,
   SubjectAttendanceYearHeatmap,
@@ -19,6 +19,7 @@ import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { supabase } from '../../lib/supabase';
+import { createAttendanceLog, updateAttendanceLog } from '../../lib/services/recordsClient';
 
 const WEB_HEADING_FONT = Platform.OS === 'web'
   ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
@@ -28,6 +29,49 @@ const WEB_BODY_FONT = Platform.OS === 'web'
   : {};
 const ATTENDANCE_LIST_LIMIT = 5;
 const EMPTY_SUBJECT_MODAL_ID = '__empty_subject__';
+const PROGRESS_ATTENDANCE_VIEW_STORAGE_PREFIX = 'ld_progress_attendance_view_v1::';
+
+function normalizeAttendanceViewMode(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'month' || raw === 'year') return raw;
+  return 'list';
+}
+
+function buildProgressAttendanceViewStorageKey({ familyId, childId, academicYearStart } = {}) {
+  const familyKey = String(familyId || '').trim();
+  const childKey = String(childId || '').trim();
+  const yearKey = Number.isFinite(Number(academicYearStart)) ? String(Number(academicYearStart)) : '';
+  if (!familyKey || !childKey || !yearKey) return '';
+  return `${PROGRESS_ATTENDANCE_VIEW_STORAGE_PREFIX}${familyKey}|${childKey}|${yearKey}`;
+}
+
+function readProgressAttendanceView(storageKey) {
+  if (!storageKey || Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage?.getItem(storageKey);
+    if (!raw) return null;
+    return normalizeAttendanceViewMode(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeProgressAttendanceView(storageKey, mode) {
+  if (!storageKey || Platform.OS !== 'web' || typeof window === 'undefined') return;
+  try {
+    window.sessionStorage?.setItem(storageKey, normalizeAttendanceViewMode(mode));
+  } catch (_) {
+    // ignore storage write failures
+  }
+}
+
+function buildAttendanceOverrideKey(eventId, dayDate, childId) {
+  const eventKey = String(eventId || '').trim();
+  const dayKey = String(dayDate || '').slice(0, 10);
+  const childKey = String(childId || '').trim();
+  if (!eventKey || !dayKey || !childKey) return '';
+  return `${eventKey}|${dayKey}|${childKey}`;
+}
 
 function getChildLabel(child) {
   return child?.first_name || child?.name || child?.full_name || child?.display_name || 'Student';
@@ -136,6 +180,8 @@ export default function ProgressTab({
   hideYearHeader = false,
   onOpenSubject,
   onRefreshSubjectDetail,
+  onEditChild = null,
+  onOpenScheduleTab = null,
 }) {
   const students = useMemo(
     () => (Array.isArray(children) ? children : [])
@@ -322,8 +368,35 @@ export default function ProgressTab({
     }
   };
 
-  const [attendanceViewMode, setAttendanceViewMode] = useState('list');
+  const attendanceViewStorageKey = useMemo(
+    () => buildProgressAttendanceViewStorageKey({
+      familyId,
+      childId: selectedStudentId,
+      academicYearStart: selectedAcademicYearStart,
+    }),
+    [familyId, selectedStudentId, selectedAcademicYearStart]
+  );
+  const [attendanceViewMode, setAttendanceViewMode] = useState(() => (
+    readProgressAttendanceView(
+      buildProgressAttendanceViewStorageKey({
+        familyId,
+        childId: preferredStudentId,
+        academicYearStart: selectedAcademicYearStart,
+      })
+    ) || 'list'
+  ));
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
+  const [optimisticAttendanceByKey, setOptimisticAttendanceByKey] = useState({});
+  useEffect(() => {
+    const persisted = readProgressAttendanceView(attendanceViewStorageKey) || 'list';
+    setAttendanceViewMode((prev) => (prev === persisted ? prev : persisted));
+  }, [attendanceViewStorageKey]);
+  useEffect(() => {
+    writeProgressAttendanceView(attendanceViewStorageKey, attendanceViewMode);
+  }, [attendanceViewStorageKey, attendanceViewMode]);
+  useEffect(() => {
+    setOptimisticAttendanceByKey({});
+  }, [familyId, selectedStudentId, selectedAcademicYearStart]);
 
   const attendanceRecordsForUI = useMemo(() => {
     const rows = [];
@@ -350,6 +423,8 @@ export default function ProgressTab({
           status: String(record?.status || '').toLowerCase(),
           minutes: Number(record?.minutes || 0),
           eventId: record?.event_id || null,
+          attendanceLogId: record?.id || null,
+          childId: record?.child_id || null,
         });
       });
       (detail?.events || []).forEach((event) => {
@@ -376,12 +451,42 @@ export default function ProgressTab({
           status: 'present',
           minutes: Number(event?.duration_minutes || 60),
           eventId: event.id,
+          attendanceLogId: null,
+          childId: selectedStudentId || null,
         });
       });
     });
+    const overrides = optimisticAttendanceByKey || {};
+    Object.values(overrides).forEach((entry) => {
+      const key = buildAttendanceOverrideKey(entry?.eventId, entry?.dayDate, entry?.childId);
+      if (!key) return;
+      const idx = rows.findIndex((row) => (
+        buildAttendanceOverrideKey(row?.eventId, row?.dayDate, row?.childId || selectedStudentId) === key
+      ));
+      if (idx >= 0) {
+        rows[idx] = {
+          ...rows[idx],
+          status: String(entry?.status || rows[idx]?.status || '').toLowerCase() || rows[idx]?.status || 'absent',
+          minutes: Number(entry?.minutes || rows[idx]?.minutes || 60),
+        };
+      } else {
+        rows.push({
+          id: `optimistic-att-${key}`,
+          subjectId: entry?.subjectId || null,
+          subjectName: entry?.subjectName || 'Subject',
+          title: entry?.title || 'Lesson',
+          dayDate: String(entry?.dayDate || '').slice(0, 10),
+          status: String(entry?.status || 'present').toLowerCase(),
+          minutes: Number(entry?.minutes || 60),
+          eventId: entry?.eventId || null,
+          attendanceLogId: null,
+          childId: entry?.childId || selectedStudentId || null,
+        });
+      }
+    });
     rows.sort((a, b) => String(b.dayDate).localeCompare(String(a.dayDate)));
     return rows;
-  }, [subjectDetails, selectedStudentId, academicYearStartDate, academicYearEndDate]);
+  }, [subjectDetails, selectedStudentId, academicYearStartDate, academicYearEndDate, optimisticAttendanceByKey]);
 
   const attendanceEvents = useMemo(() => {
     const rows = [];
@@ -476,6 +581,28 @@ export default function ProgressTab({
     });
     return map;
   }, [attendanceEvents]);
+  const attendanceLogIdByEventDayChild = useMemo(() => {
+    const index = new Map();
+    (subjectDetails || []).forEach(({ detail }) => {
+      (detail?.attendanceRecords || []).forEach((record) => {
+        const key = buildAttendanceOverrideKey(record?.event_id, record?.day_date, record?.child_id);
+        if (!key || !record?.id) return;
+        index.set(key, record.id);
+      });
+    });
+    return index;
+  }, [subjectDetails]);
+  const resolveChildIdsForAttendanceEvent = useCallback((event) => {
+    const ids = [];
+    if (event?.child_id) ids.push(String(event.child_id));
+    if (Array.isArray(event?.child_ids)) {
+      event.child_ids.forEach((id) => {
+        if (id != null && String(id).trim()) ids.push(String(id));
+      });
+    }
+    if (!ids.length && selectedStudentId) ids.push(String(selectedStudentId));
+    return [...new Set(ids.filter(Boolean))];
+  }, [selectedStudentId]);
   const handleOpenEventDetails = (eventId, initialEvent = null) => {
     if (!eventId) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -488,7 +615,152 @@ export default function ProgressTab({
       onOpenSubject?.(initialEvent.subject_id || initialEvent.subjectId);
     }
   };
-
+  const handleOpenAddEventForDate = useCallback((dateKey) => {
+    const normKey = String(dateKey || '').slice(0, 10);
+    if (!normKey || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const detail = {
+      eventType: 'Lesson',
+      date: new Date(`${normKey}T12:00:00`),
+    };
+    if (selectedStudentId) {
+      detail.childId = String(selectedStudentId);
+      detail.childIds = [String(selectedStudentId)];
+    }
+    window.dispatchEvent(new CustomEvent('openTaskModal', { detail }));
+  }, [selectedStudentId]);
+  const getEventMinutes = useCallback((event) => {
+    const durationMinutes = Number(event?.duration_minutes);
+    if (Number.isFinite(durationMinutes) && durationMinutes > 0) return Math.round(durationMinutes);
+    const startMs = event?.start_ts ? new Date(event.start_ts).getTime() : NaN;
+    const endMs = event?.end_ts ? new Date(event.end_ts).getTime() : NaN;
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+      return Math.round((endMs - startMs) / 60000);
+    }
+    return 60;
+  }, []);
+  const handleToggleEventAttendanceForDate = useCallback(async (dateKey, eventId) => {
+    const normKey = String(dateKey || '').slice(0, 10);
+    const eid = String(eventId || '').trim();
+    if (!familyId || !selectedStudentId || !normKey || !eid) return;
+    const event = attendanceEventById.get(eid);
+    if (!event?.id) return;
+    const existingRows = (attendanceRecordsForUI || []).filter((row) => (
+      String(row?.eventId || '') === eid
+      && String(row?.dayDate || '').slice(0, 10) === normKey
+      && (!row?.childId || String(row.childId) === String(selectedStudentId))
+    ));
+    const hasPresent = existingRows.some((row) => ['present', 'partial'].includes(String(row?.status || '').toLowerCase()));
+    const nextStatus = hasPresent ? 'absent' : 'present';
+    const minutes = getEventMinutes(event);
+    const targetChildIds = resolveChildIdsForAttendanceEvent(event);
+    const subjectMatch = subjectDetails.find(({ subject }) => String(subject?.id || '') === String(event?.subject_id || event?.subjectId || ''));
+    if (targetChildIds.length > 0) {
+      const nextOverrides = {};
+      targetChildIds.forEach((childId) => {
+        const overrideKey = buildAttendanceOverrideKey(eid, normKey, childId);
+        if (!overrideKey) return;
+        nextOverrides[overrideKey] = {
+          eventId: eid,
+          dayDate: normKey,
+          childId,
+          status: nextStatus,
+          minutes,
+          subjectId: subjectMatch?.subject?.id || null,
+          subjectName: subjectMatch?.subject?.name || 'Subject',
+          title: event?.title || subjectMatch?.subject?.name || 'Lesson',
+        };
+      });
+      if (Object.keys(nextOverrides).length > 0) {
+        setOptimisticAttendanceByKey((prev) => ({ ...prev, ...nextOverrides }));
+      }
+    }
+    try {
+      await Promise.all(targetChildIds.map(async (childId) => {
+        const lookupKey = buildAttendanceOverrideKey(eid, normKey, childId);
+        const existingLogId = lookupKey ? attendanceLogIdByEventDayChild.get(lookupKey) : null;
+        if (existingLogId) {
+          await updateAttendanceLog(existingLogId, { status: nextStatus, minutes });
+          return;
+        }
+        await createAttendanceLog({
+          family_id: familyId,
+          child_id: String(childId),
+          event_id: event.id,
+          day_date: normKey,
+          status: nextStatus,
+          minutes,
+        });
+      }));
+      if (event?.subject_id || event?.subjectId) {
+        await onRefreshSubjectDetail?.(event.subject_id || event.subjectId);
+      } else if (typeof onRefreshSubjectDetail === 'function') {
+        await Promise.all(
+          (subjectDetails || []).map(({ subject }) => (
+            subject?.id ? onRefreshSubjectDetail(subject.id) : null
+          )).filter(Boolean)
+        );
+      }
+    } catch (err) {
+      if (targetChildIds.length > 0) {
+        setOptimisticAttendanceByKey((prev) => {
+          if (!prev) return prev;
+          const next = { ...prev };
+          targetChildIds.forEach((childId) => {
+            const overrideKey = buildAttendanceOverrideKey(eid, normKey, childId);
+            if (overrideKey) delete next[overrideKey];
+          });
+          return next;
+        });
+      }
+      console.warn('[ProgressTab] Failed toggling attendance:', err);
+    }
+  }, [familyId, selectedStudentId, attendanceEventById, attendanceRecordsForUI, getEventMinutes, onRefreshSubjectDetail, subjectDetails, resolveChildIdsForAttendanceEvent, attendanceLogIdByEventDayChild]);
+  const canMarkAttendanceForDateKey = useCallback((dateKey) => {
+    const normKey = String(dateKey || '').slice(0, 10);
+    if (!normKey) return false;
+    if ((attendanceEvents || []).some((event) => String(getEventStartYmd(event) || '').slice(0, 10) === normKey)) return true;
+    return (attendanceRecordsForUI || []).some((record) => String(record?.dayDate || '').slice(0, 10) === normKey);
+  }, [attendanceEvents, attendanceRecordsForUI]);
+  const pendingYearDayToggleKeysRef = useRef(new Set());
+  const handleYearHeatmapDayPress = useCallback(async (dateKey) => {
+    const normKey = String(dateKey || '').slice(0, 10);
+    if (!normKey) return;
+    if (pendingYearDayToggleKeysRef.current.has(normKey)) return;
+    if (!canMarkAttendanceForDateKey(normKey)) {
+      return;
+    }
+    const dayEvents = (attendanceEvents || []).filter((event) => (
+      String(getEventStartYmd(event) || '').slice(0, 10) === normKey
+      && String(event?.status || '').toLowerCase() !== 'canceled'
+      && event?.id
+    ));
+    if (!dayEvents.length) {
+      return;
+    }
+    const dayRows = (attendanceRecordsForUI || []).filter((row) => String(row?.dayDate || '').slice(0, 10) === normKey);
+    const hasPresent = dayRows.some((row) => ['present', 'partial'].includes(String(row?.status || '').toLowerCase()));
+    const targetStateLabel = hasPresent ? 'unattended' : 'attended';
+    const eventIdsToToggle = dayEvents
+      .filter((event) => {
+        const rowsForEvent = dayRows.filter((row) => String(row?.eventId || '') === String(event?.id || ''));
+        const eventHasPresent = rowsForEvent.some((row) => ['present', 'partial'].includes(String(row?.status || '').toLowerCase()));
+        return hasPresent ? eventHasPresent : !eventHasPresent;
+      })
+      .map((event) => String(event.id));
+    if (!eventIdsToToggle.length) {
+      return;
+    }
+    pendingYearDayToggleKeysRef.current.add(normKey);
+    try {
+      for (const eventId of eventIdsToToggle) {
+        // Sequential updates avoid race conditions against refresh callbacks.
+        // eslint-disable-next-line no-await-in-loop
+        await handleToggleEventAttendanceForDate(normKey, eventId);
+      }
+    } finally {
+      pendingYearDayToggleKeysRef.current.delete(normKey);
+    }
+  }, [canMarkAttendanceForDateKey, attendanceEvents, attendanceRecordsForUI, handleToggleEventAttendanceForDate]);
   const attendanceDayCounts = useMemo(() => {
     const byDay = new Map();
     attendanceRecordsForUI.forEach((record) => {
@@ -508,17 +780,6 @@ export default function ProgressTab({
     });
     return { present, absent };
   }, [attendanceRecordsForUI]);
-
-  const attendanceGapAmount = useMemo(() => {
-    const attendedDaySet = new Set(
-      attendanceRecordsForUI
-        .filter((record) => ['present', 'partial'].includes(String(record?.status || '').toLowerCase()))
-        .map((record) => String(record?.dayDate || '').slice(0, 10))
-        .filter(Boolean)
-    );
-    const scheduledDaySet = new Set((attendanceEvents || []).map((event) => getEventStartYmd(event)).filter(Boolean));
-    return Math.max(0, scheduledDaySet.size - attendedDaySet.size);
-  }, [attendanceRecordsForUI, attendanceEvents]);
 
   useEffect(() => {
     setShowAttendanceExpanded(false);
@@ -869,6 +1130,25 @@ export default function ProgressTab({
       };
     }).filter((row) => row.id);
   }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays, familyTargetScope, familyOverallTargetDays]);
+  const attendanceTargetGapDays = useMemo(() => {
+    const useOverallTargetMode = familyTargetScope === 'overall' && familyOverallTargetDays != null;
+    if (useOverallTargetMode) {
+      const projectedUniqueDays = new Set((attendanceEvents || []).map((event) => getEventStartYmd(event)).filter(Boolean)).size;
+      return Number(projectedUniqueDays || 0) - Number(familyOverallTargetDays || 0);
+    }
+    const rowsWithTargets = (subjectProgressRows || []).filter((row) => Number.isFinite(Number(row?.targetDays)));
+    if (!rowsWithTargets.length) return null;
+    const projected = rowsWithTargets.reduce((sum, row) => sum + Number(row?.plannedDays || 0), 0);
+    const target = rowsWithTargets.reduce((sum, row) => sum + Number(row?.targetDays || 0), 0);
+    return projected - target;
+  }, [familyTargetScope, familyOverallTargetDays, attendanceEvents, subjectProgressRows]);
+  const attendanceTargetGapLabel = useMemo(() => {
+    if (!Number.isFinite(Number(attendanceTargetGapDays))) return '—';
+    const value = Number(attendanceTargetGapDays);
+    const absDays = Math.abs(value);
+    const sign = value > 0 ? '+' : (value < 0 ? '-' : '');
+    return `${sign}${absDays} ${absDays === 1 ? 'day' : 'days'}`;
+  }, [attendanceTargetGapDays]);
   const savedProfileGrade = useMemo(() => {
     const raw = selectedStudentRecord?.grade
       ?? selectedStudentRecord?.grade_level
@@ -966,6 +1246,22 @@ export default function ProgressTab({
             </View>
           </View>
         </View>
+          <View style={styles.attendanceKeyShell}>
+            <View style={styles.attendanceKeyRow}>
+              <View style={styles.attendanceKeyPill}>
+                <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotAttended]} />
+                <Text style={styles.attendanceKeyText}>Attended</Text>
+              </View>
+              <View style={styles.attendanceKeyPill}>
+                <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUnattended]} />
+                <Text style={styles.attendanceKeyText}>Unattended</Text>
+              </View>
+              <View style={styles.attendanceKeyPill}>
+                <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUpcoming]} />
+                <Text style={styles.attendanceKeyText}>Upcoming</Text>
+              </View>
+            </View>
+          </View>
         <View style={styles.attendanceCountShell}>
           <View style={styles.attendanceCountContainer}>
             <Text style={styles.attendanceCountLabel}>Count</Text>
@@ -981,14 +1277,48 @@ export default function ProgressTab({
             </View>
           </View>
         </View>
-        <View style={styles.attendanceGapShell}>
+        <TouchableOpacity
+          style={[
+            styles.attendanceGapShell,
+            Number(attendanceTargetGapDays) > 0 && styles.attendanceGapShellAhead,
+            Number(attendanceTargetGapDays) < 0 && styles.attendanceGapShellBehind,
+            Number(attendanceTargetGapDays) === 0 && styles.attendanceGapShellOnTrack,
+          ]}
+          onPress={() => onOpenScheduleTab?.()}
+          activeOpacity={0.8}
+          disabled={typeof onOpenScheduleTab !== 'function'}
+          {...(Platform.OS === 'web' && { cursor: typeof onOpenScheduleTab === 'function' ? 'pointer' : 'default' })}
+        >
           <View style={styles.attendanceGapContainer}>
-            <Text style={styles.attendanceGapLabel}>Gap</Text>
-            <View style={styles.attendanceGapChipButton}>
-              <Text style={styles.attendanceGapChipText}>{`-${attendanceGapAmount} days`}</Text>
+            <Text
+              style={[
+                styles.attendanceGapLabel,
+                Number(attendanceTargetGapDays) > 0 && styles.attendanceGapLabelAhead,
+                Number(attendanceTargetGapDays) < 0 && styles.attendanceGapLabelBehind,
+              ]}
+            >
+              Gap
+            </Text>
+            <View
+              style={[
+                styles.attendanceGapChipButton,
+                Number(attendanceTargetGapDays) > 0 && styles.attendanceGapChipButtonAhead,
+                Number(attendanceTargetGapDays) < 0 && styles.attendanceGapChipButtonBehind,
+                Number(attendanceTargetGapDays) === 0 && styles.attendanceGapChipButtonOnTrack,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.attendanceGapChipText,
+                  Number(attendanceTargetGapDays) > 0 && styles.attendanceGapChipTextAhead,
+                  Number(attendanceTargetGapDays) < 0 && styles.attendanceGapChipTextBehind,
+                ]}
+              >
+                {attendanceTargetGapLabel}
+              </Text>
             </View>
           </View>
-        </View>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -999,17 +1329,25 @@ export default function ProgressTab({
           attendanceRecords={attendanceRecordsForUI.map((record) => ({
             ...record,
             day_date: record?.dayDate,
+            event_id: record?.eventId,
           }))}
           subjectEvents={attendanceEvents}
+          isDayMarkable={canMarkAttendanceForDateKey}
+          onDayPress={handleYearHeatmapDayPress}
+          hideLegend
         />
       ) : attendanceViewMode === 'month' ? (
         <SubjectAttendanceMonthDrilldown
           attendanceRecords={attendanceRecordsForUI.map((record) => ({
             ...record,
             day_date: record?.dayDate,
+            event_id: record?.eventId,
           }))}
           subjectEvents={attendanceEvents}
           onOpenEventDetails={handleOpenEventDetails}
+          onToggleEventAttendance={handleToggleEventAttendanceForDate}
+          onAddEventForDate={handleOpenAddEventForDate}
+          hideLegend
         />
       ) : null}
     </View>
@@ -1034,47 +1372,47 @@ export default function ProgressTab({
           </View>
         ) : null}
 
-        <View style={styles.childProgressCard}>
-          <View style={[styles.childProgressInnerRow, !isWeb && styles.childProgressInnerRowStacked]}>
-            <View style={styles.childProgressMetrics}>
-              <View style={styles.childProgressTitleRow}>
+        <View style={styles.progressHeader}>
+          <View style={[styles.progressHeaderTop, !isWeb && styles.progressHeaderTopStacked]}>
+            <View style={styles.progressHeaderTitleSection}>
+              <View style={styles.progressHeaderIdentityRow}>
                 <Image
                   source={sourceForChild(selectedStudentRecord)}
-                  style={styles.childProgressAvatar}
+                  style={styles.progressHeaderAvatar}
                   resizeMode="cover"
                 />
-                <Text style={styles.childProgressTitle}>{`${selectedStudent?.name || 'Student'}'s Progress`}</Text>
+                <View style={styles.progressHeaderTitleCopy}>
+                  <Text style={styles.progressHeaderTitle}>{`${selectedStudent?.name || 'Student'}'s Progress`}</Text>
+                  <Text style={styles.progressHeaderSubtext}>{gradeAndSubjectsLine}</Text>
+                </View>
               </View>
-              <Text style={styles.childProgressLine}>{gradeAndSubjectsLine}</Text>
             </View>
-            <View style={[styles.progressActionsStack, !isWeb && styles.progressActionsStackStacked]}>
-              <Text style={[styles.progressActionsTitle, !isWeb && styles.progressActionsTitleStacked]}>Actions</Text>
+            <View style={styles.headerActions}>
               <TouchableOpacity
-                onPress={() => openSubjectPicker('attendance_edit')}
+                style={styles.actionButton}
+                onPress={() => {
+                  if (typeof onEditChild === 'function' && selectedStudentRecord) {
+                    onEditChild(selectedStudentRecord);
+                  }
+                }}
                 activeOpacity={0.75}
-                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                {...(Platform.OS === 'web' ? { cursor: (typeof onEditChild === 'function' && selectedStudentRecord) ? 'pointer' : 'default' } : {})}
               >
-                <Text style={[styles.progressActionLine, !isWeb && styles.progressActionLineStacked]}>Add/Edit attendance</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => openSubjectPicker('grades_add')}
-                activeOpacity={0.75}
-                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-              >
-                <Text style={[styles.progressActionLine, !isWeb && styles.progressActionLineStacked]}>Add/Edit grades</Text>
+                <Edit2 size={14} color="#6B7280" />
+                <Text style={styles.actionButtonText}>Edit child</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
-        <View style={styles.section}>
+        <View style={[styles.section, styles.subjectsSection]}>
           <Text style={styles.sectionTitle}>Subjects</Text>
-          <View style={styles.progressSectionBody}>
-            {subjectProgressRows.length === 0 ? (
-              <Text style={styles.emptyStateText}>
-                {`No subjects found for ${selectedStudent?.name || 'this student'} in ${selectedAcademicYearLabel}. Add a subject for this school year to see progress details here.`}
-              </Text>
-            ) : (
-              subjectProgressRows.map((row) => (
+          {subjectProgressRows.length === 0 ? (
+            <Text style={styles.emptyStateText}>
+              {`No subjects found for ${selectedStudent?.name || 'this student'} in ${selectedAcademicYearLabel}. Add a subject for this school year to see progress details here.`}
+            </Text>
+          ) : (
+            <View style={styles.subjectRowsList}>
+              {subjectProgressRows.map((row) => (
                 <TouchableOpacity
                   key={`subject-row-${row.id}`}
                   style={styles.subjectRowItem}
@@ -1085,13 +1423,10 @@ export default function ProgressTab({
                   <Text style={styles.subjectRowTitle}>{row.subject}</Text>
                   <Text style={styles.subjectRowLine}>Attendance: {row.attendedDays} attended</Text>
                   <Text style={styles.subjectRowLine}>Grades: {row.gradeAverageLetter} average</Text>
-                  <Text style={[styles.subjectRowStatus, row.statusLabel === 'Needs attention' && styles.subjectRowStatusAlert]}>
-                    Status: {row.statusDetail}
-                  </Text>
                 </TouchableOpacity>
-              ))
-            )}
-          </View>
+              ))}
+            </View>
+          )}
         </View>
         {subjectProgressRows.length > 0 ? (
           <>
@@ -1106,7 +1441,7 @@ export default function ProgressTab({
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <Edit2 size={14} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Edit attendance</Text>
+                    <Text style={styles.emptyStateButtonText}>Bulk edit attendance</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1119,6 +1454,8 @@ export default function ProgressTab({
                         {(showAttendanceExpanded ? attendanceRecordsListUI : attendanceRecordsListUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
                           const statusLabel = String(record?.statusLabel || '');
                           const statusTone = String(record?.statusTone || '').toLowerCase();
+                          const isAttended = statusTone === 'attended';
+                          const canToggleAttendance = !!record?.event_id && !!record?.day_date;
                           const event = String(record?.event_id || '').trim()
                             ? attendanceEventById.get(String(record?.event_id || '').trim()) || null
                             : null;
@@ -1130,21 +1467,50 @@ export default function ProgressTab({
                               activeOpacity={0.7}
                               {...(Platform.OS === 'web' && { cursor: event ? 'pointer' : 'default' })}
                             >
+                              <TouchableOpacity
+                                style={[
+                                  styles.attendanceListToggleCircle,
+                                  isAttended && styles.attendanceListToggleCircleAttended,
+                                ]}
+                                onPress={(ev) => {
+                                  ev?.stopPropagation?.();
+                                  if (!canToggleAttendance) return;
+                                  handleToggleEventAttendanceForDate(record.day_date, record.event_id);
+                                }}
+                                activeOpacity={0.82}
+                                hitSlop={8}
+                                disabled={!canToggleAttendance}
+                                accessibilityRole="button"
+                                accessibilityLabel={isAttended ? 'Mark attendance as unattended' : 'Mark attendance as attended'}
+                                {...(Platform.OS === 'web' && { cursor: canToggleAttendance ? 'pointer' : 'default' })}
+                              >
+                                {isAttended ? <Check size={14} color="#16a34a" strokeWidth={2.5} /> : null}
+                              </TouchableOpacity>
                               <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
                               <View style={styles.progressAttendanceTitleWrap}>
                                 <Text style={styles.attendanceItemTitle}>{record?.title || 'Lesson'}</Text>
                                 <Text style={styles.progressAttendanceSubjectText}>{record?.subjectName || 'Subject'}</Text>
                               </View>
-                              <Text
-                                style={[
-                                  styles.attendanceItemStatus,
-                                  statusTone === 'attended' && styles.attendanceItemStatusAttended,
-                                  statusTone === 'unattended' && styles.attendanceItemStatusUnattended,
-                                  statusTone === 'upcoming' && styles.attendanceItemStatusUpcoming,
-                                ]}
-                              >
-                                {statusLabel}
-                              </Text>
+                              <View style={styles.attendanceItemStatusWrap}>
+                                <View
+                                  style={[
+                                    styles.attendanceItemStatusDot,
+                                    statusTone === 'attended' && styles.attendanceItemStatusDotAttended,
+                                    statusTone === 'unattended' && styles.attendanceItemStatusDotUnattended,
+                                    statusTone === 'upcoming' && styles.attendanceItemStatusDotUpcoming,
+                                  ]}
+                                />
+                                <Text
+                                  style={[
+                                    styles.attendanceItemStatus,
+                                    statusTone === 'attended' && styles.attendanceItemStatusAttended,
+                                    statusTone === 'unattended' && styles.attendanceItemStatusUnattended,
+                                    statusTone === 'upcoming' && styles.attendanceItemStatusUpcoming,
+                                  ]}
+                                >
+                                  {statusLabel}
+                                </Text>
+                              </View>
                               <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
                             </TouchableOpacity>
                           );
@@ -1185,7 +1551,7 @@ export default function ProgressTab({
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <Plus size={16} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Add grades</Text>
+                    <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1327,63 +1693,64 @@ const styles = StyleSheet.create({
   overviewSummaryLabel: { fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', ...WEB_HEADING_FONT },
   overviewSummaryValue: { marginTop: 4, fontSize: 19, fontWeight: '700', color: '#0F172A', ...WEB_HEADING_FONT },
   overviewSummaryMeta: { marginTop: 2, fontSize: 12, color: '#64748B', ...WEB_BODY_FONT },
-  childProgressCard: {
+  progressHeader: {
     marginHorizontal: 24,
-    marginTop: 6,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderTopWidth: 1,
-    borderColor: '#E5E7EB',
-    borderTopColor: '#D8E1EC',
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    marginTop: 8,
+    marginBottom: 18,
   },
-  childProgressInnerRow: {
+  progressHeaderTop: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 16,
   },
-  childProgressInnerRowStacked: {
+  progressHeaderTopStacked: {
     flexDirection: 'column',
     gap: 10,
   },
-  childProgressMetrics: {
+  progressHeaderTitleSection: {
     flex: 1,
     minWidth: 220,
-    gap: 3,
   },
-  childProgressTitleRow: {
+  progressHeaderIdentityRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
+    gap: 10,
   },
-  childProgressAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  progressHeaderAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: '#E2E8F0',
     ...(Platform.OS === 'web' ? { objectFit: 'cover' } : {}),
   },
-  childProgressTitle: { fontSize: 16, fontWeight: '700', color: '#111827', ...WEB_HEADING_FONT },
-  childProgressLine: { fontSize: 13, color: '#4B5563', lineHeight: 18, ...WEB_BODY_FONT },
-  progressActionsStack: {
-    width: 205,
+  progressHeaderTitleCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  progressHeaderTitle: { fontSize: 32, fontWeight: '700', color: '#1F2937', marginBottom: 8, ...WEB_HEADING_FONT },
+  progressHeaderSubtext: { fontSize: 14, color: '#6B7280', marginBottom: 4, ...WEB_BODY_FONT },
+  headerActions: {
+    flexDirection: 'column',
+    gap: 8,
     alignItems: 'flex-end',
+    justifyContent: 'flex-start',
+    marginLeft: 16,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 6,
-    paddingTop: 2,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    ...(Platform.OS === 'web' && { cursor: 'pointer', transition: 'all 0.2s ease' }),
   },
-  progressActionsStackStacked: {
-    width: '100%',
-    alignItems: 'flex-start',
-  },
-  progressActionsTitle: { fontSize: 12, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.4, ...WEB_HEADING_FONT },
-  progressActionsTitleStacked: { textAlign: 'left' },
-  progressActionLine: { fontSize: 13, lineHeight: 18, fontWeight: '700', color: '#334155', textAlign: 'right', ...WEB_HEADING_FONT },
-  progressActionLineStacked: { textAlign: 'left' },
+  actionButtonText: { fontSize: 14, fontWeight: '500', color: '#374151', ...WEB_HEADING_FONT },
+  subjectRowsList: { gap: 8 },
   coreCardsRow: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', paddingHorizontal: 14, marginBottom: 12 },
   coreCard: {
     flex: 1,
@@ -1444,7 +1811,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 8,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: 'transparent',
     paddingHorizontal: 10,
     paddingVertical: 9,
     gap: 2,
@@ -1494,6 +1861,7 @@ const styles = StyleSheet.create({
   needsAttentionRowTitle: { fontSize: 13, fontWeight: '700', color: '#1F2937', ...WEB_HEADING_FONT },
   needsAttentionRowText: { marginTop: 2, fontSize: 12, color: '#64748B', ...WEB_BODY_FONT },
   section: { marginBottom: 54, paddingHorizontal: 24 },
+  subjectsSection: { marginTop: 30 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1F2937', marginBottom: 16, ...WEB_HEADING_FONT },
   attendanceSectionHeader: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 10 },
   gradesSectionHeader: { marginBottom: 10 },
@@ -1557,16 +1925,54 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(148, 163, 184, 0.12)',
   },
   attendanceChipText: { fontSize: 13, fontWeight: '500', color: '#374151', ...WEB_HEADING_FONT },
-  attendanceGapShell: { borderWidth: 1, borderColor: '#F3D4D4', borderRadius: 999, backgroundColor: '#FFF7F7', paddingHorizontal: 10, paddingVertical: 6 },
+  attendanceKeyShell: { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 999, backgroundColor: '#F8FAFC', paddingHorizontal: 8, paddingVertical: 6 },
+  attendanceKeyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  attendanceKeyPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: '#F3F4F6' },
+  attendanceKeyDot: { width: 8, height: 8, borderRadius: 999 },
+  attendanceKeyDotAttended: { backgroundColor: '#6BB3E8' },
+  attendanceKeyDotUnattended: { backgroundColor: '#F2A0A0' },
+  attendanceKeyDotUpcoming: { backgroundColor: '#C7DDF6' },
+  attendanceKeyDotNoEvents: { backgroundColor: '#E5E7EB' },
+  attendanceKeyText: { fontSize: 12, color: '#6B7280', ...WEB_BODY_FONT },
+  attendanceGapShell: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  attendanceGapShellAhead: { borderColor: '#BFE5CF', backgroundColor: '#F1FAF4' },
+  attendanceGapShellBehind: { borderColor: '#F3D4D4', backgroundColor: '#FFF7F7' },
+  attendanceGapShellOnTrack: { borderColor: '#E5E7EB', backgroundColor: '#F9FAFB' },
   attendanceGapContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  attendanceGapLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', color: '#B45353', ...WEB_HEADING_FONT },
-  attendanceGapChipButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: 'rgba(239, 68, 68, 0.12)' },
-  attendanceGapChipText: { fontSize: 13, fontWeight: '700', color: '#B91C1C', ...WEB_BODY_FONT },
+  attendanceGapLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', color: '#6B7280', ...WEB_HEADING_FONT },
+  attendanceGapLabelAhead: { color: '#1F7A3B' },
+  attendanceGapLabelBehind: { color: '#B45353' },
+  attendanceGapChipButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
+  attendanceGapChipButtonAhead: { backgroundColor: 'rgba(34, 197, 94, 0.15)' },
+  attendanceGapChipButtonBehind: { backgroundColor: 'rgba(239, 68, 68, 0.12)' },
+  attendanceGapChipButtonOnTrack: { backgroundColor: 'rgba(107, 114, 128, 0.12)' },
+  attendanceGapChipText: { fontSize: 13, fontWeight: '700', color: '#374151', ...WEB_BODY_FONT },
+  attendanceGapChipTextAhead: { color: '#166534' },
+  attendanceGapChipTextBehind: { color: '#B91C1C' },
   emptyStateText: { fontSize: 14, color: '#6B7280', lineHeight: 20, ...WEB_BODY_FONT },
   attendanceList: { gap: 8 },
   attendanceItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: '#F9FAFB', borderRadius: 8 },
+  attendanceListToggleCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.14)',
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attendanceListToggleCircleAttended: {
+    borderColor: 'rgba(34,197,94,0.35)',
+    backgroundColor: 'rgba(34,197,94,0.12)',
+  },
   attendanceItemDate: { fontSize: 12, color: '#6B7280', width: 80, ...WEB_BODY_FONT },
   attendanceItemTitle: { flex: 1, fontSize: 14, fontWeight: '500', color: '#374151', ...WEB_HEADING_FONT },
+  attendanceItemStatusWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 94 },
+  attendanceItemStatusDot: { width: 8, height: 8, borderRadius: 999, backgroundColor: '#CBD5E1' },
+  attendanceItemStatusDotAttended: { backgroundColor: '#6BB3E8' },
+  attendanceItemStatusDotUnattended: { backgroundColor: '#F2A0A0' },
+  attendanceItemStatusDotUpcoming: { backgroundColor: '#C7DDF6' },
   attendanceItemStatus: { fontSize: 12, color: '#6B7280', textTransform: 'capitalize', ...WEB_BODY_FONT },
   attendanceItemStatusAttended: { color: '#2f7fb8', fontWeight: '600' },
   attendanceItemStatusUnattended: { color: '#e68f88', fontWeight: '600' },

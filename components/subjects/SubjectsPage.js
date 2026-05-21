@@ -186,6 +186,7 @@ export default function SubjectsPage({
   onAddEvent,
   onAddMaterial,
   onEditSubject,
+  onEditChild,
   onNavigateToPlanner,
   onNavigateToPlannerAttendance,
   userRole = 'parent',
@@ -2141,23 +2142,6 @@ export default function SubjectsPage({
                 <TouchableOpacity
                   style={[
                     styles.modeSegment,
-                    selectedModeFilter === 'plan' && styles.modeSegmentActive,
-                  ]}
-                  onPress={() => handleModeFilterChange('plan')}
-                >
-                  <Text
-                    style={[
-                      styles.modeSegmentText,
-                      selectedModeFilter === 'plan' && styles.modeSegmentTextActive,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    Schedule
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.modeSegment,
                     selectedModeFilter === 'progress' && styles.modeSegmentActive,
                   ]}
                   onPress={() => handleModeFilterChange('progress')}
@@ -2170,6 +2154,23 @@ export default function SubjectsPage({
                     numberOfLines={1}
                   >
                     Progress
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modeSegment,
+                    selectedModeFilter === 'plan' && styles.modeSegmentActive,
+                  ]}
+                  onPress={() => handleModeFilterChange('plan')}
+                >
+                  <Text
+                    style={[
+                      styles.modeSegmentText,
+                      selectedModeFilter === 'plan' && styles.modeSegmentTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Schedule
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -2341,6 +2342,8 @@ export default function SubjectsPage({
             selectedYearFilter={selectedYearFilter}
             hideYearHeader
             onRefreshSubjectDetail={refreshSubjectDetailById}
+            onEditChild={onEditChild}
+            onOpenScheduleTab={() => handleModeFilterChange('plan')}
             onOpenSubject={(subjectId, options = null) => {
               const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
               if (match) {

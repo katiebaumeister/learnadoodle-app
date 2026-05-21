@@ -9399,6 +9399,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                   }));
                 }
               }}
+              onEditChild={onEditChild}
               onNavigateToPlanner={(params = {}) => {
                 if (Platform.OS !== 'web' || typeof window === 'undefined') return;
                 if (onTabChange) onTabChange('planner');

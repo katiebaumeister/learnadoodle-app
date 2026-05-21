@@ -23,6 +23,7 @@ import {
   ExternalLink,
   Trash2,
   CheckCircle,
+  Check,
   XCircle,
   X,
   HelpCircle,
@@ -30,7 +31,6 @@ import {
   BarChart3,
   List,
   SlidersHorizontal,
-  Download,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
@@ -83,6 +83,18 @@ function isAttendancePresentLike(status) {
   // Legacy rows can omit status; treat as attended.
   if (!normalized) return true;
   return normalized === 'present' || normalized === 'partial';
+}
+
+function toLocalDateKey(value) {
+  if (!value) return null;
+  const asString = String(value);
+  if (DATE_KEY_RE.test(asString)) return asString;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function computeProgressPercentFromEventsAndAttendance(events = [], attendanceRecords = []) {
@@ -1780,6 +1792,22 @@ export default function SubjectDetailPage({
       <View style={styles.attendanceSummaryWrap}>
         <View style={styles.attendanceToolbarRow}>
           {attendanceViewModeControls}
+          <View style={styles.attendanceKeyShell}>
+            <View style={styles.attendanceKeyRow}>
+              <View style={styles.attendanceKeyPill}>
+                <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotAttended]} />
+                <Text style={styles.attendanceKeyText}>Attended</Text>
+              </View>
+              <View style={styles.attendanceKeyPill}>
+                <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUnattended]} />
+                <Text style={styles.attendanceKeyText}>Unattended</Text>
+              </View>
+              <View style={styles.attendanceKeyPill}>
+                <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUpcoming]} />
+                <Text style={styles.attendanceKeyText}>Upcoming</Text>
+              </View>
+            </View>
+          </View>
           <View style={styles.attendanceCountShell}>
             <View style={styles.attendanceCountContainer}>
               <Text style={styles.attendanceCountLabel}>Count</Text>
@@ -1799,31 +1827,8 @@ export default function SubjectDetailPage({
               </View>
             </View>
           </View>
-          {showAttendanceGapChip ? (
-            <View style={styles.attendanceGapShell}>
-              <View style={styles.attendanceGapContainer}>
-                <Text style={styles.attendanceGapLabel}>Gap</Text>
-                <Pressable
-                  style={({ hovered }) => [
-                    styles.attendanceGapChipButton,
-                    hovered && styles.attendanceGapChipButtonHover,
-                    hovered && styles.attendanceGapChipButtonNegativeHover,
-                  ]}
-                  onPress={() => setShowAttendanceGapSuggestion((prev) => !prev)}
-                >
-                  <Text style={styles.attendanceGapChipText}>
-                    {`-${attendanceGapAmount} ${attendanceTargetProgress?.mode === 'days' ? 'days' : 'hours'}`}
-                  </Text>
-                  <Text style={styles.attendanceGapChipChevron}>
-                    {showAttendanceGapSuggestion ? '▴' : '▾'}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : null}
         </View>
       </View>
-      {showAttendanceGapChip && showAttendanceGapSuggestion ? attendanceTargetCard : null}
     </>
   );
 
@@ -1886,11 +1891,23 @@ export default function SubjectDetailPage({
       }));
     }
   }, []);
+  const handleOpenAddEventForDate = useCallback((dateKey) => {
+    const normKey = String(dateKey || '').slice(0, 10);
+    if (!normKey || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const childIds = [...new Set((assignedChildren || []).map((id) => String(id || '').trim()).filter(Boolean))];
+    const detail = {
+      subjectId: subject?.id ? String(subject.id) : null,
+      eventType: 'Lesson',
+      date: new Date(`${normKey}T12:00:00`),
+      childIds,
+      childId: childIds[0] || null,
+    };
+    window.dispatchEvent(new CustomEvent('openTaskModal', { detail }));
+  }, [assignedChildren, subject?.id]);
 
   const getEventDateKey = useCallback((event) => {
     const raw = event?.start_ts || event?.start || event?.start_local || event?.due_ts;
-    if (!raw) return null;
-    return String(raw).slice(0, 10);
+    return toLocalDateKey(raw);
   }, []);
 
   const subjectEventDateKeys = useMemo(() => {
@@ -2465,6 +2482,7 @@ export default function SubjectDetailPage({
           subjectEvents={subjectData?.events || []}
           isDayMarkable={canMarkAttendanceForDateKey}
           onDayPress={handleYearHeatmapDayPress}
+          hideLegend
         />
       ) : attendanceViewMode === 'month' ? (
         <SubjectAttendanceMonthDrilldown
@@ -2472,7 +2490,8 @@ export default function SubjectDetailPage({
           subjectEvents={subjectData?.events || []}
           onOpenEventDetails={handleOpenEventDetails}
           onToggleEventAttendance={handleToggleEventAttendanceForDate}
-          onMarkAllAttendedDay={handleMarkAllAttendedForDate}
+          onAddEventForDate={handleOpenAddEventForDate}
+          hideLegend
         />
       ) : null}
     </View>
@@ -2528,13 +2547,6 @@ export default function SubjectDetailPage({
               {headerMetaLine ? (
                 <Text style={styles.subtext}>{headerMetaLine}</Text>
               ) : null}
-              {classScheduleSummary ? (
-                <Text style={styles.subtext}>Schedule: {classScheduleSummary}</Text>
-              ) : (
-                <Text style={styles.subtext}>
-                  {`Schedule: No saved weekly cadence yet. Create a new plan for ${subject?.name || 'this subject'}.`}
-                </Text>
-              )}
               {logisticsHeaderLine ? (
                 <Text style={styles.subtext}>{logisticsHeaderLine}</Text>
               ) : null}
@@ -2727,31 +2739,15 @@ export default function SubjectDetailPage({
                 <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
                 <View style={styles.sectionHeaderActions}>
                   <TouchableOpacity
-                    style={styles.exportIconButton}
-                    onPress={() => handleOpenExportForSection('attendance')}
-                    activeOpacity={0.75}
-                    accessibilityRole="button"
-                    accessibilityLabel="Export attendance"
-                    {...(Platform.OS === 'web'
-                      ? {
-                          cursor: 'pointer',
-                          onMouseEnter: (e) => handleExportHover('attendance', true, e),
-                          onMouseLeave: (e) => handleExportHover('attendance', false, e),
-                        }
-                      : {})}
-                  >
-                    <Download size={14} color="#94A3B8" />
-                  </TouchableOpacity>
-                  <TouchableOpacity
                     style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
                     onPress={() => setShowPastEventsAttendanceModal(true)}
                     activeOpacity={0.7}
                     accessibilityRole="button"
-                    accessibilityLabel="Edit attendance"
+                    accessibilityLabel="Bulk edit attendance"
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <Edit2 size={14} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Edit attendance</Text>
+                    <Text style={styles.emptyStateButtonText}>Bulk edit attendance</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -2765,6 +2761,8 @@ export default function SubjectDetailPage({
                           const event = (subjectData?.events || []).find(e => e.id === record.event_id);
                           const statusLabel = String(record?.statusLabel || '');
                           const statusTone = String(record?.statusTone || '').toLowerCase();
+                          const isAttended = statusTone === 'attended';
+                          const canToggleAttendance = !!record?.event_id && !!record?.day_date;
                           return (
                             <TouchableOpacity
                               key={record.id}
@@ -2773,20 +2771,49 @@ export default function SubjectDetailPage({
                               activeOpacity={0.7}
                               {...(Platform.OS === 'web' && { cursor: event ? 'pointer' : 'default' })}
                             >
+                              <TouchableOpacity
+                                style={[
+                                  styles.attendanceListToggleCircle,
+                                  isAttended && styles.attendanceListToggleCircleAttended,
+                                ]}
+                                onPress={(ev) => {
+                                  ev?.stopPropagation?.();
+                                  if (!canToggleAttendance) return;
+                                  handleToggleEventAttendanceForDate(record.day_date, record.event_id);
+                                }}
+                                activeOpacity={0.82}
+                                hitSlop={8}
+                                disabled={!canToggleAttendance}
+                                accessibilityRole="button"
+                                accessibilityLabel={isAttended ? 'Mark attendance as unattended' : 'Mark attendance as attended'}
+                                {...(Platform.OS === 'web' && { cursor: canToggleAttendance ? 'pointer' : 'default' })}
+                              >
+                                {isAttended ? <Check size={14} color="#16a34a" strokeWidth={2.5} /> : null}
+                              </TouchableOpacity>
                               <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
                               <Text style={styles.attendanceItemTitle}>
                                 {record?.title || event?.title || 'Lesson'}
                               </Text>
-                              <Text
-                                style={[
-                                  styles.attendanceItemStatus,
-                                  statusTone === 'attended' && styles.attendanceItemStatusAttended,
-                                  statusTone === 'unattended' && styles.attendanceItemStatusUnattended,
-                                  statusTone === 'upcoming' && styles.attendanceItemStatusUpcoming,
-                                ]}
-                              >
-                                {statusLabel}
-                              </Text>
+                              <View style={styles.attendanceItemStatusWrap}>
+                                <View
+                                  style={[
+                                    styles.attendanceItemStatusDot,
+                                    statusTone === 'attended' && styles.attendanceItemStatusDotAttended,
+                                    statusTone === 'unattended' && styles.attendanceItemStatusDotUnattended,
+                                    statusTone === 'upcoming' && styles.attendanceItemStatusDotUpcoming,
+                                  ]}
+                                />
+                                <Text
+                                  style={[
+                                    styles.attendanceItemStatus,
+                                    statusTone === 'attended' && styles.attendanceItemStatusAttended,
+                                    statusTone === 'unattended' && styles.attendanceItemStatusUnattended,
+                                    statusTone === 'upcoming' && styles.attendanceItemStatusUpcoming,
+                                  ]}
+                                >
+                                  {statusLabel}
+                                </Text>
+                              </View>
                               <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
                             </TouchableOpacity>
                           );
@@ -2831,33 +2858,17 @@ export default function SubjectDetailPage({
           <View style={styles.gradesSectionHeader}>
             <View style={styles.gradesSectionTitleRow}>
               <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
-              <TouchableOpacity
-                style={[styles.exportIconButton, styles.sectionHeaderExportButton]}
-                onPress={() => handleOpenExportForSection('report_card')}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel="Export grades report card"
-                {...(Platform.OS === 'web'
-                  ? {
-                      cursor: 'pointer',
-                      onMouseEnter: (e) => handleExportHover('grades', true, e),
-                      onMouseLeave: (e) => handleExportHover('grades', false, e),
-                    }
-                  : {})}
-              >
-                <Download size={14} color="#94A3B8" />
-              </TouchableOpacity>
               {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
                 <TouchableOpacity
                   style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
                   onPress={() => setShowPastEventsGradesModal(true)}
                   activeOpacity={0.7}
                   accessibilityRole="button"
-                  accessibilityLabel="Add grades"
+                  accessibilityLabel="Bulk add grades"
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <Plus size={16} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Add grades</Text>
+                  <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -4590,6 +4601,45 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  attendanceKeyShell: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 999,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  attendanceKeyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  attendanceKeyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: '#F3F4F6',
+  },
+  attendanceKeyDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+  },
+  attendanceKeyDotAttended: { backgroundColor: '#6BB3E8' },
+  attendanceKeyDotUnattended: { backgroundColor: '#F2A0A0' },
+  attendanceKeyDotUpcoming: { backgroundColor: '#C7DDF6' },
+  attendanceKeyDotNoEvents: { backgroundColor: '#E5E7EB' },
+  attendanceKeyText: {
+    fontSize: 12,
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   attendanceGapChipButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4858,6 +4908,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FAFB',
     borderRadius: 8,
   },
+  attendanceListToggleCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.14)',
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attendanceListToggleCircleAttended: {
+    borderColor: 'rgba(34,197,94,0.35)',
+    backgroundColor: 'rgba(34,197,94,0.12)',
+  },
   attendanceItemDate: {
     fontSize: 12,
     color: '#6B7280',
@@ -4882,6 +4946,27 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  attendanceItemStatusWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minWidth: 94,
+  },
+  attendanceItemStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: '#CBD5E1',
+  },
+  attendanceItemStatusDotAttended: {
+    backgroundColor: '#6BB3E8',
+  },
+  attendanceItemStatusDotUnattended: {
+    backgroundColor: '#F2A0A0',
+  },
+  attendanceItemStatusDotUpcoming: {
+    backgroundColor: '#C7DDF6',
   },
   attendanceItemStatusAttended: {
     color: '#2f7fb8',
