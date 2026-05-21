@@ -49,7 +49,7 @@ import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
 import { extractStudentHelpReason, formatDueShort } from '../tutor/tutorHelpUtils';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
-import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import { getSubjectProgressCache, mergeSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import { createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../lib/services/recordsClient';
 import { updateEventStatus } from '../../lib/services/attendanceClient';
@@ -600,6 +600,10 @@ export default function SubjectDetailPage({
       day: 'numeric',
       year: 'numeric',
     });
+  }, []);
+  const getEventDateKey = useCallback((event) => {
+    const raw = event?.start_ts || event?.start || event?.start_local || event?.due_ts;
+    return toLocalDateKey(raw);
   }, []);
 
   // Helper to safely format percentage values
@@ -2035,11 +2039,6 @@ export default function SubjectDetailPage({
     };
     window.dispatchEvent(new CustomEvent('openTaskModal', { detail }));
   }, [assignedChildren, subject?.id]);
-
-  const getEventDateKey = useCallback((event) => {
-    const raw = event?.start_ts || event?.start || event?.start_local || event?.due_ts;
-    return toLocalDateKey(raw);
-  }, []);
 
   const subjectEventDateKeys = useMemo(() => {
     const keys = new Set();
