@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { BarChart3, Calendar, Check, CheckCircle, ChevronLeft, ChevronRight, Edit2, List, Plus, XCircle } from 'lucide-react';
+import { BarChart3, Calendar, Check, ChevronLeft, ChevronRight, Edit2, List, Plus } from 'lucide-react';
 import {
   SubjectAttendanceMonthDrilldown,
   SubjectAttendanceYearHeatmap,
@@ -1469,25 +1469,6 @@ export default function ProgressTab({
               </View>
             </View>
           </View>
-        <View style={styles.attendanceCountShell}>
-          <View style={styles.attendanceCountContainer}>
-            <Text style={styles.attendanceCountLabel}>Count</Text>
-            <View style={styles.attendanceChips}>
-              <View style={styles.attendanceChip}>
-                <CheckCircle size={14} color="#6BB3E8" />
-                <Text style={styles.attendanceChipText}>{attendanceDayCounts.present} Attended</Text>
-              </View>
-              <View style={styles.attendanceChip}>
-                <XCircle size={14} color="#EF4444" />
-                <Text style={styles.attendanceChipText}>{attendanceDayCounts.absent} Unattended</Text>
-              </View>
-              <View style={styles.attendanceChip}>
-                <CheckCircle size={14} color="#C7DDF6" />
-                <Text style={styles.attendanceChipText}>{attendanceDayCounts.upcoming || 0} Upcoming</Text>
-              </View>
-            </View>
-          </View>
-        </View>
       </View>
     </View>
   );

@@ -6662,9 +6662,7 @@ export default function SubjectsPlanBuilder({
                             </View>
                           ) : (
                             <View style={[styles.yearTargetsCellWrap, styles.yearTargetsUpcomingCol]}>
-                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsMetricCellMutedText, styles.yearTargetsCellLeft]}>
-                                -
-                              </Text>
+                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellLeft]}>0</Text>
                             </View>
                           )}
                           <View style={[styles.yearTargetsCellWrap, styles.yearTargetsProjectedCol]}>
