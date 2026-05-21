@@ -1347,7 +1347,7 @@ export default function SubjectDetailPage({
     });
 
     return [...eventRows, ...orphanRows, ...recordOnlyRowsByKey.values()]
-      .sort((a, b) => Number(b.sortTs || 0) - Number(a.sortTs || 0));
+      .sort((a, b) => Number(a.sortTs || 0) - Number(b.sortTs || 0));
   }, [attendanceRecordsForUI, subjectEvents]);
   useEffect(() => {
     setShowAttendanceExpanded(false);

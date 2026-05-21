@@ -5790,8 +5790,8 @@ export default function SubjectsPlanBuilder({
                                   : Number(row?.projectedDays || 0)
                               );
                               const progressSummary = targetDays != null
-                                ? `${completedDays} completed / ${upcomingDays} upcoming / ${targetDays} target`
-                                : `${completedDays} completed / ${upcomingDays} upcoming / ${projectedDaysForStatus} planned`;
+                                ? `${completedDays} attended / ${upcomingDays} upcoming / ${targetDays} target`
+                                : `${completedDays} attended / ${upcomingDays} upcoming / ${projectedDaysForStatus} planned`;
                               const deltaDays = targetDays != null ? (projectedDaysForStatus - targetDays) : null;
                               const statusLabel = !hasCadence
                                 ? 'No plan'
@@ -5959,17 +5959,17 @@ export default function SubjectsPlanBuilder({
                             {isLearningDaysTrackingMode ? 'Subjects' : 'Subject'}
                           </Text>
                         </View>
-                        <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsTargetCol]}>
-                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Target</Text>
-                        </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsDoneCol]}>
-                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Done</Text>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Attended</Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsUpcomingCol]}>
                           <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Upcoming</Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsProjectedCol]}>
-                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Projected (Done + Upcoming)</Text>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Projected (Attended + Upcoming)</Text>
+                        </View>
+                        <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsTargetCol]}>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Target</Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsBalanceCol, styles.yearTargetsHeaderGapCellWrap]}>
                           <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Gap</Text>
@@ -6633,9 +6633,6 @@ export default function SubjectsPlanBuilder({
                           <View style={[styles.yearTargetsSubjectCol, styles.yearTargetsSubjectCell]}>
                             <Text style={styles.yearTargetsSubjectCellName}>{row.name}</Text>
                           </View>
-                          <View style={[styles.yearTargetsCellWrap, styles.yearTargetsTargetCol]}>
-                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsTargetCellText, styles.yearTargetsCellLeft]}>{toOneDecimal(rowTargetValue)}</Text>
-                          </View>
                           <View style={[styles.yearTargetsCellWrap, styles.yearTargetsDoneCol]}>
                             <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsMetricCellEmphasisText, styles.yearTargetsCellLeft]}>{toOneDecimal(rowCompletedValue)}</Text>
                           </View>
@@ -6654,6 +6651,9 @@ export default function SubjectsPlanBuilder({
                             <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellLeft]}>
                               {toOneDecimal(rowProjectedValue)}
                             </Text>
+                          </View>
+                          <View style={[styles.yearTargetsCellWrap, styles.yearTargetsTargetCol]}>
+                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsTargetCellText, styles.yearTargetsCellLeft]}>{toOneDecimal(rowTargetValue)}</Text>
                           </View>
                           <View style={[styles.yearTargetsCellWrap, styles.yearTargetsBalanceCol, styles.yearTargetsGapCellWrap]}>
                             <Pressable
