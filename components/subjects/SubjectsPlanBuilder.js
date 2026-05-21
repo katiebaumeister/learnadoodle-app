@@ -51,7 +51,7 @@ const scheduleSupplementCacheByKey = new Map();
 const scheduleSupplementInflightByKey = new Map();
 let schoolYearTemplateCache = null;
 // Debug toggle for schedule/target calculations. Set to false to remove logs quickly.
-const ENABLE_SCHEDULE_CALC_DEBUG_LOGS = true;
+const ENABLE_SCHEDULE_CALC_DEBUG_LOGS = false;
 
 function scheduleCalcDebug(section, payload = null) {
   if (!ENABLE_SCHEDULE_CALC_DEBUG_LOGS) return;
@@ -377,7 +377,12 @@ function buildDayProjectionBySubjectFromEvents(rows = [], subjectIds = []) {
     if (!doneSets[sid]) doneSets[sid] = new Set();
     if (!upcomingSets[sid]) upcomingSets[sid] = new Set();
     const status = String(row?.status || '').trim().toLowerCase();
-    if (status === 'done' && dayKey <= todayYmd) {
+    const instructionalStatus = String(row?.instructional_status || '').trim().toUpperCase();
+    const isAttended = row?.hasAttendancePresent === true
+      || status === 'done'
+      || status === 'completed'
+      || instructionalStatus === 'MANUAL_COUNTS';
+    if (isAttended && dayKey <= todayYmd) {
       doneSets[sid].add(dayKey);
     } else if (dayKey >= todayYmd) {
       upcomingSets[sid].add(dayKey);
@@ -411,6 +416,79 @@ function buildScheduleSupplementKey(familyId, schoolYearLabel) {
   const yearKey = String(schoolYearLabel || '').trim();
   if (!familyKey || !yearKey) return '';
   return `${familyKey}|${yearKey}`;
+}
+
+function buildAttendanceModeBootstrapKey(familyId, schoolYearLabel) {
+  const familyKey = normalizeFamilyKey(familyId);
+  const yearKey = String(schoolYearLabel || '').trim();
+  if (!familyKey || !yearKey) return '';
+  return `${familyKey}|${yearKey}`;
+}
+
+function normalizeAttendanceModeOrNull(mode) {
+  const raw = String(mode || '').trim().toLowerCase();
+  if (raw === ATTENDANCE_MODES.CLASS_DAY || raw === ATTENDANCE_MODES.SUBJECT) return raw;
+  return null;
+}
+
+function buildDefaultFamilyPlannerSettings(attendanceMode = null) {
+  const normalizedMode = normalizeAttendanceModeOrNull(attendanceMode);
+  return {
+    target_scope: 'overall',
+    attendance_tracking_mode: normalizedMode,
+    default_constraint_mode: 'none',
+    default_target_days: null,
+    default_target_hours: null,
+    allowed_weekdays: [1, 2, 3, 4, 5],
+  };
+}
+
+function normalizeFamilyPlannerSettingsWithBootstrap(
+  settings,
+  familyId,
+  schoolYearLabel
+) {
+  const bootstrappedMode = readBootstrappedAttendanceMode(familyId, schoolYearLabel);
+  const rawSettings = settings && typeof settings === 'object' ? settings : {};
+  const normalizedSettingsMode = normalizeAttendanceModeOrNull(rawSettings?.attendance_tracking_mode);
+  const resolvedMode = bootstrappedMode || normalizedSettingsMode || null;
+  return {
+    ...buildDefaultFamilyPlannerSettings(resolvedMode),
+    ...rawSettings,
+    attendance_tracking_mode: resolvedMode,
+  };
+}
+
+function readBootstrappedAttendanceMode(familyId, schoolYearLabel) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  const entryKey = buildAttendanceModeBootstrapKey(familyId, schoolYearLabel);
+  if (!entryKey) return null;
+  try {
+    const raw = window.sessionStorage?.getItem('ld_attendance_mode_bootstrap_v1');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const value = parsed && typeof parsed === 'object' ? parsed[entryKey] : null;
+    return normalizeAttendanceModeOrNull(value);
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeBootstrappedAttendanceMode(familyId, schoolYearLabel, mode) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  const entryKey = buildAttendanceModeBootstrapKey(familyId, schoolYearLabel);
+  const normalizedMode = normalizeAttendanceModeOrNull(mode);
+  if (!normalizedMode) return;
+  try {
+    const raw = window.sessionStorage?.getItem('ld_attendance_mode_bootstrap_v1');
+    const parsed = raw ? JSON.parse(raw) : {};
+    const next = parsed && typeof parsed === 'object' ? parsed : {};
+    if (!entryKey) return;
+    next[entryKey] = normalizedMode;
+    window.sessionStorage?.setItem('ld_attendance_mode_bootstrap_v1', JSON.stringify(next));
+  } catch (_) {
+    // noop
+  }
 }
 
 function getCachedScheduleSupplement(familyId, schoolYearLabel, { allowStale = true } = {}) {
@@ -1150,6 +1228,8 @@ async function fetchAndCacheScheduleSupplement({
           subject_id: String(subjectId || '').trim(),
           start_ts: eventItem?.start_ts || eventItem?.startTs || null,
           status: eventItem?.status || null,
+          instructional_status: eventItem?.instructional_status || null,
+          hasAttendancePresent: eventItem?.hasAttendancePresent === true,
         }))
       );
       yearTargetProjectionBySubject = buildDayProjectionBySubjectFromEvents(projectionRows, normalizedSubjectIds);
@@ -1178,6 +1258,11 @@ async function fetchAndCacheScheduleSupplement({
       subjectIdsSignature,
       updatedAt: Date.now(),
     };
+    writeBootstrappedAttendanceMode(
+      familyId,
+      schoolYearLabel,
+      familyPlannerSettings?.attendance_tracking_mode
+    );
     scheduleCalcDebug('fetchAndCacheScheduleSupplement:resolved', {
       familyPlannerSettings,
       subjectTargetSettingsCount: Object.keys(subjectTargetSettingsById || {}).length,
@@ -1389,13 +1474,11 @@ export default function SubjectsPlanBuilder({
   const scheduleSupplementSyncedKeysRef = useRef(new Set());
   const [familyPlannerSettings, setFamilyPlannerSettings] = useState(() => {
     const cached = getCachedScheduleSupplement(familyId, initialSchoolYearState.selectedLabel);
-    return cached?.familyPlannerSettings || {
-      target_scope: 'overall',
-      default_constraint_mode: 'none',
-      default_target_days: null,
-      default_target_hours: null,
-      allowed_weekdays: [1, 2, 3, 4, 5],
-    };
+    return normalizeFamilyPlannerSettingsWithBootstrap(
+      cached?.familyPlannerSettings,
+      familyId,
+      initialSchoolYearState.selectedLabel
+    );
   });
   const [uiAttendanceModeOverride, setUiAttendanceModeOverride] = useState(null);
   const [subjectTargetSettingsById, setSubjectTargetSettingsById] = useState(() => {
@@ -1436,7 +1519,25 @@ export default function SubjectsPlanBuilder({
       schoolYearTemplateCache = mapped;
       setSchoolYearOptions(mapped);
       setSelectedSchoolYearId((prev) => {
-        if (prev) return prev;
+        const prevId = String(prev || '').trim();
+        if (prevId) {
+          const exact = mapped.find((opt) => String(opt?.id || '').trim() === prevId);
+          if (exact?.id) return exact.id;
+          const syntheticMatch = prevId.match(/^(\d{4})-(\d{4})$/);
+          if (syntheticMatch) {
+            const start = Number(syntheticMatch[1]);
+            const end = Number(syntheticMatch[2]);
+            const byYears = mapped.find(
+              (opt) => Number(opt?.start_year) === start && Number(opt?.end_year) === end
+            );
+            if (byYears?.id) return byYears.id;
+          }
+        }
+        const selectedLabel = String(initialSchoolYearState?.selectedLabel || '').trim();
+        if (selectedLabel) {
+          const byLabel = mapped.find((opt) => String(opt?.label || '').trim() === selectedLabel);
+          if (byLabel?.id) return byLabel.id;
+        }
         const matching = mapped.find(
           (opt) => Number(opt?.start_year) === presentScope.startYear && Number(opt?.end_year) === presentScope.endYear
         );
@@ -1444,7 +1545,7 @@ export default function SubjectsPlanBuilder({
       });
     })();
     return () => { cancelled = true; };
-  }, [presentScope.startYear, presentScope.endYear]);
+  }, [presentScope.startYear, presentScope.endYear, initialSchoolYearState?.selectedLabel]);
 
   useEffect(() => {
     const ids = baseSubjects.map((s) => String(s?.id)).filter(Boolean);
@@ -1472,6 +1573,15 @@ export default function SubjectsPlanBuilder({
   const currentUserMode = useMemo(() => normalizePlanningMode(planningMode), [planningMode]);
   const isHomeschoolMode = currentUserMode === 'homeschool';
   const displaySchoolYear = useMemo(() => selectedSchoolYear, [selectedSchoolYear]);
+  const resolvedSchoolYearLabelForBootstrap = useMemo(
+    () => String(
+      displaySchoolYear?.label
+      || initialSchoolYearState?.selectedLabel
+      || (selectedYearFilter !== 'all' ? selectedYearFilter : '')
+      || ''
+    ).trim(),
+    [displaySchoolYear?.label, initialSchoolYearState?.selectedLabel, selectedYearFilter]
+  );
   const displayTerm = useMemo(() => {
     if (selectedTermFilter === 'fall_term' || selectedTermFilter === 'spring_term' || selectedTermFilter === 'full_year') {
       return selectedTermFilter;
@@ -1479,6 +1589,10 @@ export default function SubjectsPlanBuilder({
     return selectedTerm;
   }, [selectedTermFilter, selectedTerm]);
   const selectedYearStart = Number(displaySchoolYear?.start_year);
+  const bootstrappedAttendanceModeForSelectedYear = useMemo(
+    () => readBootstrappedAttendanceMode(familyId, resolvedSchoolYearLabelForBootstrap),
+    [familyId, resolvedSchoolYearLabelForBootstrap]
+  );
   const selectedYearAcademicMode = useMemo(() => {
     if (!Number.isFinite(selectedYearStart)) return null;
     const matchingCores = (planCores || []).filter((core) => Number(core?.startYear) === selectedYearStart);
@@ -1505,6 +1619,7 @@ export default function SubjectsPlanBuilder({
       // use saved planner settings for the selected school year first.
       academicYearMode: uiAttendanceModeOverride
         || familyPlannerSettings?.attendance_tracking_mode
+        || bootstrappedAttendanceModeForSelectedYear
         || selectedYearAcademicMode
         || displaySchoolYear?.attendance_tracking_mode
         || activeCoreModeForSelectedYear,
@@ -1513,6 +1628,7 @@ export default function SubjectsPlanBuilder({
   ), [
     uiAttendanceModeOverride,
     selectedYearAcademicMode,
+    bootstrappedAttendanceModeForSelectedYear,
     familyPlannerSettings?.attendance_tracking_mode,
     displaySchoolYear?.attendance_tracking_mode,
     activeCoreModeForSelectedYear,
@@ -1520,6 +1636,7 @@ export default function SubjectsPlanBuilder({
   const resolvedAttendanceTrackingModeSource = useMemo(() => {
     if (uiAttendanceModeOverride) return 'ui_override';
     if (familyPlannerSettings?.attendance_tracking_mode) return 'family_planner_settings';
+    if (bootstrappedAttendanceModeForSelectedYear) return 'session_bootstrap';
     if (selectedYearAcademicMode) return 'selected_year_academic_year';
     if (displaySchoolYear?.attendance_tracking_mode) return 'display_school_year';
     if (activeCoreModeForSelectedYear) return 'active_schedule_core_selected_year';
@@ -1527,6 +1644,7 @@ export default function SubjectsPlanBuilder({
   }, [
     uiAttendanceModeOverride,
     selectedYearAcademicMode,
+    bootstrappedAttendanceModeForSelectedYear,
     familyPlannerSettings?.attendance_tracking_mode,
     displaySchoolYear?.attendance_tracking_mode,
     activeCoreModeForSelectedYear,
@@ -1535,12 +1653,21 @@ export default function SubjectsPlanBuilder({
     () => (resolveClassDayMode(resolvedAttendanceTrackingMode) ? 'overall' : 'per_subject'),
     [resolvedAttendanceTrackingMode]
   );
+  const isAttendanceModeReady = Boolean(
+    hasValidFamilyId
+    && (
+      uiAttendanceModeOverride
+      || familyPlannerSettings?.attendance_tracking_mode
+      || bootstrappedAttendanceModeForSelectedYear
+    )
+  );
   useEffect(() => {
     scheduleCalcDebug('attendanceMode:resolved', {
       schoolYearLabel: String(displaySchoolYear?.label || '').trim() || null,
       resolvedMode: resolvedAttendanceTrackingMode,
       source: resolvedAttendanceTrackingModeSource,
       uiAttendanceModeOverride: uiAttendanceModeOverride || null,
+      bootstrappedAttendanceModeForSelectedYear: bootstrappedAttendanceModeForSelectedYear || null,
       selectedYearAcademicMode: selectedYearAcademicMode || null,
       familyPlannerSettingsMode: familyPlannerSettings?.attendance_tracking_mode || null,
       displaySchoolYearMode: displaySchoolYear?.attendance_tracking_mode || null,
@@ -1553,6 +1680,7 @@ export default function SubjectsPlanBuilder({
     resolvedAttendanceTrackingMode,
     resolvedAttendanceTrackingModeSource,
     uiAttendanceModeOverride,
+    bootstrappedAttendanceModeForSelectedYear,
     selectedYearAcademicMode,
     familyPlannerSettings?.attendance_tracking_mode,
     displaySchoolYear?.attendance_tracking_mode,
@@ -1617,13 +1745,13 @@ export default function SubjectsPlanBuilder({
     const hydrateFromCache = () => {
       const cached = getCachedScheduleSupplement(familyId, schoolYearLabel);
       if (!cached) return false;
-      setFamilyPlannerSettings(cached.familyPlannerSettings || {
-        target_scope: 'overall',
-        default_constraint_mode: 'none',
-        default_target_days: null,
-        default_target_hours: null,
-        allowed_weekdays: [1, 2, 3, 4, 5],
-      });
+      setFamilyPlannerSettings(
+        normalizeFamilyPlannerSettingsWithBootstrap(
+          cached.familyPlannerSettings,
+          familyId,
+          schoolYearLabel
+        )
+      );
       setSubjectTargetSettingsById(cached.subjectTargetSettingsById || {});
       setInstructionalEventsBySubject(cached.instructionalEventsBySubject || {});
       setClassDayInstructionalEvents(Array.isArray(cached.classDayInstructionalEvents) ? cached.classDayInstructionalEvents : []);
@@ -1664,13 +1792,13 @@ export default function SubjectsPlanBuilder({
         force,
       });
       if (cancelled) return;
-      setFamilyPlannerSettings(payload.familyPlannerSettings || {
-        target_scope: 'overall',
-        default_constraint_mode: 'none',
-        default_target_days: null,
-        default_target_hours: null,
-        allowed_weekdays: [1, 2, 3, 4, 5],
-      });
+      setFamilyPlannerSettings(
+        normalizeFamilyPlannerSettingsWithBootstrap(
+          payload.familyPlannerSettings,
+          familyId,
+          schoolYearLabel
+        )
+      );
       setSubjectTargetSettingsById(payload.subjectTargetSettingsById || {});
       setInstructionalEventsBySubject(payload.instructionalEventsBySubject || {});
       setClassDayInstructionalEvents(Array.isArray(payload.classDayInstructionalEvents) ? payload.classDayInstructionalEvents : []);
@@ -1680,13 +1808,13 @@ export default function SubjectsPlanBuilder({
 
     (async () => {
       if (!hasValidFamilyId || !schoolYearLabel) {
-        setFamilyPlannerSettings({
-          target_scope: 'overall',
-          default_constraint_mode: 'none',
-          default_target_days: null,
-          default_target_hours: null,
-          allowed_weekdays: [1, 2, 3, 4, 5],
-        });
+        setFamilyPlannerSettings(
+          normalizeFamilyPlannerSettingsWithBootstrap(
+            null,
+            familyId,
+            schoolYearLabel || resolvedSchoolYearLabelForBootstrap
+          )
+        );
         setSubjectTargetSettingsById({});
         setInstructionalEventsBySubject({});
         setClassDayInstructionalEvents([]);
@@ -2666,6 +2794,52 @@ export default function SubjectsPlanBuilder({
   }, [termSections, familyPlannerSettings?.default_target_days, trackingMode, yearTargetProjectionBySubject]);
   const yearTargetsDisplayRows = useMemo(() => {
     if (!yearTargetSummary) {
+      const provisionalRows = (termSections || [])
+        .flatMap((section) => (Array.isArray(section?.subjectPlans) ? section.subjectPlans : []))
+        .filter(Boolean);
+      if (provisionalRows.length > 0) {
+        const sourceRows = isLearningDaysTrackingMode
+          ? [provisionalRows.find((row) => row?.isClassDayAggregate) || provisionalRows[0]].filter(Boolean)
+          : provisionalRows.filter((row) => !row?.isClassDayAggregate);
+        const mappedRows = sourceRows.map((row, rowIndex) => {
+          const targetUnit = String(row?.targetUnit || row?.targetMode || 'days').trim().toLowerCase() === 'hours'
+            ? 'hours'
+            : 'days';
+          const targetValue = Number.isFinite(Number(row?.targetValue))
+            ? Number(row.targetValue)
+            : Number(row?.targetDays || 0);
+          const completedDays = Math.max(0, Number(
+            Number.isFinite(Number(row?.completedDays)) ? row.completedDays : row?.actualDays
+          ) || 0);
+          const upcomingDays = Math.max(0, Number(row?.upcomingDays || 0));
+          const projectedDays = Math.max(
+            completedDays + upcomingDays,
+            Number(row?.projectedDays || 0)
+          );
+          return {
+            id: String(row?.id || (row?.isClassDayAggregate ? 'overall' : '')).trim() || `provisional-${rowIndex}`,
+            name: String(row?.name || (row?.isClassDayAggregate ? 'Class days' : 'Subject')).trim(),
+            cadenceCompactLabel: row?.cadenceCompactLabel || null,
+            targetDays: targetValue,
+            targetValue,
+            targetUnit,
+            targetMode: targetUnit,
+            completedDays,
+            upcomingDays,
+            projectedDays,
+            gapDays: targetValue - projectedDays,
+            shortDays: Math.max(0, targetValue - projectedDays),
+            schoolTermId: String(row?.schoolTermId || 'full_year').trim() || 'full_year',
+            hasPlan: row?.hasPlan === true,
+            isOverall: row?.isClassDayAggregate === true || String(row?.id || '').trim() === 'overall',
+            subjectIds: Array.isArray(row?.subjectIds) ? row.subjectIds : [],
+            eventItems: Array.isArray(row?.eventItems) ? row.eventItems : [],
+            rangeStartYmd: row?.rangeStartYmd || null,
+            rangeEndYmd: row?.rangeEndYmd || null,
+          };
+        });
+        if (mappedRows.length > 0) return mappedRows;
+      }
       const fallbackModeRaw = String(familyPlannerSettings?.default_constraint_mode || 'days').trim().toLowerCase();
       const fallbackMode = fallbackModeRaw === 'hours' ? 'hours' : 'days';
       const fallbackTargetValue = (() => {
@@ -2821,6 +2995,8 @@ export default function SubjectsPlanBuilder({
     return overallRows;
   }, [
     yearTargetSummary,
+    termSections,
+    isLearningDaysTrackingMode,
     familyPlannerSettings,
     homeSlotScopedSubjects,
     planSubjectNamesBySlot,
@@ -5172,7 +5348,7 @@ export default function SubjectsPlanBuilder({
       <View style={styles.wrap}>
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.emptyScheduleSection}>
-            {termSections.map((termSection, index) => {
+            {(isAttendanceModeReady ? termSections : []).map((termSection, index) => {
               return (
                 <View
                   key={termSection.id}
