@@ -28,6 +28,8 @@ import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/su
 import { getAttendanceLogs } from '../../lib/services/recordsClient';
 import { generateAttendanceReport } from '../../lib/services/attendanceClient';
 import { exportCurriculumPlan, exportReportCard } from '../../lib/services/exportClient';
+import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
+import { supabase } from '../../lib/supabase';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { useSession } from '../../contexts/SessionContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
@@ -241,6 +243,51 @@ export default function SubjectsPage({
   const [showSubjectsExportModal, setShowSubjectsExportModal] = useState(false);
   const [showPlanningPreferencesModal, setShowPlanningPreferencesModal] = useState(false);
   const [planningPreferencesSchoolYearLabel, setPlanningPreferencesSchoolYearLabel] = useState(null);
+  const [planningPreferencesInitialDataByYear, setPlanningPreferencesInitialDataByYear] = useState({});
+  const preloadPlanningPreferencesData = useCallback(async (schoolYearLabelInput) => {
+    const schoolYearLabel = String(schoolYearLabelInput || '').trim();
+    if (!familyId || !schoolYearLabel) return null;
+    const existing = planningPreferencesInitialDataByYear[schoolYearLabel];
+    if (existing && typeof existing === 'object') return existing;
+    try {
+      const { settings, exclusions, excluded_holiday_dates } = await getPlanDefaultsFromSettings(familyId, schoolYearLabel);
+      const { data: subjectsData } = await supabase
+        .from('subject')
+        .select('id, name, school_year, default_constraint_mode, default_target_days, default_target_hours')
+        .eq('family_id', familyId)
+        .eq('school_year', schoolYearLabel)
+        .order('name');
+      const payload = {
+        settings: {
+          ...(settings || {}),
+          school_year_label: schoolYearLabel,
+          default_school_year: schoolYearLabel,
+        },
+        exclusions: exclusions || [],
+        excluded_holiday_dates: excluded_holiday_dates || [],
+        subjects: subjectsData || [],
+      };
+      setPlanningPreferencesInitialDataByYear((prev) => ({ ...prev, [schoolYearLabel]: payload }));
+      return payload;
+    } catch (_) {
+      return null;
+    }
+  }, [familyId, planningPreferencesInitialDataByYear]);
+
+  const openPlanningPreferencesModal = useCallback(async (schoolYearLabelInput) => {
+    const targetYear = String(schoolYearLabelInput || '').trim() || selectedYearFilter || getCurrentSchoolYear();
+    setPlanningPreferencesSchoolYearLabel(targetYear);
+    await preloadPlanningPreferencesData(targetYear);
+    setShowPlanningPreferencesModal(true);
+  }, [preloadPlanningPreferencesData, selectedYearFilter]);
+
+  useEffect(() => {
+    if (!familyId) return;
+    const preloadYear = String(selectedYearFilter || getCurrentSchoolYear()).trim();
+    if (!preloadYear) return;
+    preloadPlanningPreferencesData(preloadYear);
+  }, [familyId, selectedYearFilter, preloadPlanningPreferencesData]);
+
   const [subjectsExportType, setSubjectsExportType] = useState('schedule');
   const [subjectsExportFormat, setSubjectsExportFormat] = useState('excel');
   const [subjectsExportStartDate, setSubjectsExportStartDate] = useState('');
@@ -1966,6 +2013,7 @@ export default function SubjectsPage({
           <View style={styles.planningPreferencesBody}>
             <PlannerSettingsContent
               familyId={familyId}
+              initialData={planningPreferencesInitialDataByYear[String(planningPreferencesSchoolYearLabel || '').trim()] || null}
               embeddedInModal
               lockedSchoolYearLabel={planningPreferencesSchoolYearLabel || null}
               onRequestClose={() => {
@@ -1994,12 +2042,7 @@ export default function SubjectsPage({
           subjectId={selectedSubjectId}
           familyId={familyId}
           children={safeChildren}
-          onOpenPlannerSettings={(schoolYearLabel) => {
-            setPlanningPreferencesSchoolYearLabel(
-              String(schoolYearLabel || '').trim() || selectedYearFilter || getCurrentSchoolYear()
-            );
-            setShowPlanningPreferencesModal(true);
-          }}
+          onOpenPlannerSettings={openPlanningPreferencesModal}
           preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
           initialScrollToSectionId={pendingScrollToSectionId}
           initialOpenMaterialId={pendingOpenMaterialId}
@@ -2277,12 +2320,7 @@ export default function SubjectsPage({
             pendingScheduleModalRequest={pendingScheduleModalRequest}
             onPendingScheduleModalHandled={() => setPendingScheduleModalRequest(null)}
             onDone={() => setSelectedModeFilter('view')}
-            onOpenPlannerSettings={(schoolYearLabel) => {
-              setPlanningPreferencesSchoolYearLabel(
-                String(schoolYearLabel || '').trim() || selectedYearFilter || getCurrentSchoolYear()
-              );
-              setShowPlanningPreferencesModal(true);
-            }}
+            onOpenPlannerSettings={openPlanningPreferencesModal}
             onOpenSubject={(subjectId) => {
               const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
               if (match) {

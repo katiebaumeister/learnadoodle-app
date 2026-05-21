@@ -53,6 +53,36 @@ const CHIP_SELECTED_BG = 'rgba(155, 184, 220, 0.26)';
 const SECTION_SEPARATOR = 'rgba(15,23,42,0.05)';
 const LINK_PURPLE = '#4F46E5';
 const plannerSettingsSnapshotCache = new Map();
+const PLANNER_SETTINGS_SESSION_CACHE_PREFIX = 'ld_planner_settings_snapshot_v1::';
+
+const buildPlannerSettingsSessionCacheKey = (snapshotCacheKey) => (
+  `${PLANNER_SETTINGS_SESSION_CACHE_PREFIX}${String(snapshotCacheKey || '').trim()}`
+);
+
+const readPlannerSettingsSessionSnapshot = (snapshotCacheKey) => {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  const key = buildPlannerSettingsSessionCacheKey(snapshotCacheKey);
+  if (!key) return null;
+  try {
+    const raw = window.sessionStorage?.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+};
+
+const writePlannerSettingsSessionSnapshot = (snapshotCacheKey, payload) => {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  const key = buildPlannerSettingsSessionCacheKey(snapshotCacheKey);
+  if (!key || !payload || typeof payload !== 'object') return;
+  try {
+    window.sessionStorage?.setItem(key, JSON.stringify(payload));
+  } catch (_) {
+    // ignore session cache write failures
+  }
+};
 
 const parsePositiveIntOrNull = (value) => {
   const n = parseInt(String(value ?? '').trim(), 10);
@@ -266,6 +296,33 @@ const deriveSubjectTargetState = (subjectsList) => {
   return { subjectTargetsMap: st, firstActiveTarget };
 };
 
+const deriveInitialSchoolYearLabel = (normalizedLockedSchoolYearLabel) => {
+  if (normalizedLockedSchoolYearLabel) return normalizedLockedSchoolYearLabel;
+  const now = new Date();
+  const start = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return formatSchoolYearLabel(start);
+};
+
+const deriveSnapshotCacheKey = (familyId, schoolYearLabel) => {
+  const yearLabel = normalizeSchoolYearLabel(schoolYearLabel) || 'current';
+  return `${String(familyId || 'unknown')}::${yearLabel}`;
+};
+
+const getInitialPlannerSettingsSnapshot = ({
+  embeddedInModal,
+  familyId,
+  lockedSchoolYearLabel,
+}) => {
+  if (!embeddedInModal) return null;
+  const normalizedLocked = normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim());
+  const initialYearLabel = deriveInitialSchoolYearLabel(normalizedLocked);
+  const cacheKey = deriveSnapshotCacheKey(familyId, initialYearLabel);
+  const inMemory = plannerSettingsSnapshotCache.get(cacheKey);
+  if (inMemory && typeof inMemory === 'object') return inMemory;
+  const persisted = readPlannerSettingsSessionSnapshot(cacheKey);
+  return persisted && typeof persisted === 'object' ? persisted : null;
+};
+
 export default function PlannerSettingsContent({
   familyId,
   onSave,
@@ -284,22 +341,43 @@ export default function PlannerSettingsContent({
   const subjectTargetSaveTimeoutRef = useRef(null);
   const loadDefaultsRequestRef = useRef(0);
   const stateRef = useRef({});
+  const initialSnapshot = getInitialPlannerSettingsSnapshot({
+    embeddedInModal,
+    familyId,
+    lockedSchoolYearLabel,
+  });
+  const initialAttendanceTrackingMode = getAttendanceMode({
+    academicYearMode: initialSnapshot?.attendanceTrackingMode,
+    fallback: ATTENDANCE_MODES.CLASS_DAY,
+  });
+  const initialSelectedYearLabelFromSnapshot = normalizeSchoolYearLabel(initialSnapshot?.selectedSchoolYearLabel);
+  const initialSelectedSchoolYearLabel = initialSelectedYearLabelFromSnapshot || deriveInitialSchoolYearLabel(
+    normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim())
+  );
 
   // Target scope: overall (one target) vs per_subject
-  const [targetScope, setTargetScope] = useState('overall');
-  const [attendanceTrackingMode, setAttendanceTrackingMode] = useState(ATTENDANCE_MODES.CLASS_DAY);
+  const [targetScope, setTargetScope] = useState(resolveTargetScopeForAttendanceMode(initialAttendanceTrackingMode));
+  const [attendanceTrackingMode, setAttendanceTrackingMode] = useState(initialAttendanceTrackingMode);
 
   // Goal defaults (scope is now derived from attendance mode)
-  const [goalMode, setGoalMode] = useState('days');
-  const [targetDays, setTargetDays] = useState('180');
-  const [targetHours, setTargetHours] = useState('1000');
-  const [learningStartTime, setLearningStartTime] = useState('8:00 AM');
-  const [learningEndTime, setLearningEndTime] = useState('3:00 PM');
-  const [preferredLearningDayNums, setPreferredLearningDayNums] = useState([...DEFAULT_ALLOWED_WEEKDAYS]);
+  const [goalMode, setGoalMode] = useState(initialSnapshot?.goalMode || 'days');
+  const [targetDays, setTargetDays] = useState(initialSnapshot?.targetDays ?? '180');
+  const [targetHours, setTargetHours] = useState(initialSnapshot?.targetHours ?? '1000');
+  const [learningStartTime, setLearningStartTime] = useState(
+    normalizeLearningTimeDisplay(initialSnapshot?.learningStartTime, DEFAULT_LEARNING_START_TIME)
+  );
+  const [learningEndTime, setLearningEndTime] = useState(
+    normalizeLearningTimeDisplay(initialSnapshot?.learningEndTime, DEFAULT_LEARNING_END_TIME)
+  );
+  const [preferredLearningDayNums, setPreferredLearningDayNums] = useState(
+    normalizeAllowedWeekdays(initialSnapshot?.preferredLearningDayNums)
+  );
 
   // Public holidays
-  const [followGlobalHolidays, setFollowGlobalHolidays] = useState(true);
-  const [excludedPublicHolidayDates, setExcludedPublicHolidayDates] = useState([]);
+  const [followGlobalHolidays, setFollowGlobalHolidays] = useState(initialSnapshot?.followGlobalHolidays !== false);
+  const [excludedPublicHolidayDates, setExcludedPublicHolidayDates] = useState(
+    Array.isArray(initialSnapshot?.excludedPublicHolidayDates) ? initialSnapshot.excludedPublicHolidayDates : []
+  );
   const [showPublicHolidaysPicker, setShowPublicHolidaysPicker] = useState(false);
   const [publicHolidaysList, setPublicHolidaysList] = useState([]);
   const [publicHolidaysLoading, setPublicHolidaysLoading] = useState(false);
@@ -307,8 +385,12 @@ export default function PlannerSettingsContent({
   const regionCode = null;
 
   // Custom days & ranges (stored as holiday / break exclusions in API)
-  const [customHolidays, setCustomHolidays] = useState([]);
-  const [customBreaks, setCustomBreaks] = useState([]);
+  const [customHolidays, setCustomHolidays] = useState(
+    Array.isArray(initialSnapshot?.customHolidays) ? initialSnapshot.customHolidays : []
+  );
+  const [customBreaks, setCustomBreaks] = useState(
+    Array.isArray(initialSnapshot?.customBreaks) ? initialSnapshot.customBreaks : []
+  );
   const [addingHoliday, setAddingHoliday] = useState(false);
   const [addingBreak, setAddingBreak] = useState(false);
   const [newHolidayDate, setNewHolidayDate] = useState('');
@@ -320,18 +402,22 @@ export default function PlannerSettingsContent({
   const [editingHolidayDraft, setEditingHolidayDraft] = useState({ date: '', name: '' });
   const [editingBreakIndex, setEditingBreakIndex] = useState(null);
   const [editingBreakDraft, setEditingBreakDraft] = useState({ start: '', end: '', name: '' });
-  const [defaultYearStartDate, setDefaultYearStartDate] = useState('');
-  const [defaultYearEndDate, setDefaultYearEndDate] = useState('');
-  const [defaultFallStartDate, setDefaultFallStartDate] = useState('');
-  const [defaultFallEndDate, setDefaultFallEndDate] = useState('');
-  const [defaultSpringStartDate, setDefaultSpringStartDate] = useState('');
-  const [defaultSpringEndDate, setDefaultSpringEndDate] = useState('');
+  const [defaultYearStartDate, setDefaultYearStartDate] = useState(initialSnapshot?.defaultYearStartDate || '');
+  const [defaultYearEndDate, setDefaultYearEndDate] = useState(initialSnapshot?.defaultYearEndDate || '');
+  const [defaultFallStartDate, setDefaultFallStartDate] = useState(initialSnapshot?.defaultFallStartDate || '');
+  const [defaultFallEndDate, setDefaultFallEndDate] = useState(initialSnapshot?.defaultFallEndDate || '');
+  const [defaultSpringStartDate, setDefaultSpringStartDate] = useState(initialSnapshot?.defaultSpringStartDate || '');
+  const [defaultSpringEndDate, setDefaultSpringEndDate] = useState(initialSnapshot?.defaultSpringEndDate || '');
 
   // Subject targets (per-subject defaults)
-  const [subjects, setSubjects] = useState([]);
-  const [subjectTargets, setSubjectTargets] = useState({}); // { subjectId: { mode, days, hours } }
+  const [subjects, setSubjects] = useState(Array.isArray(initialSnapshot?.subjects) ? initialSnapshot.subjects : []);
+  const [subjectTargets, setSubjectTargets] = useState(
+    initialSnapshot?.subjectTargets && typeof initialSnapshot.subjectTargets === 'object'
+      ? initialSnapshot.subjectTargets
+      : {}
+  ); // { subjectId: { mode, days, hours } }
   const [schoolYearOptions, setSchoolYearOptions] = useState([]);
-  const [selectedSchoolYearLabel, setSelectedSchoolYearLabel] = useState('');
+  const [selectedSchoolYearLabel, setSelectedSchoolYearLabel] = useState(initialSelectedSchoolYearLabel);
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [schoolYearMenuAnchor, setSchoolYearMenuAnchor] = useState(null);
   const [showAttendanceModeDropdown, setShowAttendanceModeDropdown] = useState(false);
@@ -344,6 +430,7 @@ export default function PlannerSettingsContent({
   const attendanceModeConfirmResolverRef = useRef(null);
   const schoolYearTriggerRef = useRef(null);
   const attendanceModeTriggerRef = useRef(null);
+  const hasHydratedSnapshotRef = useRef(Boolean(initialSnapshot));
   const normalizedLockedSchoolYearLabel = useMemo(
     () => normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim()),
     [lockedSchoolYearLabel]
@@ -364,10 +451,8 @@ export default function PlannerSettingsContent({
     if (showSchoolYearDropdown) setShowSchoolYearDropdown(false);
   }, [isSchoolYearLocked, normalizedLockedSchoolYearLabel, selectedSchoolYearLabel, showSchoolYearDropdown]);
 
-  useEffect(() => {
-    if (!embeddedInModal) return;
-    const cached = plannerSettingsSnapshotCache.get(snapshotCacheKey);
-    if (!cached) return;
+  const applySnapshot = useCallback((cached) => {
+    if (!cached || typeof cached !== 'object') return false;
     const cachedMode = getAttendanceMode({ academicYearMode: cached.attendanceTrackingMode });
     setAttendanceTrackingMode(cachedMode);
     setTargetScope(resolveTargetScopeForAttendanceMode(cachedMode));
@@ -392,8 +477,18 @@ export default function PlannerSettingsContent({
     if (!isSchoolYearLocked && cached.selectedSchoolYearLabel) {
       setSelectedSchoolYearLabel(normalizeSchoolYearLabel(cached.selectedSchoolYearLabel));
     }
+    hasHydratedSnapshotRef.current = true;
     setLoading(false);
-  }, [embeddedInModal, snapshotCacheKey, isSchoolYearLocked]);
+    return true;
+  }, [isSchoolYearLocked]);
+
+  useEffect(() => {
+    if (!embeddedInModal) return;
+    const inMemory = plannerSettingsSnapshotCache.get(snapshotCacheKey);
+    if (applySnapshot(inMemory)) return;
+    const persisted = readPlannerSettingsSessionSnapshot(snapshotCacheKey);
+    applySnapshot(persisted);
+  }, [embeddedInModal, snapshotCacheKey, applySnapshot]);
 
   useEffect(() => {
     const resolvedScope = resolveTargetScopeForAttendanceMode(attendanceTrackingMode);
@@ -429,7 +524,7 @@ export default function PlannerSettingsContent({
 
   useEffect(() => {
     if (!embeddedInModal) return;
-    plannerSettingsSnapshotCache.set(snapshotCacheKey, {
+    const snapshotPayload = {
       targetScope,
       attendanceTrackingMode,
       goalMode,
@@ -451,7 +546,9 @@ export default function PlannerSettingsContent({
       subjects: Array.isArray(subjects) ? [...subjects] : [],
       subjectTargets: subjectTargets && typeof subjectTargets === 'object' ? { ...subjectTargets } : {},
       selectedSchoolYearLabel,
-    });
+    };
+    plannerSettingsSnapshotCache.set(snapshotCacheKey, snapshotPayload);
+    writePlannerSettingsSessionSnapshot(snapshotCacheKey, snapshotPayload);
   }, [
     embeddedInModal,
     snapshotCacheKey,
@@ -711,7 +808,9 @@ export default function PlannerSettingsContent({
         ? normalizedLockedSchoolYearLabel
         : selectedSchoolYearLabel
     );
-    setLoading(true);
+    if (!hasHydratedSnapshotRef.current) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const { settings: s, exclusions: ex, excluded_holiday_dates: excludedDates, error: planErr } = await getPlanDefaultsFromSettings(
