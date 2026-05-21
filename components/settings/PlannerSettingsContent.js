@@ -1115,7 +1115,7 @@ export default function PlannerSettingsContent({
 
   const confirmAttendanceModeSwitch = useCallback(async ({ fromMode, toMode, isDataRich }) => {
     const title = 'Change attendance style?';
-    const baseMessage = 'Per subject tracks attendance separately for scheduled subjects.\n\nLearning days tracks whether learning happened each day without breaking attendance into subjects.\n\nChanging this setting will update how schedules, attendance, and progress are shown for this school year.';
+    const baseMessage = 'Per subject tracks attendance separately for scheduled subjects.\n\nTotal class days tracks whether learning happened each day without breaking attendance into subjects.\n\nChanging this setting will update how schedules, attendance, and progress are shown for this school year.';
     const dataRichWarning = isDataRich
       ? '\n\nThis year already has subject-based planning data. Existing subject schedules and progress may be recalculated after this change.'
       : '';
@@ -1858,7 +1858,7 @@ export default function PlannerSettingsContent({
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   };
-  const attendanceModeLabel = attendanceTrackingMode === 'class_day' ? 'Learning days' : 'Per subject';
+  const attendanceModeLabel = attendanceTrackingMode === 'class_day' ? 'Total class days' : 'Per subject';
   if (loading && !embeddedInModal) {
     return (
       <View style={{ padding: embeddedInModal ? 20 : 32, alignItems: 'center' }}>
@@ -2187,7 +2187,7 @@ export default function PlannerSettingsContent({
                     onPress={() => handleAttendanceTrackingModeChange('class_day')}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Text style={modeToggleButtonTextStyle(attendanceTrackingMode === 'class_day')}>Learning days</Text>
+                    <Text style={modeToggleButtonTextStyle(attendanceTrackingMode === 'class_day')}>Total class days</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[modeToggleButtonStyle(attendanceTrackingMode === 'subject'), { minWidth: 96 }]}
@@ -2621,7 +2621,7 @@ export default function PlannerSettingsContent({
                 }}
               >
                 {[
-                  { mode: 'class_day', label: 'Learning days' },
+                  { mode: 'class_day', label: 'Total class days' },
                   { mode: 'subject', label: 'Per subject' },
                 ].map((option, index, arr) => {
                   const isActive = attendanceTrackingMode === option.mode;
