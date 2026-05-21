@@ -48,6 +48,7 @@ const overviewCacheByFamily = new Map();
 const overviewInflightByFamily = new Map();
 const OVERVIEW_SESSION_PREFIX = 'ld_subjects_schedule_overview_v1::';
 const SCHEDULE_SUPPLEMENT_TTL_MS = 10 * 60 * 1000;
+const SCHEDULE_SUPPLEMENT_SCHEMA_VERSION = 3;
 const scheduleSupplementCacheByKey = new Map();
 const scheduleSupplementInflightByKey = new Map();
 const SCHEDULE_SUPPLEMENT_SESSION_PREFIX = 'ld_subjects_schedule_supplement_v2::';
@@ -144,8 +145,8 @@ function formatYmdFromTemplateYear(startYear, endYear, scope) {
   const safeEnd = Number(endYear);
   if (!Number.isFinite(safeStart) || !Number.isFinite(safeEnd)) return null;
   if (scope === 'fall_term') return { start_date: `${safeStart}-08-01`, end_date: `${safeStart}-12-31` };
-  if (scope === 'spring_term') return { start_date: `${safeEnd}-01-01`, end_date: `${safeEnd}-05-31` };
-  return { start_date: `${safeStart}-08-01`, end_date: `${safeEnd}-05-31` };
+  if (scope === 'spring_term') return { start_date: `${safeEnd}-01-01`, end_date: `${safeEnd}-06-30` };
+  return { start_date: `${safeStart}-08-01`, end_date: `${safeEnd}-06-30` };
 }
 
 function getClientTimezone() {
@@ -361,7 +362,17 @@ function addMinutesToHhmm(hhmm = '09:00', addMinutes = 60) {
 function isInstructionalEvent(eventRow) {
   if (!eventRow || typeof eventRow !== 'object') return false;
   const subjectId = String(eventRow?.subject_id || '').trim();
-  if (!subjectId) return false;
+  const linkedSubjectIds = new Set();
+  if (subjectId) linkedSubjectIds.add(subjectId);
+  (Array.isArray(eventRow?.subject_ids) ? eventRow.subject_ids : []).forEach((id) => {
+    const normalized = String(id || '').trim();
+    if (normalized) linkedSubjectIds.add(normalized);
+  });
+  (Array.isArray(eventRow?.curriculum_metadata?.subject_ids) ? eventRow.curriculum_metadata.subject_ids : []).forEach((id) => {
+    const normalized = String(id || '').trim();
+    if (normalized) linkedSubjectIds.add(normalized);
+  });
+  if (linkedSubjectIds.size === 0) return false;
   return isLessonOrClassDayEvent(eventRow) || String(eventRow?.event_type || '').trim() === '';
 }
 
@@ -592,6 +603,10 @@ function getCachedScheduleSupplement(familyId, schoolYearLabel, { allowStale = t
     }
   }
   if (!cached) return null;
+  if (Number(cached?.scheduleSupplementSchemaVersion || 0) !== SCHEDULE_SUPPLEMENT_SCHEMA_VERSION) {
+    invalidateScheduleSupplementCache(familyId, schoolYearLabel);
+    return null;
+  }
   if (allowStale) return cached;
   if (Date.now() - Number(cached.updatedAt || 0) > SCHEDULE_SUPPLEMENT_TTL_MS) return null;
   return cached;
@@ -1401,6 +1416,7 @@ async function fetchAndCacheScheduleSupplement({
     );
 
     const payload = {
+      scheduleSupplementSchemaVersion: SCHEDULE_SUPPLEMENT_SCHEMA_VERSION,
       familyPlannerSettings,
       subjectTargetSettingsById,
       instructionalEventsBySubject,
