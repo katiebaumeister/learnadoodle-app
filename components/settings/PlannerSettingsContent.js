@@ -1830,27 +1830,30 @@ export default function PlannerSettingsContent({
     }),
   };
   const embeddedTitleRowStyle = {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    position: 'relative',
+    minHeight: 34,
     marginBottom: 12,
   };
   const embeddedTitleStyle = {
     fontSize: 22,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#111827',
     flex: 1,
+    paddingRight: 44,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   };
   const embeddedCloseButtonStyle = {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
-    backgroundColor: '#F8FAFC',
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E6EBF2',
+    borderColor: '#E5E7EB',
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
@@ -1871,7 +1874,7 @@ export default function PlannerSettingsContent({
       contentContainerStyle={{
         paddingBottom: embeddedInModal ? 32 : 32,
         paddingHorizontal: embeddedInModal ? 26 : 0,
-        paddingTop: embeddedInModal ? 22 : 0,
+        paddingTop: embeddedInModal ? 30 : 0,
       }}
     >
       <View style={{ paddingHorizontal: 0, paddingTop: 0 }}>

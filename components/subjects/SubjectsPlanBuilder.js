@@ -5744,25 +5744,8 @@ export default function SubjectsPlanBuilder({
                                   </View>
 
                                   <View style={[styles.subjectRowActions, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay]}>
-                                    <TouchableOpacity
-                                      style={styles.subjectRowActionLink}
-                                      onPress={() => openUpcomingEventsListModal(row, termSection.title)}
-                                      activeOpacity={0.8}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      <Text style={styles.subjectRowActionLinkText}>View schedule</Text>
-                                    </TouchableOpacity>
                                     {row?.isClassDayAggregate ? null : (
                                       <>
-                                        <TouchableOpacity
-                                          style={styles.subjectRowActionLink}
-                                          onPress={() => openAddEventModalForSubjectRow(row)}
-                                          accessibilityLabel={`Add event for ${row.name || 'subject'}`}
-                                          activeOpacity={0.8}
-                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                        >
-                                          <Text style={styles.subjectRowActionLinkText}>Add event</Text>
-                                        </TouchableOpacity>
                                         <TouchableOpacity
                                           style={styles.subjectRowActionLink}
                                           onPress={() => openSubjectEditModal(row.id)}
@@ -5770,7 +5753,34 @@ export default function SubjectsPlanBuilder({
                                           activeOpacity={0.8}
                                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                         >
-                                          <Text style={styles.subjectRowActionLinkText}>Edit subject</Text>
+                                          <Text style={styles.subjectRowActionLinkText}>Edit Subject</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                          style={styles.subjectRowActionLink}
+                                          onPress={openPlanningPreferences}
+                                          accessibilityLabel={`Edit target for ${row.name || 'subject'}`}
+                                          activeOpacity={0.8}
+                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                        >
+                                          <Text style={styles.subjectRowActionLinkText}>Edit Target</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                          style={styles.subjectRowActionLink}
+                                          onPress={() => openAttendanceBulkActionsModal(row)}
+                                          accessibilityLabel={`Edit attendance for ${row.name || 'subject'}`}
+                                          activeOpacity={0.8}
+                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                        >
+                                          <Text style={styles.subjectRowActionLinkText}>Edit Attendance</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                          style={styles.subjectRowActionLink}
+                                          onPress={() => openAddEventModalForSubjectRow(row)}
+                                          accessibilityLabel={`Add subject event for ${row.name || 'subject'}`}
+                                          activeOpacity={0.8}
+                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                        >
+                                          <Text style={styles.subjectRowActionLinkText}>Add event</Text>
                                         </TouchableOpacity>
                                       </>
                                     )}
@@ -5780,21 +5790,6 @@ export default function SubjectsPlanBuilder({
                               );
                             })
                           )}
-                        </View>
-                        <View style={styles.weeklyCadencePreferencesHintRow}>
-                          <Text style={styles.weeklyCadencePreferencesHintText}>
-                            To update class days and yearly targets{' '}
-                          </Text>
-                          <TouchableOpacity
-                            onPress={openPlanningPreferences}
-                            activeOpacity={0.8}
-                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                          >
-                            <Text style={styles.weeklyCadencePreferencesHintLink}>click here</Text>
-                          </TouchableOpacity>
-                          <Text style={styles.weeklyCadencePreferencesHintText}>
-                            {' '}to open your planning preferences.
-                          </Text>
                         </View>
                       </View>
                     </>
@@ -5862,40 +5857,14 @@ export default function SubjectsPlanBuilder({
                         const rawRowGapValue = Number.isFinite(Number(row?.gapHours))
                           ? Number(row.gapHours)
                           : Number(row?.gapDays || 0);
-                        const removableFutureDayCount = (() => {
-                          if (rowTargetUnit !== 'days' || rawRowGapValue >= 0) return 0;
-                          const eventItems = Array.isArray(row?.eventItems) ? row.eventItems : [];
-                          if (!eventItems.length) return 0;
-                          const todayYmd = new Date().toISOString().slice(0, 10);
-                          const dayKeys = new Set();
-                          eventItems.forEach((eventItem) => {
-                            const dayKey = String(
-                              eventItem?.start_ts
-                              || eventItem?.startTs
-                              || eventItem?.start_local
-                              || eventItem?.due_ts
-                              || ''
-                            ).slice(0, 10);
-                            if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey) || dayKey < todayYmd) return;
-                            const status = String(eventItem?.status || '').trim().toLowerCase();
-                            const instructionalStatus = String(eventItem?.instructional_status || '').trim().toUpperCase();
-                            const isAttended = eventItem?.hasAttendancePresent === true
-                              || status === 'done'
-                              || status === 'completed'
-                              || instructionalStatus === 'MANUAL_COUNTS';
-                            if (isAttended) return;
-                            dayKeys.add(dayKey);
-                          });
-                          return dayKeys.size;
-                        })();
-                        const actionableRowGapValue = (
-                          rawRowGapValue < 0 && removableFutureDayCount <= 0
-                        )
-                          ? 0
-                          : rawRowGapValue;
+                        const actionableRowGapValue = rawRowGapValue;
                         // Always display the mathematical target gap in the chip, even when no automatic
                         // removal action is available (e.g. all extra days are already attended).
                         const rowGapValue = rawRowGapValue;
+                        const displayGapMagnitude = Math.abs(Number(rowGapValue || 0));
+                        const rowGapDisplayText = displayGapMagnitude === 0
+                          ? `0 ${rowTargetLabel}`
+                          : `+${toOneDecimal(displayGapMagnitude)} ${rowTargetLabel}`;
                         const isOverallRow = rowId === 'overall' || row?.isOverall === true;
                         const isOverallScopeTable = String(yearTargetSummary?.trackingMode || '').trim().toLowerCase() === 'overall';
                         const overallSuggestedChanges = (() => {
@@ -6564,7 +6533,7 @@ export default function SubjectsPlanBuilder({
                                     rowGapValue < 0 && styles.yearTargetsPositiveGapText,
                                   ]}
                                 >
-                                  {`${rowGapValue > 0 ? `+${toOneDecimal(rowGapValue)}` : toOneDecimal(rowGapValue)} ${rowTargetLabel}`}
+                                  {rowGapDisplayText}
                                 </Text>
                                 {showSuggestion ? (
                                   <Animated.View style={[styles.yearTargetsGapChipChevronWrap, { transform: [{ rotate: chevronRotate }] }]}>
