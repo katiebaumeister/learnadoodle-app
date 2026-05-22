@@ -8920,9 +8920,9 @@ const styles = StyleSheet.create({
     paddingLeft: 8,
   },
   cadenceStatusStudentsColClassDay: {
-    flex: 2.35,
-    minWidth: 300,
-    paddingLeft: 10,
+    flex: 1.75,
+    minWidth: 220,
+    paddingLeft: 8,
   },
   cadenceStatusProgressCol: {
     flex: 1.25,
