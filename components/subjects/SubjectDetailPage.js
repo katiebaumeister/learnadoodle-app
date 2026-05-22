@@ -388,6 +388,31 @@ function getClientTimezone() {
   return 'America/New_York';
 }
 
+function buildLearningGoalsUnitsFromEvents(events) {
+  const rows = Array.isArray(events) ? events : [];
+  const unitsMap = new Map();
+  rows.forEach((ev) => {
+    if (!ev) return;
+    const unitTitle = String(ev.curriculum_unit_title || ev.unit || '').trim();
+    const meta = ev?.curriculum_metadata && typeof ev.curriculum_metadata === 'object'
+      ? ev.curriculum_metadata
+      : {};
+    const lessonTitle = String(
+      meta?.lesson_label || ev.lesson || ev.title || ''
+    ).trim();
+    if (!unitTitle || !lessonTitle) return;
+    if (!unitsMap.has(unitTitle)) unitsMap.set(unitTitle, []);
+    unitsMap.get(unitTitle).push({
+      id: ev.id ? String(ev.id) : `${unitTitle}-${lessonTitle}`,
+      title: lessonTitle,
+    });
+  });
+  return Array.from(unitsMap.entries()).map(([title, lessons]) => ({
+    title,
+    lessons,
+  }));
+}
+
 export default function SubjectDetailPage({
   subjectId,
   familyId,
@@ -402,9 +427,9 @@ export default function SubjectDetailPage({
   initialOpenMaterialId = null,
   initialProgressAction = null,
 }) {
-  const preloadedSubjectId = preloadedSubjectData?.subject?.id;
-  const preloadedProgressCache = preloadedSubjectId
-    ? getSubjectProgressCache(familyId, preloadedSubjectId)
+  const initialSubjectIdForProgressCache = subjectId || preloadedSubjectData?.subject?.id;
+  const preloadedProgressCache = initialSubjectIdForProgressCache
+    ? getSubjectProgressCache(familyId, initialSubjectIdForProgressCache)
     : null;
   const session = useSession();
   const toast = useToast();
@@ -441,11 +466,17 @@ export default function SubjectDetailPage({
   const [learningGoalsSource, setLearningGoalsSource] = useState(
     preloadedProgressCache?.curriculumSavedContentSource || null
   );
+  const learningGoalsUnitsRef = useRef(
+    Array.isArray(preloadedProgressCache?.curriculumUnits) ? preloadedProgressCache.curriculumUnits : []
+  );
   const loadingRef = useRef(false);
   const autoOpenedMaterialKeyRef = useRef(null);
   const autoOpenedProgressActionRef = useRef(null);
   const materialHighlightTimeoutRef = useRef(null);
   const materialContextMenuIdRef = useRef(`subject-detail-material-context-menu-${Math.random().toString(36).slice(2)}`);
+  useEffect(() => {
+    learningGoalsUnitsRef.current = Array.isArray(learningGoalsUnits) ? learningGoalsUnits : [];
+  }, [learningGoalsUnits]);
   const loadLearningGoalsStructure = useCallback(async () => {
     const sid = subjectData?.subject?.id;
     if (!familyId || !sid) {
@@ -454,10 +485,15 @@ export default function SubjectDetailPage({
       return;
     }
     try {
+      // Use year-agnostic structure for Subject Detail section so saved edits are always visible.
       const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, sid, null);
       if (error) throw error;
       const nextUnits = Array.isArray(data?.units) ? data.units : [];
       const nextSource = data?.saved_content_source || null;
+      const currentUnits = Array.isArray(learningGoalsUnitsRef.current) ? learningGoalsUnitsRef.current : [];
+      if (nextUnits.length === 0 && currentUnits.length > 0) {
+        return;
+      }
       setLearningGoalsUnits(nextUnits);
       setLearningGoalsSource(nextSource);
       mergeSubjectProgressCache(familyId, sid, {
@@ -466,14 +502,9 @@ export default function SubjectDetailPage({
       });
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed loading learning goals structure:', err);
-      setLearningGoalsUnits([]);
-      setLearningGoalsSource(null);
-      mergeSubjectProgressCache(familyId, sid, {
-        curriculumUnits: [],
-        curriculumSavedContentSource: null,
-      });
+      // Keep current UI/cache values on transient load failures to avoid wiping visible units.
     }
-  }, [familyId, subjectData?.subject?.id]);
+  }, [familyId, subjectData?.subject?.id, subjectData?.events]);
   /** Parent often passes inline callbacks; keep loadSubjectDetail stable so mount effect does not loop. */
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -542,7 +573,10 @@ export default function SubjectDetailPage({
       loadSubjectDetail({ silent: true });
     };
     const handleSubjectDetailRefresh = (e) => {
-      if (e.detail?.subjectId === subjectId) loadSubjectDetail({ silent: true });
+      if (e.detail?.subjectId === subjectId) {
+        loadSubjectDetail({ silent: true });
+        loadLearningGoalsStructure();
+      }
     };
     const handleSubjectRecordUpserted = (e) => {
       const incoming = e?.detail?.subject;
@@ -580,7 +614,7 @@ export default function SubjectDetailPage({
       window.removeEventListener('childAssignmentsNeedRefresh', handleRefresh);
       window.removeEventListener('subjectDetailMaterialsStale', handleMaterialsStale);
     };
-  }, [subjectId, familyId, loadSubjectDetail]);
+  }, [subjectId, familyId, loadSubjectDetail, loadLearningGoalsStructure]);
 
   const getChildName = useCallback((childId) => {
     const child = children.find(c => c.id === childId);
@@ -740,13 +774,22 @@ export default function SubjectDetailPage({
     () => buildCalendarConnectionsHeaderLine(subject),
     [subject]
   );
+  const immediateLearningGoalsUnits = useMemo(
+    () => buildLearningGoalsUnitsFromEvents(subjectEvents),
+    [subjectEvents]
+  );
+  const effectiveLearningGoalsUnits = useMemo(() => {
+    const fetched = Array.isArray(learningGoalsUnits) ? learningGoalsUnits : [];
+    if (fetched.length > 0) return fetched;
+    return immediateLearningGoalsUnits;
+  }, [learningGoalsUnits, immediateLearningGoalsUnits]);
   const totalLearningGoalLessons = useMemo(
-    () => (learningGoalsUnits || []).reduce((sum, unit) => sum + ((unit?.lessons || []).length || 0), 0),
-    [learningGoalsUnits]
+    () => (effectiveLearningGoalsUnits || []).reduce((sum, unit) => sum + ((unit?.lessons || []).length || 0), 0),
+    [effectiveLearningGoalsUnits]
   );
   const totalLearningGoalUnits = useMemo(
-    () => (Array.isArray(learningGoalsUnits) ? learningGoalsUnits.length : 0),
-    [learningGoalsUnits]
+    () => (Array.isArray(effectiveLearningGoalsUnits) ? effectiveLearningGoalsUnits.length : 0),
+    [effectiveLearningGoalsUnits]
   );
   const hasLearningGoalsContent = totalLearningGoalUnits > 0 || totalLearningGoalLessons > 0;
   const learningGoalsMethodTitle = useMemo(() => 'SAVED UNITS', []);
@@ -801,8 +844,9 @@ export default function SubjectDetailPage({
     setShowLearningGoalsMethodModal(false);
   }, []);
   const openLearningGoalsMethodModal = useCallback(() => {
-    setShowLearningGoalsMethodModal(true);
-  }, []);
+    // For now, skip method chooser and open manual input directly.
+    openSubjectUnitsEditorForMethod('manual');
+  }, [openSubjectUnitsEditorForMethod]);
   const selectLearningGoalsMethod = useCallback((method) => {
     setShowLearningGoalsMethodModal(false);
     openSubjectUnitsEditorForMethod(method);
@@ -1104,10 +1148,13 @@ export default function SubjectDetailPage({
       const cached = getSubjectProgressCache(familyId, subject.id);
       setSubjectPlanYearId(cached?.academicYearId || subjectPlanYearIdFromEvents || null);
       setSubjectPlanData(cached?.planData || null);
-      if (Array.isArray(cached?.curriculumUnits)) {
-        setLearningGoalsUnits(cached.curriculumUnits);
+      const cachedUnits = Array.isArray(cached?.curriculumUnits) ? cached.curriculumUnits : [];
+      const currentUnits = Array.isArray(learningGoalsUnitsRef.current) ? learningGoalsUnitsRef.current : [];
+      // Promote warmed cache data when available, but never wipe visible units with an empty cache update.
+      if (cachedUnits.length > 0 || currentUnits.length === 0) {
+        setLearningGoalsUnits(cachedUnits);
+        setLearningGoalsSource(cached?.curriculumSavedContentSource || null);
       }
-      setLearningGoalsSource(cached?.curriculumSavedContentSource || null);
     };
     window.addEventListener('subjectProgressPlanCacheUpdated', onCacheUpdate);
     return () => window.removeEventListener('subjectProgressPlanCacheUpdated', onCacheUpdate);
@@ -2868,17 +2915,19 @@ export default function SubjectDetailPage({
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Units and Lessons</Text>
             {onEditSubject ? (
               <View style={styles.learningGoalsHeaderActions}>
-                <TouchableOpacity
-                  style={styles.emptyStateButton}
-                  onPress={openLearningGoalsMethodModal}
-                  activeOpacity={0.8}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.learningGoalsActionInner}>
-                    <Plus size={14} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Add new units</Text>
-                  </View>
-                </TouchableOpacity>
+                {!hasLearningGoalsContent ? (
+                  <TouchableOpacity
+                    style={styles.emptyStateButton}
+                    onPress={openLearningGoalsMethodModal}
+                    activeOpacity={0.8}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={styles.learningGoalsActionInner}>
+                      <Plus size={14} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Add new units</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
                 {hasLearningGoalsContent ? (
                   <TouchableOpacity
                     style={styles.learningGoalsEditCurrentButton}
@@ -2911,7 +2960,7 @@ export default function SubjectDetailPage({
                 </View>
                 <View style={styles.learningGoalsMethodHeaderDivider} />
                 <View style={styles.learningGoalsList}>
-                  {learningGoalsUnits.map((unit, unitIndex) => {
+                  {effectiveLearningGoalsUnits.map((unit, unitIndex) => {
                     const lessonTitles = (unit?.lessons || [])
                       .map((lesson) => String(lesson?.title || '').trim())
                       .filter(Boolean);

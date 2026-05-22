@@ -15,7 +15,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import { X, Upload, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Paperclip, Building2, Star } from 'lucide-react';
+import { X, Upload, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Paperclip, Star } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { createMaterial, linkMaterialToChild, updateMaterial, updateMaterialChildStatus } from '../../lib/services/materialsClient';
@@ -257,7 +257,6 @@ export default function AddMaterialModal({
   const [calendarViewMonth, setCalendarViewMonth] = useState(new Date());
   
   // Expandable sections state
-  const [showProviderInfo, setShowProviderInfo] = useState(false);
   const [showPurchaseInfo, setShowPurchaseInfo] = useState(false);
   const [showReviewInfo, setShowReviewInfo] = useState(false);
   
@@ -394,7 +393,6 @@ export default function AddMaterialModal({
       setUploadedFile(null);
       setUploadedFileUrl('');
     }
-    setShowProviderInfo(!!(material.provider_name || material.provider_url));
     setShowPurchaseInfo(!!(material.purchase_date || material.purchase_price || isSub));
     if (material.review_child_id || material.review_rating || material.review_emotion || material.review_pacing_fit || material.review_difficulty || material.review_notes) {
       setReviewChildId(material.review_child_id || null);
@@ -453,7 +451,6 @@ export default function AddMaterialModal({
       setSubscriptionFrequency('monthly');
       setUploadedFile(null);
       setUploadedFileUrl('');
-      setShowProviderInfo(Boolean(defaultProviderUrlTrimmed));
       setShowPurchaseInfo(false);
       setShowReviewInfo(false);
       setReviewChildId(null);
@@ -1192,6 +1189,7 @@ export default function AddMaterialModal({
             accentSoft="#FFF7EE"
             HeroIcon={Paperclip}
             onClose={handleDismiss}
+            shellStyle={styles.shellAutoHeight}
             contentContainerStyle={styles.contentContainer}
             bodyStyle={styles.shellBody}
             footer={(
@@ -1375,44 +1373,6 @@ export default function AddMaterialModal({
             <Text style={[styles.metadataSectionTitle, styles.metadataSectionTitleAfterSubject]}>
               Material Metadata (optional)
             </Text>
-
-            <ModalSectionCard
-              Icon={Building2}
-              title="Provider information"
-              subtitle="Publisher, source, author, and links"
-              expanded={showProviderInfo}
-              onPress={() => setShowProviderInfo(!showProviderInfo)}
-              accent="#E39A4B"
-            >
-                <View style={styles.sectionCardBody}>
-                  <View style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Provider (optional)</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={providerName}
-                        onChangeText={setProviderName}
-                        placeholder="e.g., OpenStax, Khan Academy"
-                        placeholderTextColor={MUTED}
-                      />
-                    </View>
-                  </View>
-                  <View style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Provider URL (optional)</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={providerUrl}
-                        onChangeText={setProviderUrl}
-                        placeholder="Link to provider website"
-                        placeholderTextColor={MUTED}
-                        keyboardType="url"
-                        autoCapitalize="none"
-                      />
-                    </View>
-                  </View>
-                </View>
-            </ModalSectionCard>
 
             <ModalSectionCard
               Icon={Star}
@@ -1842,6 +1802,15 @@ const styles = StyleSheet.create({
   modalWrap: {
     width: '100%',
     maxWidth: 860,
+  },
+  shellAutoHeight: {
+    ...(Platform.OS === 'web'
+      ? {
+          height: 'auto',
+          maxHeight: '86vh',
+          minHeight: 0,
+        }
+      : {}),
   },
   shellBody: {
     paddingTop: 18,

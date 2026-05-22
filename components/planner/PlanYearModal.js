@@ -109,7 +109,7 @@ import { getPlanDefaultsFromSettings, getAcademicYearExclusions, getFamilyPlanne
 import { supabase } from '../../lib/supabase';
 import { deleteEvent as deletePlannerEventSoft, restoreEventFromTrash } from '../../lib/services/plannerClientWithOffline';
 import { t, s, STRINGS } from '../../lib/i18n/strings';
-import { buildCurriculum, commitCurriculum, previewPacing, parsePlainTextStream, generateCurriculumDraftStream, commitManualDraft, commitParsedDraft, commitGeneratedDraft, getManualCommitValidationError, fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
+import { buildCurriculum, commitCurriculum, previewPacing, parsePlainTextStream, generateCurriculumDraftStream, commitManualDraft, commitParsedDraft, getManualCommitValidationError, fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import { buildHumanPreviewFromPartialJson, buildImportStreamPreviewDisplay } from '../../lib/parseStreamHumanPreview';
 import { getMaterials } from '../../lib/services/materialsClient';
 import {
@@ -147,7 +147,7 @@ import {
 } from '../../lib/planEditListCache';
 import { formatSubjectPlanHeading } from '../../lib/formatSubjectPlanHeading';
 import { prefetchPlanEditListForFamily } from '../../lib/services/plannerPrefetch';
-import { getSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
+import { getSubjectProgressCache, mergeSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 import { getAttendanceMode } from '../../lib/attendanceMode';
 import { trackEvent } from '../../lib/analytics';
 
@@ -303,6 +303,59 @@ function manualDraftFromUnitStructureData(struct) {
         minutes_est: typeof le.minutes === 'number' && !Number.isNaN(le.minutes) ? le.minutes : 60,
         reference_date: le.date || null,
       })),
+    })),
+  };
+}
+
+/** Normalize AI-generated draft into the manual draft shape used by saved subject structure/events. */
+function manualDraftFromGeneratedDraft(draft) {
+  const units = Array.isArray(draft?.units) ? draft.units : [];
+  const seed = Date.now();
+  return {
+    title:
+      draft?.course_title != null && String(draft.course_title).trim() !== ''
+        ? String(draft.course_title).trim()
+        : null,
+    units: units.map((u, ui) => ({
+      temp_id: `gen-u-${seed}-${ui}`,
+      title: (u?.title != null && String(u.title).trim() !== '') ? String(u.title).trim() : `Unit ${ui + 1}`,
+      sequence_index: ui + 1,
+      description:
+        u?.description != null && String(u.description).trim() !== ''
+          ? String(u.description).trim()
+          : null,
+      inferred: true,
+      lessons: (Array.isArray(u?.lessons) ? u.lessons : []).map((le, li) => {
+        const rawType = String(le?.lesson_type || '').trim().toLowerCase();
+        const normalizedType =
+          rawType === 'quiz' || rawType === 'assessment'
+            ? 'exam'
+            : ['lesson', 'assignment', 'project', 'exam', 'review', 'activity', 'reading', 'lab', 'placeholder'].includes(rawType)
+              ? rawType
+              : (le?.assessment_idea ? 'exam' : 'lesson');
+        const rawMinutes = Number(le?.minutes_est);
+        return {
+          temp_id: `gen-l-${seed}-${ui}-${li}`,
+          title:
+            le?.title != null && String(le.title).trim() !== ''
+              ? String(le.title).trim()
+              : `Lesson ${li + 1}`,
+          objective:
+            le?.objective != null && String(le.objective).trim() !== ''
+              ? String(le.objective).trim()
+              : null,
+          notes:
+            le?.notes != null && String(le.notes).trim() !== ''
+              ? String(le.notes).trim()
+              : (le?.assessment_idea != null && String(le.assessment_idea).trim() !== ''
+                ? String(le.assessment_idea).trim()
+                : null),
+          lesson_type: normalizedType,
+          sequence_index: li + 1,
+          minutes_est: Number.isFinite(rawMinutes) ? Math.max(1, Math.round(rawMinutes)) : 60,
+          reference_date: null,
+        };
+      }),
     })),
   };
 }
@@ -1931,6 +1984,7 @@ export default function PlanYearModal({
   
   // Unit Structure step state
   const [unitStructureData, setUnitStructureData] = useState(null); // { units: [{ title, lessons: [...] }] }
+  const SHOW_UNIT_MODAL_LESSON_PLACEMENT_PREVIEW = false;
   const [loadingUnitStructure, setLoadingUnitStructure] = useState(false);
   const [expandedUnits, setExpandedUnits] = useState(new Set()); // Set of unit indices
   const [editingItemId, setEditingItemId] = useState(null); // ID of item being edited inline
@@ -8875,12 +8929,15 @@ export default function PlanYearModal({
     if (planSource !== 'paste') return;
     if (unitStructureStep !== 'input') return;
     if (draftData) return;
-    if (manualDraft) return;
     if (!unitPipelineSubjectId || !familyId) return;
-    // Avoid seeding a blank draft before existing saved units hydrate.
-    if (!unitStructureData) return;
-    if (loadingUnitStructure) return;
     if (suppressManualCurriculumHydrateRef.current) return;
+    const isSeedBlankManualDraft =
+      !!manualDraft &&
+      Array.isArray(manualDraft.units) &&
+      manualDraft.units.length === 1 &&
+      String(manualDraft.units[0]?.title || '').trim().toLowerCase() === 'unit 1' &&
+      ((manualDraft.units[0]?.lessons || []).length === 0);
+    if (manualDraft && !isSeedBlankManualDraft) return;
     const persisted = (unitStructureData?.units || []).some((u) => (u.lessons || []).length > 0);
     if (persisted) {
       const loaded = manualDraftFromUnitStructureData(unitStructureData);
@@ -8903,7 +8960,6 @@ export default function PlanYearModal({
     manualDraft,
     unitPipelineSubjectId,
     familyId,
-    loadingUnitStructure,
     unitStructureData,
   ]);
 
@@ -9696,16 +9752,8 @@ export default function PlanYearModal({
                     (planSource === 'generate' && unitStructureStep === 'input') ||
                     (planSource === 'paste' && unitStructureStep === 'input') ||
                     (planSource === 'upload' && unitStructureStep === 'input'));
-                if (loadingUnitStructure && !unitStructureContentEntryIdle) {
-                  return (
-                    <View style={{ paddingVertical: 40, alignItems: 'center', paddingHorizontal: 16 }}>
-                      <ActivityIndicator size="small" color={ACCENT} />
-                      <Text style={[styles.mutedText, { marginTop: 12, textAlign: 'center' }]}>
-                        {s('planMyYear.multiSubjectUnits.loadingCurriculum')}
-                      </Text>
-                    </View>
-                  );
-                }
+                // Do not block entry with a loading screen; open the editor immediately
+                // and allow saved curriculum hydration to reconcile in the background.
 
                 const unitSubjectBanner =
                   effectiveSubjectIds.length > 1 ? (
@@ -9827,7 +9875,10 @@ export default function PlanYearModal({
                               {totalLessons === 1 ? 'lesson' : 'lessons'}
                             </Text>
                           </View>
-                          {PLAN_MY_YEAR_LOGISTICS_FIRST && cadenceYieldsInstructionalSlots && totalLessons > 0 ? (
+                          {SHOW_UNIT_MODAL_LESSON_PLACEMENT_PREVIEW &&
+                          PLAN_MY_YEAR_LOGISTICS_FIRST &&
+                          cadenceYieldsInstructionalSlots &&
+                          totalLessons > 0 ? (
                             <View
                               style={{
                                 marginBottom: 14,
@@ -9959,7 +10010,10 @@ export default function PlanYearModal({
                               </Text>
                             )}
                           </View>
-                          {PLAN_MY_YEAR_LOGISTICS_FIRST && cadenceYieldsInstructionalSlots && totalLessons > 0 && (
+                          {SHOW_UNIT_MODAL_LESSON_PLACEMENT_PREVIEW &&
+                          PLAN_MY_YEAR_LOGISTICS_FIRST &&
+                          cadenceYieldsInstructionalSlots &&
+                          totalLessons > 0 && (
                             <View
                               style={{
                                 marginBottom: 14,
@@ -10938,13 +10992,13 @@ export default function PlanYearModal({
                         {t('planMyYear.multiSubjectUnits.generateCurriculumIntro')}
                       </Text>
                       <TextInput
-                        style={[styles.input, { minHeight: 320, textAlignVertical: 'top', fontSize: 15, lineHeight: 22 }]}
+                        style={[styles.input, { minHeight: 140, textAlignVertical: 'top', fontSize: 15, lineHeight: 22 }]}
                         placeholder={t('planMyYear.multiSubjectUnits.generateCurriculumFreeFormPlaceholder')}
                         placeholderTextColor={MUTED}
                         value={generationScope}
                         onChangeText={setGenerationScope}
                         multiline
-                        numberOfLines={16}
+                        numberOfLines={6}
                         editable={!generating}
                         {...(Platform.OS === 'web' && { cursor: 'text' })}
                       />
@@ -14272,11 +14326,16 @@ export default function PlanYearModal({
                                 planSource,
                               );
                             } else if (planSource === 'generate' && draftData) {
-                              const { data, error: err } = await commitGeneratedDraft({
+                              const generatedAsManualDraft = manualDraftFromGeneratedDraft(draftData);
+                              const { data, error: err } = await commitManualDraft({
                                 subject_id: availableSubject?.id,
                                 family_id: familyId,
                                 subject_name: availableSubject?.name || '',
-                                draft: draftData,
+                                draft: generatedAsManualDraft,
+                                builder_mode: 'rich_units',
+                                replace_existing: true,
+                                academic_year_id: academicYearId || undefined,
+                                student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
                               });
                               if (err || !data) {
                                 setUnitStructureError(err?.message || 'Failed to save curriculum');
@@ -14295,6 +14354,41 @@ export default function PlanYearModal({
                             setManualDraft(null);
                             setUnitStructureStep('input');
                             if (returnToSubjectModalAfterUnitSave) {
+                              if (availableSubject?.id && familyId) {
+                                try {
+                                  const { data: structureData, error: structureErr } =
+                                    await fetchSubjectCurriculumEventsStructure(
+                                      familyId,
+                                      availableSubject.id,
+                                      null
+                                    );
+                                  if (!structureErr && Array.isArray(structureData?.units)) {
+                                    mergeSubjectProgressCache(familyId, availableSubject.id, {
+                                      curriculumUnits: structureData.units,
+                                      curriculumSavedContentSource:
+                                        structureData?.saved_content_source ?? null,
+                                    });
+                                    if (typeof window !== 'undefined') {
+                                      window.dispatchEvent(
+                                        new CustomEvent('subjectProgressPlanCacheUpdated', {
+                                          detail: {
+                                            familyId: String(familyId),
+                                            subjectId: String(availableSubject.id),
+                                          },
+                                        })
+                                      );
+                                    }
+                                  }
+                                } catch (_) {}
+                              }
+                              if (typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('refreshSubjects'));
+                                window.dispatchEvent(
+                                  new CustomEvent('refreshSubjectDetail', {
+                                    detail: { subjectId: String(availableSubject?.id || '') },
+                                  })
+                                );
+                              }
                               onClose?.();
                               return;
                             }
@@ -15140,11 +15234,16 @@ export default function PlanYearModal({
                             planSource,
                           );
                         } else if (planSource === 'generate' && draftData) {
-                          const { data, error: err } = await commitGeneratedDraft({
+                          const generatedAsManualDraft = manualDraftFromGeneratedDraft(draftData);
+                          const { data, error: err } = await commitManualDraft({
                             subject_id: availableSubject?.id,
                             family_id: familyId,
                             subject_name: availableSubject?.name || '',
-                            draft: draftData,
+                            draft: generatedAsManualDraft,
+                            builder_mode: 'rich_units',
+                            replace_existing: true,
+                            academic_year_id: academicYearId || undefined,
+                            student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
                           });
                           if (err || !data) {
                             setUnitStructureError(err?.message || 'Failed to save curriculum');
@@ -15166,6 +15265,41 @@ export default function PlanYearModal({
                         setManualDraft(null);
                         setUnitStructureStep('input');
                         if (returnToSubjectModalAfterUnitSave) {
+                          if (availableSubject?.id && familyId) {
+                            try {
+                              const { data: structureData, error: structureErr } =
+                                await fetchSubjectCurriculumEventsStructure(
+                                  familyId,
+                                  availableSubject.id,
+                                  null
+                                );
+                              if (!structureErr && Array.isArray(structureData?.units)) {
+                                mergeSubjectProgressCache(familyId, availableSubject.id, {
+                                  curriculumUnits: structureData.units,
+                                  curriculumSavedContentSource:
+                                    structureData?.saved_content_source ?? null,
+                                });
+                                if (typeof window !== 'undefined') {
+                                  window.dispatchEvent(
+                                    new CustomEvent('subjectProgressPlanCacheUpdated', {
+                                      detail: {
+                                        familyId: String(familyId),
+                                        subjectId: String(availableSubject.id),
+                                      },
+                                    })
+                                  );
+                                }
+                              }
+                            } catch (_) {}
+                          }
+                          if (typeof window !== 'undefined') {
+                            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+                            window.dispatchEvent(
+                              new CustomEvent('refreshSubjectDetail', {
+                                detail: { subjectId: String(availableSubject?.id || '') },
+                              })
+                            );
+                          }
                           onClose?.();
                           return;
                         }

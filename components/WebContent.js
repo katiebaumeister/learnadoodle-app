@@ -15,7 +15,7 @@ import {
 } from 'react-native'
 import { getChildColorFromAvatar } from '../utils/avatarColors'
 import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
-import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressPlan'
+import { prefetchAllSubjectProgressPlans, prefetchSubjectProgressPlanEntry } from '../lib/prefetchSubjectProgressPlan'
 import { getHolidaysForRange, getEventForPlanSlot, invalidateHolidaysForRangeCache } from '../lib/services/academicYearClient'
 import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext'
@@ -2652,6 +2652,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   
   // Track events with pending optimistic updates to prevent cache overwrites
   const pendingOptimisticUpdatesRef = useRef(new Set());
+  // Attendance-derived completion hints (event_ids marked present/partial or with minutes > 0).
+  // Used to keep month chips stable on first planner load (including background prefetch).
+  const attendanceMarkedDoneEventIdsRef = useRef(new Set());
   // Keep recently deleted events hidden during eventual-consistency windows.
   const recentlyDeletedEventIdsRef = useRef(new Map()); // Map<eventId, hideUntilMs>
   const recentlyDeletedAcademicYearsRef = useRef(new Map()); // Map<academicYearId, hideUntilMs>
@@ -2743,8 +2746,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           });
         });
         const uniqueMonthEventIds = [...new Set(monthEventIds)];
-        let attendedEventIds = new Set();
-        if (!background && uniqueMonthEventIds.length > 0) {
+        let attendedEventIds = new Set(attendanceMarkedDoneEventIdsRef.current || []);
+        const shouldQueryAttendanceRecords =
+          uniqueMonthEventIds.length > 0 && (!background || attendedEventIds.size === 0);
+        if (shouldQueryAttendanceRecords) {
           try {
             let attendanceRows = null;
             let attendanceError = null;
@@ -2763,7 +2768,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               if (!attendanceError) break;
             }
             if (!attendanceError) {
-              attendedEventIds = new Set(
+              const fetchedAttendedEventIds = new Set(
                 (attendanceRows || [])
                   .filter((row) => {
                     const statusKey = String(row?.status || '').trim().toLowerCase();
@@ -2773,6 +2778,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   .map((row) => cleanPlannerEventId(String(row?.event_id || '')))
                   .filter(Boolean)
               );
+              if (fetchedAttendedEventIds.size > 0) {
+                fetchedAttendedEventIds.forEach((id) => attendedEventIds.add(id));
+              }
             }
           } catch (_) {
           }
@@ -4070,6 +4078,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         
         // Mark as loading
         preloadingDetailsRef.current.add(subject.id);
+
+        // Warm subject progress (plan + units) as early as possible per subject,
+        // so Subject Detail can render units/lessons immediately on first open.
+        prefetchSubjectProgressPlanEntry(familyId, subject.id, subject.name || 'Subject').catch(() => {});
         
         // Load in background
         getSubjectDetail(subject.id, familyId, null, propSession)
@@ -4109,7 +4121,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     let cancelled = false;
     (async () => {
       try {
-        await prefetchAllSubjectProgressPlans(familyId, subjectsOverviewCache, { concurrency: 3 });
+        await prefetchAllSubjectProgressPlans(familyId, subjectsOverviewCache, { concurrency: 8 });
       } catch (e) {
         if (!cancelled) console.warn('[WebContent] Prefetch subject progress plan:', e);
       }
@@ -4277,6 +4289,72 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     });
     return () => { cancelled = true; };
   }, [familyId, plannerChildrenKey]);
+
+  // Keep attendance-derived completion hints warm and apply them to already-loaded month caches.
+  useEffect(() => {
+    const snapshotRecords = Array.isArray(plannerAttendanceSnapshot?.attendanceRecords)
+      ? plannerAttendanceSnapshot.attendanceRecords
+      : [];
+    if (snapshotRecords.length === 0) return;
+
+    const doneEventIds = new Set(
+      snapshotRecords
+        .filter((row) => {
+          const statusKey = String(row?.status || '').trim().toLowerCase();
+          const minutes = Number(row?.minutes ?? row?.minutes_present ?? 0);
+          return statusKey === 'present' || statusKey === 'partial' || minutes > 0;
+        })
+        .map((row) => cleanPlannerEventId(String(row?.event_id || '')))
+        .filter(Boolean)
+    );
+    attendanceMarkedDoneEventIdsRef.current = doneEventIds;
+    if (doneEventIds.size === 0) return;
+
+    const applyAttendanceDoneStatus = (eventList) => {
+      if (!Array.isArray(eventList) || eventList.length === 0) return eventList;
+      let changed = false;
+      const nextList = eventList.map((ev) => {
+        const cleanId = cleanPlannerEventId(String(ev?.id || ''));
+        if (!cleanId || !doneEventIds.has(cleanId)) return ev;
+        if (normalizeEventStatus(ev?.status) === 'done') return ev;
+        changed = true;
+        return { ...ev, status: 'done' };
+      });
+      return changed ? nextList : eventList;
+    };
+
+    setCalendarEvents((prev) => {
+      if (!prev || typeof prev !== 'object') return prev;
+      let changed = false;
+      const next = {};
+      for (const [dateKey, dayEvents] of Object.entries(prev)) {
+        const patched = applyAttendanceDoneStatus(dayEvents);
+        if (patched !== dayEvents) changed = true;
+        next[dateKey] = patched;
+      }
+      return changed ? next : prev;
+    });
+
+    setCalendarDataCache((prev) => {
+      if (!prev || typeof prev !== 'object') return prev;
+      let changed = false;
+      const next = {};
+      for (const [monthKey, monthData] of Object.entries(prev)) {
+        if (!monthData || typeof monthData !== 'object') {
+          next[monthKey] = monthData;
+          continue;
+        }
+        const patchedMonth = {};
+        for (const [dateKey, dayEvents] of Object.entries(monthData)) {
+          const patched = applyAttendanceDoneStatus(dayEvents);
+          if (patched !== dayEvents) changed = true;
+          patchedMonth[dateKey] = patched;
+        }
+        next[monthKey] = patchedMonth;
+      }
+      return changed ? next : prev;
+    });
+  }, [plannerAttendanceSnapshot, normalizeEventStatus]);
 
   // Fast-path spillover fetch for visible month grid edges (previous/next month cells).
   // This avoids waiting on full adjacent-month RPC payloads to populate the 30th/1st cells.

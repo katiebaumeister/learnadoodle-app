@@ -1572,9 +1572,20 @@ def _materialize_plan_year_curriculum_events(
     metadata_extra (dict merged into curriculum_metadata).
     """
     if replace_existing:
-        supabase.table("events").delete().eq("family_id", family_id).eq("subject_id", subject_id).eq(
-            "is_curriculum_related", True
-        ).eq("source", event_source).is_("deleted_at", "null").execute()
+        # Replace should clear previously materialized curriculum rows for this subject
+        # regardless of which method/source originally created them (manual, ai, import, etc).
+        # Otherwise editing from manual mode after a different source leaves stale rows behind.
+        delete_query = (
+            supabase.table("events")
+            .delete()
+            .eq("family_id", family_id)
+            .eq("subject_id", subject_id)
+            .eq("is_curriculum_related", True)
+            .is_("deleted_at", "null")
+        )
+        if (academic_year_id or "").strip():
+            delete_query = delete_query.eq("academic_year_id", (academic_year_id or "").strip())
+        delete_query.execute()
 
     ay_id = (academic_year_id or "").strip() if academic_year_id else ""
     sid_list = [str(s).strip() for s in (student_ids or []) if s]

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Platform, Animated, Easing, ScrollView, StyleSheet, Modal, Switch } from 'react-native';
-import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap, UserCircle } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap, Send } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import AddSubjectModal from './AddSubjectModal';
@@ -27,6 +27,7 @@ import { ModalSectionCard } from './ui/ModalSectionCard';
 import { ATTENDANCE_MODES, getAttendanceMode } from '../lib/attendanceMode';
 import { trackEvent } from '../lib/analytics';
 import { getFamilyExclusions, getFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
+import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
 
 const BG = '#ffffff';
 const FG = '#111827';
@@ -37,7 +38,6 @@ const ACCENT = '#d4a256';
 const CHIP_BG = '#f3f4f6';
 const CHIP_BORDER = '#e5e7eb';
 
-const DEFAULT_START_TIME = '9:00 AM';
 const DEFAULT_DURATION_MINUTES = 30;
 let createTaskEventAllowOverlapsSupported = true;
 const ENABLE_LIVE_CONFLICT_CHECK = false;
@@ -141,7 +141,6 @@ const toAmPmTime = (sqlTime) => {
 };
 
 const EVENT_TYPES = [
-  'Class Day',
   'Lesson',
   'Project',
   'Exam',
@@ -268,7 +267,7 @@ export default function TaskCreateModal({
   onCreated,
   defaultPlacement = 'calendar', // New prop: 'calendar' or 'backlog'
   defaultSubjectId = null, // Default subject ID to set when opening modal
-  defaultEventType = null, // Default event type to set when opening modal (e.g., 'Class Day')
+  defaultEventType = null, // Default event type to set when opening modal (e.g., 'Lesson')
   defaultStartTime = null, // Default start time (e.g. '9:00 AM') when opening from plan slot
   defaultTitle = null, // Default title when opening from Doodle (e.g. 'Doctors' for appointment)
   defaultMaterialId = null, // Default material ID to pre-attach
@@ -302,7 +301,6 @@ export default function TaskCreateModal({
   const [notes, setNotes] = useState('');
   const [showAcademicDetails, setShowAcademicDetails] = useState(false); // Collapsed by default
   const [showNotesSection, setShowNotesSection] = useState(false); // Collapsed by default (match Add Subject)
-  const [showStudentExchangeSection, setShowStudentExchangeSection] = useState(false); // Collapsed by default
   const [queueSendToStudentAfterSave, setQueueSendToStudentAfterSave] = useState(false);
   const [queueSendToStudentNote, setQueueSendToStudentNote] = useState('');
   const [showLogisticDetails, setShowLogisticDetails] = useState(false); // Collapsed by default
@@ -339,14 +337,15 @@ export default function TaskCreateModal({
   }, [visible, defaultPlacement]);
   
   const [allDay, setAllDay] = useState(false);
-  const [startTime, setStartTime] = useState(DEFAULT_START_TIME);
+  const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   
   // New academic and metadata fields
-  const [eventType, setEventType] = useState('Class Day'); // Default to "Class Day" for new events
+  const [eventType, setEventType] = useState('Lesson'); // Default to "Lesson" for new events
   const [subjectIds, setSubjectIds] = useState(defaultSubjectId ? [defaultSubjectId] : []);
   const [subjectId, setSubjectId] = useState(defaultSubjectId || null);
   const [unit, setUnit] = useState('');
+  const [lesson, setLesson] = useState('');
   const [grade, setGrade] = useState('');
   const [percentOfTotalGrade, setPercentOfTotalGrade] = useState('');
   const [location, setLocation] = useState('');
@@ -363,6 +362,11 @@ export default function TaskCreateModal({
   const subjectButtonRef = useRef(null);
   const subjectDropdownRef = useRef(null);
   const [subjectDropdownPosition, setSubjectDropdownPosition] = useState({ top: 0, left: 0, width: 200, maxHeight: 220 });
+  const lessonButtonRef = useRef(null);
+  const lessonDropdownRef = useRef(null);
+  const [showLessonDropdown, setShowLessonDropdown] = useState(false);
+  const [lessonOptions, setLessonOptions] = useState([]);
+  const [loadingLessonOptions, setLoadingLessonOptions] = useState(false);
   const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
   
   // Material selector state
@@ -393,7 +397,54 @@ export default function TaskCreateModal({
     );
     setSubjectIds(normalized);
     setSubjectId(normalized[0] || null);
+    setLesson('');
+    setUnit('');
+    setShowLessonDropdown(false);
   }, []);
+
+  useEffect(() => {
+    if (!visible || !familyId) return;
+    const primarySubjectId = String(subjectIds?.[0] || '').trim();
+    if (!primarySubjectId) {
+      setLessonOptions([]);
+      setLoadingLessonOptions(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoadingLessonOptions(true);
+      try {
+        const { data, error } = await fetchSubjectCurriculumEventsStructure(
+          familyId,
+          primarySubjectId,
+          null
+        );
+        if (cancelled || error) return;
+        const units = Array.isArray(data?.units) ? data.units : [];
+        const next = [];
+        units.forEach((u) => {
+          const unitTitle = String(u?.title || '').trim();
+          (u?.lessons || []).forEach((l) => {
+            const lessonTitle = String(l?.title || '').trim();
+            if (!lessonTitle) return;
+            next.push({
+              key: `${unitTitle}::${lessonTitle}`,
+              lessonTitle,
+              unitTitle,
+              label: unitTitle ? `${lessonTitle} (${unitTitle})` : lessonTitle,
+            });
+          });
+        });
+        const dedup = Array.from(new Map(next.map((item) => [item.key, item])).values());
+        setLessonOptions(dedup);
+      } finally {
+        if (!cancelled) setLoadingLessonOptions(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, familyId, subjectIds]);
 
   const applyEventTypeSelection = useCallback((nextType) => {
     const isSwitchingAwayFromClassDay = eventType === 'Class Day' && nextType !== 'Class Day';
@@ -401,6 +452,7 @@ export default function TaskCreateModal({
     if (nextType === 'Class Day') {
       applySubjectSelection([]);
       setUnit('');
+      setLesson('');
       setGrade('');
       setPercentOfTotalGrade('');
       if (!title.trim()) {
@@ -445,14 +497,7 @@ export default function TaskCreateModal({
   });
   const isClassDayEvent = eventType === 'Class Day';
   const canSendToStudentForEvent = useMemo(() => isSchoolWorkEventType(eventType), [eventType]);
-  const academicSectionTitle = useMemo(() => {
-    const normalized = String(eventType || '').trim().toLowerCase();
-    if (normalized === 'lesson' || normalized === 'class day') return 'Learning details';
-    if (normalized === 'assignment') return 'Assignment settings';
-    if (normalized === 'exam') return 'Assessment details';
-    if (normalized === 'activity') return 'Activity details';
-    return 'Academic details';
-  }, [eventType]);
+  const academicSectionTitle = 'Learning details';
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes
   useEffect(() => {
     const checkPercentSum = async () => {
@@ -1002,6 +1047,22 @@ export default function TaskCreateModal({
       };
     }
   }, [showSubjectDropdown]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !showLessonDropdown) return;
+    const handleLessonClickOutside = (event) => {
+      const buttonNode = lessonButtonRef.current?._nativeNode || lessonButtonRef.current;
+      const dropdownNode = lessonDropdownRef.current?._nativeNode || lessonDropdownRef.current;
+      if (!buttonNode || !dropdownNode || !event?.target) return;
+      if (!buttonNode.contains(event.target) && !dropdownNode.contains(event.target)) {
+        setShowLessonDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleLessonClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleLessonClickOutside);
+    };
+  }, [showLessonDropdown]);
   
   // Close material dropdown when clicking outside (web only)
   useEffect(() => {
@@ -1190,10 +1251,16 @@ export default function TaskCreateModal({
       // Labels removed - no longer used
       setPlacement(defaultPlacement || 'calendar'); // Use the prop instead of hardcoded 'calendar'
       setAllDay(false);
-      setStartTime(defaultStartTime && String(defaultStartTime).trim() ? defaultStartTime : DEFAULT_START_TIME);
+      setStartTime('');
       setEndTime('');
       // Reset new fields
-      const initialEventType = defaultEventType === 'Schedule Block' ? 'Class Day' : (defaultEventType || 'Class Day');
+      const normalizedDefaultType = String(defaultEventType || '').trim();
+      const initialEventType =
+        normalizedDefaultType === 'Schedule Block' ||
+        normalizedDefaultType === 'Class Day' ||
+        normalizedDefaultType === 'ClassDay'
+          ? 'Lesson'
+          : (defaultEventType || 'Lesson');
       setIsClassDayTitleAutofilled(false);
       applyEventTypeSelection(initialEventType);
       const initialMaterialId = defaultMaterialId ? String(defaultMaterialId) : null;
@@ -1209,6 +1276,7 @@ export default function TaskCreateModal({
         setShowAcademicDetails(true);
       }
       setUnit('');
+      setLesson('');
       setGrade('');
       setPercentOfTotalGrade('');
       setLocation('');
@@ -1720,8 +1788,13 @@ export default function TaskCreateModal({
         is_backlog: false,
         event_type: normalizeEventTypeForPersistence(eventType),
         subject_id: subjectIds[0] || null,
-        curriculum_metadata: withSubjectIdsInCurriculumMetadata(null, subjectIds),
+        curriculum_metadata: withSubjectIdsInCurriculumMetadata(
+          lesson.trim() ? { lesson_label: lesson.trim() } : null,
+          subjectIds
+        ),
         unit: unit.trim() || null,
+        curriculum_unit_title: unit.trim() || null,
+        lesson: lesson.trim() || null,
         grade: grade.trim() || null,
         location: location.trim() || null,
         mode: mode || null,
@@ -1741,7 +1814,7 @@ export default function TaskCreateModal({
       if (insertError) throw insertError;
       return inserted;
     },
-    [attachedMaterialIds, familyId, goalLink, grade, instructor, location, mode, notes, subjectIds, unit]
+    [attachedMaterialIds, familyId, goalLink, grade, instructor, lesson, location, mode, notes, subjectIds, unit]
   );
 
   // Handle overlap errors by fetching conflicting events and showing conflict warning
@@ -1952,10 +2025,6 @@ export default function TaskCreateModal({
 
     if (!dueDate) {
       errors.date = 'Date is required';
-    }
-
-    if (placement === 'calendar' && !allDay && !startTime.trim()) {
-      errors.time = 'Start time is required';
     }
 
     if (!eventType) {
@@ -2215,27 +2284,35 @@ export default function TaskCreateModal({
           endDate = new Date(baseDate);
           endDate.setHours(23, 59, 0, 0);
         } else {
-          const resolvedStart = applyTimeToDate(baseDate, startTime);
-          if (!resolvedStart) {
-            toast.push('Enter a valid start time, e.g. 9:00 AM', 'error');
-            setSubmitting(false);
-            return;
-          }
-          startDate = resolvedStart;
-
-          if (endTime.trim()) {
-            let resolvedEnd = applyTimeToDate(baseDate, endTime);
-            if (!resolvedEnd) {
-              toast.push('Enter a valid end time, e.g. 10:00 AM', 'error');
+          const hasStartTime = Boolean(startTime.trim());
+          if (!hasStartTime) {
+            // Keep start/end optional by defaulting blank-time events to all-day bounds.
+            startDate = new Date(baseDate);
+            endDate = new Date(baseDate);
+            endDate.setHours(23, 59, 0, 0);
+          } else {
+            const resolvedStart = applyTimeToDate(baseDate, startTime);
+            if (!resolvedStart) {
+              toast.push('Enter a valid start time, e.g. 9:00 AM', 'error');
               setSubmitting(false);
               return;
             }
-            if (resolvedEnd <= startDate) {
-              resolvedEnd = new Date(startDate.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+            startDate = resolvedStart;
+
+            if (endTime.trim()) {
+              let resolvedEnd = applyTimeToDate(baseDate, endTime);
+              if (!resolvedEnd) {
+                toast.push('Enter a valid end time, e.g. 10:00 AM', 'error');
+                setSubmitting(false);
+                return;
+              }
+              if (resolvedEnd <= startDate) {
+                resolvedEnd = new Date(startDate.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+              }
+              endDate = resolvedEnd;
+            } else {
+              endDate = new Date(startDate.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
             }
-            endDate = resolvedEnd;
-          } else {
-            endDate = new Date(startDate.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
           }
         }
 
@@ -2641,11 +2718,17 @@ export default function TaskCreateModal({
 
       // Persist fields after create (RPC may omit some columns)
       if (data?.id) {
-        const curriculumMetadata = withSubjectIdsInCurriculumMetadata(data?.curriculum_metadata, subjectIds);
+        const curriculumMetadata = withSubjectIdsInCurriculumMetadata(
+          lesson.trim() ? { ...(data?.curriculum_metadata || {}), lesson_label: lesson.trim() } : data?.curriculum_metadata,
+          subjectIds
+        );
         const updatePayload = {
           requires_submission_home: false,
           subject_id: subjectIds[0] || null,
           curriculum_metadata: curriculumMetadata,
+          unit: unit.trim() || null,
+          curriculum_unit_title: unit.trim() || null,
+          lesson: lesson.trim() || null,
         };
         await supabase
           .from('events')
@@ -2903,8 +2986,19 @@ export default function TaskCreateModal({
             <Text style={styles.errorText}>{validationErrors.title}</Text>
           )}
 
-          <View
+          <ScrollView
             style={styles.bodyScroll}
+            contentContainerStyle={styles.bodyScrollContent}
+            showsVerticalScrollIndicator={true}
+            nestedScrollEnabled={true}
+            {...(Platform.OS === 'web' && {
+              style: {
+                ...styles.bodyScroll,
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                WebkitOverflowScrolling: 'touch',
+              },
+            })}
           >
           {/* Event Type - at top above Schedule on calendar/backlog */}
           <SafeFieldRow style={[styles.fieldRow, { marginTop: 12, marginBottom: 8 }]}>
@@ -3037,11 +3131,12 @@ export default function TaskCreateModal({
                     {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
                   </View>
                   <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
-                      <View style={styles.timeField}>
+                      <View style={[styles.timeField, styles.timeFieldCompact]}>
                         <Text style={styles.timeLabel}>Start</Text>
                         {Platform.OS === 'web' ? (
                           <input
                             type="time"
+                            placeholder="Optional"
                             value={startTime ? (() => {
                               const parts = parseTimeString(startTime);
                               if (parts) {
@@ -3086,7 +3181,7 @@ export default function TaskCreateModal({
                           />
                         ) : (
                           <TextInput
-                            placeholder="e.g. 9:00 AM"
+                            placeholder="Optional"
                             placeholderTextColor={MUTED}
                             value={startTime}
                             onChangeText={(text) => {
@@ -3109,7 +3204,7 @@ export default function TaskCreateModal({
                           <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
                         )}
                       </View>
-                      <View style={styles.timeField}>
+                      <View style={[styles.timeField, styles.timeFieldCompact]}>
                         <Text style={styles.timeLabel}>End</Text>
                         {Platform.OS === 'web' ? (
                           <input
@@ -3165,53 +3260,30 @@ export default function TaskCreateModal({
                           />
                         )}
                       </View>
+                      <View style={[styles.inlineSwitchField, styles.inlineSwitchFieldStack]}>
+                        <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>Repeat</Text>
+                        <View style={styles.inlineSwitchControlWrap}>
+                          <Switch
+                            value={isRecurring}
+                            onValueChange={(value) => {
+                              setIsRecurring(value);
+                              setShowRecurringSection(value);
+                              if (value) {
+                                if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
+                                  const defaultDay = dueDate instanceof Date ? dueDate.getDay() : new Date().getDay();
+                                  setRecurrenceWeekdays([defaultDay]);
+                                  setIsRecurrenceWeekdayAutofilled(true);
+                                }
+                              } else if (validationErrors.recurrenceEnd) {
+                                setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                              }
+                            }}
+                            trackColor={{ false: BORDER, true: '#AECBFA' }}
+                            thumbColor={isRecurring ? '#45A29E' : '#f9fafb'}
+                          />
+                        </View>
+                      </View>
                     </View>
-                  <View style={styles.inlineSwitchField}>
-                    <View style={[styles.allDayRow, styles.inlineSwitchRow]}>
-                      <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>All day</Text>
-                      <Switch
-                        value={allDay}
-                        onValueChange={(value) => {
-                          setAllDay(value);
-                          if (value) {
-                            setStartTime('');
-                            setEndTime('');
-                            if (validationErrors.time) {
-                              setValidationErrors({ ...validationErrors, time: null });
-                            }
-                          } else {
-                            setStartTime(DEFAULT_START_TIME);
-                            setEndTime('');
-                          }
-                        }}
-                        trackColor={{ false: BORDER, true: '#AECBFA' }}
-                        thumbColor={allDay ? '#45A29E' : '#f9fafb'}
-                      />
-                    </View>
-                  </View>
-                  <View style={styles.inlineSwitchField}>
-                    <View style={[styles.repeatToggleTopRow, styles.inlineSwitchRow]}>
-                      <Text style={[styles.repeatToggleLabel, styles.inlineSwitchLabel]}>Repeat</Text>
-                      <Switch
-                        value={isRecurring}
-                        onValueChange={(value) => {
-                          setIsRecurring(value);
-                          setShowRecurringSection(value);
-                          if (value) {
-                            if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
-                              const defaultDay = dueDate instanceof Date ? dueDate.getDay() : new Date().getDay();
-                              setRecurrenceWeekdays([defaultDay]);
-                              setIsRecurrenceWeekdayAutofilled(true);
-                            }
-                          } else if (validationErrors.recurrenceEnd) {
-                            setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
-                          }
-                        }}
-                        trackColor={{ false: BORDER, true: '#AECBFA' }}
-                        thumbColor={isRecurring ? '#45A29E' : '#f9fafb'}
-                      />
-                    </View>
-                  </View>
                 </View>
                 {/* Suggested Change (when inline reschedule is available) */}
                 {suggestedChange ? (
@@ -3861,15 +3933,13 @@ export default function TaskCreateModal({
               accent="#7C70F4"
             >
                 <SafeView>
-              {/* Subject, Unit, Grade */}
-              <>
-              <SafeFieldRow style={styles.fieldRow}>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Subjects (optional)</Text>
-                  <View style={styles.selectContainer}>
+              <SafeFieldRow style={[styles.fieldRow, styles.learningRow]}>
+                <View style={[styles.field, styles.academicFieldSubject]}>
+                  <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Subjects</Text>
+                  <View style={[styles.selectContainer, styles.academicSelectContainer]}>
                     <TouchableOpacity
                       ref={subjectButtonRef}
-                      style={[styles.select, assigneeIds.length === 0 && { opacity: 0.6 }]}
+                      style={[styles.select, styles.academicSelect, assigneeIds.length === 0 && { opacity: 0.6 }]}
                       onPress={() => {
                         if (assigneeIds.length > 0) {
                           setShowSubjectDropdown(!showSubjectDropdown);
@@ -4055,31 +4125,80 @@ export default function TaskCreateModal({
                     )}
                   </View>
                 </View>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Unit (optional)</Text>
-                  <TextInput
-                    placeholder="e.g. Algebra I – Linear Equations"
-                    placeholderTextColor={MUTED}
-                    value={unit}
-                    onChangeText={setUnit}
-                    style={styles.input}
-                  />
+                <View style={[styles.field, styles.academicFieldUnit]}>
+                  <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Lesson</Text>
+                  <View style={[styles.selectContainer, styles.academicSelectContainer]}>
+                    <TouchableOpacity
+                      ref={lessonButtonRef}
+                      style={[styles.select, styles.academicSelect, (!subjectIds?.[0] || loadingLessonOptions) && { opacity: 0.6 }]}
+                      onPress={() => {
+                        if (subjectIds?.[0] && !loadingLessonOptions) {
+                          setShowLessonDropdown((prev) => !prev);
+                        }
+                      }}
+                      disabled={!subjectIds?.[0] || loadingLessonOptions}
+                    >
+                      <Text style={[styles.selectText, (!lesson || !String(lesson).trim()) && styles.selectPlaceholder]}>
+                        {!subjectIds?.[0]
+                          ? 'Select subject first'
+                          : loadingLessonOptions
+                            ? 'Loading lessons...'
+                            : (lesson || (lessonOptions.length > 0 ? 'Select lesson' : 'No saved lessons'))}
+                      </Text>
+                      <ChevronDown size={16} color={SUB} />
+                    </TouchableOpacity>
+                    {showLessonDropdown ? (
+                      <View ref={lessonDropdownRef} style={styles.selectOptions}>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setLesson('');
+                            setUnit('');
+                            setShowLessonDropdown(false);
+                          }}
+                          style={[styles.selectOption, !lesson && styles.selectOptionActive]}
+                        >
+                          <Text style={[styles.selectOptionText, !lesson && styles.selectOptionTextActive]}>
+                            None
+                          </Text>
+                        </TouchableOpacity>
+                        {lessonOptions.length > 0 ? lessonOptions.map((opt) => {
+                          const active = String(lesson || '').trim() === opt.lessonTitle;
+                          return (
+                            <TouchableOpacity
+                              key={opt.key}
+                              onPress={() => {
+                                setLesson(opt.lessonTitle);
+                                setUnit(opt.unitTitle || '');
+                                setShowLessonDropdown(false);
+                              }}
+                              style={[styles.selectOption, active && styles.selectOptionActive]}
+                            >
+                              <Text style={[styles.selectOptionText, active && styles.selectOptionTextActive]}>
+                                {opt.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        }) : (
+                          <View style={{ padding: 12 }}>
+                            <Text style={{ fontSize: 13, color: MUTED }}>No saved lessons for selected subject</Text>
+                          </View>
+                        )}
+                      </View>
+                    ) : null}
+                  </View>
                 </View>
-              </SafeFieldRow>
-
-              <SafeFieldRow style={styles.fieldRow}>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Grade (optional)</Text>
+                <View style={[styles.field, styles.academicFieldGrade]}>
+                  <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Grade</Text>
                   <TextInput
-                    placeholder="e.g. B+ or 88%"
+                    placeholder="e.g. A+"
                     placeholderTextColor={MUTED}
                     value={grade}
                     onChangeText={setGrade}
-                    style={styles.input}
+                    style={[styles.input, styles.academicInputCompact]}
                   />
                 </View>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>% of Total Grade (optional)</Text>
+                <View style={[styles.field, styles.academicFieldPercent]}>
+                  <Text style={[styles.fieldLabel, styles.learningRowLabel]}>% Grade</Text>
                   <TextInput
                     placeholder="e.g. 25"
                     placeholderTextColor={MUTED}
@@ -4087,6 +4206,7 @@ export default function TaskCreateModal({
                     onChangeText={setPercentOfTotalGrade}
                     style={[
                       styles.input,
+                      styles.academicInputCompact,
                       percentValidationError && styles.inputError
                     ]}
                     keyboardType="numeric"
@@ -4128,7 +4248,56 @@ export default function TaskCreateModal({
                   )}
                 </View>
               </SafeFieldRow>
-              </>
+              {canSendToStudentForEvent ? (
+                <View style={styles.learningDetailsSendSection}>
+                  <Text style={[styles.fieldLabel, styles.sendSectionTitle]}>Send to student</Text>
+                  {assigneeIds.length === 0 ? (
+                    <Text style={styles.fieldHelpText}>Select at least one student to enable sharing.</Text>
+                  ) : (
+                    <>
+                      {queueSendToStudentAfterSave ? (
+                        <TextInput
+                          placeholder="Optional note for student"
+                          placeholderTextColor={MUTED}
+                          value={queueSendToStudentNote}
+                          onChangeText={setQueueSendToStudentNote}
+                          style={[styles.input, styles.notesInput, { minHeight: 72, marginTop: 8, marginBottom: 8 }]}
+                          multiline
+                          textAlignVertical="top"
+                        />
+                      ) : null}
+                      <View style={styles.workflowHeaderRow}>
+                        <TouchableOpacity
+                          style={[
+                            styles.workflowActionButton,
+                            queueSendToStudentAfterSave && styles.workflowActionButtonActive,
+                            assigneeIds.length === 0 && styles.workflowActionButtonDisabled,
+                          ]}
+                          onPress={() => setQueueSendToStudentAfterSave((prev) => !prev)}
+                          disabled={assigneeIds.length === 0}
+                          activeOpacity={0.85}
+                          accessibilityRole="button"
+                          accessibilityLabel={queueSendToStudentAfterSave ? 'Turn off send after save' : 'Turn on send after save'}
+                          {...(Platform.OS === 'web' && { cursor: assigneeIds.length === 0 ? 'default' : 'pointer' })}
+                        >
+                          <View style={styles.workflowActionButtonRow}>
+                            <View style={[styles.workflowActionIconWrap, queueSendToStudentAfterSave && styles.workflowActionIconWrapActive]}>
+                              {queueSendToStudentAfterSave ? (
+                                <Check size={12} color="#16A34A" />
+                              ) : (
+                                <Send size={12} color="#5B6880" />
+                              )}
+                            </View>
+                            <Text style={styles.workflowActionButtonText}>
+                              {assigneeIds.length > 1 ? 'Send to students' : 'Send to student'}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  )}
+                </View>
+              ) : null}
                 </SafeView>
             </ModalSectionCard>
 
@@ -4142,6 +4311,7 @@ export default function TaskCreateModal({
               accent="#7C70F4"
             >
                 <View style={{ marginTop: 2 }}>
+                  <Text style={styles.fieldLabel}>Notes</Text>
                   <TextInput
                     placeholder="Add any additional notes about this event"
                     placeholderTextColor={MUTED}
@@ -4159,7 +4329,7 @@ export default function TaskCreateModal({
             {familyId && (
               <SafeFieldRow style={[styles.fieldRow, { marginTop: 8 }]}>
                 <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Attachments (optional)</Text>
+                  <Text style={styles.fieldLabel}>Attachments</Text>
                   <View style={styles.materialSelectorContainer}>
                     <TouchableOpacity
                       ref={materialButtonRef}
@@ -4368,47 +4538,7 @@ export default function TaskCreateModal({
             )}
             </ModalSectionCard>
 
-            <ModalSectionCard
-              Icon={UserCircle}
-              title="Send to student"
-              subtitle="Student workflow"
-              expanded={showStudentExchangeSection}
-              onPress={() => setShowStudentExchangeSection(!showStudentExchangeSection)}
-              accent="#7C70F4"
-            >
-              <SafeView>
-                {!canSendToStudentForEvent ? (
-                  <Text style={styles.fieldHelpText}>This event type cannot be sent to student.</Text>
-                ) : assigneeIds.length === 0 ? (
-                  <Text style={styles.fieldHelpText}>Select at least one student to enable sharing.</Text>
-                ) : (
-                  <>
-                    <View style={[styles.allDayRow, { marginTop: 0 }]}>
-                      <Text style={styles.fieldLabel}>Send after save</Text>
-                      <Switch
-                        value={queueSendToStudentAfterSave}
-                        onValueChange={setQueueSendToStudentAfterSave}
-                        trackColor={{ false: BORDER, true: '#AECBFA' }}
-                        thumbColor={queueSendToStudentAfterSave ? '#45A29E' : '#f9fafb'}
-                      />
-                    </View>
-                    {queueSendToStudentAfterSave ? (
-                      <TextInput
-                        placeholder="Optional note for student"
-                        placeholderTextColor={MUTED}
-                        value={queueSendToStudentNote}
-                        onChangeText={setQueueSendToStudentNote}
-                        style={[styles.input, styles.notesInput, { minHeight: 64, marginTop: 8, marginBottom: 0 }]}
-                        multiline
-                        textAlignVertical="top"
-                      />
-                    ) : null}
-                  </>
-                )}
-              </SafeView>
-            </ModalSectionCard>
-
-          </View>
+          </ScrollView>
           </AppModalShell>
         </Animated.View>
       </Animated.View>
@@ -5164,7 +5294,13 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
   modalShell: {
-    height: Platform.OS === 'web' ? '78vh' : '84%',
+    ...(Platform.OS === 'web'
+      ? {
+          height: 'auto',
+          maxHeight: '78vh',
+          minHeight: 0,
+        }
+      : { height: '84%' }),
   },
   shellBody: {
     flex: 1,
@@ -5391,6 +5527,10 @@ const styles = StyleSheet.create({
   bodyScroll: {
     flex: 1,
     minHeight: 0,
+    maxHeight: Platform.OS === 'web' ? 'min(60vh, calc(100vh - 300px))' : undefined,
+  },
+  bodyScrollContent: {
+    paddingBottom: 6,
   },
   bodyContent: {
     paddingHorizontal: 20,
@@ -5412,11 +5552,11 @@ const styles = StyleSheet.create({
   dateTimeInlineRowWeb: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 12,
+    gap: 4,
   },
   dateFieldInline: {
-    flexGrow: 1,
-    flexShrink: 1,
+    flexGrow: 0,
+    flexShrink: 0,
     minWidth: 220,
   },
   inlineSwitchField: {
@@ -5431,8 +5571,15 @@ const styles = StyleSheet.create({
     marginTop: 0,
     marginBottom: 0,
   },
+  inlineSwitchFieldStack: {
+    justifyContent: 'flex-start',
+  },
   inlineSwitchLabel: {
     marginBottom: 0,
+  },
+  inlineSwitchControlWrap: {
+    minHeight: 40,
+    justifyContent: 'center',
   },
   allDayRow: {
     flexDirection: 'row',
@@ -5588,6 +5735,17 @@ const styles = StyleSheet.create({
   },
   timeField: {
     flex: 1,
+  },
+  timeFieldCompact: {
+    ...(Platform.OS === 'web'
+      ? {
+          flex: 0,
+          width: 148,
+          maxWidth: 148,
+          minWidth: 148,
+          flexShrink: 0,
+        }
+      : {}),
   },
   timeLabel: {
     color: SUB,
@@ -5820,10 +5978,50 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     overflow: 'visible',
   },
+  learningRow: {
+    alignItems: 'stretch',
+    ...(Platform.OS === 'web'
+      ? {
+          display: 'grid',
+          gridTemplateColumns: 'minmax(130px, 180px) minmax(220px, 1fr) minmax(82px, 96px) minmax(82px, 96px)',
+          gap: 4,
+        }
+      : {
+          flexWrap: 'wrap',
+        }),
+  },
   field: {
     flex: 1,
     alignItems: 'flex-start',
     overflow: 'visible',
+  },
+  academicFieldSubject: {
+    ...(Platform.OS === 'web'
+      ? { minWidth: 0, maxWidth: 180, width: '100%', alignSelf: 'flex-start' }
+      : { minWidth: '47%' }),
+  },
+  academicFieldUnit: {
+    ...(Platform.OS === 'web' ? { minWidth: 0 } : { minWidth: '47%' }),
+  },
+  academicFieldGrade: {
+    ...(Platform.OS === 'web' ? { minWidth: 0, maxWidth: 96, width: '100%', alignSelf: 'flex-start' } : { minWidth: '47%' }),
+    flex: 0.5,
+  },
+  academicFieldPercent: {
+    ...(Platform.OS === 'web' ? { minWidth: 0, maxWidth: 96, width: '100%', alignSelf: 'flex-start' } : { minWidth: '47%' }),
+    flex: 0.4,
+  },
+  academicFieldGradeStack: {
+    flex: 0,
+    minWidth: 0,
+    maxWidth: 96,
+    width: 96,
+    alignSelf: 'flex-start',
+    gap: 8,
+  },
+  academicGradeItem: {
+    width: '100%',
+    maxWidth: 96,
   },
   fieldLabel: {
     color: SUB,
@@ -5834,6 +6032,21 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  learningRowLabel: {
+    minHeight: 16,
+    marginBottom: 6,
+  },
+  academicInputCompact: {
+    minHeight: 40,
+    height: 40,
+    borderRadius: 12,
+    width: 96,
+    maxWidth: 96,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    marginBottom: 0,
   },
   dropdownContainer: {
     flexDirection: 'row',
@@ -5911,6 +6124,9 @@ const styles = StyleSheet.create({
     position: 'relative',
     zIndex: 1000,
   },
+  academicSelectContainer: {
+    width: '100%',
+  },
   select: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -5921,6 +6137,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
     backgroundColor: '#fff',
+  },
+  academicSelect: {
+    minHeight: 40,
+    height: 40,
+    borderRadius: 12,
+    paddingVertical: 8,
   },
   selectText: {
     color: FG,
@@ -6144,6 +6366,64 @@ const styles = StyleSheet.create({
   },
   removeStandardButton: {
     padding: 2,
+  },
+  learningDetailsSendSection: {
+    marginTop: 12,
+    paddingTop: 0,
+    gap: 4,
+  },
+  sendSectionTitle: {
+    marginBottom: 2,
+    minHeight: 0,
+  },
+  workflowHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  workflowActionButton: {
+    minHeight: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  workflowActionButtonActive: {
+    borderColor: '#86EFAC',
+    backgroundColor: '#F0FDF4',
+  },
+  workflowActionButtonDisabled: {
+    opacity: 0.6,
+  },
+  workflowActionButtonText: {
+    color: '#5B6880',
+    fontSize: 13,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  workflowActionButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  workflowActionIconWrap: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  workflowActionIconWrapActive: {
+    backgroundColor: '#DCFCE7',
   },
 });
 

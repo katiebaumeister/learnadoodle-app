@@ -314,7 +314,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         preloadSubjectsPlanOverview(familyId, { force: true }).catch(() => {});
         warmSubjectsScheduleCaches({ force: true });
         if (Array.isArray(subjects) && subjects.length > 0) {
-          prefetchAllSubjectProgressPlans(familyId, subjects, { concurrency: 3 }).catch(() => {});
+          prefetchAllSubjectProgressPlans(familyId, subjects, { concurrency: 8 }).catch(() => {});
         }
       }, 500);
     };
@@ -334,7 +334,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Warm subject progress/unit-structure cache once subjects are known, so Edit Subject can render stable units actions immediately.
   useEffect(() => {
     if (!familyId || !Array.isArray(subjects) || subjects.length === 0) return;
-    prefetchAllSubjectProgressPlans(familyId, subjects, { concurrency: 3 }).catch(() => {});
+    prefetchAllSubjectProgressPlans(familyId, subjects, { concurrency: 8 }).catch(() => {});
   }, [familyId, subjects]);
 
   // Onboarding: resolve status before first paint so we never flash landing without modal

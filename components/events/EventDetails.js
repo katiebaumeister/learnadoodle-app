@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated, ActivityIndicator, Image, useWindowDimensions } from 'react-native';
 import {
   LearnerPill,
   resolveLearnerChild,
@@ -8,7 +8,7 @@ import {
   mapChildrenForConflict,
   sharedConflictBannerStyles as cb,
 } from '../planner/conflictBannerShared';
-import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2, Send } from 'lucide-react';
+import { Clock, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2, Send } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { formatDate, apiRequest, pushEventToGoogleCalendar } from '../../lib/apiClient';
@@ -26,6 +26,7 @@ import AddSubjectModal from '../AddSubjectModal';
 import { STRINGS } from '../../lib/i18n/strings';
 import { getAcademicYear } from '../../lib/services/academicYearClient';
 import { dropPlanYearFullDataCacheEntry, dropPlanEditListTimesCacheEntry } from '../../lib/planEditListCache';
+import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import AskParentHelpModal from '../child/AskParentHelpModal';
 import StudentHelpHistoryModal from '../child/StudentHelpHistoryModal';
 import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
@@ -230,6 +231,29 @@ function sameIdList(a = [], b = []) {
   const left = (Array.isArray(a) ? a : []).map((x) => String(x?.id || x)).join('|');
   const right = (Array.isArray(b) ? b : []).map((x) => String(x?.id || x)).join('|');
   return left === right;
+}
+
+function sameAssignmentTrackingList(a = [], b = []) {
+  const left = Array.isArray(a) ? a : [];
+  const right = Array.isArray(b) ? b : [];
+  if (left.length !== right.length) return false;
+  const normalizeHelpLog = (value) => {
+    if (Array.isArray(value)) return JSON.stringify(value);
+    if (typeof value === 'string') return value;
+    return '';
+  };
+  for (let i = 0; i < left.length; i += 1) {
+    const l = left[i] || {};
+    const r = right[i] || {};
+    if (String(l.id || '') !== String(r.id || '')) return false;
+    if (String(l.updated_at || '') !== String(r.updated_at || '')) return false;
+    if (String(l.submitted_at || '') !== String(r.submitted_at || '')) return false;
+    if (String(l.status || '') !== String(r.status || '')) return false;
+    if (String(l.review_status || '') !== String(r.review_status || '')) return false;
+    if (Boolean(l.need_help) !== Boolean(r.need_help)) return false;
+    if (normalizeHelpLog(l.help_message_log) !== normalizeHelpLog(r.help_message_log)) return false;
+  }
+  return true;
 }
 
 /** Assignee chips — matches hydrate effect so first paint matches loaded event. */
@@ -679,7 +703,6 @@ const formatTime = (timestamp) => {
 const SUGGESTED_TAGS = ['math', 'reading', 'science', 'writing', 'review', 'test', 'project', 'practice'];
 
 const EVENT_TYPES = [
-  'Class Day',
   'Lesson',
   'Project',
   'Exam',
@@ -692,7 +715,7 @@ const normalizeEventTypeForDisplay = (type) => {
   const raw = String(type || '').trim();
   if (!raw) return 'Lesson';
   if (raw === 'Schedule Block' || raw === 'Scheduled Class Day' || raw === 'ClassDay') {
-    return 'Class Day';
+    return 'Lesson';
   }
   return raw;
 };
@@ -714,7 +737,6 @@ const CALENDAR_CONNECTION_OPTIONS = [
   { value: 'apple', label: 'Apple' },
 ];
 
-const DEFAULT_START_TIME = '9:00 AM';
 const DEFAULT_DURATION_MINUTES = 30;
 
 // Color constants matching TaskCreateModal
@@ -772,6 +794,34 @@ function normalizeByWeekday(value) {
         .filter((code) => RECURRENCE_WEEKDAY_OPTIONS.some((option) => option.value === code))
     )
   );
+}
+
+function resolveWeekdayCodeFromEventOrDueDate(event, dueDate) {
+  const directDate = dueDate instanceof Date && !Number.isNaN(dueDate.getTime()) ? dueDate : null;
+  if (directDate) return WEEKDAY_FROM_DATE[directDate.getDay()] || 'MO';
+
+  const candidates = [
+    event?.start_ts,
+    event?.due_ts,
+    event?.end_ts,
+    event?.due_date,
+    event?.start_date,
+  ];
+  for (const rawValue of candidates) {
+    if (!rawValue) continue;
+    const raw = String(rawValue).trim();
+    if (!raw) continue;
+    let parsed = null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      parsed = new Date(`${raw}T12:00:00`);
+    } else {
+      parsed = new Date(raw);
+    }
+    if (parsed instanceof Date && !Number.isNaN(parsed.getTime())) {
+      return WEEKDAY_FROM_DATE[parsed.getDay()] || 'MO';
+    }
+  }
+  return 'MO';
 }
 
 function formatConflictSuggestionMessage(startDate, endDate) {
@@ -894,6 +944,7 @@ function ChipRow({ children, style }) {
 }
 
 export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed, openConflictResolution = false, conflictResolutionContext = null, onOpenConflictResolutionConsumed, sendOnlyMode = false }) {
+  const { width: viewportWidth } = useWindowDimensions();
   const session = useSession();
   const { user: authUser } = useAuth();
   const toast = useToast();
@@ -909,7 +960,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [eventEndDate, setEventEndDate] = useState(null); // End date for multi-day events
   const [draftStartTime, setDraftStartTime] = useState('');
   const [draftEndTime, setDraftEndTime] = useState('');
-  const [startTime, setStartTime] = useState(DEFAULT_START_TIME);
+  const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [draftChildId, setDraftChildId] = useState(null);
   const [assigneeIds, setAssigneeIds] = useState(() => initialAssigneeIdsFromEvent(event));
@@ -925,7 +976,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     () => !!(event?.location || event?.mode || event?.instructor)
   );
   const [showNotesSection, setShowNotesSection] = useState(false); // Collapsed by default (match Add Subject)
-  const [showStudentExchangeSection, setShowStudentExchangeSection] = useState(false);
   const [draftMaterialId, setDraftMaterialId] = useState(null);
   const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
   const [selectedMaterialId, setSelectedMaterialId] = useState(null);
@@ -946,6 +996,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const subjectButtonRef = useRef(null);
   const subjectDropdownRef = useRef(null);
   const [subjectDropdownPosition, setSubjectDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
+  const lessonButtonRef = useRef(null);
+  const lessonDropdownRef = useRef(null);
+  const [showLessonDropdown, setShowLessonDropdown] = useState(false);
+  const [lessonOptions, setLessonOptions] = useState([]);
+  const [loadingLessonOptions, setLoadingLessonOptions] = useState(false);
   
   // Event type and placement
   const [eventType, setEventType] = useState(() =>
@@ -1095,6 +1150,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [parentSubmissionModalAssignment, setParentSubmissionModalAssignment] = useState(null);
   const [showSendToStudentModal, setShowSendToStudentModal] = useState(false);
   const [sendToStudentNote, setSendToStudentNote] = useState('');
+  const [queueSendToStudentAfterSave, setQueueSendToStudentAfterSave] = useState(false);
   const [sendToStudentSubmitting, setSendToStudentSubmitting] = useState(false);
   const [hasInvitedAssignee, setHasInvitedAssignee] = useState(false);
 
@@ -1108,7 +1164,70 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     );
     setSubjectIds(normalized);
     setSubjectId(normalized[0] || null);
+    setLesson('');
+    setUnit('');
+    setShowLessonDropdown(false);
   }, []);
+
+  useEffect(() => {
+    if (!familyId) return;
+    const primarySubjectId = String(subjectIds?.[0] || '').trim();
+    if (!primarySubjectId) {
+      setLessonOptions([]);
+      setLoadingLessonOptions(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoadingLessonOptions(true);
+      try {
+        const { data, error } = await fetchSubjectCurriculumEventsStructure(
+          familyId,
+          primarySubjectId,
+          null
+        );
+        if (cancelled || error) return;
+        const units = Array.isArray(data?.units) ? data.units : [];
+        const next = [];
+        units.forEach((u) => {
+          const unitTitle = String(u?.title || '').trim();
+          (u?.lessons || []).forEach((l) => {
+            const lessonTitle = String(l?.title || '').trim();
+            if (!lessonTitle) return;
+            next.push({
+              key: `${unitTitle}::${lessonTitle}`,
+              lessonTitle,
+              unitTitle,
+              label: unitTitle ? `${lessonTitle} (${unitTitle})` : lessonTitle,
+            });
+          });
+        });
+        const dedup = Array.from(
+          new Map(next.map((item) => [item.key, item])).values()
+        );
+        setLessonOptions(dedup);
+      } finally {
+        if (!cancelled) setLoadingLessonOptions(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId, subjectIds]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !showLessonDropdown) return;
+    const handleLessonClickOutside = (event) => {
+      const buttonNode = lessonButtonRef.current?._nativeNode || lessonButtonRef.current;
+      const dropdownNode = lessonDropdownRef.current?._nativeNode || lessonDropdownRef.current;
+      if (!buttonNode || !dropdownNode || !event?.target) return;
+      if (!buttonNode.contains(event.target) && !dropdownNode.contains(event.target)) {
+        setShowLessonDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleLessonClickOutside);
+    return () => document.removeEventListener('mousedown', handleLessonClickOutside);
+  }, [showLessonDropdown]);
 
   const isParentView = useMemo(
     () => session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true,
@@ -1261,7 +1380,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         return;
       }
       const matches = (rows || []).filter((r) => assignmentRowLinksEventId(r, event.id));
-      setParentLinkedAssignments((prev) => (sameIdList(prev, matches) ? prev : matches));
+      setParentLinkedAssignments((prev) => (sameAssignmentTrackingList(prev, matches) ? prev : matches));
     } catch {
       if (mySeq !== parentLinkedFetchSeq.current) return;
     } finally {
@@ -1331,7 +1450,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       return;
     }
     const matches = preloadedFamilyAssignments.filter((r) => assignmentRowLinksEventId(r, event.id));
-    setParentLinkedAssignments((prev) => (sameIdList(prev, matches) ? prev : matches));
+    setParentLinkedAssignments((prev) => (sameAssignmentTrackingList(prev, matches) ? prev : matches));
     setParentLinkedReady((prev) => (prev ? prev : true));
   }, [event?.id, event?.event_type, eventType, preloadedFamilyAssignments, isParentView, familyId]);
 
@@ -1350,69 +1469,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     const linkedAssignments = Array.isArray(parentLinkedAssignments) ? parentLinkedAssignments : [];
     const sentAssignments = linkedAssignments.filter((assignment) => assignment?.assigned_by != null);
 
-    const formatDateLabel = (value) => {
-      if (!value) return null;
-      const parsed = new Date(value);
-      if (Number.isNaN(parsed.getTime())) return null;
-      return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-    };
-
-    const formatRelativeDateLabel = (value) => {
-      if (!value) return null;
-      const parsed = new Date(value);
-      if (Number.isNaN(parsed.getTime())) return null;
-      const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const target = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
-      const diffDays = Math.round((today.getTime() - target.getTime()) / (24 * 60 * 60 * 1000));
-      if (diffDays === 0) return 'Today';
-      if (diffDays === 1) return 'Yesterday';
-      return formatDateLabel(parsed);
-    };
-
     const nameForAssignment = (assignment) => {
       const childId = assignment?.child_id;
       const joinedName = assignment?.child?.first_name || assignment?.child?.name || '';
       if (joinedName && String(joinedName).trim()) return String(joinedName).trim();
       const member = (familyMembers || []).find((m) => String(m?.id) === String(childId));
       return (member?.name || member?.first_name || 'student').trim();
-    };
-
-    const latestSent = sentAssignments
-      .slice()
-      .sort((a, b) => {
-        const aTs = new Date(a?.updated_at || a?.created_at || 0).getTime();
-        const bTs = new Date(b?.updated_at || b?.created_at || 0).getTime();
-        return bTs - aTs;
-      })[0] || null;
-
-    const sentOnLabel = formatRelativeDateLabel(latestSent?.updated_at || latestSent?.created_at) || 'Not sent yet';
-
-    const returnedAssignment =
-      sentAssignments.find((assignment) => {
-        const status = String(assignment?.status || '').toLowerCase();
-        return status === 'submitted' || status === 'reviewed' || status === 'accepted';
-      }) || null;
-
-    const returnedOnLabel = formatRelativeDateLabel(
-      returnedAssignment?.submitted_at || returnedAssignment?.updated_at || returnedAssignment?.created_at
-    );
-
-    const returnedLabel = returnedAssignment
-      ? (returnedOnLabel ? `Yes (${returnedOnLabel})` : 'Yes')
-      : 'No';
-
-    const parseHelpLog = (rawLog) => {
-      if (Array.isArray(rawLog)) return rawLog;
-      if (typeof rawLog === 'string') {
-        try {
-          const parsed = JSON.parse(rawLog);
-          return Array.isArray(parsed) ? parsed : [];
-        } catch (_) {
-          return [];
-        }
-      }
-      return [];
     };
 
     const formatWhen = (value) => {
@@ -1430,113 +1492,162 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       return `${date} at ${time}`;
     };
 
-    const statusForAssignment = (assignment) => {
-      const status = String(assignment?.status || '').toLowerCase();
-      const reviewStatus = String(assignment?.review_status || '').toLowerCase();
-      if (reviewStatus === 'approved' || status === 'accepted' || status === 'reviewed') return 'COMPLETED';
-      if (status === 'submitted' && (reviewStatus === '' || reviewStatus === 'needs_revision')) return 'NEEDS_REVIEW';
-      if (status === 'submitted') return 'RETURNED';
-      if (status === 'in_progress') return 'IN_PROGRESS';
-      return 'SENT';
-    };
-
-    const statusPresentation = (statusKey) => {
-      switch (statusKey) {
-        case 'COMPLETED':
-          return { label: 'Completed', dotColor: '#16A34A', pillKey: 'COMPLETED' };
-        case 'NEEDS_REVIEW':
-          return { label: 'Needs review', dotColor: '#F59E0B', pillKey: 'NEEDSREVIEW' };
-        case 'RETURNED':
-          return { label: 'Returned', dotColor: '#22C55E', pillKey: 'RETURNED' };
-        case 'IN_PROGRESS':
-          return { label: 'In progress', dotColor: '#14B8A6', pillKey: 'INPROGRESS' };
-        case 'NOT_YET_SHARED':
-          return { label: 'NOT SHARED', dotColor: '#9CA3AF', pillKey: 'NOTYETSHARED' };
-        default:
-          return { label: 'Sent', dotColor: '#8B5CF6', pillKey: 'SENT' };
+    const parseHelpLog = (rawLog) => {
+      if (Array.isArray(rawLog)) return rawLog;
+      if (typeof rawLog === 'string') {
+        try {
+          const parsed = JSON.parse(rawLog);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+          return [];
+        }
       }
+      return [];
     };
 
     const assigneeSet = new Set((assigneeIds || []).map((id) => String(id)));
     const candidateStudents = (familyMembers || []).filter((member) => assigneeSet.has(String(member?.id)));
-    const studentRows = candidateStudents.map((member) => {
-      const assignment = sentAssignments.find((a) => String(a?.child_id) === String(member?.id)) || null;
-      const status = assignment ? statusForAssignment(assignment) : 'NOT_YET_SHARED';
-      const statusUi = statusPresentation(status);
-      const sentAt = assignment?.updated_at || assignment?.created_at || null;
-      const subLabel = assignment ? `Shared ${formatWhen(sentAt)}` : 'Not shared yet';
-      const trailLines = [];
-      if (assignment) {
-        const statusTs = assignment?.submitted_at || assignment?.updated_at || assignment?.created_at || null;
-        if (status === 'RETURNED' || status === 'NEEDS_REVIEW' || status === 'COMPLETED') {
-          trailLines.push(`Sent back ${formatWhen(statusTs)}`);
-        } else if (status === 'IN_PROGRESS') {
-          trailLines.push(`In progress ${formatWhen(statusTs)}`);
-        }
-
-        const helpLog = parseHelpLog(assignment?.help_message_log);
-        const noteLines = helpLog
-          .map((entry) => {
-            const text = String(
-              (entry && (entry.reason || entry.body || entry.message || entry.text || entry.note)) || ''
-            ).trim();
-            if (!text) return null;
-            const ts = entry?.created_at || entry?.timestamp || assignment?.updated_at || assignment?.created_at || null;
-            return {
-              ts: new Date(ts || 0).getTime(),
-              label: `Note ${formatWhen(ts)}: ${text.length > 90 ? `${text.slice(0, 90)}...` : text}`,
-            };
-          })
-          .filter(Boolean)
-          .sort((a, b) => b.ts - a.ts)
-          .slice(0, 2)
-          .map((n) => n.label);
-        trailLines.push(...noteLines);
-      }
-
-      return {
-        id: String(member?.id),
-        name: (member?.name || member?.first_name || 'Student').trim(),
-        avatarRaw: member?.avatar || member?.avatar_url || assignment?.child?.avatar || null,
-        status,
-        statusLabel: statusUi.label,
-        statusPillKey: statusUi.pillKey,
-        dotColor: statusUi.dotColor,
-        subLabel,
-        trailLines,
-        hasAssignment: !!assignment,
-      };
-    });
-
-    const sharedCount = studentRows.filter((row) => row.hasAssignment).length;
-    const totalCount = studentRows.length;
+    const sharedCount = sentAssignments.length;
+    const totalCount = candidateStudents.length;
     const ctaLabel = sharedCount > 0
-      ? 'Send again'
-      : totalCount > 1
-        ? 'Send to students'
-        : 'Send to student';
-    const workflowContext = sharedCount === 0
-      ? 'This assignment has not been shared yet.'
-      : studentRows.some((row) => ['RETURNED', 'NEEDS_REVIEW', 'COMPLETED'].includes(row.status))
-        ? 'Student activity detected.'
-        : 'Awaiting student response.';
+      ? 'Send again to students'
+      : (totalCount > 1 ? 'Send to students' : 'Send to student');
+    const historyItems = [];
+    sentAssignments.forEach((assignment) => {
+      const studentName = nameForAssignment(assignment);
+      const helpLog = parseHelpLog(assignment?.help_message_log);
+      let hasParentSendLog = false;
+      helpLog.forEach((entry) => {
+        const senderRole = String(entry?.sender_role || '').trim().toLowerCase();
+        const reason = String(entry?.reason || '').trim().toLowerCase();
+        const body = String(entry?.body || entry?.message || entry?.note || '').trim();
+        const tsRaw = entry?.created_at || entry?.timestamp || assignment?.updated_at || assignment?.created_at || null;
+        const ts = new Date(tsRaw || 0).getTime();
+        if (!Number.isFinite(ts) || ts <= 0) return;
+        if (senderRole === 'parent' && reason === 'sent_assignment') {
+          hasParentSendLog = true;
+          const hasCustomMessage = body && body !== '[Sent assignment]';
+          historyItems.push({
+            ts,
+            kind: 'parent_send',
+            studentName,
+            when: formatWhen(tsRaw),
+            message: hasCustomMessage ? body : null,
+            line: hasCustomMessage
+              ? `Sent to ${studentName} at ${formatWhen(tsRaw)} — "${body}"`
+              : `Sent to ${studentName} at ${formatWhen(tsRaw)}`,
+          });
+          return;
+        }
+        if (senderRole === 'child' && body) {
+          historyItems.push({
+            ts,
+            kind: 'child_reply',
+            studentName,
+            when: formatWhen(tsRaw),
+            message: body,
+            line: `${studentName} replied at ${formatWhen(tsRaw)} — "${body}"`,
+          });
+        }
+      });
+      if (!hasParentSendLog) {
+        const fallbackTsRaw = assignment?.updated_at || assignment?.created_at || null;
+        const fallbackTs = new Date(fallbackTsRaw || 0).getTime();
+        if (Number.isFinite(fallbackTs) && fallbackTs > 0) {
+          historyItems.push({
+            ts: fallbackTs,
+            kind: 'parent_send',
+            studentName,
+            when: formatWhen(fallbackTsRaw),
+            message: null,
+            line: `Sent to ${studentName} at ${formatWhen(fallbackTsRaw)}`,
+          });
+        }
+      }
+      const status = String(assignment?.status || '').trim().toLowerCase();
+      if (status === 'submitted' || status === 'reviewed' || status === 'accepted') {
+        const submittedTsRaw = assignment?.submitted_at || assignment?.updated_at || null;
+        const submittedTs = new Date(submittedTsRaw || 0).getTime();
+        if (Number.isFinite(submittedTs) && submittedTs > 0) {
+          historyItems.push({
+            ts: submittedTs,
+            kind: 'child_returned',
+            studentName,
+            when: formatWhen(submittedTsRaw),
+            message: null,
+            line: `${studentName} sent work back at ${formatWhen(submittedTsRaw)}`,
+          });
+        }
+      }
+    });
+    const historyLines = historyItems
+      .sort((a, b) => a.ts - b.ts)
+      .filter((item, index, arr) => index === arr.findIndex((other) => (
+        other.ts === item.ts && other.line === item.line
+      )))
+      .map((item) => item.line);
+    const latestByTime = [...historyItems]
+      .filter((item) => item && Number.isFinite(item.ts))
+      .sort((a, b) => b.ts - a.ts);
+    const latestFeedback = latestByTime.find((item) => item.kind === 'child_reply' || item.kind === 'child_returned') || null;
+    const latestSent = latestByTime.find((item) => item.kind === 'parent_send') || null;
+    const latestSendBatchNames = (() => {
+      if (!latestSent) return [];
+      const BATCH_WINDOW_MS = 90 * 1000;
+      const sameBatch = latestByTime.filter((item) => (
+        item.kind === 'parent_send'
+        && Math.abs(Number(item.ts || 0) - Number(latestSent.ts || 0)) <= BATCH_WINDOW_MS
+        && String(item.message || '') === String(latestSent.message || '')
+      ));
+      return [...new Set(
+        sameBatch
+          .map((item) => String(item.studentName || '').trim())
+          .filter(Boolean)
+      )].sort((a, b) => a.localeCompare(b));
+    })();
+    const latestStatusLine = latestFeedback
+      ? (
+          latestFeedback.kind === 'child_reply' && latestFeedback.message
+            ? `${latestFeedback.studentName || 'Student'} sent back on ${latestFeedback.when} with message: "${latestFeedback.message}"`
+            : `${latestFeedback.studentName || 'Student'} sent back on ${latestFeedback.when}`
+        )
+      : (latestSent
+          ? `Last sent to ${(latestSendBatchNames.length > 0 ? latestSendBatchNames.join(', ') : (latestSent.studentName || 'student'))} on ${latestSent.when}`
+          : null);
 
     return {
       hasShared: sentAssignments.length > 0,
       sharedCount,
       totalCount,
       ctaLabel,
-      workflowContext,
-      studentRows,
+      historyLines,
+      latestStatusLine,
     };
   }, [parentLinkedAssignments, familyMembers, assigneeIds]);
 
   useEffect(() => {
-    if (!parentLinkedReady) return;
-    if (sendTrackingSummary.hasShared) {
-      setShowStudentExchangeSection(true);
+    const canQueueSendAfterSave = Boolean(
+      event?.id
+      && familyId
+      && assigneeIds.length > 0
+      && hasInvitedAssignee
+      && placement === 'calendar'
+      && isParentView
+      && isSchoolWorkEventType(eventType)
+    );
+    if (!canQueueSendAfterSave && queueSendToStudentAfterSave) {
+      setQueueSendToStudentAfterSave(false);
     }
-  }, [parentLinkedReady, sendTrackingSummary.hasShared]);
+  }, [
+    event?.id,
+    familyId,
+    assigneeIds.length,
+    hasInvitedAssignee,
+    placement,
+    isParentView,
+    eventType,
+    queueSendToStudentAfterSave,
+  ]);
 
   useEffect(() => {
     if (!parentLinkedReady || !parentEventFocus) return;
@@ -1653,6 +1764,23 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return p ? `${p}\n\n${n}` : n;
   };
 
+  const appendAssignmentSendLogQuiet = useCallback(async (assignmentId, noteText = '') => {
+    if (!assignmentId) return;
+    const body = String(noteText || '').trim() || '[Sent assignment]';
+    try {
+      const { error } = await supabase.rpc('append_assignment_help_message', {
+        p_assignment_id: assignmentId,
+        p_body: body,
+        p_reason: 'sent_assignment',
+      });
+      if (error) {
+        console.warn('[EventDetails] append_assignment_help_message:', error.message || error);
+      }
+    } catch (e) {
+      console.warn('[EventDetails] append_assignment_help_message', e);
+    }
+  }, []);
+
   const closeSendToStudentModal = useCallback(() => {
     if (sendToStudentSubmitting) return;
     setShowSendToStudentModal(false);
@@ -1699,6 +1827,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             (rows || []).find((r) => assignmentRowLinksEventId(r, eventIdStr)) || null;
 
           const noteTrim = (note || '').trim();
+          let linkedAssignmentId = null;
 
           if (linked?.id) {
             const baseUpdates = {
@@ -1714,8 +1843,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             }
             const { error: upErr } = await updateAssignment(linked.id, baseUpdates);
             if (upErr) throw upErr;
+            linkedAssignmentId = linked.id;
           } else {
-            const { error: insErr } = await createAssignment({
+            const { data: createdAssignment, error: insErr } = await createAssignment({
               family_id: familyId,
               child_id: childId,
               title: titleBase,
@@ -1728,7 +1858,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               need_help: false,
             });
             if (insErr) throw insErr;
+            linkedAssignmentId = createdAssignment?.id || null;
           }
+          await appendAssignmentSendLogQuiet(linkedAssignmentId, noteTrim);
         }
 
         toast.push('Sent to student', 'success');
@@ -1741,6 +1873,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
           window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
         }
+        await loadEventLinkedParentAssignments();
       } catch (e) {
         console.error('[EventDetails] sendWorkToStudents', e);
         toast.push(e?.message || 'Could not send', 'error');
@@ -1748,7 +1881,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setSendToStudentSubmitting(false);
       }
     },
-    [familyId, event, assigneeIds, authUser?.id, draftTitle, eventType, subjectId, toast, sendOnlyMode, onClose]
+    [familyId, event, assigneeIds, authUser?.id, draftTitle, eventType, subjectId, toast, sendOnlyMode, onClose, appendAssignmentSendLogQuiet, loadEventLinkedParentAssignments]
   );
 
   const startPeriod = useMemo(() => {
@@ -1775,14 +1908,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     () => normalizeEventTypeForDisplay(eventType) === 'Class Day',
     [eventType]
   );
-  const academicSectionTitle = useMemo(() => {
-    const normalized = String(eventType || '').trim().toLowerCase();
-    if (normalized === 'lesson' || normalized === 'class day') return 'Learning details';
-    if (normalized === 'assignment') return 'Assignment settings';
-    if (normalized === 'exam') return 'Assessment details';
-    if (normalized === 'activity') return 'Activity details';
-    return 'Academic details';
-  }, [eventType]);
+  const useCompactRepeatGrid = useMemo(
+    () => (Platform.OS === 'web' ? viewportWidth < 1200 : viewportWidth < 900),
+    [viewportWidth]
+  );
+  const academicSectionTitle = 'Learning details';
   // Helper functions matching TaskCreateModal
   const showAcademicFields = () => {
     return eventType && ['Lesson', 'Activity', 'Assignment', 'Class Day', 'Scheduled Class Day', 'Schedule Block', 'ClassDay'].includes(eventType);
@@ -1825,11 +1955,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       errors.date = 'Date is required';
     }
     
-    // Time is required if calendar placement and not all day
-    if (placement === 'calendar' && !allDay && !startTime.trim()) {
-      errors.time = 'Start time is required';
-    }
-    
     if (!eventType) {
       errors.eventType = 'Event type is required';
     }
@@ -1866,7 +1991,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (!draftTitle.trim()) return false;
     if (assigneeIds.length === 0) return false;
     if (!dueDate) return false;
-    if (placement === 'calendar' && !allDay && !startTime.trim()) return false;
     if (!eventType) return false;
     const isMultiDayEvent = false; // No multi-day events in new system
     if (isMultiDayEvent && placement === 'calendar' && !eventEndDate) return false;
@@ -2344,7 +2468,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const endTimeStr = endFromLocal || toTimeInput(endTs);
       setDraftStartTime(startTimeStr);
       setDraftEndTime(endTimeStr);
-      setStartTime(startTimeStr || DEFAULT_START_TIME);
+      setStartTime(startTimeStr || '');
       setEndTime(endTimeStr || '');
     }
     
@@ -2442,7 +2566,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setIsRecurring(true);
       setRecurrenceType('weekly');
       setRecurrenceInterval(null);
-      setRecurrenceWeekdays([WEEKDAY_FROM_DATE[new Date(event?.due_date || new Date()).getDay()] || 'MO']);
+      setRecurrenceWeekdays([resolveWeekdayCodeFromEventOrDueDate(event, dueDate)]);
       setRecurrenceEndType('never');
       setRecurrenceEndAfter(null);
       setRecurrenceEndAfterText('');
@@ -2509,7 +2633,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (!isRecurring || placement !== 'calendar' || recurrenceType !== 'weekly') return;
     if (Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 0) return;
     if (isPlanYearBlockSeries(event) && event?.academic_year_id) return;
-    const fallback = WEEKDAY_FROM_DATE[new Date(dueDate || new Date()).getDay()] || 'MO';
+    const fallback = resolveWeekdayCodeFromEventOrDueDate(event, dueDate);
     setRecurrenceWeekdays([fallback]);
   }, [isRecurring, placement, recurrenceType, recurrenceWeekdays, dueDate, event]);
 
@@ -2538,7 +2662,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         if (isClassDayEventType) {
           setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
         } else {
-          const fallback = WEEKDAY_FROM_DATE[new Date(dueDate || new Date()).getDay()] || 'MO';
+          const fallback = resolveWeekdayCodeFromEventOrDueDate(event, dueDate);
           setRecurrenceWeekdays([fallback]);
         }
       }
@@ -3803,33 +3927,37 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           return;
         }
       } else {
-        if (!startTime.trim() && !draftStartTime.trim()) {
-          Alert.alert('Validation', 'Please enter a start time or mark the event as All Day.');
-          return;
-        }
-
         const timeToUse = startTime.trim() || draftStartTime.trim();
-        const resolvedStart = applyTimeToDate(dueDate || new Date(dateToUse), timeToUse);
-        if (!resolvedStart) {
-          Alert.alert('Validation', 'Enter a valid start time, e.g. 9:00 AM');
-          return;
-        }
-        startDateObj = resolvedStart;
-
-        if (endTime.trim() || draftEndTime.trim()) {
-          // Single-day event with end time
-          const endTimeToUse = endTime.trim() || draftEndTime.trim();
-          let resolvedEnd = applyTimeToDate(dueDate || new Date(dateToUse), endTimeToUse);
-          if (!resolvedEnd) {
-            Alert.alert('Validation', 'Enter a valid end time, e.g. 10:00 AM');
+        if (!timeToUse) {
+          // Keep start/end optional by defaulting blank-time edits to all-day bounds.
+          const baseDate = dueDate || new Date(dateToUse);
+          baseDate.setHours(0, 0, 0, 0);
+          startDateObj = baseDate;
+          endDateObj = new Date(baseDate);
+          endDateObj.setHours(23, 59, 0, 0);
+        } else {
+          const resolvedStart = applyTimeToDate(dueDate || new Date(dateToUse), timeToUse);
+          if (!resolvedStart) {
+            Alert.alert('Validation', 'Enter a valid start time, e.g. 9:00 AM');
             return;
           }
-          if (resolvedEnd <= startDateObj) {
-            resolvedEnd = new Date(startDateObj.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+          startDateObj = resolvedStart;
+
+          if (endTime.trim() || draftEndTime.trim()) {
+            // Single-day event with end time
+            const endTimeToUse = endTime.trim() || draftEndTime.trim();
+            let resolvedEnd = applyTimeToDate(dueDate || new Date(dateToUse), endTimeToUse);
+            if (!resolvedEnd) {
+              Alert.alert('Validation', 'Enter a valid end time, e.g. 10:00 AM');
+              return;
+            }
+            if (resolvedEnd <= startDateObj) {
+              resolvedEnd = new Date(startDateObj.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+            }
+            endDateObj = resolvedEnd;
+          } else {
+            endDateObj = new Date(startDateObj.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
           }
-          endDateObj = resolvedEnd;
-        } else {
-          endDateObj = new Date(startDateObj.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
         }
       }
     }
@@ -4382,6 +4510,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
       const afterEventRow = data?.[0] || { ...event, ...cleanUpdates };
       emitMaterialLinkageEventsIfChangedWeb(familyId, event, afterEventRow);
+
+      if (
+        queueSendToStudentAfterSave
+        && placement === 'calendar'
+        && isParentView
+        && isSchoolWorkEventType(eventType)
+        && event?.id
+        && familyId
+        && assigneeIds.length > 0
+        && hasInvitedAssignee
+      ) {
+        await sendWorkToStudents(sendToStudentNote.trim());
+        setQueueSendToStudentAfterSave(false);
+      }
 
       setEditing(false);
       setSchedulingBacklog(false);
@@ -5432,169 +5574,140 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 </View>
                 {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
               </View>
-              <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
-                  <View style={styles.timeField}>
-                    <Text style={styles.timeLabel}>Start</Text>
-                    {Platform.OS === 'web' ? (
-                      <input
-                        type="time"
-                        value={startTime ? (() => {
-                          const parts = parseTimeString(startTime);
-                          if (parts) {
-                            return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                          }
-                          return '';
-                        })() : ''}
-                        onChange={(e) => {
-                          const [hours, minutes] = e.target.value.split(':').map(Number);
-                          if (!isNaN(hours) && !isNaN(minutes)) {
-                            const hour12 = hours % 12 || 12;
-                            const period = hours >= 12 ? 'PM' : 'AM';
-                            const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-                            setStartTime(formatted);
-                            setDraftStartTime(formatted);
-                            if (validationErrors.time) {
-                              setValidationErrors({ ...validationErrors, time: null });
-                            }
-                          }
-                        }}
-                        disabled={allDay}
-                        style={{
-                          backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
-                          borderRadius: 14,
-                          paddingTop: 10,
-                          paddingBottom: 10,
-                          paddingLeft: 12,
-                          paddingRight: 12,
-                          borderWidth: 1,
-                          borderColor: validationErrors.time ? '#ef4444' : '#e5e7eb',
-                          borderStyle: 'solid',
-                          fontSize: 14,
-                          color: allDay ? MUTED : '#111827',
-                          width: '100%',
-                          maxWidth: 100,
-                          height: 'auto',
-                          outline: 'none',
-                          opacity: allDay ? 0.9 : 1,
-                          ...(validationErrors.time && {
-                            borderColor: '#ef4444',
-                          }),
-                        }}
-                      />
-                    ) : (
-                      <TextInput
-                        placeholder="e.g. 9:00 AM"
-                        placeholderTextColor={MUTED}
-                        value={startTime}
-                        onChangeText={(text) => {
-                          const formatted = formatTimeInput(text);
-                          setStartTime(formatted);
-                          setDraftStartTime(formatted);
-                          if (validationErrors.time) {
-                            setValidationErrors({ ...validationErrors, time: null });
-                          }
-                        }}
-                        style={[
-                          styles.timeInputEdit,
-                          allDay && styles.timeInputDisabled,
-                          validationErrors.time && styles.inputError,
-                        ]}
-                        editable={!allDay}
-                        autoCapitalize="characters"
-                      />
-                    )}
-                    {validationErrors.time && (
-                      <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
-                    )}
-                  </View>
-                  <View style={styles.timeField}>
-                    <Text style={styles.timeLabel}>End</Text>
-                    {Platform.OS === 'web' ? (
-                      <input
-                        type="time"
-                        value={endTime ? (() => {
-                          const parts = parseTimeString(endTime);
-                          if (parts) {
-                            return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                          }
-                          return '';
-                        })() : ''}
-                        onChange={(e) => {
-                          const [hours, minutes] = e.target.value.split(':').map(Number);
-                          if (!isNaN(hours) && !isNaN(minutes)) {
-                            const hour12 = hours % 12 || 12;
-                            const period = hours >= 12 ? 'PM' : 'AM';
-                            const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-                            setEndTime(formatted);
-                            setDraftEndTime(formatted);
-                          }
-                        }}
-                        disabled={allDay}
-                        style={{
-                          backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
-                          borderRadius: 14,
-                          paddingTop: 10,
-                          paddingBottom: 10,
-                          paddingLeft: 12,
-                          paddingRight: 12,
-                          borderWidth: 1,
-                          borderColor: '#e5e7eb',
-                          borderStyle: 'solid',
-                          fontSize: 14,
-                          color: allDay ? MUTED : '#111827',
-                          width: '100%',
-                          maxWidth: 100,
-                          height: 'auto',
-                          outline: 'none',
-                          opacity: allDay ? 0.9 : 1,
-                        }}
-                      />
-                    ) : (
-                      <TextInput
-                        placeholder="Optional"
-                        placeholderTextColor={MUTED}
-                        value={endTime}
-                        onChangeText={(text) => {
-                          const formatted = formatTimeInput(text);
-                          setEndTime(formatted);
-                          setDraftEndTime(formatted);
-                        }}
-                        style={[styles.timeInputEdit, allDay && styles.timeInputDisabled]}
-                        editable={!allDay}
-                        autoCapitalize="characters"
-                      />
-                    )}
-                  </View>
-                </View>
-              <View style={styles.inlineSwitchField}>
-                <View style={[styles.allDayRow, styles.inlineSwitchRow]}>
-                  <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>All day</Text>
-                  <Switch
-                    value={allDay}
-                    onValueChange={(value) => {
-                      setAllDay(value);
-                      setDraftAllDay(value);
-                      if (value) {
-                        setStartTime('');
-                        setEndTime('');
-                        setDraftStartTime('');
-                        setDraftEndTime('');
+              <View style={[styles.timeField, styles.timeFieldCompact]}>
+                <Text style={styles.timeLabel}>Start</Text>
+                {Platform.OS === 'web' ? (
+                  <input
+                    type="time"
+                    placeholder="Optional"
+                    value={startTime ? (() => {
+                      const parts = parseTimeString(startTime);
+                      if (parts) {
+                        return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
+                      }
+                      return '';
+                    })() : ''}
+                    onChange={(e) => {
+                      const [hours, minutes] = e.target.value.split(':').map(Number);
+                      if (!isNaN(hours) && !isNaN(minutes)) {
+                        const hour12 = hours % 12 || 12;
+                        const period = hours >= 12 ? 'PM' : 'AM';
+                        const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                        setStartTime(formatted);
+                        setDraftStartTime(formatted);
                         if (validationErrors.time) {
                           setValidationErrors({ ...validationErrors, time: null });
                         }
-                      } else {
-                        setStartTime(startTime || DEFAULT_START_TIME);
-                        setEndTime(endTime || '');
                       }
                     }}
-                    trackColor={{ false: BORDER, true: '#AECBFA' }}
-                    thumbColor={allDay ? '#45A29E' : '#f9fafb'}
+                    disabled={allDay}
+                    style={{
+                      backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
+                      borderRadius: 14,
+                      paddingTop: 0,
+                      paddingBottom: 0,
+                      paddingLeft: 12,
+                      paddingRight: 12,
+                      borderWidth: 1,
+                      borderColor: validationErrors.time ? '#ef4444' : '#e5e7eb',
+                      borderStyle: 'solid',
+                      fontSize: 14,
+                      color: allDay ? MUTED : '#111827',
+                      width: '100%',
+                      height: 40,
+                      outline: 'none',
+                      opacity: allDay ? 0.9 : 1,
+                      ...(validationErrors.time && {
+                        borderColor: '#ef4444',
+                      }),
+                    }}
                   />
-                </View>
+                ) : (
+                  <TextInput
+                    placeholder="Optional"
+                    placeholderTextColor={MUTED}
+                    value={startTime}
+                    onChangeText={(text) => {
+                      const formatted = formatTimeInput(text);
+                      setStartTime(formatted);
+                      setDraftStartTime(formatted);
+                      if (validationErrors.time) {
+                        setValidationErrors({ ...validationErrors, time: null });
+                      }
+                    }}
+                    style={[
+                      styles.timeInputEdit,
+                      allDay && styles.timeInputDisabled,
+                      validationErrors.time && styles.inputError,
+                    ]}
+                    editable={!allDay}
+                    autoCapitalize="characters"
+                  />
+                )}
+                {validationErrors.time && (
+                  <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
+                )}
               </View>
-              <View style={styles.inlineSwitchField}>
-                <View style={[styles.repeatToggleTopRow, styles.inlineSwitchRow]}>
-                  <Text style={[styles.repeatToggleLabel, styles.inlineSwitchLabel]}>Repeat</Text>
+              <View style={[styles.timeField, styles.timeFieldCompact]}>
+                <Text style={styles.timeLabel}>End</Text>
+                {Platform.OS === 'web' ? (
+                  <input
+                    type="time"
+                    value={endTime ? (() => {
+                      const parts = parseTimeString(endTime);
+                      if (parts) {
+                        return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
+                      }
+                      return '';
+                    })() : ''}
+                    onChange={(e) => {
+                      const [hours, minutes] = e.target.value.split(':').map(Number);
+                      if (!isNaN(hours) && !isNaN(minutes)) {
+                        const hour12 = hours % 12 || 12;
+                        const period = hours >= 12 ? 'PM' : 'AM';
+                        const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                        setEndTime(formatted);
+                        setDraftEndTime(formatted);
+                      }
+                    }}
+                    disabled={allDay}
+                    style={{
+                      backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
+                      borderRadius: 14,
+                      paddingTop: 0,
+                      paddingBottom: 0,
+                      paddingLeft: 12,
+                      paddingRight: 12,
+                      borderWidth: 1,
+                      borderColor: '#e5e7eb',
+                      borderStyle: 'solid',
+                      fontSize: 14,
+                      color: allDay ? MUTED : '#111827',
+                      width: '100%',
+                      height: 40,
+                      outline: 'none',
+                      opacity: allDay ? 0.9 : 1,
+                    }}
+                  />
+                ) : (
+                  <TextInput
+                    placeholder="Optional"
+                    placeholderTextColor={MUTED}
+                    value={endTime}
+                    onChangeText={(text) => {
+                      const formatted = formatTimeInput(text);
+                      setEndTime(formatted);
+                      setDraftEndTime(formatted);
+                    }}
+                    style={[styles.timeInputEdit, allDay && styles.timeInputDisabled]}
+                    editable={!allDay}
+                    autoCapitalize="characters"
+                  />
+                )}
+              </View>
+              <View style={[styles.inlineSwitchField, styles.inlineSwitchFieldStack]}>
+                <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>Repeat</Text>
+                <View style={styles.inlineSwitchControlWrap}>
                   <Switch
                     value={isRecurring}
                     onValueChange={(value) => {
@@ -5604,7 +5717,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                           if (isClassDayEventType) {
                             setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
                           } else {
-                            const fallback = WEEKDAY_FROM_DATE[new Date(dueDate || new Date()).getDay()] || 'MO';
+                            const fallback = resolveWeekdayCodeFromEventOrDueDate(event, dueDate);
                             setRecurrenceWeekdays([fallback]);
                           }
                         }
@@ -5620,14 +5733,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </View>
             {isRecurring && (
               <View style={styles.recurringSectionContent}>
-                <View style={recurrenceType === 'weekly' ? styles.recurrenceTopRow : null}>
-                  <View
-                    style={[
-                      { marginBottom: 14 },
-                      recurrenceType === 'weekly' && styles.recurrenceTopColumn,
-                    ]}
-                  >
-                    <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Repeat pattern</Text>
+                <View style={[styles.repeatGrid, useCompactRepeatGrid && styles.repeatGridCompact]}>
+                  <View style={[styles.repeatGroup, styles.repeatGroupPattern]}>
+                    <Text style={styles.recurrenceGroupLabel}>Repeat pattern</Text>
                     <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
                       {['daily', 'weekly', 'monthly'].map((type) => (
                         <TouchableOpacity
@@ -5638,7 +5746,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                               if (isClassDayEventType) {
                                 setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
                               } else {
-                                const fallback = WEEKDAY_FROM_DATE[new Date(dueDate || new Date()).getDay()] || 'MO';
+                                const fallback = resolveWeekdayCodeFromEventOrDueDate(event, dueDate);
                                 setRecurrenceWeekdays([fallback]);
                               }
                             }
@@ -5663,62 +5771,57 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ))}
                     </ChipRow>
                   </View>
-                  {recurrenceType === 'weekly' && (
-                    <View style={[{ marginBottom: 14 }, styles.recurrenceTopColumn]}>
-                      <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Repeats on</Text>
-                      <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
-                        {RECURRENCE_WEEKDAY_OPTIONS.map((day) => {
-                          const isSelected = Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.includes(day.value);
-                          return (
-                            <TouchableOpacity
-                              key={day.value}
-                              onPress={() => {
-                                setRecurrenceWeekdays((prev) => {
-                                  const prevSafe = Array.isArray(prev) ? prev : [];
-                                  if (prevSafe.includes(day.value)) {
-                                    return prevSafe.filter((value) => value !== day.value);
+                  <View style={[styles.repeatGroup, styles.repeatGroupDays]}>
+                    <Text style={styles.recurrenceGroupLabel}>Repeats on</Text>
+                    {recurrenceType === 'weekly' ? (
+                      <>
+                        <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
+                          {RECURRENCE_WEEKDAY_OPTIONS.map((day) => {
+                            const isSelected = Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.includes(day.value);
+                            return (
+                              <TouchableOpacity
+                                key={day.value}
+                                onPress={() => {
+                                  setRecurrenceWeekdays((prev) => {
+                                    const prevSafe = Array.isArray(prev) ? prev : [];
+                                    if (prevSafe.includes(day.value)) {
+                                      return prevSafe.filter((value) => value !== day.value);
+                                    }
+                                    return [...prevSafe, day.value];
+                                  });
+                                  if (validationErrors.recurrenceWeekdays) {
+                                    setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
                                   }
-                                  return [...prevSafe, day.value];
-                                });
-                                if (validationErrors.recurrenceWeekdays) {
-                                  setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
-                                }
-                              }}
-                              style={[
-                                styles.dropdownOption,
-                                isSelected && styles.dropdownOptionActive,
-                              ]}
-                            >
-                              <Text
+                                }}
                                 style={[
-                                  styles.dropdownOptionText,
-                                  isSelected && styles.dropdownOptionTextActive,
+                                  styles.dropdownOption,
+                                  isSelected && styles.dropdownOptionActive,
                                 ]}
                               >
-                                {day.label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </ChipRow>
-                      {validationErrors.recurrenceWeekdays ? (
-                        <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.recurrenceWeekdays}</Text>
-                      ) : null}
-                    </View>
-                  )}
-                </View>
-                <View
-                  style={[
-                    recurrenceEndType !== 'never' && styles.recurrenceEndsRow,
-                  ]}
-                >
-                  <View
-                    style={[
-                      { marginBottom: 8 },
-                      recurrenceEndType !== 'never' && styles.recurrenceEndsControl,
-                    ]}
-                  >
-                    <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Ends</Text>
+                                <Text
+                                  style={[
+                                    styles.dropdownOptionText,
+                                    isSelected && styles.dropdownOptionTextActive,
+                                  ]}
+                                >
+                                  {day.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ChipRow>
+                        {validationErrors.recurrenceWeekdays ? (
+                          <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.recurrenceWeekdays}</Text>
+                        ) : null}
+                      </>
+                    ) : (
+                      <View style={styles.repeatDisabledHintWrap}>
+                        <Text style={styles.fieldHelpText}>Used for weekly repeats.</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={[styles.repeatGroup, styles.repeatGroupEnds]}>
+                    <Text style={styles.recurrenceGroupLabel}>Ends</Text>
                     <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
                       {['never', 'after', 'on'].map((endType) => (
                         <TouchableOpacity
@@ -5746,87 +5849,89 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ))}
                     </ChipRow>
                   </View>
-                  {recurrenceEndType === 'after' ? (
-                    <View style={[{ marginBottom: 8, maxWidth: 220 }, styles.recurrenceEndsInputWrap]}>
-                      <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Number of occurrences</Text>
-                      <TextInput
-                        style={{
-                          borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? 1.5 : 1,
-                          borderColor:
-                            validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? '#ef4444' : CHIP_BORDER,
-                          borderRadius: 999,
-                          width: 116,
-                          marginBottom: 0,
-                          paddingVertical: 0,
-                          paddingHorizontal: 14,
-                          height: 36,
-                          color: FG,
-                          backgroundColor: '#FFFFFF',
-                          fontSize: 12,
-                        }}
-                        value={recurrenceEndAfterText}
-                        onChangeText={(text) => {
-                          if (validationErrors.recurrenceEnd) {
-                            setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
-                          }
-                          if (text === '' || /^\d+$/.test(text)) {
-                            setRecurrenceEndAfterText(text);
-                            const num = parseInt(text, 10);
-                            if (!isNaN(num) && num > 0) {
+                  {recurrenceEndType !== 'never' ? (
+                    <View style={[styles.repeatGroup, styles.repeatGroupEndInput]}>
+                      <Text style={styles.recurrenceGroupLabel}>
+                        {recurrenceEndType === 'after' ? 'Occurrences' : 'End date'}
+                      </Text>
+                      {recurrenceEndType === 'after' ? (
+                        <TextInput
+                          style={{
+                            borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? 1.5 : 1,
+                            borderColor:
+                              validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? '#ef4444' : CHIP_BORDER,
+                            borderRadius: 999,
+                            width: 116,
+                            marginBottom: 0,
+                            paddingVertical: 0,
+                            paddingHorizontal: 14,
+                            height: 36,
+                            color: FG,
+                            backgroundColor: '#FFFFFF',
+                            fontSize: 12,
+                          }}
+                          value={recurrenceEndAfterText}
+                          onChangeText={(text) => {
+                            if (validationErrors.recurrenceEnd) {
+                              setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                            }
+                            if (text === '' || /^\d+$/.test(text)) {
+                              setRecurrenceEndAfterText(text);
+                              const num = parseInt(text, 10);
+                              if (!isNaN(num) && num > 0) {
+                                setRecurrenceEndAfter(num);
+                              }
+                            }
+                          }}
+                          onBlur={() => {
+                            const num = parseInt(recurrenceEndAfterText, 10);
+                            if (isNaN(num) || num <= 0) {
+                              setRecurrenceEndAfterText('');
+                              setRecurrenceEndAfter(null);
+                            } else {
+                              setRecurrenceEndAfterText(num.toString());
                               setRecurrenceEndAfter(num);
                             }
-                          }
-                        }}
-                        onBlur={() => {
-                          const num = parseInt(recurrenceEndAfterText, 10);
-                          if (isNaN(num) || num <= 0) {
-                            setRecurrenceEndAfterText('');
-                            setRecurrenceEndAfter(null);
-                          } else {
-                            setRecurrenceEndAfterText(num.toString());
-                            setRecurrenceEndAfter(num);
-                          }
-                        }}
-                        keyboardType="numeric"
-                      />
-                    </View>
-                  ) : null}
-                  {recurrenceEndType === 'on' ? (
-                    <View style={[{ marginBottom: 8, maxWidth: 240 }, styles.recurrenceEndsInputWrap]}>
-                      <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>End date</Text>
-                      <TouchableOpacity
-                        style={{
-                          borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? 1.5 : 1,
-                          borderColor:
-                            validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? '#ef4444' : CHIP_BORDER,
-                          borderRadius: 999,
-                          marginBottom: 0,
-                          paddingVertical: 0,
-                          paddingHorizontal: 14,
-                          height: 36,
-                          justifyContent: 'center',
-                          backgroundColor: '#FFFFFF',
-                          width: '100%',
-                          maxWidth: 220,
-                        }}
-                        onPress={() => {
-                          if (validationErrors.recurrenceEnd) {
-                            setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
-                          }
-                          if (recurrenceEndDate) {
-                            setEndDateCalendarViewMonth(new Date(recurrenceEndDate));
-                          } else {
-                            const endDate = new Date(dueDate);
-                            endDate.setDate(endDate.getDate() + 30);
-                            setEndDateCalendarViewMonth(endDate);
-                          }
-                          setShowEndDateCalendarPicker(true);
-                        }}
-                      >
-                        <Text style={{ color: recurrenceEndDate ? FG : MUTED, fontSize: 12 }}>
-                          {recurrenceEndDate ? fmt(recurrenceEndDate) : 'Select end date'}
-                        </Text>
-                      </TouchableOpacity>
+                          }}
+                          keyboardType="numeric"
+                          placeholder="e.g. 10"
+                          placeholderTextColor={MUTED}
+                        />
+                      ) : (
+                        <TouchableOpacity
+                          style={{
+                            borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? 1.5 : 1,
+                            borderColor:
+                              validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? '#ef4444' : CHIP_BORDER,
+                            borderRadius: 999,
+                            marginBottom: 0,
+                            paddingVertical: 0,
+                            paddingHorizontal: 14,
+                            height: 36,
+                            justifyContent: 'center',
+                            backgroundColor: '#FFFFFF',
+                            width: '100%',
+                            maxWidth: 220,
+                          }}
+                          onPress={() => {
+                            if (validationErrors.recurrenceEnd) {
+                              setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                            }
+                            if (recurrenceEndDate) {
+                              setEndDateCalendarViewMonth(new Date(recurrenceEndDate));
+                            } else {
+                              const endDate = new Date(dueDate);
+                              endDate.setDate(endDate.getDate() + 30);
+                              setEndDateCalendarViewMonth(endDate);
+                            }
+                            setShowEndDateCalendarPicker(true);
+                          }}
+                        >
+                          <Text style={{ color: recurrenceEndDate ? FG : MUTED, fontSize: 12 }}>
+                            {recurrenceEndDate ? fmt(recurrenceEndDate) : 'Select end date'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   ) : null}
                 </View>
@@ -5847,14 +5952,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           onPress={() => setShowAcademicDetails(!showAcademicDetails)}
           accent="#7C70F4"
         >
-          {/* Subject + Unit row */}
-          <SafeFieldRow style={styles.fieldRow}>
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Subjects (optional)</Text>
-              <View style={styles.selectContainer}>
+          {/* Subject + Unit + Grade + % row */}
+          <SafeFieldRow style={[styles.fieldRow, styles.learningRow]}>
+            <View style={[styles.field, styles.academicFieldSubject]}>
+              <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Subjects</Text>
+              <View style={[styles.selectContainer, styles.academicSelectContainer]}>
                 <TouchableOpacity
                   ref={subjectButtonRef}
-                  style={[styles.select, assigneeIds.length === 0 && { opacity: 0.6 }]}
+                  style={[styles.select, styles.academicSelect, assigneeIds.length === 0 && { opacity: 0.6 }]}
                   onPress={() => {
                     if (assigneeIds.length > 0) {
                       setShowSubjectDropdown(!showSubjectDropdown);
@@ -6020,31 +6125,81 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 )}
               </View>
             </View>
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Unit (optional)</Text>
-              <TextInput
-                placeholder="e.g. Algebra I – Linear Equations"
-                placeholderTextColor={MUTED}
-                value={unit}
-                onChangeText={setUnit}
-                style={styles.input}
-              />
+            <View style={[styles.field, styles.academicFieldUnit]}>
+              <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Lesson</Text>
+              <View style={[styles.selectContainer, styles.academicSelectContainer]}>
+                <TouchableOpacity
+                  ref={lessonButtonRef}
+                  style={[styles.select, styles.academicSelect, (!subjectIds?.[0] || loadingLessonOptions) && { opacity: 0.6 }]}
+                  onPress={() => {
+                    if (subjectIds?.[0] && !loadingLessonOptions) setShowLessonDropdown((prev) => !prev);
+                  }}
+                  disabled={!subjectIds?.[0] || loadingLessonOptions}
+                >
+                  <Text
+                    style={[
+                      styles.selectText,
+                      (!lesson || !String(lesson).trim()) && styles.selectPlaceholder,
+                    ]}
+                  >
+                    {!subjectIds?.[0]
+                      ? 'Select subject first'
+                      : loadingLessonOptions
+                        ? 'Loading lessons...'
+                        : (lesson || (lessonOptions.length > 0 ? 'Select lesson' : 'No saved lessons'))}
+                  </Text>
+                  <ChevronDown size={16} color={SUB} />
+                </TouchableOpacity>
+                {showLessonDropdown ? (
+                  <View ref={lessonDropdownRef} style={styles.selectOptions}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setLesson('');
+                        setUnit('');
+                        setShowLessonDropdown(false);
+                      }}
+                      style={[styles.selectOption, !lesson && styles.selectOptionActive]}
+                    >
+                      <Text style={[styles.selectOptionText, !lesson && styles.selectOptionTextActive]}>None</Text>
+                    </TouchableOpacity>
+                    {lessonOptions.length > 0 ? lessonOptions.map((opt) => {
+                      const active = String(lesson || '').trim() === opt.lessonTitle;
+                      return (
+                        <TouchableOpacity
+                          key={opt.key}
+                          onPress={() => {
+                            setLesson(opt.lessonTitle);
+                            setUnit(opt.unitTitle || '');
+                            setShowLessonDropdown(false);
+                          }}
+                          style={[styles.selectOption, active && styles.selectOptionActive]}
+                        >
+                          <Text style={[styles.selectOptionText, active && styles.selectOptionTextActive]}>
+                            {opt.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    }) : (
+                      <View style={{ padding: 12 }}>
+                        <Text style={{ fontSize: 13, color: MUTED }}>No saved lessons for selected subject</Text>
+                      </View>
+                    )}
+                  </View>
+                ) : null}
+              </View>
             </View>
-          </SafeFieldRow>
-
-          <SafeFieldRow style={styles.fieldRow}>
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Grade (optional)</Text>
+            <View style={[styles.field, styles.academicFieldGrade]}>
+              <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Grade</Text>
               <TextInput
-                placeholder="e.g. B+ or 88%"
+                placeholder="e.g. A+"
                 placeholderTextColor={MUTED}
                 value={grade}
                 onChangeText={setGrade}
-                style={styles.input}
+                style={[styles.input, styles.academicInputCompact]}
               />
             </View>
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>% of Total Grade (optional)</Text>
+            <View style={[styles.field, styles.academicFieldPercent]}>
+              <Text style={[styles.fieldLabel, styles.learningRowLabel]}>% Grade</Text>
               <TextInput
                 placeholder="e.g. 25"
                 placeholderTextColor={MUTED}
@@ -6052,6 +6207,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 onChangeText={setPercentOfTotalGrade}
                 style={[
                   styles.input,
+                  styles.academicInputCompact,
                   percentValidationError && styles.inputError
                 ]}
                 keyboardType="numeric"
@@ -6095,6 +6251,65 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               )}
             </View>
           </SafeFieldRow>
+          {placement === 'calendar' && isParentView && isSchoolWorkEventType(eventType) ? (
+            <View style={styles.learningDetailsSendSection}>
+              <Text style={[styles.fieldLabel, styles.sendSectionTitle]}>Send to student</Text>
+              {!parentLinkedReady ? (
+                <Text style={styles.fieldHelpText}>Loading...</Text>
+              ) : sendTrackingSummary.totalCount === 0 ? (
+                <View style={styles.workflowEmptyWrap}>
+                  <Text style={styles.fieldHelpText}>No students assigned to this event yet.</Text>
+                </View>
+              ) : (
+                <View style={styles.workflowActivityWrap}>
+                  {queueSendToStudentAfterSave ? (
+                    <TextInput
+                      placeholder="Optional note for student"
+                      placeholderTextColor={MUTED}
+                      value={sendToStudentNote}
+                      onChangeText={setSendToStudentNote}
+                      style={[styles.input, styles.notesInput, { minHeight: 72, marginTop: 8, marginBottom: 8 }]}
+                      multiline
+                      textAlignVertical="top"
+                      editable={!saving}
+                    />
+                  ) : null}
+                  {Array.isArray(sendTrackingSummary.historyLines) && sendTrackingSummary.historyLines.length > 0 ? (
+                    <View style={styles.workflowHistoryList}>
+                      {sendTrackingSummary.historyLines.map((line, index) => (
+                        <Text key={`send-history-line-${index}`} style={styles.workflowSentLine}>
+                          {line}
+                        </Text>
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
+              )}
+              <View style={styles.workflowHeaderRow}>
+                <TouchableOpacity
+                  onPress={() => setQueueSendToStudentAfterSave((prev) => !prev)}
+                  disabled={!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee}
+                  style={[
+                    styles.workflowActionButton,
+                    queueSendToStudentAfterSave && styles.workflowActionButtonActive,
+                    (!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee) && styles.workflowActionButtonDisabled,
+                  ]}
+                  {...(Platform.OS === 'web' && { cursor: (!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee) ? 'default' : 'pointer' })}
+                >
+                  <View style={styles.workflowActionButtonRow}>
+                    <View style={[styles.workflowActionIconWrap, queueSendToStudentAfterSave && styles.workflowActionIconWrapActive]}>
+                      {queueSendToStudentAfterSave ? (
+                        <Check size={12} color="#16A34A" />
+                      ) : (
+                        <Send size={12} color="#5B6880" />
+                      )}
+                    </View>
+                    <Text style={styles.workflowActionButtonText}>{sendTrackingSummary.ctaLabel || 'Send to student'}</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
         </ModalSectionCard>
 
         {/* Notes and attachments section */}
@@ -6107,6 +6322,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           accent="#7C70F4"
         >
           <View style={{ marginTop: 2 }}>
+            <Text style={styles.fieldLabel}>Notes</Text>
             <TextInput
               placeholder="Add any additional notes about this event"
               placeholderTextColor={MUTED}
@@ -6124,7 +6340,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           {familyId && (
             <SafeFieldRow style={[styles.fieldRow, { marginTop: 8 }]}>
             <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Attachments (optional)</Text>
+              <Text style={styles.fieldLabel}>Attachments</Text>
               <View style={styles.materialSelectorContainer}>
                 <TouchableOpacity
                   ref={materialButtonRef}
@@ -6268,76 +6484,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               })()}
             </View>
             </SafeFieldRow>
-          )}
-        </ModalSectionCard>
-
-        <ModalSectionCard
-          Icon={UserCircle}
-          title="Send to student"
-          subtitle="Student workflow"
-          expanded={showStudentExchangeSection}
-          onPress={() => setShowStudentExchangeSection(!showStudentExchangeSection)}
-          accent="#7C70F4"
-        >
-          {placement === 'calendar' && isParentView && isSchoolWorkEventType(eventType) ? (
-            <>
-              <View style={styles.workflowHeaderRow}>
-                <TouchableOpacity
-                  onPress={() => setShowSendToStudentModal(true)}
-                  disabled={!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee}
-                  style={[
-                    styles.workflowActionButton,
-                    (!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee) && styles.workflowActionButtonDisabled,
-                  ]}
-                  {...(Platform.OS === 'web' && { cursor: (!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee) ? 'default' : 'pointer' })}
-                >
-                  <View style={styles.workflowActionButtonRow}>
-                    <Send size={12} color="#5B6880" />
-                    <Text style={styles.workflowActionButtonText}>{sendTrackingSummary.ctaLabel || 'Send to student'}</Text>
-                  </View>
-                </TouchableOpacity>
-              </View>
-              {!parentLinkedReady ? (
-                <Text style={styles.fieldHelpText}>Loading...</Text>
-              ) : sendTrackingSummary.studentRows.length === 0 ? (
-                <View style={styles.workflowEmptyWrap}>
-                  <Text style={styles.fieldHelpText}>No students assigned to this event yet.</Text>
-                </View>
-              ) : (
-                <View style={styles.studentRowsWrap}>
-                  {sendTrackingSummary.studentRows.map((row) => (
-                    <View key={row.id} style={styles.studentRow}>
-                      <View style={{ flex: 1, paddingRight: 8 }}>
-                        <View style={styles.studentIdentityRow}>
-                          <Image source={resolveStudentAvatarSource(row.avatarRaw)} style={styles.studentAvatar} />
-                          <Text style={styles.studentRowName}>{row.name}</Text>
-                        </View>
-                        <View style={styles.studentMetaRow}>
-                          <Text style={styles.studentRowMeta}>{row.subLabel}</Text>
-                        </View>
-                        {Array.isArray(row.trailLines) && row.trailLines.length > 0
-                          ? row.trailLines.map((line, index) => (
-                              <Text key={`${row.id}-trail-${index}`} style={styles.studentTrailLine}>
-                                {line}
-                              </Text>
-                            ))
-                          : null}
-                      </View>
-                      <View style={styles.studentRowRight}>
-                        <View style={[styles.statusPill, styles[`statusPill${row.statusPillKey}`] || styles.statusPillSENT]}>
-                          <Text style={styles.statusPillText}>{row.statusLabel || row.status}</Text>
-                        </View>
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-            </>
-          ) : (
-            <Text style={styles.fieldHelpText}>
-              Available for calendar schoolwork events with student assignees.
-            </Text>
           )}
         </ModalSectionCard>
 
@@ -6954,9 +7100,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             >
               <TouchableOpacity
                 activeOpacity={1}
-                onPress={() => {}}
+                onPress={(e) => {
+                  e?.stopPropagation?.();
+                }}
+                onKeyDown={(e) => {
+                  e?.stopPropagation?.();
+                }}
                 style={{
-                  backgroundColor: LD.shell,
+                  backgroundColor: '#FFFFFF',
                   borderRadius: 24,
                   width: '100%',
                   maxWidth: 520,
@@ -7001,7 +7152,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ...fontDisplay('400'),
                     }}
                   >
-                    This will notify {sendToStudentTargetLabel} that the assignment needs their attention.
+                    {sendTrackingSummary.hasShared
+                      ? (sendTrackingSummary.latestStatusLine || 'Last sent recently.')
+                      : `This will notify ${sendToStudentTargetLabel} that the assignment needs their attention.`}
                   </Text>
                   <Text
                     style={{
@@ -7018,6 +7171,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <TextInput
                     value={sendToStudentNote}
                     onChangeText={setSendToStudentNote}
+                    onKeyPress={(e) => {
+                      e?.stopPropagation?.();
+                    }}
+                    onKeyDown={(e) => {
+                      e?.stopPropagation?.();
+                    }}
                     placeholder="Add a short message…"
                     placeholderTextColor={LD.placeholder}
                     multiline
@@ -7033,7 +7192,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       color: LD.ink,
                       minHeight: 120,
                       maxHeight: 260,
-                      backgroundColor: LD.fillSoft,
+                      backgroundColor: '#FFFFFF',
                       ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
                     }}
                   />
@@ -7042,28 +7201,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     <TouchableOpacity
                       onPress={() => sendWorkToStudents(sendToStudentNote.trim())}
                       disabled={sendToStudentSubmitting}
-                      style={{
-                        backgroundColor: LD.black,
-                        paddingVertical: 15,
-                        borderRadius: 14,
-                        alignItems: 'center',
-                        opacity: sendToStudentSubmitting ? 0.5 : 1,
-                        ...(Platform.OS === 'web'
-                          ? { boxShadow: '0 2px 8px rgba(17, 24, 39, 0.12)', cursor: sendToStudentSubmitting ? 'not-allowed' : 'pointer' }
-                          : {}),
-                      }}
+                      style={[
+                        styles.workflowActionButton,
+                        sendToStudentSubmitting && styles.workflowActionButtonDisabled,
+                        { alignSelf: 'center' },
+                      ]}
+                      {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'not-allowed' : 'pointer' })}
                     >
-                      <Text style={{ fontSize: 16, fontWeight: '600', color: '#ffffff', ...fontDisplay('600') }}>
-                        {sendToStudentSubmitting ? 'Sending…' : 'Send to student'}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={closeSendToStudentModal}
-                      disabled={sendToStudentSubmitting}
-                      style={{ paddingVertical: 12, alignItems: 'center', marginTop: 4 }}
-                      {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'default' : 'pointer' })}
-                    >
-                      <Text style={{ fontSize: 13, fontWeight: '400', color: LD.mutedLight }}>Cancel</Text>
+                      <View style={styles.workflowActionButtonRow}>
+                        <View style={styles.workflowActionIconWrap}>
+                          <Send size={12} color="#5B6880" />
+                        </View>
+                        <Text style={styles.workflowActionButtonText}>
+                          {sendToStudentSubmitting ? 'Sending…' : (sendTrackingSummary.ctaLabel || 'Send to student')}
+                        </Text>
+                      </View>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -8085,10 +8237,11 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   fieldLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.text,
+    color: SUB,
+    fontSize: 12,
     marginBottom: 4,
+    fontWeight: '500',
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -8746,6 +8899,75 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     overflow: 'visible',
   },
+  learningRow: {
+    alignItems: 'stretch',
+    gap: 4,
+    ...(Platform.OS === 'web' && {
+      display: 'grid',
+      gridTemplateColumns: 'minmax(130px, 180px) minmax(220px, 1fr) minmax(82px, 96px) minmax(82px, 96px)',
+      alignItems: 'stretch',
+    }),
+  },
+  learningRowLabel: {
+    marginBottom: 6,
+    minHeight: 16,
+  },
+  academicFieldSubject: {
+    flex: 1.2,
+    minWidth: 0,
+    maxWidth: 180,
+    width: '100%',
+    alignSelf: 'flex-start',
+  },
+  academicFieldUnit: {
+    flex: 1.6,
+    minWidth: 0,
+  },
+  academicFieldGrade: {
+    flex: 0.5,
+    minWidth: 0,
+    maxWidth: 96,
+    width: '100%',
+    alignSelf: 'flex-start',
+  },
+  academicFieldPercent: {
+    flex: 0.4,
+    minWidth: 0,
+    maxWidth: 96,
+    width: '100%',
+    alignSelf: 'flex-start',
+  },
+  academicFieldGradeStack: {
+    flex: 0,
+    minWidth: 0,
+    maxWidth: 96,
+    width: 96,
+    alignSelf: 'flex-start',
+    gap: 8,
+  },
+  academicGradeItem: {
+    width: '100%',
+    maxWidth: 96,
+  },
+  academicSelectContainer: {
+    width: '100%',
+  },
+  academicSelect: {
+    width: '100%',
+    minHeight: 40,
+    borderRadius: 12,
+    paddingVertical: 0,
+  },
+  academicInputCompact: {
+    height: 40,
+    borderRadius: 12,
+    width: 96,
+    maxWidth: 96,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    marginBottom: 0,
+    paddingVertical: 0,
+  },
   fieldStretch: {
     flex: 1,
     minWidth: 0,
@@ -8869,11 +9091,12 @@ const styles = StyleSheet.create({
   workflowHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    marginBottom: 8,
+    justifyContent: 'flex-start',
+    marginTop: 10,
+    marginBottom: 4,
   },
   workflowActionButton: {
-    height: 38,
+    minHeight: 38,
     paddingHorizontal: 14,
     borderRadius: 999,
     borderWidth: 1,
@@ -8884,6 +9107,10 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
+  },
+  workflowActionButtonActive: {
+    borderColor: '#86EFAC',
+    backgroundColor: '#F0FDF4',
   },
   workflowActionButtonDisabled: {
     opacity: 0.5,
@@ -8903,6 +9130,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
   },
+  workflowActionIconWrap: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  workflowActionIconWrapActive: {
+    backgroundColor: '#DCFCE7',
+  },
   workflowContextText: {
     fontSize: 12,
     color: MUTED,
@@ -8918,6 +9156,73 @@ const styles = StyleSheet.create({
   },
   workflowEmptyWrap: {
     marginBottom: 8,
+  },
+  workflowActivityWrap: {
+    marginTop: 0,
+    marginBottom: 2,
+  },
+  learningDetailsSendSection: {
+    marginTop: 8,
+    paddingTop: 0,
+  },
+  sendSectionTitle: {
+    marginBottom: 2,
+    minHeight: 0,
+  },
+  workflowHistoryList: {
+    marginTop: 2,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  workflowSentLine: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  workflowTimelineList: {
+    marginTop: 4,
+    gap: 8,
+  },
+  workflowTimelineItem: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  workflowTimelineTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  workflowTimelineWhen: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  workflowTimelineMessage: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   studentRowsWrap: {
     marginBottom: 2,
@@ -9115,12 +9420,42 @@ const styles = StyleSheet.create({
   dateTimeInlineRowWeb: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 12,
+    gap: 4,
   },
   dateFieldInline: {
-    flexGrow: 1,
-    flexShrink: 1,
+    flexGrow: 0,
+    flexShrink: 0,
     minWidth: 220,
+  },
+  timeFieldCompact: {
+    ...(Platform.OS === 'web'
+      ? {
+          flex: 0,
+          width: 148,
+          maxWidth: 148,
+          minWidth: 148,
+          flexShrink: 0,
+        }
+      : {}),
+  },
+  topScheduleDateChip: {
+    minHeight: 40,
+    height: 40,
+    marginBottom: 0,
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  topScheduleLabel: {
+    minHeight: 16,
+    marginBottom: 6,
+  },
+  toggleField: {
+    alignItems: 'flex-start',
+    justifyContent: 'flex-end',
+  },
+  toggleControlWrap: {
+    minHeight: 40,
+    justifyContent: 'center',
   },
   inlineSwitchField: {
     minWidth: 84,
@@ -9134,8 +9469,15 @@ const styles = StyleSheet.create({
     marginTop: 0,
     marginBottom: 0,
   },
+  inlineSwitchFieldStack: {
+    justifyContent: 'flex-start',
+  },
   inlineSwitchLabel: {
     marginBottom: 0,
+  },
+  inlineSwitchControlWrap: {
+    minHeight: 40,
+    justifyContent: 'center',
   },
   allDayRow: {
     flexDirection: 'row',
@@ -9213,6 +9555,16 @@ const styles = StyleSheet.create({
     color: SUB,
     fontSize: 12,
     marginBottom: 4,
+    fontWeight: '500',
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  recurrenceGroupLabel: {
+    color: SUB,
+    fontSize: 12,
+    marginBottom: 8,
     fontWeight: '500',
     textAlign: 'left',
     ...(Platform.OS === 'web' && {
@@ -9434,6 +9786,49 @@ const styles = StyleSheet.create({
   recurringSectionContent: {
     marginTop: 8,
     paddingTop: 0,
+  },
+  repeatGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 24,
+    alignItems: 'flex-end',
+    ...(Platform.OS === 'web' && {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1.7fr 1fr 1.4fr',
+      gap: 24,
+      alignItems: 'end',
+    }),
+  },
+  repeatGridCompact: {
+    ...(Platform.OS === 'web' && {
+      gridTemplateColumns: '1fr 1fr',
+      alignItems: 'start',
+    }),
+  },
+  repeatGroup: {
+    minWidth: 180,
+    marginBottom: 8,
+  },
+  repeatGroupPattern: {
+    flex: 1,
+    minWidth: 170,
+  },
+  repeatGroupDays: {
+    flex: 1.7,
+    minWidth: 250,
+  },
+  repeatGroupEnds: {
+    flex: 1,
+    minWidth: 170,
+  },
+  repeatGroupEndInput: {
+    flex: 0.7,
+    minWidth: 110,
+    maxWidth: 130,
+  },
+  repeatDisabledHintWrap: {
+    minHeight: 36,
+    justifyContent: 'center',
   },
   recurrenceTopRow: {
     ...(Platform.OS === 'web' && {

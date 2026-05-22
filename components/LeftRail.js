@@ -150,7 +150,7 @@ export default function LeftRail({
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
-        { key: 'subjects', label: 'Learning', icon: Brain },
+        { key: 'subjects', label: 'Subjects', icon: Brain },
         { key: 'materials', label: 'Materials', icon: BookOpen },
         { key: 'profile', label: 'Settings', icon: UserCircle },
         // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
