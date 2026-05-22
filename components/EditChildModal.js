@@ -645,8 +645,8 @@ export default function EditChildModal({
             mode="edit"
             title={childName || 'Edit child'}
             eyebrow="CHILD"
-            accent="#4BB39C"
-            accentSoft="#EEF9F6"
+            accent="#9ECFFB"
+            accentSoft="#F0F8FF"
             HeroIcon={Smile}
             onClose={onClose}
             contentContainerStyle={styles.scrollContent}
@@ -666,7 +666,7 @@ export default function EditChildModal({
                     void savePermissionOnly();
                   }
                 }}
-                accent="#4BB39C"
+                accent="#9ECFFB"
                 disabled={isSubmitting || (!formCanSubmit && !permissionDirty)}
                 loading={isSubmitting}
               />

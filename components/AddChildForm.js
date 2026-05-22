@@ -1,7 +1,8 @@
 import React, { useState, useImperativeHandle, forwardRef, useEffect, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Platform } from 'react-native';
-import { ChevronLeft, ChevronRight, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Check, BookOpen, Brain, FileText } from 'lucide-react';
 import { getChildColorFromAvatar, hexToRgba } from '../utils/avatarColors';
+import { ModalSectionCard } from './ui/ModalSectionCard';
 
 const GRADES = ['Pre-K','K','1','2','3','4','5','6','7','8','9','10','11','12'];
 const STATES = ['None','AL','AK','AZ','AR','CA','CO','CT','DC','DE','FL','GA','HI','IA','ID','IL','IN','KS','KY','LA','MA','MD','ME','MI','MN','MO','MS','MT','NC','ND','NE','NH','NJ','NM','NV','NY','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VA','VT','WA','WI','WV','WY'];
@@ -401,13 +402,15 @@ const AddChildForm = forwardRef(
         </View>
       </View>
 
-      {/* SECTION 2: Accordion — Learning setup */}
-      <View style={styles.accordionSection}>
-        <TouchableOpacity onPress={() => setShowLearningSetup(!showLearningSetup)} style={styles.accordionHeader} activeOpacity={0.8}>
-          <Text style={styles.sectionLabel}>Learning setup</Text>
-          {showLearningSetup ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
-        </TouchableOpacity>
-        {showLearningSetup && (
+      {/* SECTION 2: Learning setup */}
+      <ModalSectionCard
+        Icon={BookOpen}
+        title="Learning setup"
+        subtitle="Standards, interests, and goals"
+        expanded={showLearningSetup}
+        onPress={() => setShowLearningSetup(!showLearningSetup)}
+        accent="#9ECFFB"
+      >
           <View style={styles.accordionContent}>
             <View style={styles.field}>
               <Text style={styles.label}>Follow State Standards?</Text>
@@ -445,16 +448,17 @@ const AddChildForm = forwardRef(
               )}
             </View>
           </View>
-        )}
-      </View>
+      </ModalSectionCard>
 
-      {/* SECTION 3: Accordion — Learning profile & supports */}
-      <View style={styles.accordionSection}>
-        <TouchableOpacity onPress={() => setShowLearningProfile(!showLearningProfile)} style={styles.accordionHeader} activeOpacity={0.8}>
-          <Text style={styles.sectionLabel}>Learning profile & supports</Text>
-          {showLearningProfile ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
-        </TouchableOpacity>
-        {showLearningProfile && (
+      {/* SECTION 3: Learning profile & supports */}
+      <ModalSectionCard
+        Icon={Brain}
+        title="Learning profile & supports"
+        subtitle="Support needs and learning preferences"
+        expanded={showLearningProfile}
+        onPress={() => setShowLearningProfile(!showLearningProfile)}
+        accent="#9ECFFB"
+      >
           <View style={styles.accordionContent}>
             <View style={styles.field}>
               <Text style={styles.label}>Learning & processing needs</Text>
@@ -512,23 +516,23 @@ const AddChildForm = forwardRef(
               </View>
             </View>
           </View>
-        )}
-      </View>
+      </ModalSectionCard>
 
-      {/* SECTION 4: Accordion — Additional notes */}
-      <View style={styles.accordionSection}>
-        <TouchableOpacity onPress={() => setShowAdditionalNotes(!showAdditionalNotes)} style={styles.accordionHeader} activeOpacity={0.8}>
-          <Text style={styles.sectionLabel}>Additional notes</Text>
-          {showAdditionalNotes ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
-        </TouchableOpacity>
-        {showAdditionalNotes && (
+      {/* SECTION 4: Additional notes */}
+      <ModalSectionCard
+        Icon={FileText}
+        title="Additional notes"
+        subtitle="Anything else to remember"
+        expanded={showAdditionalNotes}
+        onPress={() => setShowAdditionalNotes(!showAdditionalNotes)}
+        accent="#9ECFFB"
+      >
           <View style={styles.accordionContent}>
             <View style={styles.field}>
               <TextInput style={[styles.input, styles.textArea]} placeholder="Add any additional notes about learning supports..." value={supportNotes} onChangeText={setSupportNotes} placeholderTextColor={MUTED} multiline numberOfLines={3} textAlignVertical="top" />
             </View>
           </View>
-        )}
-      </View>
+      </ModalSectionCard>
     </View>
   );
 });

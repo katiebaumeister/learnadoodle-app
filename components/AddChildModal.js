@@ -152,8 +152,8 @@ export default function AddChildModal({
             mode="add"
             title="Add child"
             eyebrow="CHILD"
-            accent="#4BB39C"
-            accentSoft="#EEF9F6"
+            accent="#9ECFFB"
+            accentSoft="#F0F8FF"
             HeroIcon={Smile}
             onClose={onClose}
             contentContainerStyle={styles.scrollContent}
@@ -165,7 +165,7 @@ export default function AddChildModal({
                 onPrimary={() => {
                   if (formRef.current?.submit) formRef.current.submit();
                 }}
-                accent="#4BB39C"
+                accent="#9ECFFB"
                 disabled={isSubmitting || !canSubmit}
                 loading={isSubmitting}
               />

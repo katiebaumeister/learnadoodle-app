@@ -2926,13 +2926,14 @@ export default function TaskCreateModal({
             mode="add"
             title={title || 'New event'}
             eyebrow="EVENT"
-            accent="#7C70F4"
-            accentSoft="#FAF9FF"
+            accent="#9ECFFB"
+            accentSoft="#F0F8FF"
             HeroIcon={Calendar}
             onClose={handleDismiss}
             shellStyle={styles.modalShell}
             contentContainerStyle={styles.bodyContent}
             bodyStyle={styles.shellBody}
+            disableShellScroll
             footer={(
               <ModalFooter
                 mode="add"
@@ -2942,12 +2943,26 @@ export default function TaskCreateModal({
                 onBlockedPrimary={() => {
                   validateFields({ showBanner: true });
                 }}
-                accent="#7C70F4"
+                accent="#9ECFFB"
                 disabled={submitting}
                 visuallyDisabled={!isFormValid()}
                 loading={submitting}
               />
             )}
+          >
+          <ScrollView
+            style={styles.bodyScroll}
+            contentContainerStyle={styles.bodyScrollContent}
+            showsVerticalScrollIndicator={true}
+            nestedScrollEnabled={true}
+            {...(Platform.OS === 'web' && {
+              style: {
+                ...styles.bodyScroll,
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                WebkitOverflowScrolling: 'touch',
+              },
+            })}
           >
           {validationBanner ? (
             <View style={styles.validationBannerContainer}>
@@ -2986,20 +3001,6 @@ export default function TaskCreateModal({
             <Text style={styles.errorText}>{validationErrors.title}</Text>
           )}
 
-          <ScrollView
-            style={styles.bodyScroll}
-            contentContainerStyle={styles.bodyScrollContent}
-            showsVerticalScrollIndicator={true}
-            nestedScrollEnabled={true}
-            {...(Platform.OS === 'web' && {
-              style: {
-                ...styles.bodyScroll,
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                WebkitOverflowScrolling: 'touch',
-              },
-            })}
-          >
           {/* Event Type - at top above Schedule on calendar/backlog */}
           <SafeFieldRow style={[styles.fieldRow, { marginTop: 12, marginBottom: 8 }]}>
             <View style={styles.field}>
@@ -3679,125 +3680,94 @@ export default function TaskCreateModal({
                 ) : null}
                 {isRecurring && showRecurringSection && (
                   <View style={styles.recurringSectionContent}>
-                    <View style={recurrenceType === 'weekly' ? styles.recurrenceTopRow : null}>
-                      <View
-                        style={[
-                          { marginBottom: 14 },
-                          recurrenceType === 'weekly' && styles.recurrenceTopColumn,
-                        ]}
-                      >
-                        <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Repeat pattern</Text>
-                        <ChipRow style={styles.dropdownRow}>
-                          <TouchableOpacity
-                            onPress={() => {
-                              setRecurrenceType('weekly');
-                              if (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0) {
-                                const defaultDay = dueDate instanceof Date ? dueDate.getDay() : new Date().getDay();
-                                setRecurrenceWeekdays([defaultDay]);
-                                setIsRecurrenceWeekdayAutofilled(true);
-                              }
-                              if (validationErrors.recurrenceWeekdays) {
-                                setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
-                              }
-                            }}
-                            style={[
-                              styles.dropdownOption,
-                              recurrenceType === 'weekly' && styles.dropdownOptionActive,
-                            ]}
-                          >
-                            <Text
+                    <View style={styles.repeatGrid}>
+                      <View style={[styles.repeatGroup, styles.repeatGroupPattern]}>
+                        <Text style={styles.recurrenceGroupLabel}>Repeat pattern</Text>
+                        <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
+                          {['daily', 'weekly', 'monthly'].map((type) => (
+                            <TouchableOpacity
+                              key={type}
+                              onPress={() => {
+                                setRecurrenceType(type);
+                                if (type === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
+                                  const defaultDay = dueDate instanceof Date ? dueDate.getDay() : new Date().getDay();
+                                  setRecurrenceWeekdays([defaultDay]);
+                                  setIsRecurrenceWeekdayAutofilled(true);
+                                }
+                                if (validationErrors.recurrenceWeekdays) {
+                                  setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
+                                }
+                              }}
                               style={[
-                                styles.dropdownOptionText,
-                                recurrenceType === 'weekly' && styles.dropdownOptionTextActive,
+                                styles.dropdownOption,
+                                recurrenceType === type && styles.dropdownOptionActive,
                               ]}
                             >
-                              Weekly
-                            </Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={() => {
-                              setRecurrenceType('monthly');
-                              if (validationErrors.recurrenceWeekdays) {
-                                setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
-                              }
-                            }}
-                            style={[
-                              styles.dropdownOption,
-                              recurrenceType === 'monthly' && styles.dropdownOptionActive,
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.dropdownOptionText,
-                                recurrenceType === 'monthly' && styles.dropdownOptionTextActive,
-                              ]}
-                            >
-                              Monthly
-                            </Text>
-                          </TouchableOpacity>
+                              <Text
+                                style={[
+                                  styles.dropdownOptionText,
+                                  recurrenceType === type && styles.dropdownOptionTextActive,
+                                ]}
+                              >
+                                {type.charAt(0).toUpperCase() + type.slice(1)}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
                         </ChipRow>
                       </View>
-                      {recurrenceType === 'weekly' && (
-                        <View style={[{ marginBottom: 14 }, styles.recurrenceTopColumn]}>
-                          <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Repeats on</Text>
-                          <ChipRow style={styles.dropdownRow}>
-                            {WEEKDAY_OPTIONS.map((day) => {
-                              const selected = recurrenceWeekdays.includes(day.value);
-                              return (
-                                <TouchableOpacity
-                                  key={day.value}
-                                  onPress={() => {
-                                    setRecurrenceWeekdays((prev) => {
-                                      const next = Array.isArray(prev) ? [...prev] : [];
-                                      const idx = next.indexOf(day.value);
-                                      if (idx >= 0) {
-                                        next.splice(idx, 1);
-                                      } else {
-                                        next.push(day.value);
+                      <View style={[styles.repeatGroup, styles.repeatGroupDays]}>
+                        <Text style={styles.recurrenceGroupLabel}>Repeats on</Text>
+                        {recurrenceType === 'weekly' ? (
+                          <>
+                            <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
+                              {WEEKDAY_OPTIONS.map((day) => {
+                                const isSelected = Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.includes(day.value);
+                                return (
+                                  <TouchableOpacity
+                                    key={day.value}
+                                    onPress={() => {
+                                      setRecurrenceWeekdays((prev) => {
+                                        const prevSafe = Array.isArray(prev) ? prev : [];
+                                        if (prevSafe.includes(day.value)) {
+                                          return prevSafe.filter((value) => value !== day.value);
+                                        }
+                                        return [...prevSafe, day.value];
+                                      });
+                                      setIsRecurrenceWeekdayAutofilled(false);
+                                      if (validationErrors.recurrenceWeekdays) {
+                                        setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
                                       }
-                                      return next.sort((a, b) => a - b);
-                                    });
-                                    setIsRecurrenceWeekdayAutofilled(false);
-                                    if (validationErrors.recurrenceWeekdays) {
-                                      setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
-                                    }
-                                  }}
-                                  style={[
-                                    styles.dropdownOption,
-                                    selected && styles.dropdownOptionActive,
-                                  ]}
-                                >
-                                  <Text
+                                    }}
                                     style={[
-                                      styles.dropdownOptionText,
-                                      selected && styles.dropdownOptionTextActive,
+                                      styles.dropdownOption,
+                                      isSelected && styles.dropdownOptionActive,
                                     ]}
                                   >
-                                    {day.label}
-                                  </Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </ChipRow>
-                          {validationErrors.recurrenceWeekdays ? (
-                            <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceWeekdays}</Text>
-                          ) : null}
-                        </View>
-                      )}
-                    </View>
-                    <View
-                      style={[
-                        recurrenceEndType !== 'never' && styles.recurrenceEndsRow,
-                      ]}
-                    >
-                      <View
-                        style={[
-                          { marginBottom: 8 },
-                          recurrenceEndType !== 'never' && styles.recurrenceEndsControl,
-                        ]}
-                      >
-                        <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Ends</Text>
-                        <ChipRow style={styles.dropdownRow}>
+                                    <Text
+                                      style={[
+                                        styles.dropdownOptionText,
+                                        isSelected && styles.dropdownOptionTextActive,
+                                      ]}
+                                    >
+                                      {day.label}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </ChipRow>
+                            {validationErrors.recurrenceWeekdays ? (
+                              <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.recurrenceWeekdays}</Text>
+                            ) : null}
+                          </>
+                        ) : (
+                          <View style={styles.repeatDisabledHintWrap}>
+                            <Text style={styles.fieldHelpText}>Used for weekly repeats.</Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={[styles.repeatGroup, styles.repeatGroupEnds]}>
+                        <Text style={styles.recurrenceGroupLabel}>Ends</Text>
+                        <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
                           {['never', 'after', 'on'].map((endType) => (
                             <TouchableOpacity
                               key={endType}
@@ -3824,98 +3794,94 @@ export default function TaskCreateModal({
                           ))}
                         </ChipRow>
                       </View>
-                      {recurrenceEndType === 'after' ? (
-                        <View style={[{ marginBottom: 8, maxWidth: 220 }, styles.recurrenceEndsInputWrap]}>
-                          <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Number of occurrences</Text>
-                          <TextInput
-                            style={[
-                              styles.input,
-                              {
+                      {recurrenceEndType !== 'never' ? (
+                        <View style={[styles.repeatGroup, styles.repeatGroupEndInput]}>
+                          <Text style={styles.recurrenceGroupLabel}>
+                            {recurrenceEndType === 'after' ? 'Occurrences' : 'End date'}
+                          </Text>
+                          {recurrenceEndType === 'after' ? (
+                            <TextInput
+                              style={{
+                                borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? 1.5 : 1,
+                                borderColor:
+                                  validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? '#ef4444' : CHIP_BORDER,
+                                borderRadius: 999,
                                 width: 116,
                                 marginBottom: 0,
                                 paddingVertical: 0,
                                 paddingHorizontal: 14,
                                 height: 36,
-                                borderRadius: 999,
+                                color: FG,
                                 backgroundColor: '#FFFFFF',
-                              },
-                              validationErrors.recurrenceEnd && recurrenceEndType === 'after' && {
-                                borderColor: '#ef4444',
-                                borderWidth: 1.5,
-                              },
-                            ]}
-                            value={recurrenceEndAfterText}
-                            onChangeText={(text) => {
-                              if (validationErrors.recurrenceEnd) {
-                                setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
-                              }
-                              if (text === '' || /^\d+$/.test(text)) {
-                                setRecurrenceEndAfterText(text);
-                                const num = parseInt(text, 10);
-                                if (!isNaN(num) && num > 0) {
+                                fontSize: 12,
+                              }}
+                              value={recurrenceEndAfterText}
+                              onChangeText={(text) => {
+                                if (validationErrors.recurrenceEnd) {
+                                  setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                                }
+                                if (text === '' || /^\d+$/.test(text)) {
+                                  setRecurrenceEndAfterText(text);
+                                  const num = parseInt(text, 10);
+                                  if (!isNaN(num) && num > 0) {
+                                    setRecurrenceEndAfter(num);
+                                  }
+                                }
+                              }}
+                              onBlur={() => {
+                                const num = parseInt(recurrenceEndAfterText, 10);
+                                if (isNaN(num) || num <= 0) {
+                                  setRecurrenceEndAfterText('');
+                                  setRecurrenceEndAfter(null);
+                                } else {
+                                  setRecurrenceEndAfterText(num.toString());
                                   setRecurrenceEndAfter(num);
                                 }
-                              }
-                            }}
-                            onBlur={() => {
-                              const num = parseInt(recurrenceEndAfterText, 10);
-                              if (isNaN(num) || num <= 0) {
-                                setRecurrenceEndAfterText('');
-                                setRecurrenceEndAfter(null);
-                              } else {
-                                setRecurrenceEndAfterText(num.toString());
-                                setRecurrenceEndAfter(num);
-                              }
-                            }}
-                            keyboardType="numeric"
-                          />
-                        </View>
-                      ) : null}
-                      {recurrenceEndType === 'on' ? (
-                        <View style={[{ marginBottom: 8, maxWidth: 240 }, styles.recurrenceEndsInputWrap]}>
-                          <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>End date</Text>
-                          <TouchableOpacity
-                            style={[
-                              styles.input,
-                              {
+                              }}
+                              keyboardType="numeric"
+                              placeholder="e.g. 10"
+                              placeholderTextColor={MUTED}
+                            />
+                          ) : (
+                            <TouchableOpacity
+                              style={{
+                                borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? 1.5 : 1,
+                                borderColor:
+                                  validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? '#ef4444' : CHIP_BORDER,
+                                borderRadius: 999,
                                 marginBottom: 0,
                                 paddingVertical: 0,
                                 paddingHorizontal: 14,
                                 height: 36,
-                                borderRadius: 999,
                                 justifyContent: 'center',
                                 backgroundColor: '#FFFFFF',
                                 width: '100%',
                                 maxWidth: 220,
-                              },
-                              validationErrors.recurrenceEnd && recurrenceEndType === 'on' && {
-                                borderColor: '#ef4444',
-                                borderWidth: 1.5,
-                              },
-                            ]}
-                            onPress={() => {
-                              if (validationErrors.recurrenceEnd) {
-                                setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
-                              }
-                              if (recurrenceEndDate) {
-                                setEndDateCalendarViewMonth(new Date(recurrenceEndDate));
-                              } else {
-                                const endDate = new Date(dueDate);
-                                endDate.setDate(endDate.getDate() + 30);
-                                setEndDateCalendarViewMonth(endDate);
-                              }
-                              setShowEndDateCalendarPicker(true);
-                            }}
-                          >
-                            <Text style={{ color: recurrenceEndDate ? FG : MUTED }}>
-                              {recurrenceEndDate ? fmt(recurrenceEndDate) : 'Select end date'}
-                            </Text>
-                          </TouchableOpacity>
+                              }}
+                              onPress={() => {
+                                if (validationErrors.recurrenceEnd) {
+                                  setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                                }
+                                if (recurrenceEndDate) {
+                                  setEndDateCalendarViewMonth(new Date(recurrenceEndDate));
+                                } else {
+                                  const endDate = new Date(dueDate);
+                                  endDate.setDate(endDate.getDate() + 30);
+                                  setEndDateCalendarViewMonth(endDate);
+                                }
+                                setShowEndDateCalendarPicker(true);
+                              }}
+                            >
+                              <Text style={{ color: recurrenceEndDate ? FG : MUTED, fontSize: 12 }}>
+                                {recurrenceEndDate ? fmt(recurrenceEndDate) : 'Select end date'}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
                         </View>
                       ) : null}
                     </View>
                     {validationErrors.recurrenceEnd ? (
-                      <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceEnd}</Text>
+                      <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.recurrenceEnd}</Text>
                     ) : null}
                   </View>
                 )}
@@ -3930,7 +3896,7 @@ export default function TaskCreateModal({
               subtitle="Scheduling and grading context"
               expanded={showAcademicDetails}
               onPress={() => setShowAcademicDetails(!showAcademicDetails)}
-              accent="#7C70F4"
+              accent="#9ECFFB"
             >
                 <SafeView>
               <SafeFieldRow style={[styles.fieldRow, styles.learningRow]}>
@@ -4308,7 +4274,7 @@ export default function TaskCreateModal({
               subtitle="Anything else to remember"
               expanded={showNotesSection}
               onPress={() => setShowNotesSection(!showNotesSection)}
-              accent="#7C70F4"
+              accent="#9ECFFB"
             >
                 <View style={{ marginTop: 2 }}>
                   <Text style={styles.fieldLabel}>Notes</Text>
@@ -5905,6 +5871,53 @@ const styles = StyleSheet.create({
   recurringSectionContent: {
     marginTop: 8,
     paddingTop: 0,
+  },
+  repeatGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 24,
+    alignItems: 'flex-start',
+    ...(Platform.OS === 'web' && {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1.7fr 1fr 1.4fr',
+      gap: 24,
+      alignItems: 'start',
+    }),
+  },
+  repeatGroup: {
+    minWidth: 180,
+    marginBottom: 8,
+  },
+  repeatGroupPattern: {
+    flex: 1,
+    minWidth: 170,
+  },
+  repeatGroupDays: {
+    flex: 1.7,
+    minWidth: 250,
+  },
+  repeatGroupEnds: {
+    flex: 1,
+    minWidth: 170,
+  },
+  repeatGroupEndInput: {
+    flex: 0.7,
+    minWidth: 110,
+    maxWidth: 130,
+  },
+  repeatDisabledHintWrap: {
+    minHeight: 36,
+    justifyContent: 'center',
+  },
+  recurrenceGroupLabel: {
+    color: SUB,
+    fontSize: 12,
+    marginBottom: 8,
+    fontWeight: '500',
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   recurrenceTopRow: {
     ...(Platform.OS === 'web' && {

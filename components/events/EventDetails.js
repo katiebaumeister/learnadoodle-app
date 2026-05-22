@@ -5574,160 +5574,164 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 </View>
                 {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
               </View>
-              <View style={[styles.timeField, styles.timeFieldCompact]}>
-                <Text style={styles.timeLabel}>Start</Text>
-                {Platform.OS === 'web' ? (
-                  <input
-                    type="time"
-                    placeholder="Optional"
-                    value={startTime ? (() => {
-                      const parts = parseTimeString(startTime);
-                      if (parts) {
-                        return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                      }
-                      return '';
-                    })() : ''}
-                    onChange={(e) => {
-                      const [hours, minutes] = e.target.value.split(':').map(Number);
-                      if (!isNaN(hours) && !isNaN(minutes)) {
-                        const hour12 = hours % 12 || 12;
-                        const period = hours >= 12 ? 'PM' : 'AM';
-                        const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+              <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
+                <View style={[styles.timeField, styles.timeFieldCompact]}>
+                  <Text style={styles.timeLabel}>Start</Text>
+                  {Platform.OS === 'web' ? (
+                    <input
+                      type="time"
+                      placeholder="Optional"
+                      value={startTime ? (() => {
+                        const parts = parseTimeString(startTime);
+                        if (parts) {
+                          return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
+                        }
+                        return '';
+                      })() : ''}
+                      onChange={(e) => {
+                        const [hours, minutes] = e.target.value.split(':').map(Number);
+                        if (!isNaN(hours) && !isNaN(minutes)) {
+                          const hour12 = hours % 12 || 12;
+                          const period = hours >= 12 ? 'PM' : 'AM';
+                          const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                          setStartTime(formatted);
+                          setDraftStartTime(formatted);
+                          if (validationErrors.time) {
+                            setValidationErrors({ ...validationErrors, time: null });
+                          }
+                        }
+                      }}
+                      disabled={allDay}
+                      style={{
+                        backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
+                        borderRadius: 14,
+                        paddingTop: 10,
+                        paddingBottom: 10,
+                        paddingLeft: 12,
+                        paddingRight: 12,
+                        borderWidth: 1,
+                        borderColor: validationErrors.time ? '#ef4444' : BORDER,
+                        borderStyle: 'solid',
+                        fontSize: 14,
+                        color: allDay ? MUTED : FG,
+                        width: '100%',
+                        maxWidth: 100,
+                        height: 'auto',
+                        outline: 'none',
+                        opacity: allDay ? 0.9 : 1,
+                        ...(validationErrors.time && {
+                          borderColor: '#ef4444',
+                        }),
+                      }}
+                    />
+                  ) : (
+                    <TextInput
+                      placeholder="Optional"
+                      placeholderTextColor={MUTED}
+                      value={startTime}
+                      onChangeText={(text) => {
+                        const formatted = formatTimeInput(text);
                         setStartTime(formatted);
                         setDraftStartTime(formatted);
                         if (validationErrors.time) {
                           setValidationErrors({ ...validationErrors, time: null });
                         }
-                      }
-                    }}
-                    disabled={allDay}
-                    style={{
-                      backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
-                      borderRadius: 14,
-                      paddingTop: 0,
-                      paddingBottom: 0,
-                      paddingLeft: 12,
-                      paddingRight: 12,
-                      borderWidth: 1,
-                      borderColor: validationErrors.time ? '#ef4444' : '#e5e7eb',
-                      borderStyle: 'solid',
-                      fontSize: 14,
-                      color: allDay ? MUTED : '#111827',
-                      width: '100%',
-                      height: 40,
-                      outline: 'none',
-                      opacity: allDay ? 0.9 : 1,
-                      ...(validationErrors.time && {
-                        borderColor: '#ef4444',
-                      }),
-                    }}
-                  />
-                ) : (
-                  <TextInput
-                    placeholder="Optional"
-                    placeholderTextColor={MUTED}
-                    value={startTime}
-                    onChangeText={(text) => {
-                      const formatted = formatTimeInput(text);
-                      setStartTime(formatted);
-                      setDraftStartTime(formatted);
-                      if (validationErrors.time) {
-                        setValidationErrors({ ...validationErrors, time: null });
-                      }
-                    }}
-                    style={[
-                      styles.timeInputEdit,
-                      allDay && styles.timeInputDisabled,
-                      validationErrors.time && styles.inputError,
-                    ]}
-                    editable={!allDay}
-                    autoCapitalize="characters"
-                  />
-                )}
-                {validationErrors.time && (
-                  <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
-                )}
-              </View>
-              <View style={[styles.timeField, styles.timeFieldCompact]}>
-                <Text style={styles.timeLabel}>End</Text>
-                {Platform.OS === 'web' ? (
-                  <input
-                    type="time"
-                    value={endTime ? (() => {
-                      const parts = parseTimeString(endTime);
-                      if (parts) {
-                        return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                      }
-                      return '';
-                    })() : ''}
-                    onChange={(e) => {
-                      const [hours, minutes] = e.target.value.split(':').map(Number);
-                      if (!isNaN(hours) && !isNaN(minutes)) {
-                        const hour12 = hours % 12 || 12;
-                        const period = hours >= 12 ? 'PM' : 'AM';
-                        const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                      }}
+                      style={[
+                        styles.timeInputEdit,
+                        allDay && styles.timeInputDisabled,
+                        validationErrors.time && styles.inputError,
+                      ]}
+                      editable={!allDay}
+                      autoCapitalize="characters"
+                    />
+                  )}
+                  {validationErrors.time && (
+                    <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
+                  )}
+                </View>
+                <View style={[styles.timeField, styles.timeFieldCompact]}>
+                  <Text style={styles.timeLabel}>End</Text>
+                  {Platform.OS === 'web' ? (
+                    <input
+                      type="time"
+                      value={endTime ? (() => {
+                        const parts = parseTimeString(endTime);
+                        if (parts) {
+                          return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
+                        }
+                        return '';
+                      })() : ''}
+                      onChange={(e) => {
+                        const [hours, minutes] = e.target.value.split(':').map(Number);
+                        if (!isNaN(hours) && !isNaN(minutes)) {
+                          const hour12 = hours % 12 || 12;
+                          const period = hours >= 12 ? 'PM' : 'AM';
+                          const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                          setEndTime(formatted);
+                          setDraftEndTime(formatted);
+                        }
+                      }}
+                      disabled={allDay}
+                      style={{
+                        backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
+                        borderRadius: 14,
+                        paddingTop: 10,
+                        paddingBottom: 10,
+                        paddingLeft: 12,
+                        paddingRight: 12,
+                        borderWidth: 1,
+                        borderColor: BORDER,
+                        borderStyle: 'solid',
+                        fontSize: 14,
+                        color: allDay ? MUTED : FG,
+                        width: '100%',
+                        maxWidth: 100,
+                        height: 'auto',
+                        outline: 'none',
+                        opacity: allDay ? 0.9 : 1,
+                      }}
+                    />
+                  ) : (
+                    <TextInput
+                      placeholder="Optional"
+                      placeholderTextColor={MUTED}
+                      value={endTime}
+                      onChangeText={(text) => {
+                        const formatted = formatTimeInput(text);
                         setEndTime(formatted);
                         setDraftEndTime(formatted);
-                      }
-                    }}
-                    disabled={allDay}
-                    style={{
-                      backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
-                      borderRadius: 14,
-                      paddingTop: 0,
-                      paddingBottom: 0,
-                      paddingLeft: 12,
-                      paddingRight: 12,
-                      borderWidth: 1,
-                      borderColor: '#e5e7eb',
-                      borderStyle: 'solid',
-                      fontSize: 14,
-                      color: allDay ? MUTED : '#111827',
-                      width: '100%',
-                      height: 40,
-                      outline: 'none',
-                      opacity: allDay ? 0.9 : 1,
-                    }}
-                  />
-                ) : (
-                  <TextInput
-                    placeholder="Optional"
-                    placeholderTextColor={MUTED}
-                    value={endTime}
-                    onChangeText={(text) => {
-                      const formatted = formatTimeInput(text);
-                      setEndTime(formatted);
-                      setDraftEndTime(formatted);
-                    }}
-                    style={[styles.timeInputEdit, allDay && styles.timeInputDisabled]}
-                    editable={!allDay}
-                    autoCapitalize="characters"
-                  />
-                )}
-              </View>
-              <View style={[styles.inlineSwitchField, styles.inlineSwitchFieldStack]}>
-                <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>Repeat</Text>
-                <View style={styles.inlineSwitchControlWrap}>
-                  <Switch
-                    value={isRecurring}
-                    onValueChange={(value) => {
-                      setIsRecurring(value);
-                      if (value) {
-                        if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
-                          if (isClassDayEventType) {
-                            setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
-                          } else {
-                            const fallback = resolveWeekdayCodeFromEventOrDueDate(event, dueDate);
-                            setRecurrenceWeekdays([fallback]);
+                      }}
+                      style={[styles.timeInputEdit, allDay && styles.timeInputDisabled]}
+                      editable={!allDay}
+                      autoCapitalize="characters"
+                    />
+                  )}
+                </View>
+                <View style={[styles.inlineSwitchField, styles.inlineSwitchFieldStack]}>
+                  <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>Repeat</Text>
+                  <View style={styles.inlineSwitchControlWrap}>
+                    <Switch
+                      value={isRecurring}
+                      onValueChange={(value) => {
+                        setIsRecurring(value);
+                        if (value) {
+                          if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
+                            if (isClassDayEventType) {
+                              setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
+                            } else {
+                              const fallback = resolveWeekdayCodeFromEventOrDueDate(event, dueDate);
+                              setRecurrenceWeekdays([fallback]);
+                            }
                           }
+                        } else if (validationErrors.recurrenceEnd) {
+                          setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
                         }
-                      } else if (validationErrors.recurrenceEnd) {
-                        setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
-                      }
-                    }}
-                    trackColor={{ false: BORDER, true: '#AECBFA' }}
-                    thumbColor={isRecurring ? '#45A29E' : '#f9fafb'}
-                  />
+                      }}
+                      trackColor={{ false: BORDER, true: '#AECBFA' }}
+                      thumbColor={isRecurring ? '#45A29E' : '#f9fafb'}
+                    />
+                  </View>
                 </View>
               </View>
             </View>
@@ -5950,7 +5954,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           subtitle="Scheduling and grading context"
           expanded={showAcademicDetails}
           onPress={() => setShowAcademicDetails(!showAcademicDetails)}
-          accent="#7C70F4"
+          accent="#9ECFFB"
         >
           {/* Subject + Unit + Grade + % row */}
           <SafeFieldRow style={[styles.fieldRow, styles.learningRow]}>
@@ -6319,7 +6323,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           subtitle="Anything else to remember"
           expanded={showNotesSection}
           onPress={() => setShowNotesSection(!showNotesSection)}
-          accent="#7C70F4"
+          accent="#9ECFFB"
         >
           <View style={{ marginTop: 2 }}>
             <Text style={styles.fieldLabel}>Notes</Text>
@@ -8614,7 +8618,7 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#EEF0F5',
-    backgroundColor: '#FAF9FF',
+    backgroundColor: '#F0F8FF',
   },
   headerContent: {
     flexDirection: 'row',
@@ -8632,7 +8636,7 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 14,
     justifyContent: 'center',
-    backgroundColor: '#FAF9FF',
+    backgroundColor: '#F0F8FF',
   },
   headerBadge: {
     alignSelf: 'flex-start',
@@ -8646,7 +8650,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.4,
-    color: '#7C70F4',
+    color: '#85C4F2',
   },
   headerTitleLarge: {
     fontSize: 34,
@@ -8901,41 +8905,35 @@ const styles = StyleSheet.create({
   },
   learningRow: {
     alignItems: 'stretch',
-    gap: 4,
-    ...(Platform.OS === 'web' && {
-      display: 'grid',
-      gridTemplateColumns: 'minmax(130px, 180px) minmax(220px, 1fr) minmax(82px, 96px) minmax(82px, 96px)',
-      alignItems: 'stretch',
-    }),
+    ...(Platform.OS === 'web'
+      ? {
+          display: 'grid',
+          gridTemplateColumns: 'minmax(130px, 180px) minmax(220px, 1fr) minmax(82px, 96px) minmax(82px, 96px)',
+          gap: 4,
+        }
+      : {
+          flexWrap: 'wrap',
+        }),
   },
   learningRowLabel: {
     marginBottom: 6,
     minHeight: 16,
   },
   academicFieldSubject: {
-    flex: 1.2,
-    minWidth: 0,
-    maxWidth: 180,
-    width: '100%',
-    alignSelf: 'flex-start',
+    ...(Platform.OS === 'web'
+      ? { minWidth: 0, maxWidth: 180, width: '100%', alignSelf: 'flex-start' }
+      : { minWidth: '47%' }),
   },
   academicFieldUnit: {
-    flex: 1.6,
-    minWidth: 0,
+    ...(Platform.OS === 'web' ? { minWidth: 0 } : { minWidth: '47%' }),
   },
   academicFieldGrade: {
+    ...(Platform.OS === 'web' ? { minWidth: 0, maxWidth: 96, width: '100%', alignSelf: 'flex-start' } : { minWidth: '47%' }),
     flex: 0.5,
-    minWidth: 0,
-    maxWidth: 96,
-    width: '100%',
-    alignSelf: 'flex-start',
   },
   academicFieldPercent: {
+    ...(Platform.OS === 'web' ? { minWidth: 0, maxWidth: 96, width: '100%', alignSelf: 'flex-start' } : { minWidth: '47%' }),
     flex: 0.4,
-    minWidth: 0,
-    maxWidth: 96,
-    width: '100%',
-    alignSelf: 'flex-start',
   },
   academicFieldGradeStack: {
     flex: 0,
@@ -8953,12 +8951,13 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   academicSelect: {
-    width: '100%',
     minHeight: 40,
+    height: 40,
     borderRadius: 12,
-    paddingVertical: 0,
+    paddingVertical: 8,
   },
   academicInputCompact: {
+    minHeight: 40,
     height: 40,
     borderRadius: 12,
     width: 96,
@@ -8966,7 +8965,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingHorizontal: 8,
     marginBottom: 0,
-    paddingVertical: 0,
+    paddingVertical: 8,
   },
   fieldStretch: {
     flex: 1,
@@ -9723,7 +9722,7 @@ const styles = StyleSheet.create({
     }),
   },
   createButton: {
-    backgroundColor: '#7C70F4',
+    backgroundColor: '#9ECFFB',
     minHeight: 50,
     paddingVertical: 12,
     paddingHorizontal: 18,
@@ -9733,7 +9732,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 12px rgba(124,112,244,0.24)',
+      boxShadow: '0 4px 12px rgba(158,207,251,0.55)',
       cursor: 'pointer',
     }),
   },
@@ -9791,12 +9790,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 24,
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
     ...(Platform.OS === 'web' && {
       display: 'grid',
       gridTemplateColumns: '1fr 1.7fr 1fr 1.4fr',
       gap: 24,
-      alignItems: 'end',
+      alignItems: 'start',
     }),
   },
   repeatGridCompact: {

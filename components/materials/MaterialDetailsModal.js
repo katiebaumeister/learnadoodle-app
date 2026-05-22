@@ -23,8 +23,8 @@ const FG = '#111827';
 const SUB = '#6b7280';
 const MUTED = '#9ca3af';
 const BORDER = '#e5e7eb';
-const MATERIAL_ACCENT = '#EDBF7A';
-const MATERIAL_ACCENT_SOFT = '#FCF6EE';
+const MATERIAL_ACCENT = '#9ECFFB';
+const MATERIAL_ACCENT_SOFT = '#F0F8FF';
 
 export default function MaterialDetailsModal({
   visible,
@@ -166,7 +166,7 @@ export default function MaterialDetailsModal({
           <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
             {loading ? (
               <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.accent} />
+                <ActivityIndicator size="large" color={MATERIAL_ACCENT} />
                 <Text style={styles.loadingText}>Loading material details...</Text>
               </View>
             ) : (
@@ -289,7 +289,7 @@ export default function MaterialDetailsModal({
                                     }
                                   }}
                                 >
-                                  <ExternalLink size={16} color={colors.accent} />
+                                  <ExternalLink size={16} color={MATERIAL_ACCENT} />
                                   <Text style={styles.linkText}>Visit Provider</Text>
                                 </TouchableOpacity>
                               ) : (
@@ -527,7 +527,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#F3E2CD',
+    borderColor: '#DCECFB',
   },
   eyebrowText: {
     color: MATERIAL_ACCENT,
@@ -560,7 +560,7 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#F3E2CD',
+    borderColor: '#DCECFB',
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
@@ -674,7 +674,7 @@ const styles = StyleSheet.create({
   linkText: {
     fontSize: 14,
     fontWeight: '500',
-    color: colors.accent,
+    color: MATERIAL_ACCENT,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

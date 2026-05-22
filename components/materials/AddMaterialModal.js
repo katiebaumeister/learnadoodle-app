@@ -55,7 +55,7 @@ const FG = '#111827';
 const SUB = '#6b7280';
 const BORDER = '#e5e7eb';
 const MUTED = '#9ca3af';
-const ACCENT = '#d4a256';
+const ACCENT = '#9ECFFB';
 const CHIP_BG = '#f3f4f6';
 const CHIP_BORDER = '#e5e7eb';
 
@@ -1185,8 +1185,8 @@ export default function AddMaterialModal({
             mode={effectiveMaterial ? 'edit' : 'add'}
             title={effectiveMaterial ? title || 'Edit material' : 'Add material'}
             eyebrow="MATERIAL"
-            accent="#E39A4B"
-            accentSoft="#FFF7EE"
+            accent="#9ECFFB"
+            accentSoft="#F0F8FF"
             HeroIcon={Paperclip}
             onClose={handleDismiss}
             shellStyle={styles.shellAutoHeight}
@@ -1201,7 +1201,7 @@ export default function AddMaterialModal({
                 onDelete={effectiveMaterial && typeof onDelete === 'function' ? () => onDelete(effectiveMaterial) : undefined}
                 onPrimary={handleSave}
                 onBlockedPrimary={showBlockedSaveFeedback}
-                accent="#E39A4B"
+                accent="#9ECFFB"
                 disabled={loading || !isFormValid}
                 loading={loading}
               />
@@ -1292,7 +1292,7 @@ export default function AddMaterialModal({
             {children.length > 0 && (
               <View style={styles.fieldRow}>
                 <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Children (optional)</Text>
+                  <Text style={styles.fieldLabel}>Children</Text>
                   <View style={styles.dropdownContainer}>
                     <View style={styles.dropdownRow}>
                       {children.map((child) => {
@@ -1331,7 +1331,7 @@ export default function AddMaterialModal({
             {/* Subject - Chip Selection */}
             <View style={styles.fieldRow}>
               <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Subject (optional)</Text>
+                <Text style={styles.fieldLabel}>Subject</Text>
                 {loadingSubjects ? (
                   <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 8 }} />
                 ) : subjectsForPicker.length > 0 ? (
@@ -1369,25 +1369,20 @@ export default function AddMaterialModal({
               </View>
             </View>
 
-            {/* Material Metadata Section */}
-            <Text style={[styles.metadataSectionTitle, styles.metadataSectionTitleAfterSubject]}>
-              Material Metadata (optional)
-            </Text>
-
             <ModalSectionCard
               Icon={Star}
               title="Rate and review material"
               subtitle="Difficulty, usefulness, and notes"
               expanded={showReviewInfo}
               onPress={() => setShowReviewInfo(!showReviewInfo)}
-              accent="#E39A4B"
+              accent="#9ECFFB"
             >
                 <View style={styles.sectionCardBody}>
                   {/* Select Child for Review */}
                   {children.length > 0 && (
                     <View style={styles.fieldRow}>
                       <View style={styles.field}>
-                        <Text style={styles.fieldLabel}>Child (optional)</Text>
+                        <Text style={styles.fieldLabel}>Child</Text>
                         <View style={styles.dropdownContainer}>
                           <View style={styles.dropdownRow}>
                             {children.map((child) => {
@@ -1420,7 +1415,7 @@ export default function AddMaterialModal({
                   {/* Rating */}
                   <View style={styles.fieldRow}>
                     <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Rating (1-5) (optional)</Text>
+                      <Text style={styles.fieldLabel}>Rating (1-5)</Text>
                       <View style={styles.ratingContainer}>
                         {[1, 2, 3, 4, 5].map(num => (
                           <TouchableOpacity
@@ -1446,7 +1441,7 @@ export default function AddMaterialModal({
                   {/* Emotion */}
                   <View style={styles.fieldRow}>
                     <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Emotional Response (optional)</Text>
+                      <Text style={styles.fieldLabel}>Emotional Response</Text>
                       <View style={styles.emotionContainer}>
                         {EMOTIONS.map(em => (
                           <TouchableOpacity
@@ -1472,7 +1467,7 @@ export default function AddMaterialModal({
                   {/* Pacing */}
                   <View style={styles.fieldRow}>
                     <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Pacing Fit (optional)</Text>
+                      <Text style={styles.fieldLabel}>Pacing Fit</Text>
                       <View style={styles.pillsContainer}>
                         {PACING_OPTIONS.map(opt => (
                           <TouchableOpacity
@@ -1498,7 +1493,7 @@ export default function AddMaterialModal({
                   {/* Difficulty */}
                   <View style={styles.fieldRow}>
                     <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Difficulty Level (optional)</Text>
+                      <Text style={styles.fieldLabel}>Difficulty Level</Text>
                       <View style={styles.pillsContainer}>
                         {DIFFICULTY_OPTIONS.map(opt => (
                           <TouchableOpacity
@@ -1524,7 +1519,7 @@ export default function AddMaterialModal({
                   {/* Review Notes */}
                   <View style={styles.fieldRow}>
                     <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Notes (optional)</Text>
+                      <Text style={styles.fieldLabel}>Notes</Text>
                       <TextInput
                         style={[styles.input, styles.textArea]}
                         multiline
@@ -1994,8 +1989,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   checkboxChecked: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accent,
+    borderColor: ACCENT,
+    backgroundColor: ACCENT,
   },
   checkmark: {
     fontSize: 12,

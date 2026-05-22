@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput } from 'react-native';
-import { ChevronDown, ChevronUp, Trash2, CheckCircle, AlertTriangle, BookOpen, FileText } from 'lucide-react';
+import { ChevronDown, ChevronUp, Trash2, CheckCircle, AlertTriangle, BookOpen, FileText, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -115,6 +115,10 @@ export default function AddSubjectModal({
   const [logisticalMode, setLogisticalMode] = useState('');
   const [logisticalInstructor, setLogisticalInstructor] = useState('');
   const [connectedCalendarTargets, setConnectedCalendarTargets] = useState([]);
+  const [materials, setMaterials] = useState([]);
+  const [loadingMaterials, setLoadingMaterials] = useState(false);
+  const [showMaterialDropdown, setShowMaterialDropdown] = useState(false);
+  const [selectedMaterialId, setSelectedMaterialId] = useState(null);
   const [children, setChildren] = useState(propChildren || []);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -143,6 +147,7 @@ export default function AddSubjectModal({
   const draftSubjectIdRef = useRef(null);
   const [openingAddUnits, setOpeningAddUnits] = useState(false);
   const finalizedSubjectSaveRef = useRef(false);
+  const materialDropdownRef = useRef(null);
 
   useEffect(() => {
     draftSubjectIdRef.current = draftSubjectId || null;
@@ -182,6 +187,7 @@ export default function AddSubjectModal({
         setConnectedCalendarTargets(normalizeCalendarTargets(subject.connected_calendar_targets));
         setShowDangerZone(false);
         setConfirmDeleteSubjectName('');
+        setShowMaterialDropdown(false);
         // Child IDs will be set in the next useEffect after children load
         // Load events for this subject
         loadSubjectEvents(subject.id);
@@ -196,6 +202,8 @@ export default function AddSubjectModal({
         setLogisticalMode('');
         setLogisticalInstructor('');
         setConnectedCalendarTargets([]);
+        setSelectedMaterialId(null);
+        setShowMaterialDropdown(false);
         if (defaultSubjectName) {
           setSubjectName(defaultSubjectName);
         }
@@ -229,6 +237,8 @@ export default function AddSubjectModal({
       setShowAdditionalNotesAccordion(false);
       setDraftSubjectId(null);
       setOpeningAddUnits(false);
+      setShowMaterialDropdown(false);
+      setSelectedMaterialId(null);
     }
   }, [visible, defaultChildId, defaultChildIds, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject]);
 
@@ -444,6 +454,54 @@ export default function AddSubjectModal({
       setSubjectEvents([]);
     }
   };
+
+  const fetchMaterials = useCallback(async () => {
+    if (!familyId) {
+      setMaterials([]);
+      return;
+    }
+    try {
+      setLoadingMaterials(true);
+      const { data, error } = await supabase
+        .from('materials')
+        .select('id, title, provider_name, subject_id, created_at')
+        .eq('family_id', familyId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setMaterials(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.warn('Error loading materials for subject attachment:', e);
+      setMaterials([]);
+    } finally {
+      setLoadingMaterials(false);
+    }
+  }, [familyId]);
+
+  useEffect(() => {
+    if (!visible) return;
+    fetchMaterials();
+  }, [visible, fetchMaterials]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !visible) return;
+    const onRefresh = () => fetchMaterials();
+    window.addEventListener('refreshMaterials', onRefresh);
+    return () => window.removeEventListener('refreshMaterials', onRefresh);
+  }, [visible, fetchMaterials]);
+
+  useEffect(() => {
+    if (!visible || !subject?.id || selectedMaterialId) return;
+    const existingLinked = materials.find((m) => String(m?.subject_id || '') === String(subject.id));
+    if (existingLinked?.id) {
+      setSelectedMaterialId(existingLinked.id);
+    }
+  }, [visible, subject?.id, materials, selectedMaterialId]);
+
+  const selectedMaterial = useMemo(
+    () => materials.find((m) => String(m?.id || '') === String(selectedMaterialId || '')) || null,
+    [materials, selectedMaterialId]
+  );
 
   const loadSubjectCurriculum = useCallback(async (subjectId, academicYearIds = []) => {
     if (!subjectId || !familyId) return;
@@ -744,6 +802,20 @@ export default function AddSubjectModal({
         throw insertError;
       }
 
+      const savedSubjectId = newSubjects?.[0]?.id || effectiveSubjectId || null;
+      if (savedSubjectId && selectedMaterialId) {
+        try {
+          const { error: materialLinkError } = await supabase
+            .from('materials')
+            .update({ subject_id: savedSubjectId })
+            .eq('id', selectedMaterialId)
+            .eq('family_id', familyId);
+          if (materialLinkError) throw materialLinkError;
+        } catch (linkErr) {
+          console.warn('Failed to link selected material to subject:', linkErr);
+        }
+      }
+
       // Success
       finalizedSubjectSaveRef.current = true;
       const isEdit = !!(subject && subject.id);
@@ -820,10 +892,14 @@ export default function AddSubjectModal({
         <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalWrap}>
           <AppModalShell
             mode={subject ? 'edit' : 'add'}
-            title={subject ? subjectName || 'Edit subject' : 'New subject'}
+            title={
+              subject
+                ? (subjectName?.trim() || 'Edit subject')
+                : (subjectName?.trim() || 'New subject')
+            }
             eyebrow="SUBJECT"
-            accent="#45A29E"
-            accentSoft="#ECFDF5"
+            accent="#9ECFFB"
+            accentSoft="#F0F8FF"
             HeroIcon={BookOpen}
             onClose={handleCloseWithDraftCleanup}
             shellStyle={styles.compactSubjectShell}
@@ -836,7 +912,7 @@ export default function AddSubjectModal({
                 onCancel={handleCloseWithDraftCleanup}
                 onPrimary={handleSubmit}
                 onBlockedPrimary={handleBlockedSubmit}
-                accent="#45A29E"
+                accent="#9ECFFB"
                 disabled={!canSubmit || isSubmitting}
                 loading={isSubmitting}
               />
@@ -1054,11 +1130,12 @@ export default function AddSubjectModal({
             {/* Notes */}
             <ModalSectionCard
               Icon={FileText}
-              title="Notes"
-              subtitle="Anything extra for this subject"
+              title="Notes and attachments"
+              subtitle="Anything else to remember"
               expanded={showAdditionalNotesAccordion}
               onPress={() => setShowAdditionalNotesAccordion(!showAdditionalNotesAccordion)}
-              accent="#45A29E"
+              accent="#9ECFFB"
+              allowOverflow
             >
                 <View style={styles.accordionContent}>
                   <View style={styles.formGroup}>
@@ -1072,6 +1149,87 @@ export default function AddSubjectModal({
                       numberOfLines={3}
                       textAlignVertical="top"
                     />
+                  </View>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.label}>Attachments</Text>
+                    <View style={styles.materialSelectorContainer}>
+                      <View style={[styles.materialSelectorFieldWrap, showMaterialDropdown && styles.materialSelectorFieldWrapOpen]}>
+                        <TouchableOpacity
+                          style={styles.materialSelector}
+                          onPress={() => setShowMaterialDropdown((prev) => !prev)}
+                          activeOpacity={0.7}
+                        >
+                          <Text
+                            numberOfLines={1}
+                            style={[
+                              styles.materialSelectorText,
+                              !selectedMaterial && styles.materialSelectorPlaceholder,
+                            ]}
+                          >
+                            {selectedMaterial
+                              ? (selectedMaterial.title || selectedMaterial.provider_name || 'Untitled material')
+                              : (loadingMaterials ? 'Loading attachments...' : 'Select attachment...')}
+                          </Text>
+                          <ChevronDown size={16} color="#6b7280" />
+                        </TouchableOpacity>
+                        {showMaterialDropdown && (
+                          <View ref={materialDropdownRef} style={styles.materialDropdownList}>
+                            <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
+                              <TouchableOpacity
+                                style={[styles.dropdownOption, !selectedMaterialId && styles.dropdownOptionSelected]}
+                                onPress={() => {
+                                  setSelectedMaterialId(null);
+                                  setShowMaterialDropdown(false);
+                                }}
+                                activeOpacity={0.7}
+                              >
+                                <Text style={[styles.dropdownOptionText, !selectedMaterialId && styles.dropdownOptionTextSelected]}>
+                                  None
+                                </Text>
+                              </TouchableOpacity>
+                              {materials.map((material) => {
+                                const isSelected = String(selectedMaterialId || '') === String(material.id);
+                                return (
+                                  <TouchableOpacity
+                                    key={material.id}
+                                    style={[styles.dropdownOption, isSelected && styles.dropdownOptionSelected]}
+                                    onPress={() => {
+                                      setSelectedMaterialId(material.id);
+                                      setShowMaterialDropdown(false);
+                                    }}
+                                    activeOpacity={0.7}
+                                  >
+                                    <Text style={[styles.dropdownOptionText, isSelected && styles.dropdownOptionTextSelected]}>
+                                      {material.title || material.provider_name || 'Untitled material'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </ScrollView>
+                          </View>
+                        )}
+                      </View>
+                      <TouchableOpacity
+                        style={styles.addMaterialButton}
+                        onPress={() => {
+                          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                            window.dispatchEvent(
+                              new CustomEvent('openAddMaterialModal', {
+                                detail: {
+                                  subjectId: effectiveSubjectId || null,
+                                  subjectName: subjectName?.trim() || subject?.name || null,
+                                  childIds: selectedChildIds,
+                                },
+                              })
+                            );
+                          }
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Plus size={14} color="#6BB3E8" />
+                        <Text style={styles.addMaterialText}>Add New</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
             </ModalSectionCard>
@@ -1339,8 +1497,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   logisticsChipActive: {
-    borderColor: '#45A29E',
-    backgroundColor: 'rgba(69, 162, 158, 0.18)',
+    borderColor: '#85C4F2',
+    backgroundColor: 'rgba(133, 196, 242, 0.2)',
   },
   logisticsChipText: {
     fontSize: 13,
@@ -1348,7 +1506,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   logisticsChipTextActive: {
-    color: '#45A29E',
+    color: '#6BB3E8',
     fontWeight: '700',
   },
   calendarChipContent: {
@@ -1383,7 +1541,7 @@ const styles = StyleSheet.create({
   addUnitsLink: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#45A29E',
+    color: '#6BB3E8',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       textDecorationLine: 'underline',
@@ -1468,7 +1626,7 @@ const styles = StyleSheet.create({
     }),
   },
   subjectNameInputFocused: {
-    borderColor: '#45A29E',
+    borderColor: '#85C4F2',
     borderWidth: 1.5,
   },
   input: {
@@ -1543,14 +1701,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   dropdownOptionSelected: {
-    backgroundColor: 'rgba(69, 162, 158, 0.12)',
+    backgroundColor: 'rgba(133, 196, 242, 0.12)',
   },
   dropdownOptionText: {
     fontSize: 14,
     color: '#374151',
   },
   dropdownOptionTextSelected: {
-    color: colors.accent || '#45A29E',
+    color: '#6BB3E8',
     fontWeight: '600',
   },
   textArea: {
@@ -1584,8 +1742,8 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
   },
   childChipSelected: {
-    borderColor: '#45A29E',
-    backgroundColor: 'rgba(69, 162, 158, 0.18)',
+    borderColor: '#85C4F2',
+    backgroundColor: 'rgba(133, 196, 242, 0.2)',
   },
   childChipText: {
     fontSize: 12,
@@ -1596,7 +1754,7 @@ const styles = StyleSheet.create({
     }),
   },
   childChipTextSelected: {
-    color: '#45A29E',
+    color: '#6BB3E8',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -1615,8 +1773,8 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   gradeChipSelected: {
-    borderColor: '#45A29E',
-    backgroundColor: 'rgba(69, 162, 158, 0.18)',
+    borderColor: '#85C4F2',
+    backgroundColor: 'rgba(133, 196, 242, 0.2)',
   },
   gradeChipText: {
     fontSize: 12,
@@ -1627,7 +1785,7 @@ const styles = StyleSheet.create({
     }),
   },
   gradeChipTextSelected: {
-    color: '#45A29E',
+    color: '#6BB3E8',
     fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -1658,14 +1816,14 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   saveButton: {
-    backgroundColor: '#45A29E',
+    backgroundColor: '#9ECFFB',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',
     alignSelf: 'flex-end',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(69,162,158,0.28)',
+      boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
       cursor: 'pointer',
     }),
   },
@@ -1761,7 +1919,7 @@ const styles = StyleSheet.create({
   },
   addMaterialText: {
     fontSize: 13,
-    color: '#0f766e',
+    color: '#6BB3E8',
     fontWeight: '600',
   },
   eventManagementSection: {
@@ -1863,7 +2021,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 12,
     fontWeight: '600',
-    color: '#45A29E',
+    color: '#6BB3E8',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
