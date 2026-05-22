@@ -9686,8 +9686,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     borderRadius: 16,
     backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -9698,7 +9696,6 @@ const styles = StyleSheet.create({
   },
   deleteEventButtonDisabled: {
     backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
     ...(Platform.OS === 'web' && {
       cursor: 'not-allowed',
     }),
@@ -9751,7 +9748,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 12px rgba(158,207,251,0.55)',
       cursor: 'pointer',
     }),
   },

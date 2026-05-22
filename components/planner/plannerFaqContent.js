@@ -5,17 +5,17 @@ export const PLANNER_FAQ = [
   {
     id: 'pl-1',
     q: 'How does the planner work?',
-    a: 'Use Planner as your daily execution calendar: create, edit, move, and complete events there. Use Learning > Subjects > Schedule when you need to change recurring lesson cadence for a subject. Use Settings > Planning Preferences when you need family-wide defaults (total class days, date ranges, breaks/exclusions, and targets). In short: Planner handles daily action, Schedule handles recurring structure, and Planning Preferences handles global rules.',
+    a: 'Use Planner as your daily execution calendar: create, edit, move, and complete events there. Use Subjects > Schedule when you need to change recurring lesson cadence for a subject. Use Settings > Planning Preferences when you need family-wide defaults (total class days, date ranges, breaks/exclusions, and targets). In short: Planner handles daily action, Schedule handles recurring structure, and Planning Preferences handles global rules.',
   },
   {
     id: 'pl-2',
     q: 'When should I edit the schedule vs an event?',
-    a: 'Edit a single event when only one date needs a change (time, date, assignees, or type). Edit Learning > Subjects > Schedule when the pattern should change for future lessons. A helpful rule: if this is a temporary exception, edit the event in Planner; if this is your new normal, update Schedule.',
+    a: 'Edit a single event when only one date needs a change (time, date, assignees, or type). Edit Subjects > Schedule when the pattern should change for future lessons. A helpful rule: if this is a temporary exception, edit the event in Planner; if this is your new normal, update Schedule.',
   },
   {
     id: 'pl-3',
     q: 'What if schedules change?',
-    a: 'For immediate adjustments, open Planner and reschedule, skip, or edit the affected event. If the same change is likely to continue, open Learning > Subjects > Schedule and update the recurring cadence so future events stay aligned. Historical records, attendance, and completed items stay intact.',
+    a: 'For immediate adjustments, open Planner and reschedule, skip, or edit the affected event. If the same change is likely to continue, open Subjects > Schedule and update the recurring cadence so future events stay aligned. Historical records, attendance, and completed items stay intact.',
   },
   {
     id: 'pl-4',
@@ -25,17 +25,17 @@ export const PLANNER_FAQ = [
   {
     id: 'pl-5',
     q: 'How do I edit an event?',
-    a: 'In Planner, select the event and choose Edit Event. Update the date, time, event type, assigned learners, or notes, then save. This edit applies only to that event instance; if you intended to change future recurring lessons, use Learning > Subjects > Schedule instead.',
+    a: 'In Planner, select the event and choose Edit Event. Update the date, time, event type, assigned learners, or notes, then save. This edit applies only to that event instance; if you intended to change future recurring lessons, use Subjects > Schedule instead.',
   },
   {
     id: 'pl-6',
     q: 'How do I manage Schedule and Planning Preferences?',
-    a: 'Use this step-by-step path when settings feel buried: (1) open Learning, (2) choose the Subjects tab, (3) choose a subject, and (4) open Schedule to set that subject\'s recurring cadence and metrics. For family-wide rules, open Settings > Planning Preferences and set total class days, year boundaries, exclusions/breaks, and targets. Subject Schedule controls one subject; Planning Preferences controls household defaults.',
+    a: 'Use this step-by-step path when settings feel buried: (1) open the Subjects tab, (2) choose a subject, and (3) open Schedule to set that subject\'s recurring cadence and metrics. For family-wide rules, open Settings > Planning Preferences and set total class days, year boundaries, exclusions/breaks, and targets. Subject Schedule controls one subject; Planning Preferences controls household defaults.',
   },
   {
     id: 'pl-7',
     q: 'How do I add a one-off event from a subject?',
-    a: 'Go to Learning > Subjects, open the subject, then open Schedule. In the Actions area, choose Add event; the event composer opens with that subject preselected. Use this for exceptions, special sessions, or ad-hoc lessons without changing your recurring cadence.',
+    a: 'Go to the Subjects tab, open the subject, then open Schedule. In the Actions area, choose Add event; the event composer opens with that subject preselected. Use this for exceptions, special sessions, or ad-hoc lessons without changing your recurring cadence.',
   },
   {
     id: 'pl-9',

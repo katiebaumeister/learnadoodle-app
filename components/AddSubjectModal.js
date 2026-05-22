@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput } from 'react-native';
-import { ChevronDown, ChevronUp, Trash2, CheckCircle, AlertTriangle, BookOpen, FileText, Plus } from 'lucide-react';
+import { ChevronDown, CheckCircle, BookOpen, FileText, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -138,8 +138,6 @@ export default function AddSubjectModal({
 
   // Accordion state (all collapsed by default)
   const [showAdditionalNotesAccordion, setShowAdditionalNotesAccordion] = useState(false);
-  const [showDangerZone, setShowDangerZone] = useState(false);
-  const [confirmDeleteSubjectName, setConfirmDeleteSubjectName] = useState('');
   const [deletingSubject, setDeletingSubject] = useState(false);
   /** Add-mode draft subject persisted early so unit structure can be saved before final subject save. */
   const [draftSubjectId, setDraftSubjectId] = useState(null);
@@ -185,8 +183,6 @@ export default function AddSubjectModal({
         setLogisticalMode(subject.mode || '');
         setLogisticalInstructor(subject.instructor || '');
         setConnectedCalendarTargets(normalizeCalendarTargets(subject.connected_calendar_targets));
-        setShowDangerZone(false);
-        setConfirmDeleteSubjectName('');
         setShowMaterialDropdown(false);
         // Child IDs will be set in the next useEffect after children load
         // Load events for this subject
@@ -614,7 +610,7 @@ export default function AddSubjectModal({
   
   // Delete subject permanently (Danger Zone)
   const performDeleteSubject = async () => {
-    if (!subject || !subject.id || !familyId) return;
+    if (!subject || !subject.id || !familyId || deletingSubject) return;
     setDeletingSubject(true);
     try {
       const deletedName = subject.name || subjectName || 'Subject';
@@ -858,7 +854,7 @@ export default function AddSubjectModal({
     }
   };
 
-  const canSubmit = subjectName.trim().length > 0 && selectedChildIds.length > 0 && !isSubmitting;
+  const canSubmit = subjectName.trim().length > 0 && selectedChildIds.length > 0 && !isSubmitting && !deletingSubject;
 
   const handleBlockedSubmit = useCallback(() => {
     if (!subjectName.trim()) {
@@ -909,12 +905,14 @@ export default function AddSubjectModal({
               <ModalFooter
                 mode={subject ? 'edit' : 'add'}
                 primaryLabel={isSubmitting ? 'Saving...' : (subject ? 'Save changes' : 'Save Subject')}
+                destructiveLabel={subject?.id ? (deletingSubject ? 'Deleting...' : 'Delete subject') : undefined}
                 onCancel={handleCloseWithDraftCleanup}
+                onDelete={subject?.id ? performDeleteSubject : undefined}
                 onPrimary={handleSubmit}
                 onBlockedPrimary={handleBlockedSubmit}
                 accent="#9ECFFB"
                 disabled={!canSubmit || isSubmitting}
-                loading={isSubmitting}
+                loading={isSubmitting || deletingSubject}
               />
             )}
           >
@@ -1234,56 +1232,6 @@ export default function AddSubjectModal({
                 </View>
             </ModalSectionCard>
 
-            {/* Accordion E: Danger zone (edit mode only) */}
-            {subject && subject.id && (
-              <View style={styles.dangerZoneAccordion}>
-                <TouchableOpacity
-                  onPress={() => setShowDangerZone(!showDangerZone)}
-                  style={styles.dangerZoneHeader}
-                  activeOpacity={0.8}
-                >
-                  <View style={styles.dangerZoneHeaderLeft}>
-                    <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-                    <Text style={styles.dangerZoneTitle}>Danger zone</Text>
-                  </View>
-                  {showDangerZone ? <ChevronUp size={20} color={colors.redBold || '#dc2626'} /> : <ChevronDown size={20} color={colors.redBold || '#dc2626'} />}
-                </TouchableOpacity>
-                {showDangerZone && (
-                  <View style={styles.dangerZoneContent}>
-                    <View style={styles.dangerSection}>
-                      <Text style={styles.dangerSectionTitle}>Delete permanently</Text>
-                      <Text style={styles.dangerSectionDescription}>
-                        This removes the subject and all its events, materials, and syllabus data for{' '}
-                        <Text style={styles.dangerSectionBold}>{subjectName || subject.name || 'this subject'}</Text>. This cannot be undone.
-                      </Text>
-                      <Text style={styles.dangerInputLabel}>Type the subject name to confirm</Text>
-                      <TextInput
-                        style={styles.dangerInput}
-                        value={confirmDeleteSubjectName}
-                        onChangeText={setConfirmDeleteSubjectName}
-                        placeholder={subjectName || subject.name || ''}
-                        placeholderTextColor="#9ca3af"
-                        autoCapitalize="words"
-                      />
-                      <TouchableOpacity
-                        style={[
-                          styles.dangerDeleteButton,
-                          (confirmDeleteSubjectName.trim().toLowerCase() !== (subjectName || subject.name || '').trim().toLowerCase() || deletingSubject) && styles.dangerDeleteButtonDisabled,
-                        ]}
-                        onPress={performDeleteSubject}
-                        disabled={
-                          confirmDeleteSubjectName.trim().toLowerCase() !== (subjectName || subject.name || '').trim().toLowerCase() || deletingSubject
-                        }
-                      >
-                        <Text style={styles.dangerDeleteButtonText}>
-                          {deletingSubject ? 'Deleting...' : `Delete ${subjectName || subject.name || 'subject'}`}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-              </View>
-            )}
           </AppModalShell>
         </TouchableOpacity>
       </View>
@@ -2105,91 +2053,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  // Danger zone accordion
-  dangerZoneAccordion: {
-    marginTop: 0,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(220, 38, 38, 0.25)',
-    borderRadius: 12,
-    padding: 10,
-    backgroundColor: 'rgba(254, 242, 242, 0.5)',
-  },
-  dangerZoneHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  dangerZoneHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  dangerZoneTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.redBold || '#dc2626',
-  },
-  dangerZoneContent: {
-    marginTop: 12,
-  },
-  dangerSection: {
-    backgroundColor: colors.redSoft || '#fef2f2',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: (colors.redBold || '#dc2626') + '40',
-    padding: 16,
-  },
-  dangerSectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  dangerSectionDescription: {
-    fontSize: 12,
-    color: '#6b7280',
-    lineHeight: 18,
-    marginBottom: 12,
-  },
-  dangerSectionBold: {
-    fontWeight: '600',
-  },
-  dangerInputLabel: {
-    fontSize: 11,
-    color: '#6b7280',
-    marginBottom: 4,
-    marginTop: 8,
-  },
-  dangerInput: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 12,
-    color: '#111827',
-    backgroundColor: '#ffffff',
-    marginBottom: 12,
-  },
-  dangerDeleteButton: {
-    backgroundColor: colors.redBold || '#dc2626',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  dangerDeleteButtonDisabled: {
-    backgroundColor: colors.redSoft || '#fef2f2',
-    opacity: 0.5,
-  },
-  dangerDeleteButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#ffffff',
   },
 });
 

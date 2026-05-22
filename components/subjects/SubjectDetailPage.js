@@ -52,7 +52,8 @@ import { findAcademicYearPlanForSubject } from '../../lib/subjectPlanSlotLines';
 import { getSubjectProgressCache, mergeSubjectProgressCache } from '../../lib/subjectProgressPlanCache';
 import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import { createAttendanceLog, updateAttendanceLog, deleteAttendanceLog } from '../../lib/services/recordsClient';
-import { updateEventStatus } from '../../lib/services/attendanceClient';
+import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
+import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 import { applyToCalendar, getAcademicYear } from '../../lib/services/academicYearClient';
 import { getAcademicYearExclusions } from '../../lib/services/plannerSettingsClient';
 import {
@@ -2065,14 +2066,20 @@ export default function SubjectDetailPage({
       return a && (a.needHelp || a.needsSubmissionReview);
     });
   }, [isParentViewer, gradedItems, assignmentAttentionByEventId]);
+  const showAssignedToStudentButton = false;
 
   const handleOpenEventDetails = useCallback((eventId, initialEvent) => {
+    const subjectForEdit = subjectData?.subject || subject;
+    if (typeof onEditSubject === 'function' && subjectForEdit) {
+      onEditSubject(subjectForEdit);
+      return;
+    }
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('openEventModal', {
         detail: { eventId, initialEvent: initialEvent || null },
       }));
     }
-  }, []);
+  }, [subjectData?.subject, subject, onEditSubject]);
   const handleOpenAddEventForDate = useCallback((dateKey) => {
     const normKey = String(dateKey || '').slice(0, 10);
     if (!normKey || Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -2173,9 +2180,94 @@ export default function SubjectDetailPage({
   }, []);
 
   const runEventStatusBestEffort = useCallback(async (eventId, status) => {
-    // Disabled intentionally for attendance toggles: backend status endpoints are currently unstable
-    // and should not block or add noise to attendance interactions.
-    return null;
+    if (!eventId || !status) return null;
+    const normalizedEventId = cleanPlannerEventId(String(eventId).trim());
+    if (!normalizedEventId) return null;
+    const normalizedStatus = String(status).trim().toLowerCase();
+    try {
+      const result = normalizedStatus === 'done'
+        ? await completeEvent(normalizedEventId, null, { requirePersist: true })
+        : await updateEventStatus(normalizedEventId, normalizedStatus);
+      if (result?.error) {
+        const { error: directError } = await supabase
+          .from('events')
+          .update({ status: normalizedStatus })
+          .eq('id', normalizedEventId);
+        if (directError) {
+          console.warn('[SubjectDetailPage] Could not update event status:', result.error || directError);
+          return null;
+        }
+      }
+      return result?.data ?? null;
+    } catch (err) {
+      try {
+        const { error: directError } = await supabase
+          .from('events')
+          .update({ status: normalizedStatus })
+          .eq('id', normalizedEventId);
+        if (directError) {
+          console.warn('[SubjectDetailPage] Event status update failed:', err || directError);
+          return null;
+        }
+      } catch (directErr) {
+        console.warn('[SubjectDetailPage] Event status update failed:', directErr || err);
+        return null;
+      }
+      return null;
+    }
+  }, []);
+
+  const emitPlannerAttendanceSync = useCallback((patchedAttendances = [], dateKey = null) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const latestByEventId = new Map();
+    (Array.isArray(patchedAttendances) ? patchedAttendances : []).forEach((item) => {
+      const rawEventId = String(item?.eventId || '').trim();
+      if (!rawEventId) return;
+      const normalizedEventId = cleanPlannerEventId(rawEventId);
+      const normalized = String(item?.status || '').trim().toLowerCase();
+      const status =
+        normalized === 'completed' || normalized === 'present' || normalized === 'done'
+          ? 'done'
+          : 'scheduled';
+      latestByEventId.set(rawEventId, status);
+      if (normalizedEventId) latestByEventId.set(normalizedEventId, status);
+    });
+    try {
+      const debugItems = [...latestByEventId.entries()].map(([eventId, status]) => ({ eventId, status }));
+      console.debug('[AttendanceSync][SubjectDetail] Emitting eventAttendancePatched', {
+        dateKey: DATE_KEY_RE.test(String(dateKey || '').slice(0, 10)) ? String(dateKey).slice(0, 10) : null,
+        count: debugItems.length,
+        items: debugItems,
+      });
+    } catch (_) {
+      // no-op for debug logging
+    }
+    latestByEventId.forEach((status, eventId) => {
+      window.dispatchEvent(
+        new CustomEvent('eventAttendancePatched', {
+          detail: { eventId, status },
+        })
+      );
+    });
+    const parsedDate =
+      DATE_KEY_RE.test(String(dateKey || '').slice(0, 10))
+        ? new Date(`${String(dateKey).slice(0, 10)}T12:00:00`)
+        : null;
+    window.dispatchEvent(
+      new CustomEvent('refreshCalendar', {
+        detail: {
+          skipCacheClear: true,
+          forceInvalidate: true,
+          ...(parsedDate && !Number.isNaN(parsedDate.getTime())
+            ? {
+                targetYear: parsedDate.getFullYear(),
+                targetMonth: parsedDate.getMonth(),
+              }
+            : {}),
+        },
+      })
+    );
+    window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
   }, []);
 
   const applyOptimisticProgressByEventIds = useCallback((
@@ -2285,6 +2377,7 @@ export default function SubjectDetailPage({
       (r) => String(r?.event_id || '') === String(eventId) && String(r?.day_date || '').slice(0, 10) === normKey
     );
     const isMarkedPresent = uiDayRecordsForEvent.some((r) => String(r?.status || '').toLowerCase() === 'present');
+    let plannerPatchedAttendances = [];
 
     try {
       if (isMarkedPresent) {
@@ -2323,6 +2416,8 @@ export default function SubjectDetailPage({
             minutesByEventId: { [String(event.id)]: getEventMinutes(event) || 60 },
           },
         );
+        await runEventStatusBestEffort(event.id, 'scheduled');
+        plannerPatchedAttendances = [{ eventId: event.id, status: 'scheduled' }];
       } else {
         const siblings = getSiblingEventsOnDay(normKey, event, subjectEvents || []);
         const siblingIds = siblings
@@ -2366,10 +2461,12 @@ export default function SubjectDetailPage({
           await Promise.all(upserts);
           await runEventStatusBestEffort(sibling.id, 'done');
         }
+        plannerPatchedAttendances = siblingIds.map((id) => ({ eventId: id, status: 'done' }));
       }
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
+        emitPlannerAttendanceSync(plannerPatchedAttendances, normKey);
       }
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed toggling event attendance:', err);
@@ -2387,6 +2484,7 @@ export default function SubjectDetailPage({
     runAttendanceMutation,
     runEventStatusBestEffort,
     applyOptimisticProgressByEventIds,
+    emitPlannerAttendanceSync,
     loadSubjectDetail,
     toast,
   ]);
@@ -2396,6 +2494,7 @@ export default function SubjectDetailPage({
     const normKey = String(dateKey).slice(0, 10);
     const dayEvents = (subjectEvents || []).filter((event) => getEventDateKey(event) === normKey);
     if (!dayEvents.length) return;
+    let plannerPatchedAttendances = [];
     try {
       const dayEventIds = [];
       const minutesByEventId = {};
@@ -2437,16 +2536,21 @@ export default function SubjectDetailPage({
         await Promise.all(upserts);
         await runEventStatusBestEffort(event.id, 'done');
       }
+      plannerPatchedAttendances = dayEvents
+        .map((event) => event?.id)
+        .filter(Boolean)
+        .map((id) => ({ eventId: id, status: 'done' }));
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
+        emitPlannerAttendanceSync(plannerPatchedAttendances, normKey);
       }
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed marking day attended:', err);
       toast.push(err?.message || 'Could not mark day attended.', 'error');
       await loadSubjectDetail({ silent: true });
     }
-  }, [familyId, subjectEvents, getEventDateKey, resolveChildIdsForAttendanceEvent, getEventMinutes, attendanceRecords, runAttendanceMutation, runEventStatusBestEffort, applyOptimisticProgressByEventIds, loadSubjectDetail, toast]);
+  }, [familyId, subjectEvents, getEventDateKey, resolveChildIdsForAttendanceEvent, getEventMinutes, attendanceRecords, runAttendanceMutation, runEventStatusBestEffort, applyOptimisticProgressByEventIds, emitPlannerAttendanceSync, loadSubjectDetail, toast]);
 
   const pendingDayToggleKeysRef = useRef(new Set());
   const handleYearHeatmapDayPress = useCallback(async (dateKey) => {
@@ -2482,6 +2586,7 @@ export default function SubjectDetailPage({
         ...(children || []).map((child) => String(child?.id || '').trim()),
       ].filter(Boolean)),
     ];
+    let plannerPatchedAttendances = [];
 
     try {
       if (hasPresent) {
@@ -2541,6 +2646,7 @@ export default function SubjectDetailPage({
           );
         }
         applyOptimisticProgressByEventIds(toggledEventIds, false);
+        plannerPatchedAttendances = toggledEventIds.map((id) => ({ eventId: id, status: 'scheduled' }));
       } else {
         const toggledEventIds = [];
         if (dayEvents.length > 0) {
@@ -2619,10 +2725,12 @@ export default function SubjectDetailPage({
           );
         }
         applyOptimisticProgressByEventIds(toggledEventIds, true);
+        plannerPatchedAttendances = toggledEventIds.map((id) => ({ eventId: id, status: 'done' }));
       }
       await loadSubjectDetail({ silent: true });
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
+        emitPlannerAttendanceSync(plannerPatchedAttendances, normKey);
       }
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed toggling day attendance:', err);
@@ -2646,6 +2754,7 @@ export default function SubjectDetailPage({
     runAttendanceMutation,
     runEventStatusBestEffort,
     applyOptimisticProgressByEventIds,
+    emitPlannerAttendanceSync,
     loadSubjectDetail,
     toast,
     pendingDayToggleKeysRef,
@@ -3114,7 +3223,7 @@ export default function SubjectDetailPage({
             <View style={styles.gradesSectionTitleRow}>
               <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
               <View style={styles.gradesHeaderActions}>
-                {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
+                {showAssignedToStudentButton && isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
                   <TouchableOpacity
                     style={[styles.emptyStateButton, styles.gradesHeaderActionButton]}
                     onPress={() => setShowAssignedToStudentModal(true)}
@@ -3453,6 +3562,7 @@ export default function SubjectDetailPage({
         familyId={familyId}
         children={children}
         material={editingMaterial}
+        onDelete={handleDeleteMaterial}
         allSubjects={subject ? [subject] : []}
       />
       <RespondToHelpRequestModal

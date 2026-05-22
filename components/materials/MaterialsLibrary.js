@@ -1850,6 +1850,7 @@ export default function MaterialsLibrary({
         familyId={familyId}
         children={children}
         material={editingMaterial}
+        onDelete={handleDeleteFromDetails}
         allSubjects={subjects}
         connectedProviderIds={resolvedConnectedAccountProviders}
       />

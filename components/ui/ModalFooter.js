@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Check, Sparkles } from 'lucide-react';
+import { Check, Sparkles, Trash2 } from 'lucide-react';
 
 export function ModalFooter({
   mode = 'add',
@@ -27,8 +27,15 @@ export function ModalFooter({
           <Text style={styles.cancelButtonText}>Cancel</Text>
         </TouchableOpacity>
         {mode === 'edit' && !!destructiveLabel && (
-          <TouchableOpacity onPress={onDelete} disabled={loading}>
-            <Text style={styles.delete}>{destructiveLabel}</Text>
+          <TouchableOpacity
+            onPress={onDelete}
+            disabled={loading}
+            style={[styles.deleteButton, loading && styles.deleteButtonDisabled]}
+          >
+            <Trash2 size={17} color="#DC2626" />
+            <Text style={[styles.deleteButtonText, loading && styles.deleteButtonTextDisabled]}>
+              {destructiveLabel}
+            </Text>
           </TouchableOpacity>
         )}
 
@@ -73,7 +80,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   cancelButton: {
-    minHeight: 50,
+    height: 50,
     borderRadius: 16,
     paddingHorizontal: 28,
     backgroundColor: '#E5E7EB',
@@ -95,13 +102,33 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", sans-serif',
     }),
   },
-  delete: {
-    fontSize: 16,
+  deleteButton: {
+    height: 50,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    backgroundColor: '#FEF2F2',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  deleteButtonDisabled: {
+    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
+  },
+  deleteButtonText: {
+    color: '#B91C1C',
     fontWeight: '700',
-    color: '#69758A',
+    fontSize: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
+  },
+  deleteButtonTextDisabled: {
+    opacity: 0.8,
   },
   primary: {
-    minHeight: 50,
+    height: 50,
     borderRadius: 16,
     paddingHorizontal: 18,
     flexDirection: 'row',
@@ -113,6 +140,9 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 16,
     fontWeight: '800',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
 });
 

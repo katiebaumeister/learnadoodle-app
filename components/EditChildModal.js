@@ -604,6 +604,13 @@ export default function EditChildModal({
     (childInviteStatus === 'pending' && pendingInviteEmail && String(pendingInviteEmail).trim() !== '');
   const permissionDirty =
     normalizeChildProfile(childPermissionProfile) !== normalizeChildProfile(initialChildPermissionProfile);
+  const hasRequiredEditFields = useMemo(() => {
+    const nameOk = Boolean(String(initialData?.name || '').trim());
+    const ageOk = Boolean(String(initialData?.age || '').trim());
+    const gradeOk = Boolean(String(initialData?.grade || '').trim());
+    const avatarOk = Boolean(String(initialData?.avatar || '').trim());
+    return nameOk && ageOk && gradeOk && avatarOk;
+  }, [initialData?.name, initialData?.age, initialData?.grade, initialData?.avatar]);
 
   const savePermissionOnly = async () => {
     const effectiveFamilyId = familyId || fullChildData?.family_id || child?.family_id;
@@ -664,10 +671,14 @@ export default function EditChildModal({
                   }
                   if (permissionDirty) {
                     void savePermissionOnly();
+                    return;
+                  }
+                  if (hasRequiredEditFields && formRef.current?.submit) {
+                    formRef.current.submit();
                   }
                 }}
                 accent="#9ECFFB"
-                disabled={isSubmitting || (!formCanSubmit && !permissionDirty)}
+                disabled={isSubmitting || (!formCanSubmit && !permissionDirty && !hasRequiredEditFields)}
                 loading={isSubmitting}
               />
             )}
@@ -687,7 +698,7 @@ export default function EditChildModal({
                   submitting={isSubmitting}
                   onSubmit={handleSubmit}
                   onValidationChange={setFormCanSubmit}
-                  requireDirtyToSubmit
+                  requireDirtyToSubmit={false}
                 />
 
                 <View style={styles.accountSection}>

@@ -2580,6 +2580,21 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         normalized === 'completed' || normalized === 'present' || normalized === 'done'
           ? 'done'
           : 'scheduled';
+      try {
+        console.debug('[AttendanceSync][WebContent] Received eventAttendancePatched', {
+          rawEventId: String(rawEventId),
+          normalizedEventId: targetEventId,
+          requestedStatus: normalized,
+          appliedStatus: nextStatus,
+        });
+      } catch (_) {
+        // no-op for debug logging
+      }
+      if (nextStatus === 'done') {
+        attendanceMarkedDoneEventIdsRef.current.add(targetEventId);
+      } else {
+        attendanceMarkedDoneEventIdsRef.current.delete(targetEventId);
+      }
 
       setCalendarEvents((prev) => {
         if (!prev || typeof prev !== 'object') return prev;
@@ -2594,7 +2609,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             const evId = cleanPlannerEventId(String(ev?.id || ''));
             if (!evId || evId !== targetEventId) return ev;
             changed = true;
-            return { ...ev, status: nextStatus };
+            return {
+              ...ev,
+              status: nextStatus,
+              data: {
+                ...(ev?.data || {}),
+                status: nextStatus,
+              },
+            };
           });
           next[dateKey] = patchedDay;
         }
@@ -2620,7 +2642,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               const evId = cleanPlannerEventId(String(ev?.id || ''));
               if (!evId || evId !== targetEventId) return ev;
               changed = true;
-              return { ...ev, status: nextStatus };
+              return {
+                ...ev,
+                status: nextStatus,
+                data: {
+                  ...(ev?.data || {}),
+                  status: nextStatus,
+                },
+              };
             });
             nextMonth[dateKey] = patchedDay;
           }
@@ -2636,7 +2665,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           const evId = cleanPlannerEventId(String(ev?.id || ''));
           if (!evId || evId !== targetEventId) return ev;
           changed = true;
-          return { ...ev, status: nextStatus };
+          return {
+            ...ev,
+            status: nextStatus,
+            data: {
+              ...(ev?.data || {}),
+              status: nextStatus,
+            },
+          };
         });
         return changed ? { ...prev, learning: nextLearning } : prev;
       });
@@ -2662,7 +2698,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               const evId = cleanPlannerEventId(String(ev?.id || ''));
               if (!evId || evId !== targetEventId) return ev;
               changed = true;
-              return { ...ev, status: nextStatus };
+              return {
+                ...ev,
+                status: nextStatus,
+                data: {
+                  ...(ev?.data || {}),
+                  status: nextStatus,
+                },
+              };
             });
             if (!changed) return;
             localStorage.setItem(
@@ -2784,12 +2827,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           const dayEvents = eventsByDate[dateKey];
           const list = Array.isArray(dayEvents) ? dayEvents : (dayEvents && dayEvents.events ? dayEvents.events : []);
           (list || []).forEach((e) => {
-            const cleanId = cleanPlannerEventId(String(e?.id || ''));
+            const rawId = String(e?.id || '').trim();
+            const cleanId = cleanPlannerEventId(rawId);
+            if (rawId) monthEventIds.push(rawId);
             if (cleanId) monthEventIds.push(cleanId);
           });
         });
         const uniqueMonthEventIds = [...new Set(monthEventIds)];
         let attendedEventIds = new Set(attendanceMarkedDoneEventIdsRef.current || []);
+        const attendanceStateByEventId = new Map();
         const shouldQueryAttendanceRecords =
           uniqueMonthEventIds.length > 0 && (!background || attendedEventIds.size === 0);
         if (shouldQueryAttendanceRecords) {
@@ -2811,6 +2857,18 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               if (!attendanceError) break;
             }
             if (!attendanceError) {
+              (attendanceRows || []).forEach((row) => {
+                const normalizedEventId = cleanPlannerEventId(String(row?.event_id || ''));
+                if (!normalizedEventId) return;
+                const existing = attendanceStateByEventId.get(normalizedEventId) || { hasRows: false, hasPresent: false };
+                existing.hasRows = true;
+                const statusKey = String(row?.status || '').trim().toLowerCase();
+                const minutes = Number(row?.minutes ?? row?.minutes_present ?? 0);
+                if (statusKey === 'present' || statusKey === 'partial' || minutes > 0) {
+                  existing.hasPresent = true;
+                }
+                attendanceStateByEventId.set(normalizedEventId, existing);
+              });
               const fetchedAttendedEventIds = new Set(
                 (attendanceRows || [])
                   .filter((row) => {
@@ -2821,9 +2879,14 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   .map((row) => cleanPlannerEventId(String(row?.event_id || '')))
                   .filter(Boolean)
               );
-              if (fetchedAttendedEventIds.size > 0) {
-                fetchedAttendedEventIds.forEach((id) => attendedEventIds.add(id));
-              }
+              // Replace attendance truth for events in this month instead of only unioning,
+              // so events toggled to unattended are removed from "done" hints.
+              uniqueMonthEventIds
+                .map((id) => cleanPlannerEventId(String(id || '')))
+                .filter(Boolean)
+                .forEach((id) => attendedEventIds.delete(id));
+              fetchedAttendedEventIds.forEach((id) => attendedEventIds.add(id));
+              attendanceMarkedDoneEventIdsRef.current = new Set(attendedEventIds);
             }
           } catch (_) {
           }
@@ -2855,6 +2918,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             status: (() => {
               const normalizedStatus = normalizeEventStatus(e.status);
               const eventId = cleanPlannerEventId(String(e?.id || ''));
+              const attendanceState = eventId ? attendanceStateByEventId.get(eventId) : null;
+              if (attendanceState?.hasRows) {
+                return attendanceState.hasPresent ? 'done' : 'scheduled';
+              }
               return (
                 normalizedStatus === 'done' ||
                 (eventId && attendedEventIds.has(eventId))

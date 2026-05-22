@@ -33,7 +33,7 @@ export const FAMILY_FAQ_SECTIONS = [
       {
         id: 'gs-1',
         q: 'How do I begin with Learnadoodle?',
-        a: 'A clear setup sequence is: (1) open Settings > Family Members and add each child, (2) open Learning > Subjects and create core subjects, (3) open Planner and add your first week of events, (4) open Learning > Subjects > Schedule to set recurring cadence and learner metrics, and (5) open Settings > Planning Preferences to set household defaults such as total class days and date ranges.',
+        a: 'A clear setup sequence is: (1) open Settings > Family Members and add each child, (2) open the Subjects tab and create core subjects, (3) open Planner and add your first week of events, (4) open Subjects > Schedule to set recurring cadence and learner metrics, and (5) open Settings > Planning Preferences to set household defaults such as total class days and date ranges.',
       },
       {
         id: 'gs-2',
@@ -43,12 +43,12 @@ export const FAMILY_FAQ_SECTIONS = [
       {
         id: 'gs-3',
         q: 'How do I manage multiple children with different schedules?',
-        a: 'Set each child up individually, then layer in shared items where needed. A practical flow is: assign subjects per child, schedule child-specific events in Planner, use shared events for combined activities, and refine each learner\'s cadence in Learning > Subjects > Schedule. This preserves learner-specific attendance and progress while still allowing shared household coordination.',
+        a: 'Set each child up individually, then layer in shared items where needed. A practical flow is: assign subjects per child, schedule child-specific events in Planner, use shared events for combined activities, and refine each learner\'s cadence in Subjects > Schedule. This preserves learner-specific attendance and progress while still allowing shared household coordination.',
       },
       {
         id: 'gs-4',
         q: 'Where do I go in the app for common tasks?',
-        a: 'Use Home for daily status and quick review, Planner for creating and editing events, Learning > Subjects for curriculum structure and schedule settings, Materials for storing and reusing resources, Settings > Family Members for invites and permissions, and Settings > Planning Preferences for household scheduling defaults.',
+        a: 'Use Home for daily status and quick review, Planner for creating and editing events, the Subjects tab for curriculum structure and schedule settings, the Materials tab for storing and reusing resources, Settings > Family Members for invites and permissions, and Settings > Planning Preferences for household scheduling defaults.',
       },
     ],
   },
@@ -121,7 +121,7 @@ export const FAMILY_FAQ_SECTIONS = [
       {
         id: 'rec-2',
         q: 'How do I track progress?',
-        a: 'Use this flow for clarity: (1) mark event completion and attendance in Planner, (2) review learner indicators in Learning > Subjects (Progress and Schedule tabs), and (3) attach notes or materials so records include meaningful context, not only completion status.',
+        a: 'Use this flow for clarity: (1) mark event completion and attendance in Planner, (2) review learner indicators in the Subjects tab (Progress and Schedule), and (3) attach notes or materials from the Materials tab so records include meaningful context, not only completion status.',
       },
       {
         id: 'rec-3',
