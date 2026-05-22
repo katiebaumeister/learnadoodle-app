@@ -854,7 +854,7 @@ export default function AddSubjectModal({
     }
   };
 
-  const canSubmit = subjectName.trim().length > 0 && selectedChildIds.length > 0 && !isSubmitting && !deletingSubject;
+  const canSubmit = subjectName.trim().length > 0 && selectedChildIds.length > 0;
 
   const handleBlockedSubmit = useCallback(() => {
     if (!subjectName.trim()) {
@@ -911,7 +911,8 @@ export default function AddSubjectModal({
                 onPrimary={handleSubmit}
                 onBlockedPrimary={handleBlockedSubmit}
                 accent="#9ECFFB"
-                disabled={!canSubmit || isSubmitting}
+                disabled={isSubmitting || deletingSubject}
+                visuallyDisabled={!canSubmit}
                 loading={isSubmitting || deletingSubject}
               />
             )}

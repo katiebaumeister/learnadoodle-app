@@ -677,8 +677,12 @@ export default function EditChildModal({
                     formRef.current.submit();
                   }
                 }}
+                onBlockedPrimary={() => {
+                  setError('Please complete all required fields before saving.');
+                }}
                 accent="#9ECFFB"
-                disabled={isSubmitting || (!formCanSubmit && !permissionDirty && !hasRequiredEditFields)}
+                disabled={isSubmitting}
+                visuallyDisabled={!formCanSubmit && !permissionDirty && !hasRequiredEditFields}
                 loading={isSubmitting}
               />
             )}

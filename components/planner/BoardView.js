@@ -504,23 +504,75 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
         familyId || source.family_id || null
       );
       if (error) {
+        const errorMessage = String(error?.message || '');
+        const errorStatus = Number(error?.status || 0);
+        const lower = errorMessage.toLowerCase();
+        const isConflictLike =
+          error?.isConflict === true ||
+          errorStatus === 409 ||
+          errorStatus === 500 ||
+          lower.includes('overlap') ||
+          lower.includes('conflict') ||
+          lower.includes('exclusion') ||
+          lower.includes('database_error');
         debugDrag('api_reschedule_error', {
           eventId,
           targetDateIso,
-          error: error.message || 'unknown_error',
+          error: errorMessage || 'unknown_error',
+          errorStatus,
+          isConflictLike,
         });
+        const optimisticEvent = {
+          ...source,
+          start_ts: newStart.toISOString(),
+          end_ts: newEnd.toISOString(),
+          start: newStart.toISOString(),
+          end: newEnd.toISOString(),
+          date_local: targetDateIso,
+          start_local: `${String(newStart.getHours()).padStart(2, '0')}:${String(newStart.getMinutes()).padStart(2, '0')}`,
+          end_local: `${String(newEnd.getHours()).padStart(2, '0')}:${String(newEnd.getMinutes()).padStart(2, '0')}`,
+        };
+        if (isConflictLike && typeof window !== 'undefined') {
+          // Match month-view behavior: keep optimistic placement for conflict-like failures
+          // so conflict resolution banner can decide next action.
+          window.dispatchEvent(new CustomEvent('eventRescheduled', {
+            detail: {
+              eventId,
+              updatedEvent: optimisticEvent,
+              apiError: error,
+              previousDateLocal: sourceDayIso,
+            },
+          }));
+          window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+          return;
+        }
         setLocalOverrides((prev) => {
           const next = { ...prev };
           delete next[eventId];
           return next;
         });
         if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.alert === 'function') {
-          window.alert(`Failed to move event: ${error.message || 'Unknown error'}`);
+          window.alert(`Failed to move event: ${errorMessage || 'Unknown error'}`);
         } else {
-          Alert.alert('Error', `Failed to move event: ${error.message || 'Unknown error'}`);
+          Alert.alert('Error', `Failed to move event: ${errorMessage || 'Unknown error'}`);
         }
       } else if (typeof window !== 'undefined') {
         debugDrag('api_reschedule_success', { eventId, targetDateIso });
+        window.dispatchEvent(new CustomEvent('eventRescheduled', {
+          detail: {
+            eventId,
+            updatedEvent: {
+              ...source,
+              start_ts: newStart.toISOString(),
+              end_ts: newEnd.toISOString(),
+              start: newStart.toISOString(),
+              end: newEnd.toISOString(),
+              date_local: targetDateIso,
+            },
+            fromApi: true,
+          },
+        }));
         window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
         window.dispatchEvent(new CustomEvent('refreshCalendar'));
       }

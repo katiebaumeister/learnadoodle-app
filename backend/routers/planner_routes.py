@@ -271,14 +271,42 @@ async def reschedule_event(
         if not rpc_response.get('ok'):
             reason = rpc_response.get('reason', 'unknown')
             detail_msg = rpc_response.get('detail', '')
-            status_code = status.HTTP_409_CONFLICT if reason == 'overlap' else status.HTTP_400_BAD_REQUEST
-            error_message = f"Error rescheduling event: {reason}"
-            if detail_msg:
-                error_message += f" - {detail_msg}"
-            raise HTTPException(
-                status_code=status_code,
-                detail=error_message
-            )
+
+            # Fallback: some environments can return generic database_error from RPC while
+            # a direct row update succeeds. Keep overlap/outside_availability strict, but
+            # attempt a direct update for database_error to avoid false drag-drop failures.
+            if reason == 'database_error':
+                try:
+                    supabase.table("events").update(
+                        {
+                            "start_ts": new_start_dt.isoformat(),
+                            "end_ts": new_end_dt.isoformat(),
+                            "updated_at": datetime.utcnow().isoformat(),
+                        }
+                    ).eq("id", event_id).execute()
+                    log_event(
+                        "reschedule_event.database_error_fallback_applied",
+                        event_id=event_id,
+                        family_id=family_id,
+                        old_start=event.get("start_ts"),
+                        new_start=new_start_dt.isoformat(),
+                    )
+                    rpc_response = {"ok": True, "fallback": "direct_update"}
+                except Exception as fallback_error:
+                    detail_fallback = str(fallback_error) or detail_msg
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Error rescheduling event: {reason}{f' - {detail_fallback}' if detail_fallback else ''}"
+                    )
+            else:
+                status_code = status.HTTP_409_CONFLICT if reason == 'overlap' else status.HTTP_400_BAD_REQUEST
+                error_message = f"Error rescheduling event: {reason}"
+                if detail_msg:
+                    error_message += f" - {detail_msg}"
+                raise HTTPException(
+                    status_code=status_code,
+                    detail=error_message
+                )
         
         # Fetch the updated event to return
         updated_event_res = supabase.table("events").select("*").eq("id", event_id).single().execute()

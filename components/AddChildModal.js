@@ -165,8 +165,12 @@ export default function AddChildModal({
                 onPrimary={() => {
                   if (formRef.current?.submit) formRef.current.submit();
                 }}
+                onBlockedPrimary={() => {
+                  setError('Please complete all required fields before saving.');
+                }}
                 accent="#9ECFFB"
-                disabled={isSubmitting || !canSubmit}
+                disabled={isSubmitting}
+                visuallyDisabled={!canSubmit}
                 loading={isSubmitting}
               />
             )}

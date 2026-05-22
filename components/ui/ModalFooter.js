@@ -51,7 +51,7 @@ export function ModalFooter({
           disabled={loading}
           style={[
             styles.primary,
-            { backgroundColor: isPrimaryBlocked || loading ? '#B7BFCD' : accent },
+            { backgroundColor: loading ? '#B7BFCD' : accent },
           ]}
         >
           {mode === 'edit' ? (

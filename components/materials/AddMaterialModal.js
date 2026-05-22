@@ -1202,7 +1202,8 @@ export default function AddMaterialModal({
                 onPrimary={handleSave}
                 onBlockedPrimary={showBlockedSaveFeedback}
                 accent="#9ECFFB"
-                disabled={loading || !isFormValid}
+                disabled={loading}
+                visuallyDisabled={!isFormValid}
                 loading={loading}
               />
             )}
