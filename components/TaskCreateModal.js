@@ -404,8 +404,14 @@ export default function TaskCreateModal({
 
   useEffect(() => {
     if (!visible || !familyId) return;
-    const primarySubjectId = String(subjectIds?.[0] || '').trim();
-    if (!primarySubjectId) {
+    const selectedSubjectIds = Array.from(
+      new Set(
+        (Array.isArray(subjectIds) ? subjectIds : [])
+          .map((id) => String(id || '').trim())
+          .filter(Boolean)
+      )
+    );
+    if (selectedSubjectIds.length === 0) {
       setLessonOptions([]);
       setLoadingLessonOptions(false);
       return;
@@ -414,28 +420,41 @@ export default function TaskCreateModal({
     (async () => {
       setLoadingLessonOptions(true);
       try {
-        const { data, error } = await fetchSubjectCurriculumEventsStructure(
-          familyId,
-          primarySubjectId,
-          null
+        const subjectNameById = new Map(
+          (Array.isArray(subjects) ? subjects : []).map((s) => [
+            String(s?.id || '').trim(),
+            String(s?.name || '').trim(),
+          ])
         );
-        if (cancelled || error) return;
-        const units = Array.isArray(data?.units) ? data.units : [];
-        const next = [];
-        units.forEach((u) => {
-          const unitTitle = String(u?.title || '').trim();
-          (u?.lessons || []).forEach((l) => {
-            const lessonTitle = String(l?.title || '').trim();
-            if (!lessonTitle) return;
-            next.push({
-              key: `${unitTitle}::${lessonTitle}`,
-              lessonTitle,
-              unitTitle,
-              label: unitTitle ? `${lessonTitle} (${unitTitle})` : lessonTitle,
+        const fetchedBySubject = await Promise.all(
+          selectedSubjectIds.map(async (sid) => {
+            const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, sid, null);
+            if (error) return [];
+            const units = Array.isArray(data?.units) ? data.units : [];
+            const subjectName = subjectNameById.get(sid) || '';
+            const showSubjectContext = selectedSubjectIds.length > 1;
+            const next = [];
+            units.forEach((u) => {
+              const unitTitle = String(u?.title || '').trim();
+              (u?.lessons || []).forEach((l) => {
+                const lessonTitle = String(l?.title || '').trim();
+                if (!lessonTitle) return;
+                const lessonWithUnit = unitTitle ? `${lessonTitle} (${unitTitle})` : lessonTitle;
+                next.push({
+                  key: `${sid}::${unitTitle}::${lessonTitle}`,
+                  lessonTitle,
+                  unitTitle,
+                  subjectId: sid,
+                  label: showSubjectContext && subjectName ? `${lessonWithUnit} - ${subjectName}` : lessonWithUnit,
+                });
+              });
             });
-          });
-        });
-        const dedup = Array.from(new Map(next.map((item) => [item.key, item])).values());
+            return next;
+          })
+        );
+        if (cancelled) return;
+        const combined = fetchedBySubject.flat();
+        const dedup = Array.from(new Map(combined.map((item) => [item.key, item])).values());
         setLessonOptions(dedup);
       } finally {
         if (!cancelled) setLoadingLessonOptions(false);
@@ -444,7 +463,7 @@ export default function TaskCreateModal({
     return () => {
       cancelled = true;
     };
-  }, [visible, familyId, subjectIds]);
+  }, [visible, familyId, subjectIds, subjects]);
 
   const applyEventTypeSelection = useCallback((nextType) => {
     const isSwitchingAwayFromClassDay = eventType === 'Class Day' && nextType !== 'Class Day';
@@ -4146,22 +4165,12 @@ export default function TaskCreateModal({
                           );
                         }) : (
                           <View style={{ padding: 12 }}>
-                            <Text style={{ fontSize: 13, color: MUTED }}>No saved lessons for selected subject</Text>
+                            <Text style={{ fontSize: 13, color: MUTED }}>No saved lessons for selected subject(s)</Text>
                           </View>
                         )}
                       </View>
                     ) : null}
                   </View>
-                </View>
-                <View style={[styles.field, styles.academicFieldGrade]}>
-                  <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Grade</Text>
-                  <TextInput
-                    placeholder="e.g. A+"
-                    placeholderTextColor={MUTED}
-                    value={grade}
-                    onChangeText={setGrade}
-                    style={[styles.input, styles.academicInputCompact]}
-                  />
                 </View>
                 <View style={[styles.field, styles.academicFieldPercent]}>
                   <Text style={[styles.fieldLabel, styles.learningRowLabel]}>% Grade</Text>
@@ -4212,6 +4221,16 @@ export default function TaskCreateModal({
                       </View>
                     </View>
                   )}
+                </View>
+                <View style={[styles.field, styles.academicFieldGrade]}>
+                  <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Grade</Text>
+                  <TextInput
+                    placeholder="e.g. A+"
+                    placeholderTextColor={MUTED}
+                    value={grade}
+                    onChangeText={setGrade}
+                    style={[styles.input, styles.academicInputCompact]}
+                  />
                 </View>
               </SafeFieldRow>
               {canSendToStudentForEvent ? (

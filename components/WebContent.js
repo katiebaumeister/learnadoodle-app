@@ -2576,7 +2576,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const targetEventId = cleanPlannerEventId(String(rawEventId));
       if (!targetEventId) return;
       const normalized = String(event?.detail?.status || 'scheduled').trim().toLowerCase();
-      const nextStatus = normalized === 'completed' ? 'done' : (normalized || 'scheduled');
+      const nextStatus =
+        normalized === 'completed' || normalized === 'present' || normalized === 'done'
+          ? 'done'
+          : 'scheduled';
 
       setCalendarEvents((prev) => {
         if (!prev || typeof prev !== 'object') return prev;
@@ -2637,6 +2640,46 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         });
         return changed ? { ...prev, learning: nextLearning } : prev;
       });
+
+      // Keep persisted Home cache in sync so returning to Home reflects planner attendance instantly.
+      if (typeof window !== 'undefined' && familyId) {
+        try {
+          const prefix = `home_data_${familyId}_`;
+          Object.keys(localStorage).forEach((key) => {
+            if (!key.startsWith(prefix)) return;
+            const raw = localStorage.getItem(key);
+            if (!raw) return;
+            let parsed;
+            try {
+              parsed = JSON.parse(raw);
+            } catch {
+              return;
+            }
+            const cachedLearning = Array.isArray(parsed?.data?.learning) ? parsed.data.learning : null;
+            if (!cachedLearning || cachedLearning.length === 0) return;
+            let changed = false;
+            const nextLearning = cachedLearning.map((ev) => {
+              const evId = cleanPlannerEventId(String(ev?.id || ''));
+              if (!evId || evId !== targetEventId) return ev;
+              changed = true;
+              return { ...ev, status: nextStatus };
+            });
+            if (!changed) return;
+            localStorage.setItem(
+              key,
+              JSON.stringify({
+                ...parsed,
+                data: {
+                  ...(parsed?.data || {}),
+                  learning: nextLearning,
+                },
+              })
+            );
+          });
+        } catch (cacheErr) {
+          console.warn('[WebContent] Unable to sync attendance into home cache:', cacheErr);
+        }
+      }
     };
 
     window.addEventListener('eventPatched', handleEventPatched);

@@ -24,6 +24,31 @@ import ParentDigestModal from './ParentDigestModal';
 import NextRecommendedActionRow from './NextRecommendedActionRow';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
+import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
+
+function applyAttendanceSnapshotToLearning(learning = [], attendanceRows = []) {
+  const events = Array.isArray(learning) ? learning : [];
+  const rows = Array.isArray(attendanceRows) ? attendanceRows : [];
+  if (events.length === 0 || rows.length === 0) return events;
+
+  const byEventId = new Map();
+  rows.forEach((row) => {
+    const eventId = cleanPlannerEventId(String(row?.event_id || '').trim());
+    if (!eventId) return;
+    const status = String(row?.status || '').trim().toLowerCase();
+    if (!byEventId.has(eventId)) byEventId.set(eventId, new Set());
+    byEventId.get(eventId).add(status);
+  });
+
+  return events.map((event) => {
+    const eventId = cleanPlannerEventId(String(event?.id || '').trim());
+    if (!eventId || !byEventId.has(eventId)) return event;
+    const statuses = byEventId.get(eventId);
+    if (statuses.has('present')) return { ...event, status: 'done' };
+    if (statuses.has('absent')) return { ...event, status: 'scheduled' };
+    return event;
+  });
+}
 
 async function hydrateLearningAssignees(learning = [], familyId) {
   const items = Array.isArray(learning) ? learning : [];
@@ -240,8 +265,30 @@ export default function ParentHomeScreen({
         children: [],
         subjects: [],
       };
+      const learningRows = Array.isArray(homeDataResult.learning) ? homeDataResult.learning : [];
+      const learningEventIds = Array.from(
+        new Set(
+          learningRows.flatMap((event) => {
+            const rawId = String(event?.id || '').trim();
+            const cleanedId = cleanPlannerEventId(rawId);
+            return [rawId, cleanedId].filter(Boolean);
+          })
+        )
+      );
+      let attendanceRows = [];
+      if (learningEventIds.length > 0) {
+        const { data: attendanceData, error: attendanceError } = await supabase
+          .from('attendance_records')
+          .select('event_id, status, day_date')
+          .eq('family_id', familyId)
+          .in('event_id', learningEventIds);
+        if (!attendanceError && Array.isArray(attendanceData)) {
+          attendanceRows = attendanceData;
+        }
+      }
+      const learningWithAttendance = applyAttendanceSnapshotToLearning(learningRows, attendanceRows);
       const learningWithAssignees = await hydrateLearningAssignees(
-        homeDataResult.learning,
+        learningWithAttendance,
         familyId
       );
       const normalizedHomeData = {
@@ -286,14 +333,26 @@ export default function ParentHomeScreen({
     const onAttendancePatched = (e) => {
       const rawEventId = e?.detail?.eventId;
       if (!rawEventId) return;
-      const eventId = String(rawEventId);
+      const eventId = String(rawEventId).trim();
+      const cleanedEventId = cleanPlannerEventId(eventId);
       const rawStatus = String(e?.detail?.status || '').trim().toLowerCase();
-      const nextStatus = rawStatus === 'completed' ? 'done' : (rawStatus || 'scheduled');
+      const nextStatus =
+        rawStatus === 'completed' || rawStatus === 'present' || rawStatus === 'done'
+          ? 'done'
+          : 'scheduled';
       setHomeData((prev) => {
         if (!prev || !Array.isArray(prev.learning) || prev.learning.length === 0) return prev;
         let changed = false;
         const nextLearning = prev.learning.map((event) => {
-          if (!event?.id || String(event.id) !== eventId) return event;
+          const rawId = String(event?.id || '').trim();
+          if (!rawId) return event;
+          const cleanedRawId = cleanPlannerEventId(rawId);
+          const isMatch =
+            rawId === eventId ||
+            rawId === cleanedEventId ||
+            cleanedRawId === eventId ||
+            cleanedRawId === cleanedEventId;
+          if (!isMatch) return event;
           changed = true;
           return { ...event, status: nextStatus };
         });

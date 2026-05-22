@@ -45,7 +45,7 @@ export default function TodayScheduleCard({
       if (!ev?.id) return false;
       if (attendanceOptimistic[ev.id] !== undefined) return attendanceOptimistic[ev.id];
       const normalized = String(ev.status || '').trim().toLowerCase();
-      return normalized === 'done' || normalized === 'completed';
+      return normalized === 'done' || normalized === 'completed' || normalized === 'present';
     },
     [attendanceOptimistic]
   );
