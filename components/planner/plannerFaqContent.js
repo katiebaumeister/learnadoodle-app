@@ -38,11 +38,6 @@ export const PLANNER_FAQ = [
     a: 'Go to Learning > Subjects, open the subject, then open Schedule. In the Actions area, choose Add event; the event composer opens with that subject preselected. Use this for exceptions, special sessions, or ad-hoc lessons without changing your recurring cadence.',
   },
   {
-    id: 'pl-8',
-    q: 'What does Backlog mean?',
-    a: 'Backlog is your unscheduled queue. Save ideas and future tasks there first, then move items into Planner when you are ready to commit to dates. This helps families separate idea capture from calendar commitments.',
-  },
-  {
     id: 'pl-9',
     q: 'What counts toward learning totals?',
     a: 'Instructional events (for example lessons) count toward learning totals. Non-instructional events can still be tracked for planning history, but they typically do not count toward targets. This keeps totals focused on instructional learning time for reporting and compliance workflows.',

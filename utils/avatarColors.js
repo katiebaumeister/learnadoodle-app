@@ -109,6 +109,20 @@ export function getChildColorFromAvatar(avatar) {
 }
 
 /**
+ * Get the exact mapped avatar color (non-desaturated), intended for small identity dots.
+ * @param {string} avatar - Avatar name (e.g., "prof1", "prof1.png")
+ * @returns {string} - Solid hex color from avatar palette
+ */
+export function getChildDotColorFromAvatar(avatar) {
+  if (!avatar) return '#9CA3AF';
+  let avatarKey = String(avatar).toLowerCase().trim();
+  avatarKey = avatarKey.replace(/\.(png|jpg|jpeg|gif|webp)$/i, '');
+  avatarKey = avatarKey.replace(/^.*[\/\\]/, '');
+  avatarKey = avatarKey.trim();
+  return AVATAR_COLORS[avatarKey] || '#9CA3AF';
+}
+
+/**
  * Get child color from child object
  * @param {object} child - Child object with avatar property
  * @returns {string} - Pastel hex color

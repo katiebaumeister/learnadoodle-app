@@ -23,6 +23,8 @@ const FG = '#111827';
 const SUB = '#6b7280';
 const MUTED = '#9ca3af';
 const BORDER = '#e5e7eb';
+const MATERIAL_ACCENT = '#EDBF7A';
+const MATERIAL_ACCENT_SOFT = '#FCF6EE';
 
 export default function MaterialDetailsModal({
   visible,
@@ -98,17 +100,17 @@ export default function MaterialDetailsModal({
   const role = roleTag ? roleTag.replace('role:', '') : null;
 
   // Get role label for display
-  const roleDisplayName = role ? 
-    role.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : 
-    'Unknown';
-
-  // Get children names
-  const childNames = materialChildren
-    .map(mc => {
-      const child = children.find(c => c.id === mc.child_id);
-      return child?.first_name || child?.name || 'Unknown';
+  const roleDisplayName = role ? getRoleLabel(role) : null;
+  const childLabels = materialChildren
+    .map((mc) => {
+      const child = children.find((c) => c.id === mc.child_id);
+      return child?.first_name || child?.name || null;
     })
-    .join(', ') || 'None';
+    .filter(Boolean);
+  const subjectLabels = [
+    material.subject_name,
+    material.subject_key,
+  ].filter(Boolean);
 
   const showScheduleLinks = !!(material?.id && familyId);
   const hasProviderMetadata = !!(material.provider_name || material.provider_url);
@@ -144,7 +146,17 @@ export default function MaterialDetailsModal({
         <View style={styles.container}>
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.headerTitle}>Attachment Details</Text>
+            <View style={styles.headerTextWrap}>
+              <View style={styles.eyebrowBadge}>
+                <Text style={styles.eyebrowText}>MATERIAL DETAILS</Text>
+              </View>
+              <Text style={styles.headerTitle}>Material Details</Text>
+              {!!material?.title && (
+                <Text style={styles.headerSubtitle} numberOfLines={1}>
+                  {material.title}
+                </Text>
+              )}
+            </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <X size={18} color={colors.muted || 'rgba(15, 23, 42, 0.5)'} />
             </TouchableOpacity>
@@ -159,82 +171,19 @@ export default function MaterialDetailsModal({
               </View>
             ) : (
               <>
-                {/* Basic Info */}
+                {/* Core fields (match Edit Material form shape) */}
                 <View style={styles.section}>
                   <Text style={styles.sectionTitle}>Details</Text>
-                  
-                  {material.grade_range_min !== null && material.grade_range_max !== null && (
-                    <View style={styles.infoRow}>
-                      <Text style={styles.infoLabel}>Grade Range:</Text>
-                      <Text style={styles.infoValue}>
-                        {material.grade_range_min}-{material.grade_range_max}
-                      </Text>
+                  {material.title ? (
+                    <View style={styles.detailFieldBlock}>
+                      <Text style={styles.detailFieldLabel}>Title</Text>
+                      <Text style={styles.detailFieldValue}>{material.title}</Text>
                     </View>
-                  )}
-
-                  {material.title && (
-                    <View style={styles.infoRow}>
-                      <Type size={16} color={colors.muted} />
-                      <Text style={styles.infoLabel}>Title:</Text>
-                      <Text style={styles.infoValue} numberOfLines={1}>
-                        {material.title}
-                      </Text>
-                    </View>
-                  )}
-
-                  {isFileBased && material.storage_path && (
-                    <View style={styles.infoRow}>
-                      <FileText size={16} color={colors.muted} />
-                      <Text style={styles.infoLabel}>File:</Text>
-                      <Text style={styles.infoValue} numberOfLines={1}>
-                        {material.filename || material.storage_path.split('/').pop() || 'Uploaded file'}
-                      </Text>
-                    </View>
-                  )}
-
-                  {(role || material.mime) && (
-                    <View style={styles.infoRow}>
-                      <Tag size={16} color={colors.muted} />
-                      <Text style={styles.infoLabel}>Type:</Text>
-                      <Text style={styles.infoValue}>
-                        {(() => {
-                          const roleName = role ? getRoleLabel(role) : null;
-                          let fileType = null;
-                          if (material.mime) {
-                            if (material.mime.includes('pdf')) fileType = 'PDF';
-                            else if (material.mime.includes('word') || material.mime.includes('document')) fileType = 'DOC';
-                            else if (material.mime.startsWith('image/')) fileType = 'Image';
-                            else if (material.mime.startsWith('video/')) fileType = 'Video';
-                            else fileType = material.mime.split('/').pop().toUpperCase();
-                          }
-                          if (roleName && fileType) {
-                            return `${roleName} (${fileType})`;
-                          } else if (roleName) {
-                            return roleName;
-                          } else if (fileType) {
-                            return fileType;
-                          }
-                          return 'Unknown';
-                        })()}
-                      </Text>
-                    </View>
-                  )}
-
-                  {material.bytes && (
-                    <View style={styles.infoRow}>
-                      <HardDrive size={16} color={colors.muted} />
-                      <Text style={styles.infoLabel}>Size:</Text>
-                      <Text style={styles.infoValue}>
-                        {(material.bytes / 1024).toFixed(1)} KB
-                      </Text>
-                    </View>
-                  )}
-
+                  ) : null}
                   {material.created_at && (
-                    <View style={styles.infoRow}>
-                      <Calendar size={16} color={colors.muted} />
-                      <Text style={styles.infoLabel}>Created:</Text>
-                      <Text style={styles.infoValue}>
+                    <View style={styles.detailFieldBlock}>
+                      <Text style={styles.detailFieldLabel}>Date</Text>
+                      <Text style={styles.detailFieldValue}>
                         {new Date(material.created_at).toLocaleDateString(undefined, {
                           month: 'long',
                           day: 'numeric',
@@ -243,38 +192,47 @@ export default function MaterialDetailsModal({
                       </Text>
                     </View>
                   )}
+                  {roleDisplayName ? (
+                    <View style={styles.detailFieldBlock}>
+                      <Text style={styles.detailFieldLabel}>Type</Text>
+                      <View style={styles.tagsContainer}>
+                        <View style={styles.tagChip}>
+                          <Text style={styles.tagText}>{roleDisplayName}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  ) : null}
+                  {childLabels.length > 0 ? (
+                    <View style={styles.detailFieldBlock}>
+                      <Text style={styles.detailFieldLabel}>Children</Text>
+                      <View style={styles.tagsContainer}>
+                        {childLabels.map((name) => (
+                          <View key={name} style={styles.tagChip}>
+                            <Text style={styles.tagText}>{name}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
+                  {subjectLabels.length > 0 ? (
+                    <View style={styles.detailFieldBlock}>
+                      <Text style={styles.detailFieldLabel}>Subject</Text>
+                      <View style={styles.tagsContainer}>
+                        {subjectLabels.map((subjectName) => (
+                          <View key={subjectName} style={styles.tagChip}>
+                            <Text style={styles.tagText}>{subjectName}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
                 </View>
 
-                {/* Children */}
-                {materialChildren.length > 0 && (
+                {/* Notes */}
+                {material.notes && (
                   <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Children</Text>
-                    <View style={styles.tagsContainer}>
-                      {materialChildren.map((mc) => {
-                        const child = children.find(c => c.id === mc.child_id);
-                        const childName = child?.first_name || child?.name || 'Unknown';
-                        return (
-                          <View key={mc.id || mc.child_id} style={styles.tagChip}>
-                            <Text style={styles.tagText}>{childName}</Text>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  </View>
-                )}
-
-                {/* Subjects */}
-                {(material.subject_key || material.subject_id) && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Subjects</Text>
-                    <View style={styles.tagsContainer}>
-                      {material.subject_key && (
-                        <View style={styles.tagChip}>
-                          <Text style={styles.tagText}>{material.subject_key}</Text>
-                        </View>
-                      )}
-                      {/* If we have subject_id but no subject_key, we could look it up, but for now just show if we have the key */}
-                    </View>
+                    <Text style={styles.sectionTitle}>Notes</Text>
+                    <Text style={styles.notesText}>{material.notes}</Text>
                   </View>
                 )}
 
@@ -461,18 +419,12 @@ export default function MaterialDetailsModal({
                 {material.location_hint && (
                   <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Location</Text>
-                    <View style={styles.infoRow}>
-                      <MapPin size={16} color={colors.muted} />
-                      <Text style={styles.infoValue}>{material.location_hint}</Text>
+                    <View style={styles.tagsContainer}>
+                      <View style={styles.infoRow}>
+                        <MapPin size={16} color={colors.muted} />
+                        <Text style={styles.infoValue}>{material.location_hint}</Text>
+                      </View>
                     </View>
-                  </View>
-                )}
-
-                {/* Notes */}
-                {material.notes && (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Notes</Text>
-                    <Text style={styles.notesText}>{material.notes}</Text>
                   </View>
                 )}
 
@@ -483,22 +435,33 @@ export default function MaterialDetailsModal({
           {/* Footer with Edit and Delete buttons */}
           {!loading && (
             <View style={styles.footer}>
-              <TouchableOpacity onPress={() => {
-                onEdit?.(material);
-                onClose();
-              }}>
-                <Text style={styles.editButtonText}>Edit</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                onPress={() => {
-                  onDelete?.(material);
-                  onClose();
-                }}
-                style={styles.deleteButton}
-              >
-                <Trash2 size={16} color="#ef4444" />
-                <Text style={styles.deleteButtonText}>Delete</Text>
-              </TouchableOpacity>
+              <View style={styles.footerActions}>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={onClose}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    onDelete?.(material);
+                    onClose();
+                  }}
+                  style={styles.deleteButton}
+                >
+                  <Trash2 size={16} color="#FFFFFF" />
+                  <Text style={styles.deleteButtonText}>Delete</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.editButton}
+                  onPress={() => {
+                    onEdit?.(material);
+                  }}
+                >
+                  <Edit2 size={16} color="#FFFFFF" />
+                  <Text style={styles.editButtonText}>Edit</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
         </View>
@@ -520,13 +483,14 @@ const styles = StyleSheet.create({
   },
   container: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 34,
+    overflow: 'hidden',
     width: '100%',
     maxWidth: 600,
     maxHeight: '90%',
     ...Platform.select({
       web: {
-        boxShadow: '0 20px 60px rgba(0, 0, 0, 0.15)',
+        boxShadow: '0 20px 60px rgba(36, 50, 74, 0.20)',
       },
       ios: {
         shadowColor: '#000',
@@ -542,27 +506,70 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 14,
+    backgroundColor: MATERIAL_ACCENT_SOFT,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: '#EEF0F5',
+  },
+  headerTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  eyebrowBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FFFFFFE6',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#F3E2CD',
+  },
+  eyebrowText: {
+    color: MATERIAL_ACCENT,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.text,
+    fontSize: 30,
+    lineHeight: 32,
+    fontWeight: '800',
+    color: '#1E2A3A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
+  },
+  headerSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#6C738E',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   closeButton: {
-    padding: 4,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#F3E2CD',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   content: {
     flex: 1,
   },
   contentContainer: {
-    padding: 20,
+    padding: 16,
   },
   loadingContainer: {
     paddingVertical: 40,
@@ -577,15 +584,41 @@ const styles = StyleSheet.create({
     }),
   },
   section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#EEF0F5',
+    borderRadius: 14,
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  detailFieldBlock: {
+    marginBottom: 10,
+  },
+  detailFieldLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6C738E',
+    marginBottom: 6,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  detailFieldValue: {
+    fontSize: 15,
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6C738E',
+    textTransform: 'uppercase',
+    letterSpacing: 0.35,
+    marginBottom: 10,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
     }),
   },
   metadataSectionTitle: {
@@ -675,32 +708,76 @@ const styles = StyleSheet.create({
     }),
   },
   footer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: '#EEF0F5',
+    backgroundColor: '#FFFFFF',
+  },
+  footerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  cancelButton: {
+    minHeight: 42,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F3F4F6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", sans-serif',
+    }),
+  },
+  editButton: {
+    minHeight: 42,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: MATERIAL_ACCENT,
+    backgroundColor: MATERIAL_ACCENT,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   editButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: colors.text,
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", sans-serif',
     }),
   },
   deleteButton: {
+    minHeight: 42,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#EF4444',
+    backgroundColor: '#EF4444',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
   deleteButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#ef4444',
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", sans-serif',
     }),
   },
   blockSection: {

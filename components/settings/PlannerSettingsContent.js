@@ -37,7 +37,6 @@ import { SettingsLayout, SettingsTypography } from './settingsDesignTokens';
 import {
   ATTENDANCE_MODES,
   getAttendanceMode,
-  shouldWarnAttendanceModeSwitch,
 } from '../../lib/attendanceMode';
 import { trackEvent } from '../../lib/analytics';
 
@@ -1233,37 +1232,23 @@ export default function PlannerSettingsContent({
     const normalizedMode = getAttendanceMode({ academicYearMode: mode });
     const previousMode = getAttendanceMode({ academicYearMode: attendanceTrackingMode });
     if (previousMode === normalizedMode) return;
-    const riskPromise = getSelectedYearModeAndRisk();
-    const baseConfirmed = await confirmAttendanceModeSwitch({
+    const confirmed = await confirmAttendanceModeSwitch({
       fromMode: previousMode,
       toMode: normalizedMode,
       isDataRich: false,
     });
-    if (!baseConfirmed) return;
+    if (!confirmed) return;
     let risk = null;
     try {
-      risk = await riskPromise;
+      risk = await getSelectedYearModeAndRisk();
     } catch (_) {
       risk = null;
-    }
-    const shouldWarnDataRich = shouldWarnAttendanceModeSwitch({
-      fromMode: previousMode,
-      toMode: normalizedMode,
-      isDataRich: risk?.is_data_rich === true,
-    });
-    let confirmed = baseConfirmed;
-    if (shouldWarnDataRich) {
-      confirmed = await confirmAttendanceModeSwitch({
-        fromMode: previousMode,
-        toMode: normalizedMode,
-        isDataRich: true,
-      });
     }
     trackEvent('attendance_mode_switch_confirmed', {
       from_mode: previousMode,
       to_mode: normalizedMode,
       academic_year_id: risk?.academicYearId || null,
-      is_data_rich: shouldWarnDataRich,
+      is_data_rich: risk?.is_data_rich === true,
       confirmed,
     });
     if (!confirmed) return;
@@ -1283,7 +1268,7 @@ export default function PlannerSettingsContent({
       }
 
       const resolvedScope = resolveTargetScopeForAttendanceMode(normalizedMode);
-      plannerSettingsTrace('manual_attendance_mode_change', {
+      trackEvent('manual_attendance_mode_change', {
         selectedSchoolYearLabel,
         normalizedMode,
         resolvedScope,
@@ -2343,18 +2328,15 @@ export default function PlannerSettingsContent({
         <View style={[sectionStyle, { marginBottom: 12 }]}>
           <Text style={sectionTitleStyle}>Days off</Text>
           <View style={sectionDividerStyle} />
-          <View style={{ marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 8 }}>
-            <View>
-              <Text style={learningDefaultsFieldTitleStyle}>U.S. Public Holidays</Text>
-            </View>
-            <View>
-              <Switch
-                value={followGlobalHolidays}
-                onValueChange={handleFollowChange}
-                trackColor={{ false: BORDER, true: '#AECBFA' }}
-                thumbColor={followGlobalHolidays ? '#45A29E' : '#f9fafb'}
-              />
-            </View>
+          <View style={{ marginBottom: 8, minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 8 }}>
+            <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>U.S. Public Holidays</Text>
+            <Switch
+              style={{ alignSelf: 'center' }}
+              value={followGlobalHolidays}
+              onValueChange={handleFollowChange}
+              trackColor={{ false: BORDER, true: '#AECBFA' }}
+              thumbColor={followGlobalHolidays ? '#45A29E' : '#f9fafb'}
+            />
           </View>
         </View>
 

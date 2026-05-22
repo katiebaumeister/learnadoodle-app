@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Platform, Animated, Easing, ScrollView, StyleSheet, Modal, Switch } from 'react-native';
-import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap, UserCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import AddSubjectModal from './AddSubjectModal';
@@ -9,8 +9,10 @@ import { getMaterials } from '../lib/services/materialsClient';
 import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { apiRequest, pushEventToGoogleCalendar } from '../lib/apiClient';
-import { defaultRequiresSubmissionHomeForEventType } from '../lib/eventRequiresSubmissionHome';
 import { Search } from 'lucide-react';
+import { createAssignment, updateAssignment } from '../lib/services/assignmentsClient';
+import { assignmentRowLinksEventId } from '../lib/assignmentLinkedEventUtils';
+import { isChildHelpAssignment, isSchoolWorkEventType } from './child/childHomeRailHelpers';
 import {
   LearnerPill,
   formatConflictMetaFromEvent,
@@ -300,6 +302,9 @@ export default function TaskCreateModal({
   const [notes, setNotes] = useState('');
   const [showAcademicDetails, setShowAcademicDetails] = useState(false); // Collapsed by default
   const [showNotesSection, setShowNotesSection] = useState(false); // Collapsed by default (match Add Subject)
+  const [showStudentExchangeSection, setShowStudentExchangeSection] = useState(false); // Collapsed by default
+  const [queueSendToStudentAfterSave, setQueueSendToStudentAfterSave] = useState(false);
+  const [queueSendToStudentNote, setQueueSendToStudentNote] = useState('');
   const [showLogisticDetails, setShowLogisticDetails] = useState(false); // Collapsed by default
   const [submitting, setSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
@@ -378,8 +383,6 @@ export default function TaskCreateModal({
   const [attachedStandards, setAttachedStandards] = useState([]);
   const [showStandardsModal, setShowStandardsModal] = useState(false);
 
-  const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(false);
-
   const applySubjectSelection = useCallback((nextSubjectIds) => {
     const normalized = Array.from(
       new Set(
@@ -395,9 +398,6 @@ export default function TaskCreateModal({
   const applyEventTypeSelection = useCallback((nextType) => {
     const isSwitchingAwayFromClassDay = eventType === 'Class Day' && nextType !== 'Class Day';
     setEventType(nextType);
-    setShowRequiresSubmissionHome(
-      nextType === 'Class Day' ? false : defaultRequiresSubmissionHomeForEventType(nextType)
-    );
     if (nextType === 'Class Day') {
       applySubjectSelection([]);
       setUnit('');
@@ -412,8 +412,7 @@ export default function TaskCreateModal({
       return;
     }
     if (isSwitchingAwayFromClassDay) {
-      // Class Day is the only chip that auto-enables recurring defaults.
-      // When switching away, reset recurrence back to neutral defaults.
+      // When switching away from Class Day, reset recurrence back to neutral defaults.
       setIsRecurring(false);
       setShowRecurringSection(false);
       setRecurrenceType('weekly');
@@ -445,10 +444,15 @@ export default function TaskCreateModal({
     fallback: ATTENDANCE_MODES.CLASS_DAY,
   });
   const isClassDayEvent = eventType === 'Class Day';
-  useEffect(() => {
-    if (!isClassDayEvent) return;
-    if (showRequiresSubmissionHome) setShowRequiresSubmissionHome(false);
-  }, [isClassDayEvent, showRequiresSubmissionHome]);
+  const canSendToStudentForEvent = useMemo(() => isSchoolWorkEventType(eventType), [eventType]);
+  const academicSectionTitle = useMemo(() => {
+    const normalized = String(eventType || '').trim().toLowerCase();
+    if (normalized === 'lesson' || normalized === 'class day') return 'Learning details';
+    if (normalized === 'assignment') return 'Assignment settings';
+    if (normalized === 'exam') return 'Assessment details';
+    if (normalized === 'activity') return 'Activity details';
+    return 'Academic details';
+  }, [eventType]);
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes
   useEffect(() => {
     const checkPercentSum = async () => {
@@ -784,7 +788,6 @@ export default function TaskCreateModal({
   const [plannerDaysOffSet, setPlannerDaysOffSet] = useState(new Set());
   const [classDayDefaultsApplied, setClassDayDefaultsApplied] = useState(false);
   const [plannerDefaultsRefreshKey, setPlannerDefaultsRefreshKey] = useState(0);
-  
   const toast = useToast();
   const session = useSession();
 
@@ -1196,6 +1199,8 @@ export default function TaskCreateModal({
       const initialMaterialId = defaultMaterialId ? String(defaultMaterialId) : null;
       setSelectedMaterialId(initialMaterialId);
       setAttachedMaterialIds(initialMaterialId ? [initialMaterialId] : []);
+      // If user starts from "Create assignment from material", open Notes/attachments by default.
+      setShowNotesSection(!!initialMaterialId);
       setAttachedStandards([]);
       setShowStandardsModal(false);
       applySubjectSelection(defaultSubjectId ? [defaultSubjectId] : []);
@@ -1228,6 +1233,8 @@ export default function TaskCreateModal({
       setRespectSavedDaysOff(true);
       setIsRecurrenceWeekdayAutofilled(true);
       setClassDayDefaultsApplied(false);
+      setQueueSendToStudentAfterSave(false);
+      setQueueSendToStudentNote('');
       // Reset conflict detection state
       setConflictWarning(null);
       setShouldAutoAdjust(false);
@@ -1239,6 +1246,11 @@ export default function TaskCreateModal({
     }
     wasVisibleRef.current = visible;
   }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId, familyMembers, applyEventTypeSelection, applySubjectSelection]);
+
+  useEffect(() => {
+    if (canSendToStudentForEvent && assigneeIds.length > 0) return;
+    if (queueSendToStudentAfterSave) setQueueSendToStudentAfterSave(false);
+  }, [canSendToStudentForEvent, assigneeIds.length, queueSendToStudentAfterSave]);
 
   // Keep weekly "On" default aligned with selected date until user manually edits weekday chips.
   useEffect(() => {
@@ -1313,8 +1325,8 @@ export default function TaskCreateModal({
     const defaultEnd = toAmPmTime(plannerDefaults.default_day_end_time);
     if (defaultStart) setStartTime(defaultStart);
     if (defaultEnd) setEndTime(defaultEnd);
-    setIsRecurring(true);
-    setShowRecurringSection(true);
+    // Keep repeat default OFF in create flow for every event type.
+    setShowRecurringSection(false);
     setRecurrenceType('weekly');
     setRecurrenceInterval(1);
     setRecurrenceIntervalText('1');
@@ -1942,18 +1954,6 @@ export default function TaskCreateModal({
       errors.date = 'Date is required';
     }
 
-    const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
-    if (isMultiDayEventType && placement === 'calendar' && !eventEndDate) {
-      errors.endDate = 'End date is required for ' + eventType + ' events';
-    }
-    if (isMultiDayEventType && eventEndDate && dueDate) {
-      const startDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-      const endDateOnly = new Date(eventEndDate.getFullYear(), eventEndDate.getMonth(), eventEndDate.getDate());
-      if (endDateOnly < startDateOnly) {
-        errors.endDate = 'End date must be on or after start date';
-      }
-    }
-
     if (placement === 'calendar' && !allDay && !startTime.trim()) {
       errors.time = 'Start time is required';
     }
@@ -2042,6 +2042,72 @@ export default function TaskCreateModal({
     onClose?.();
   }, [onClose]);
 
+  const mergeDescriptionWithNote = useCallback((prev, note) => {
+    const n = (note || '').trim();
+    if (!n) return prev || null;
+    const p = (prev || '').trim();
+    return p ? `${p}\n\n${n}` : n;
+  }, []);
+
+  const queueSendToStudentsAfterSave = useCallback(async ({
+    createdEvent,
+    familyIdToUse,
+    userId,
+    note,
+  }) => {
+    if (!createdEvent?.id || !familyIdToUse || !userId || assigneeIds.length === 0) return false;
+    if (!isSchoolWorkEventType(createdEvent?.event_type || eventType)) return false;
+
+    const eventIdStr = String(createdEvent.id);
+    const dueTs = createdEvent.due_ts || createdEvent.end_ts || createdEvent.start_ts;
+    const dueStr = dueTs ? new Date(dueTs).toISOString().split('T')[0] : null;
+    const titleBase = String(createdEvent.title || title || 'Schoolwork').trim().slice(0, 200);
+    const noteTrim = String(note || '').trim();
+
+    for (const childId of assigneeIds) {
+      const { data: rows, error: findErr } = await supabase
+        .from('assignments')
+        .select('id, title, description, linked_event_ids, need_help')
+        .eq('family_id', familyIdToUse)
+        .eq('child_id', childId)
+        .order('updated_at', { ascending: false })
+        .limit(200);
+      if (findErr) throw findErr;
+
+      const linked = (rows || []).find((r) => assignmentRowLinksEventId(r, eventIdStr)) || null;
+      if (linked?.id) {
+        const updates = {
+          assigned_by: userId,
+          status: 'not_started',
+        };
+        if (isChildHelpAssignment(linked)) {
+          updates.title = titleBase;
+          updates.need_help = false;
+        }
+        if (noteTrim) {
+          updates.description = mergeDescriptionWithNote(linked.description, noteTrim);
+        }
+        const { error: upErr } = await updateAssignment(linked.id, updates);
+        if (upErr) throw upErr;
+      } else {
+        const { error: insErr } = await createAssignment({
+          family_id: familyIdToUse,
+          child_id: childId,
+          title: titleBase,
+          description: noteTrim || null,
+          assigned_by: userId,
+          related_subject: subjectIds[0] || null,
+          due_date: dueStr,
+          status: 'not_started',
+          linked_event_ids: [eventIdStr],
+          need_help: false,
+        });
+        if (insErr) throw insErr;
+      }
+    }
+    return true;
+  }, [assigneeIds, eventType, mergeDescriptionWithNote, subjectIds, title]);
+
   const handleCreate = async (skipConflictValidation = false, allowOverlaps = false) => {
     // Always validate required fields (including when continuing from conflict UI). skipConflictValidation
     // only affects overlap handling later, not whether we run field validation.
@@ -2076,7 +2142,7 @@ export default function TaskCreateModal({
       }
 
       const userFamilyId = profile.family_id;
-      const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
+      const isMultiDayEventType = false;
 
       // Parse list_id to extract child_id if it's a child list
       const childIds = assigneeIds.length > 0 ? assigneeIds : null;
@@ -2136,11 +2202,10 @@ export default function TaskCreateModal({
           error = fetchError;
         }
       } else {
-        const eventEndDateToUse = isMultiDayEventType && eventEndDate ? eventEndDate : dueDate;
-
         // Calculate start_ts and end_ts from due date and selected time
         const baseDate = new Date(dueDate);
         baseDate.setHours(0, 0, 0, 0);
+        const eventEndDateToUse = dueDate;
 
         let startDate;
         let endDate;
@@ -2158,20 +2223,7 @@ export default function TaskCreateModal({
           }
           startDate = resolvedStart;
 
-          // For multi-day event types with an end date, use the end date
-          if (isMultiDayEventType && eventEndDate) {
-            // Set end date to end of the selected day (23:59:59.999)
-            const endDateYear = eventEndDate.getFullYear();
-            const endDateMonth = eventEndDate.getMonth();
-            const endDateDay = eventEndDate.getDate();
-            endDate = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
-            console.log('[TaskCreateModal] Multi-day event with end date:', {
-              eventType,
-              eventEndDate: eventEndDate.toISOString(),
-              endDate: endDate.toISOString(),
-              startDate: startDate.toISOString()
-            });
-          } else if (endTime.trim()) {
+          if (endTime.trim()) {
             let resolvedEnd = applyTimeToDate(baseDate, endTime);
             if (!resolvedEnd) {
               toast.push('Enter a valid end time, e.g. 10:00 AM', 'error');
@@ -2591,7 +2643,7 @@ export default function TaskCreateModal({
       if (data?.id) {
         const curriculumMetadata = withSubjectIdsInCurriculumMetadata(data?.curriculum_metadata, subjectIds);
         const updatePayload = {
-          requires_submission_home: isClassDayEvent ? false : showRequiresSubmissionHome,
+          requires_submission_home: false,
           subject_id: subjectIds[0] || null,
           curriculum_metadata: curriculumMetadata,
         };
@@ -2664,7 +2716,32 @@ export default function TaskCreateModal({
         }
       }
 
-      toast.push(placement === 'backlog' ? 'Backlog task created' : 'Task created successfully', 'success');
+      let sentToStudentAfterSave = false;
+      if (queueSendToStudentAfterSave && data?.id && canSendToStudentForEvent && assigneeIds.length > 0) {
+        try {
+          sentToStudentAfterSave = await queueSendToStudentsAfterSave({
+            createdEvent: data,
+            familyIdToUse: userFamilyId,
+            userId: authUser.id,
+            note: queueSendToStudentNote,
+          });
+          if (sentToStudentAfterSave && Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+            window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+          }
+        } catch (sendErr) {
+          console.error('[TaskCreateModal] queueSendToStudentsAfterSave', sendErr);
+          toast.push(sendErr?.message || 'Saved event, but could not send to student.', 'error');
+        }
+      }
+
+      if (placement === 'backlog') {
+        toast.push('Backlog task created', 'success');
+      } else if (sentToStudentAfterSave) {
+        toast.push('Task created and sent to student', 'success');
+      } else {
+        toast.push('Task created successfully', 'success');
+      }
       trackEvent('manual_event_created', {
         mode: resolvedAttendanceMode,
         event_type: normalizeEventTypeForPersistence(eventType),
@@ -2770,7 +2847,7 @@ export default function TaskCreateModal({
             accentSoft="#FAF9FF"
             HeroIcon={Calendar}
             onClose={handleDismiss}
-            disableShellScroll
+            shellStyle={styles.modalShell}
             contentContainerStyle={styles.bodyContent}
             bodyStyle={styles.shellBody}
             footer={(
@@ -2826,18 +2903,8 @@ export default function TaskCreateModal({
             <Text style={styles.errorText}>{validationErrors.title}</Text>
           )}
 
-          <ScrollView 
+          <View
             style={styles.bodyScroll}
-            showsVerticalScrollIndicator={true}
-            nestedScrollEnabled={true}
-            {...(Platform.OS === 'web' && {
-              style: {
-                ...styles.bodyScroll,
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                WebkitOverflowScrolling: 'touch',
-              },
-            })}
           >
           {/* Event Type - at top above Schedule on calendar/backlog */}
           <SafeFieldRow style={[styles.fieldRow, { marginTop: 12, marginBottom: 8 }]}>
@@ -2880,274 +2947,228 @@ export default function TaskCreateModal({
             </View>
           </SafeFieldRow>
 
-          {/* Placement toggle */}
-          <View style={styles.modeToggle}>
-            {[
-              { key: 'calendar', label: 'Schedule on calendar' },
-              { key: 'backlog', label: 'Add to backlog' },
-            ].map((option) => (
-              <TouchableOpacity
-                key={option.key}
-                onPress={() => {
-                  setPlacement(option.key);
-                  // Clear time validation error when switching to backlog (time not required)
-                  if (option.key === 'backlog' && validationErrors.time) {
-                    setValidationErrors({ ...validationErrors, time: null });
-                  }
-                }}
-                style={[
-                  styles.modeOption,
-                  placement === option.key && styles.modeOptionActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.modeOptionText,
-                    placement === option.key && styles.modeOptionTextActive,
-                  ]}
-                >
-                  {option.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          {/* Placement toggle hidden for now */}
 
-          {placement === 'backlog' && (
-            <View style={styles.modeInfo}>
-              <Text style={styles.modeInfoText}>
-                Backlog tasks stay off the calendar until you schedule them.
-              </Text>
-            </View>
-          )}
-
-          {/* Chip Row */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipRow}
-            style={{ marginBottom: 0 }}
-          >
-            {/* Date picker - single date or date range based on event type */}
-            {placement === 'calendar' && (() => {
-              const isMultiDayEvent = false; // No multi-day events in new system
-              
-              if (isMultiDayEvent) {
-                // Start date picker for multi-day events
-                return (
-                  <View style={styles.chip}>
-                    <Text style={[styles.chipLabel, { marginRight: 8 }]}>Start:</Text>
-                    <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, -1))}>
-                      <ChevronLeft size={16} color={FG} />
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      onPress={() => {
-                        setCalendarViewMonth(dueDate);
-                        setShowCalendarPicker(true);
-                      }}
-                      style={{ flex: 1, paddingHorizontal: 8 }}
-                    >
-                      <Text style={styles.chipText}>{fmt(dueDate)}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, +1))}>
-                      <ChevronRight size={16} color={FG} />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setDueDate(new Date())} style={styles.todayButton}>
-                      <Text style={styles.todayText}>Today</Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              } else {
-                // Single date picker for regular events
-                return (
-                  <View
-                    style={[
-                      styles.chip,
-                      validationErrors.date && {
-                        borderWidth: 1.5,
-                        borderColor: '#ef4444',
-                        borderRadius: 8,
-                      },
-                    ]}
-                  >
-                    {eventType === 'Project' && (
-                      <Text style={[styles.chipLabel, { marginRight: 8 }]}>Start:</Text>
-                    )}
-                    <TouchableOpacity 
-                      onPress={() => setDueDate(addDays(dueDate, -1))}
-                      style={eventType === 'Project' ? { marginLeft: 4 } : {}}
-                    >
-                      <ChevronLeft size={16} color={FG} />
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      onPress={() => {
-                        if (validationErrors.date) {
-                          setValidationErrors((prev) => ({ ...prev, date: null }));
-                        }
-                        setCalendarViewMonth(dueDate);
-                        setShowCalendarPicker(true);
-                      }}
-                      style={{ flex: 1, paddingHorizontal: 8 }}
-                    >
-                      <Text style={styles.chipText}>{fmt(dueDate)}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, +1))}>
-                      <ChevronRight size={16} color={FG} />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setDueDate(new Date())} style={styles.todayButton}>
-                      <Text style={styles.todayText}>Today</Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              }
-            })()}
-
-            {/* Assignee — same compact row chip as date (label + pills inline); error text below strip */}
-            {(familyMembers.length > 0 || validationErrors.assignee) && (
-              <View
-                style={[
-                  styles.chip,
-                  validationErrors.assignee && {
-                    borderWidth: 1.5,
-                    borderColor: '#ef4444',
-                  },
-                ]}
-              >
-                <View>
-                  <Text style={styles.chipLabel}>Assignee <Text style={{ color: '#ef4444' }}>*</Text></Text>
-                </View>
-                {familyMembers.length > 0 ? (
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                    {familyMembers.map((m) => {
-                      const isSelected = assigneeIds.some((id) => String(id) === String(m.id));
-                      return (
-                        <TouchableOpacity
-                          key={String(m.id)}
-                          onPress={() => {
-                            if (validationErrors.assignee) {
-                              setValidationErrors((prev) => ({ ...prev, assignee: null }));
-                            }
-                            if (isSelected) {
-                              setAssigneeIds(assigneeIds.filter((id) => String(id) !== String(m.id)));
-                            } else {
-                              setAssigneeIds([...assigneeIds, m.id]);
-                            }
-                          }}
+          <SafeFieldRow style={[styles.fieldRow, { marginTop: 0, marginBottom: 8 }]}>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Students <Text style={{ color: '#ef4444' }}>*</Text></Text>
+              <SafeView style={[
+                styles.dropdownContainer,
+                validationErrors.assignee && styles.dropdownContainerError,
+              ]}>
+                <ChipRow style={styles.dropdownRow}>
+                  {familyMembers.map((m) => {
+                    const isSelected = assigneeIds.some((id) => String(id) === String(m.id));
+                    return (
+                      <TouchableOpacity
+                        key={String(m.id)}
+                        onPress={() => {
+                          if (validationErrors.assignee) {
+                            setValidationErrors((prev) => ({ ...prev, assignee: null }));
+                          }
+                          if (isSelected) {
+                            setAssigneeIds(assigneeIds.filter((id) => String(id) !== String(m.id)));
+                          } else {
+                            setAssigneeIds([...assigneeIds, m.id]);
+                          }
+                        }}
+                        style={[
+                          styles.dropdownOption,
+                          styles.assigneePill,
+                          isSelected && styles.dropdownOptionActive,
+                        ]}
+                      >
+                        <Text
                           style={[
-                            styles.chipOption,
-                            isSelected && styles.chipOptionActive,
+                            styles.dropdownOptionText,
+                            styles.assigneePillText,
+                            isSelected && [styles.assigneePillTextActive, styles.dropdownOptionTextActive],
                           ]}
                         >
-                          <Text
-                            style={[
-                              styles.chipOptionText,
-                              isSelected && styles.chipOptionTextActive,
-                            ]}
-                          >
-                            {m.name}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                ) : (
-                  validationErrors.assignee ? (
-                    <Text style={[styles.errorTextSmall, { flexShrink: 1 }]}>{validationErrors.assignee}</Text>
-                  ) : null
-                )}
-              </View>
-            )}
-
-            {/* Labels chip */}
-            {/* Labels section removed - no longer used */}
-          </ScrollView>
-
-          {validationErrors.date ? (
-            <Text style={[styles.errorTextSmall, { marginTop: 2, marginBottom: 2 }]}>{validationErrors.date}</Text>
-          ) : null}
-          {validationErrors.assignee && familyMembers.length > 0 ? (
-            <Text style={[styles.errorTextSmall, { marginTop: validationErrors.date ? 0 : 2, marginBottom: 4 }]}>
-              {validationErrors.assignee}
-            </Text>
-          ) : null}
-
-          {/* End date picker - shown below start date for multi-day events */}
-          {placement === 'calendar' && ['Trip', 'Holiday', 'Project', 'Other'].includes(eventType) && (
-            <View style={{ marginTop: 8, marginBottom: 8, paddingHorizontal: 0 }}>
-              <View style={[styles.chip, { alignSelf: 'flex-start', marginRight: 0 }]}>
-                <Text style={[styles.chipLabel, { marginRight: 8 }]}>End:</Text>
-                <TouchableOpacity 
-                  onPress={() => eventEndDate && setEventEndDate(addDays(eventEndDate, -1))}
-                  style={{ marginLeft: 8 }}
-                >
-                  <ChevronLeft size={16} color={FG} />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  onPress={() => {
-                    if (eventEndDate) {
-                      setEventEndDateCalendarViewMonth(eventEndDate);
-                    } else {
-                      const defaultEnd = new Date(dueDate);
-                      defaultEnd.setDate(defaultEnd.getDate() + 1);
-                      setEventEndDateCalendarViewMonth(defaultEnd);
-                    }
-                    setShowEventEndDatePicker(true);
-                    if (validationErrors.endDate) {
-                      setValidationErrors({ ...validationErrors, endDate: null });
-                    }
-                  }}
-                  style={[
-                    { flex: 1, paddingHorizontal: 8 },
-                    validationErrors.endDate && { borderColor: '#ef4444', borderWidth: 1, borderRadius: 4 }
-                  ]}
-                >
-                  <Text style={[
-                    styles.chipText,
-                    validationErrors.endDate && { color: '#ef4444' }
-                  ]}>
-                    {eventEndDate ? fmt(eventEndDate) : 'Select end date'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => eventEndDate && setEventEndDate(addDays(eventEndDate, +1))}>
-                  <ChevronRight size={16} color={FG} />
-                </TouchableOpacity>
-                {eventType === 'Project' ? (
-                  <TouchableOpacity 
-                    onPress={() => {
-                      const today = new Date();
-                      setEventEndDate(today);
-                    }} 
-                    style={styles.todayButton}
-                  >
-                    <Text style={styles.todayText}>Today</Text>
-                  </TouchableOpacity>
-                ) : (
-                  eventEndDate && (
-                    <TouchableOpacity onPress={() => {
-                      const defaultEnd = new Date(dueDate);
-                      defaultEnd.setDate(defaultEnd.getDate() + 1);
-                      setEventEndDate(defaultEnd);
-                    }} style={styles.todayButton}>
-                      <Text style={styles.todayText}>+1 day</Text>
-                    </TouchableOpacity>
-                  )
-                )}
-              </View>
-              {validationErrors.endDate && (
-                <Text style={styles.errorTextSmall}>{validationErrors.endDate}</Text>
-              )}
+                          {m.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ChipRow>
+              </SafeView>
+              {validationErrors.assignee ? (
+                <Text style={[styles.errorTextSmall, { marginTop: 2, marginBottom: 4 }]}>
+                  {validationErrors.assignee}
+                </Text>
+              ) : null}
             </View>
-          )}
+          </SafeFieldRow>
 
           <SafeView>
             {placement === 'calendar' && (
-              <View style={styles.timeSection}>
-                <View style={styles.timeToggleRow}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={styles.sectionLabel}>Schedule time <Text style={{ color: '#ef4444' }}>*</Text></Text>
+              <View style={[styles.scheduleFieldsWrap, validationErrors.time && styles.scheduleFieldsWrapError]}>
+                <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
+                  <View style={[styles.timeField, styles.dateFieldInline]}>
+                    <Text style={styles.timeLabel}>Date <Text style={{ color: '#ef4444' }}>*</Text></Text>
+                    <View style={[styles.chip, validationErrors.date && styles.chipError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setDueDate(addDays(dueDate, -1));
+                          if (validationErrors.date) setValidationErrors((prev) => ({ ...prev, date: null }));
+                        }}
+                      >
+                        <ChevronLeft size={16} color={FG} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (validationErrors.date) setValidationErrors((prev) => ({ ...prev, date: null }));
+                          setCalendarViewMonth(dueDate);
+                          setShowCalendarPicker(true);
+                        }}
+                        style={{ flex: 1, paddingHorizontal: 8 }}
+                      >
+                        <Text style={styles.chipText}>{fmt(dueDate)}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setDueDate(addDays(dueDate, +1));
+                          if (validationErrors.date) setValidationErrors((prev) => ({ ...prev, date: null }));
+                        }}
+                      >
+                        <ChevronRight size={16} color={FG} />
+                      </TouchableOpacity>
+                    </View>
+                    {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
                   </View>
-                  <View style={styles.timeToggleControls}>
-                    <View style={styles.allDayControl}>
-                      <Text style={styles.allDayLabel}>All day</Text>
+                  <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
+                      <View style={styles.timeField}>
+                        <Text style={styles.timeLabel}>Start</Text>
+                        {Platform.OS === 'web' ? (
+                          <input
+                            type="time"
+                            value={startTime ? (() => {
+                              const parts = parseTimeString(startTime);
+                              if (parts) {
+                                return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
+                              }
+                              return '';
+                            })() : ''}
+                            onChange={(e) => {
+                              const [hours, minutes] = e.target.value.split(':').map(Number);
+                              if (!isNaN(hours) && !isNaN(minutes)) {
+                                const hour12 = hours % 12 || 12;
+                                const period = hours >= 12 ? 'PM' : 'AM';
+                                const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                                setStartTime(formatted);
+                                if (validationErrors.time) {
+                                  setValidationErrors({ ...validationErrors, time: null });
+                                }
+                              }
+                            }}
+                            disabled={allDay}
+                            style={{
+                              backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
+                              borderRadius: 14,
+                              paddingTop: 10,
+                              paddingBottom: 10,
+                              paddingLeft: 12,
+                              paddingRight: 12,
+                              borderWidth: 1,
+                              borderColor: validationErrors.time ? '#ef4444' : BORDER,
+                              borderStyle: 'solid',
+                              fontSize: 14,
+                              color: allDay ? MUTED : FG,
+                              width: '100%',
+                              maxWidth: 100,
+                              height: 'auto',
+                              outline: 'none',
+                              opacity: allDay ? 0.9 : 1,
+                              ...(validationErrors.time && {
+                                borderColor: '#ef4444',
+                              }),
+                            }}
+                          />
+                        ) : (
+                          <TextInput
+                            placeholder="e.g. 9:00 AM"
+                            placeholderTextColor={MUTED}
+                            value={startTime}
+                            onChangeText={(text) => {
+                              const formatted = formatTimeInput(text, startTime);
+                              setStartTime(formatted);
+                              if (validationErrors.time) {
+                                setValidationErrors({ ...validationErrors, time: null });
+                              }
+                            }}
+                            style={[
+                              styles.timeInput,
+                              allDay && styles.timeInputDisabled,
+                              validationErrors.time && styles.inputError,
+                            ]}
+                            editable={!allDay}
+                            autoCapitalize="characters"
+                          />
+                        )}
+                        {validationErrors.time && (
+                          <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
+                        )}
+                      </View>
+                      <View style={styles.timeField}>
+                        <Text style={styles.timeLabel}>End</Text>
+                        {Platform.OS === 'web' ? (
+                          <input
+                            type="time"
+                            value={endTime ? (() => {
+                              const parts = parseTimeString(endTime);
+                              if (parts) {
+                                return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
+                              }
+                              return '';
+                            })() : ''}
+                            onChange={(e) => {
+                              const [hours, minutes] = e.target.value.split(':').map(Number);
+                              if (!isNaN(hours) && !isNaN(minutes)) {
+                                const hour12 = hours % 12 || 12;
+                                const period = hours >= 12 ? 'PM' : 'AM';
+                                const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                                setEndTime(formatted);
+                              }
+                            }}
+                            disabled={allDay}
+                            style={{
+                              backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
+                              borderRadius: 14,
+                              paddingTop: 10,
+                              paddingBottom: 10,
+                              paddingLeft: 12,
+                              paddingRight: 12,
+                              borderWidth: 1,
+                              borderColor: BORDER,
+                              borderStyle: 'solid',
+                              fontSize: 14,
+                              color: allDay ? MUTED : FG,
+                              width: '100%',
+                              maxWidth: 100,
+                              height: 'auto',
+                              outline: 'none',
+                              opacity: allDay ? 0.9 : 1,
+                            }}
+                          />
+                        ) : (
+                          <TextInput
+                            placeholder="Optional"
+                            placeholderTextColor={MUTED}
+                            value={endTime}
+                            onChangeText={(text) => {
+                              const formatted = formatTimeInput(text, endTime);
+                              setEndTime(formatted);
+                            }}
+                            style={[styles.timeInput, allDay && styles.timeInputDisabled]}
+                            editable={!allDay}
+                            autoCapitalize="characters"
+                          />
+                        )}
+                      </View>
+                    </View>
+                  <View style={styles.inlineSwitchField}>
+                    <View style={[styles.allDayRow, styles.inlineSwitchRow]}>
+                      <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>All day</Text>
                       <Switch
                         value={allDay}
                         onValueChange={(value) => {
@@ -3155,7 +3176,6 @@ export default function TaskCreateModal({
                           if (value) {
                             setStartTime('');
                             setEndTime('');
-                            // Clear time validation error when switching to all day
                             if (validationErrors.time) {
                               setValidationErrors({ ...validationErrors, time: null });
                             }
@@ -3168,18 +3188,22 @@ export default function TaskCreateModal({
                         thumbColor={allDay ? '#45A29E' : '#f9fafb'}
                       />
                     </View>
-                    <View style={styles.allDayControl}>
-                      <Text style={styles.allDayLabel}>Recurring</Text>
+                  </View>
+                  <View style={styles.inlineSwitchField}>
+                    <View style={[styles.repeatToggleTopRow, styles.inlineSwitchRow]}>
+                      <Text style={[styles.repeatToggleLabel, styles.inlineSwitchLabel]}>Repeat</Text>
                       <Switch
                         value={isRecurring}
                         onValueChange={(value) => {
                           setIsRecurring(value);
-                          if (value && recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
-                            const defaultDay = dueDate instanceof Date ? dueDate.getDay() : new Date().getDay();
-                            setRecurrenceWeekdays([defaultDay]);
-                            setIsRecurrenceWeekdayAutofilled(true);
-                          }
-                          if (validationErrors.recurrenceEnd) {
+                          setShowRecurringSection(value);
+                          if (value) {
+                            if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
+                              const defaultDay = dueDate instanceof Date ? dueDate.getDay() : new Date().getDay();
+                              setRecurrenceWeekdays([defaultDay]);
+                              setIsRecurrenceWeekdayAutofilled(true);
+                            }
+                          } else if (validationErrors.recurrenceEnd) {
                             setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
                           }
                         }}
@@ -3189,135 +3213,6 @@ export default function TaskCreateModal({
                     </View>
                   </View>
                 </View>
-                {!allDay && (
-                  <View style={styles.timeInputsRow}>
-                    <View style={styles.timeField}>
-                      <Text style={styles.timeLabel}>Start</Text>
-                      {Platform.OS === 'web' ? (
-                        <input
-                          type="time"
-                          value={startTime ? (() => {
-                            // Convert "9:00 AM" to "09:00" format
-                            const parts = parseTimeString(startTime);
-                            if (parts) {
-                              return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                            }
-                            return '';
-                          })() : ''}
-                          onChange={(e) => {
-                            // Convert "09:00" to "9:00 AM" format
-                            const [hours, minutes] = e.target.value.split(':').map(Number);
-                            if (!isNaN(hours) && !isNaN(minutes)) {
-                              const hour12 = hours % 12 || 12;
-                              const period = hours >= 12 ? 'PM' : 'AM';
-                              const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-                              setStartTime(formatted);
-                              if (validationErrors.time) {
-                                setValidationErrors({ ...validationErrors, time: null });
-                              }
-                            }
-                          }}
-                          style={{
-                            backgroundColor: '#ffffff',
-                            borderRadius: 10,
-                            paddingTop: 10,
-                            paddingBottom: 10,
-                            paddingLeft: 12,
-                            paddingRight: 12,
-                            borderWidth: 1,
-                            borderColor: validationErrors.time ? '#ef4444' : BORDER,
-                            borderStyle: 'solid',
-                            fontSize: 14,
-                            color: FG,
-                            width: '100%',
-                            maxWidth: 100,
-                            height: 'auto',
-                            outline: 'none',
-                            ...(validationErrors.time && {
-                              borderColor: '#ef4444',
-                            }),
-                          }}
-                        />
-                      ) : (
-                        <TextInput
-                          placeholder="e.g. 9:00 AM"
-                          placeholderTextColor={MUTED}
-                          value={startTime}
-                          onChangeText={(text) => {
-                            const formatted = formatTimeInput(text, startTime);
-                            setStartTime(formatted);
-                            if (validationErrors.time) {
-                              setValidationErrors({ ...validationErrors, time: null });
-                            }
-                          }}
-                          style={[
-                            styles.timeInput,
-                            validationErrors.time && styles.inputError,
-                          ]}
-                          autoCapitalize="characters"
-                        />
-                      )}
-                      {validationErrors.time && (
-                        <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
-                      )}
-                    </View>
-                    <View style={styles.timeField}>
-                      <Text style={styles.timeLabel}>End</Text>
-                      {Platform.OS === 'web' ? (
-                        <input
-                          type="time"
-                          value={endTime ? (() => {
-                            // Convert "10:00 AM" to "10:00" format
-                            const parts = parseTimeString(endTime);
-                            if (parts) {
-                              return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                            }
-                            return '';
-                          })() : ''}
-                          onChange={(e) => {
-                            // Convert "10:00" to "10:00 AM" format
-                            const [hours, minutes] = e.target.value.split(':').map(Number);
-                            if (!isNaN(hours) && !isNaN(minutes)) {
-                              const hour12 = hours % 12 || 12;
-                              const period = hours >= 12 ? 'PM' : 'AM';
-                              const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-                              setEndTime(formatted);
-                            }
-                          }}
-                          style={{
-                            backgroundColor: '#ffffff',
-                            borderRadius: 10,
-                            paddingTop: 10,
-                            paddingBottom: 10,
-                            paddingLeft: 12,
-                            paddingRight: 12,
-                            borderWidth: 1,
-                            borderColor: BORDER,
-                            borderStyle: 'solid',
-                            fontSize: 14,
-                            color: FG,
-                            width: '100%',
-                            maxWidth: 100,
-                            height: 'auto',
-                            outline: 'none',
-                          }}
-                        />
-                      ) : (
-                        <TextInput
-                          placeholder="Optional"
-                          placeholderTextColor={MUTED}
-                          value={endTime}
-                          onChangeText={(text) => {
-                            const formatted = formatTimeInput(text, endTime);
-                            setEndTime(formatted);
-                          }}
-                          style={styles.timeInput}
-                          autoCapitalize="characters"
-                        />
-                      )}
-                    </View>
-                  </View>
-                )}
                 {/* Suggested Change (when inline reschedule is available) */}
                 {suggestedChange ? (
                   <View style={{
@@ -3710,11 +3605,16 @@ export default function TaskCreateModal({
                     </View>
                   </View>
                 ) : null}
-                {isRecurring && (
+                {isRecurring && showRecurringSection && (
                   <View style={styles.recurringSectionContent}>
-                    <View style={{ marginBottom: 16, flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Repeat</Text>
+                    <View style={recurrenceType === 'weekly' ? styles.recurrenceTopRow : null}>
+                      <View
+                        style={[
+                          { marginBottom: 14 },
+                          recurrenceType === 'weekly' && styles.recurrenceTopColumn,
+                        ]}
+                      >
+                        <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Repeat pattern</Text>
                         <ChipRow style={styles.dropdownRow}>
                           <TouchableOpacity
                             onPress={() => {
@@ -3766,56 +3666,64 @@ export default function TaskCreateModal({
                         </ChipRow>
                       </View>
                       {recurrenceType === 'weekly' && (
-                      <View style={{ flex: 2 }}>
-                        <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>On</Text>
-                        <ChipRow style={styles.dropdownRow}>
-                          {WEEKDAY_OPTIONS.map((day) => {
-                            const selected = recurrenceWeekdays.includes(day.value);
-                            return (
-                              <TouchableOpacity
-                                key={day.value}
-                                onPress={() => {
-                                  setRecurrenceWeekdays((prev) => {
-                                    const next = Array.isArray(prev) ? [...prev] : [];
-                                    const idx = next.indexOf(day.value);
-                                    if (idx >= 0) {
-                                      next.splice(idx, 1);
-                                    } else {
-                                      next.push(day.value);
+                        <View style={[{ marginBottom: 14 }, styles.recurrenceTopColumn]}>
+                          <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Repeats on</Text>
+                          <ChipRow style={styles.dropdownRow}>
+                            {WEEKDAY_OPTIONS.map((day) => {
+                              const selected = recurrenceWeekdays.includes(day.value);
+                              return (
+                                <TouchableOpacity
+                                  key={day.value}
+                                  onPress={() => {
+                                    setRecurrenceWeekdays((prev) => {
+                                      const next = Array.isArray(prev) ? [...prev] : [];
+                                      const idx = next.indexOf(day.value);
+                                      if (idx >= 0) {
+                                        next.splice(idx, 1);
+                                      } else {
+                                        next.push(day.value);
+                                      }
+                                      return next.sort((a, b) => a - b);
+                                    });
+                                    setIsRecurrenceWeekdayAutofilled(false);
+                                    if (validationErrors.recurrenceWeekdays) {
+                                      setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
                                     }
-                                    return next.sort((a, b) => a - b);
-                                  });
-                                  setIsRecurrenceWeekdayAutofilled(false);
-                                  if (validationErrors.recurrenceWeekdays) {
-                                    setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
-                                  }
-                                }}
-                                style={[
-                                  styles.dropdownOption,
-                                  selected && styles.dropdownOptionActive,
-                                ]}
-                              >
-                                <Text
+                                  }}
                                   style={[
-                                    styles.dropdownOptionText,
-                                    selected && styles.dropdownOptionTextActive,
+                                    styles.dropdownOption,
+                                    selected && styles.dropdownOptionActive,
                                   ]}
                                 >
-                                  {day.label}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </ChipRow>
-                        {validationErrors.recurrenceWeekdays ? (
-                          <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceWeekdays}</Text>
-                        ) : null}
-                      </View>
+                                  <Text
+                                    style={[
+                                      styles.dropdownOptionText,
+                                      selected && styles.dropdownOptionTextActive,
+                                    ]}
+                                  >
+                                    {day.label}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </ChipRow>
+                          {validationErrors.recurrenceWeekdays ? (
+                            <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceWeekdays}</Text>
+                          ) : null}
+                        </View>
                       )}
                     </View>
-                    {/* Ends and Number of occurrences/End date in one row */}
-                    <View style={{ marginBottom: 16, flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
-                      <View style={{ flex: 1 }}>
+                    <View
+                      style={[
+                        recurrenceEndType !== 'never' && styles.recurrenceEndsRow,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          { marginBottom: 8 },
+                          recurrenceEndType !== 'never' && styles.recurrenceEndsControl,
+                        ]}
+                      >
                         <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Ends</Text>
                         <ChipRow style={styles.dropdownRow}>
                           {['never', 'after', 'on'].map((endType) => (
@@ -3844,13 +3752,21 @@ export default function TaskCreateModal({
                           ))}
                         </ChipRow>
                       </View>
-                      {recurrenceEndType === 'after' && (
-                        <View style={{ flex: 2 }}>
+                      {recurrenceEndType === 'after' ? (
+                        <View style={[{ marginBottom: 8, maxWidth: 220 }, styles.recurrenceEndsInputWrap]}>
                           <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>Number of occurrences</Text>
                           <TextInput
                             style={[
                               styles.input,
-                              { width: 100, marginBottom: 0, paddingVertical: 6, paddingHorizontal: 12, height: 'auto' },
+                              {
+                                width: 116,
+                                marginBottom: 0,
+                                paddingVertical: 0,
+                                paddingHorizontal: 14,
+                                height: 36,
+                                borderRadius: 999,
+                                backgroundColor: '#FFFFFF',
+                              },
                               validationErrors.recurrenceEnd && recurrenceEndType === 'after' && {
                                 borderColor: '#ef4444',
                                 borderWidth: 1.5,
@@ -3861,7 +3777,6 @@ export default function TaskCreateModal({
                               if (validationErrors.recurrenceEnd) {
                                 setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
                               }
-                              // Allow any numeric input for free editing
                               if (text === '' || /^\d+$/.test(text)) {
                                 setRecurrenceEndAfterText(text);
                                 const num = parseInt(text, 10);
@@ -3871,7 +3786,6 @@ export default function TaskCreateModal({
                               }
                             }}
                             onBlur={() => {
-                              // Validate on blur - clear if invalid, otherwise set the value
                               const num = parseInt(recurrenceEndAfterText, 10);
                               if (isNaN(num) || num <= 0) {
                                 setRecurrenceEndAfterText('');
@@ -3884,14 +3798,24 @@ export default function TaskCreateModal({
                             keyboardType="numeric"
                           />
                         </View>
-                      )}
-                      {recurrenceEndType === 'on' && (
-                        <View style={{ flex: 2 }}>
+                      ) : null}
+                      {recurrenceEndType === 'on' ? (
+                        <View style={[{ marginBottom: 8, maxWidth: 240 }, styles.recurrenceEndsInputWrap]}>
                           <Text style={[styles.fieldLabel, { marginBottom: 8, fontSize: 13 }]}>End date</Text>
                           <TouchableOpacity
                             style={[
                               styles.input,
-                              { marginBottom: 0, paddingVertical: 6, paddingHorizontal: 12, height: 'auto' },
+                              {
+                                marginBottom: 0,
+                                paddingVertical: 0,
+                                paddingHorizontal: 14,
+                                height: 36,
+                                borderRadius: 999,
+                                justifyContent: 'center',
+                                backgroundColor: '#FFFFFF',
+                                width: '100%',
+                                maxWidth: 220,
+                              },
                               validationErrors.recurrenceEnd && recurrenceEndType === 'on' && {
                                 borderColor: '#ef4444',
                                 borderWidth: 1.5,
@@ -3901,7 +3825,6 @@ export default function TaskCreateModal({
                               if (validationErrors.recurrenceEnd) {
                                 setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
                               }
-                              // Initialize calendar view month to current end date or 30 days from start
                               if (recurrenceEndDate) {
                                 setEndDateCalendarViewMonth(new Date(recurrenceEndDate));
                               } else {
@@ -3917,7 +3840,7 @@ export default function TaskCreateModal({
                             </Text>
                           </TouchableOpacity>
                         </View>
-                      )}
+                      ) : null}
                     </View>
                     {validationErrors.recurrenceEnd ? (
                       <Text style={[styles.errorTextSmall, { marginTop: 4 }]}>{validationErrors.recurrenceEnd}</Text>
@@ -3928,130 +3851,16 @@ export default function TaskCreateModal({
             )}
           </SafeView>
 
-            <ModalSectionCard
-              Icon={MapPin}
-              title="Logistical details"
-              subtitle="Location, mode, and host"
-              expanded={showLogisticDetails}
-              onPress={() => setShowLogisticDetails(!showLogisticDetails)}
-              accent="#7C70F4"
-            >
-                <SafeView>
-                  <SafeFieldRow style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Location (optional)</Text>
-                      <TextInput
-                        placeholder="e.g. Library, Park, etc."
-                        placeholderTextColor={MUTED}
-                        value={location}
-                        onChangeText={setLocation}
-                        style={styles.input}
-                      />
-                      <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Instructor / Host (optional)</Text>
-                      <TextInput
-                        placeholder="e.g. Elisa"
-                        placeholderTextColor={MUTED}
-                        value={instructor}
-                        onChangeText={setInstructor}
-                        style={styles.input}
-                      />
-                    </View>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Mode (optional)</Text>
-                      <SafeView style={styles.dropdownContainer}>
-                        <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>{MODE_OPTIONS.map((m) => (
-                            <TouchableOpacity
-                              key={m}
-                              onPress={() => setMode(mode === m ? '' : m)}
-                              style={[
-                                styles.dropdownOption,
-                                mode === m && styles.dropdownOptionActive,
-                              ]}
-                            >
-                              <Text
-                                style={[
-                                  styles.dropdownOptionText,
-                                  mode === m && styles.dropdownOptionTextActive,
-                                ]}
-                              >
-                                {m.charAt(0).toUpperCase() + m.slice(1)}
-                              </Text>
-                            </TouchableOpacity>
-                          ))}</ChipRow>
-                      </SafeView>
-                      <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add to connected calendar</Text>
-                      <SafeView style={styles.dropdownContainer}>
-                        <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
-                          {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
-                            const isSelected = connectedCalendarTargets.includes(provider.value);
-                            return (
-                              <TouchableOpacity
-                                key={provider.value}
-                                onPress={() =>
-                                  setConnectedCalendarTargets((prev) =>
-                                    prev.includes(provider.value)
-                                      ? prev.filter((value) => value !== provider.value)
-                                      : [...prev, provider.value]
-                                  )
-                                }
-                                style={[
-                                  styles.dropdownOption,
-                                  styles.calendarConnectionOption,
-                                  isSelected && styles.dropdownOptionActive,
-                                ]}
-                              >
-                                <View style={styles.calendarConnectionOptionContent}>
-                                  {isSelected ? (
-                                    <Check size={12} color="#6BB3E8" />
-                                  ) : null}
-                                  <Text
-                                    style={[
-                                      styles.dropdownOptionText,
-                                      isSelected && styles.dropdownOptionTextActive,
-                                    ]}
-                                  >
-                                    {provider.label}
-                                  </Text>
-                                </View>
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </ChipRow>
-                      </SafeView>
-                    </View>
-                  </SafeFieldRow>
-                </SafeView>
-            </ModalSectionCard>
-
             {/* Academic Details Section - after Schedule time */}
             <ModalSectionCard
               Icon={GraduationCap}
-              title="Academic details"
+              title={academicSectionTitle}
               subtitle="Scheduling and grading context"
               expanded={showAcademicDetails}
               onPress={() => setShowAcademicDetails(!showAcademicDetails)}
               accent="#7C70F4"
             >
                 <SafeView>
-              {/* Count this as instructional time (was below Event Type; lives in Academic Details) */}
-              {placement === 'calendar' &&
-                ['Lesson', 'Class Day', 'Project', 'Exam', 'Assignment', 'Activity', 'Appointment'].includes(eventType) && (
-                <View style={[styles.inputGroup, { marginTop: 0, marginBottom: 12 }]}>
-                  {!isClassDayEvent ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
-                      <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }} numberOfLines={2}>
-                        Show in student home as &apos;Requires Submission&apos;
-                      </Text>
-                      <Switch
-                        value={showRequiresSubmissionHome}
-                        onValueChange={setShowRequiresSubmissionHome}
-                        trackColor={{ false: BORDER, true: '#AECBFA' }}
-                        thumbColor={showRequiresSubmissionHome ? '#45A29E' : '#f9fafb'}
-                      />
-                    </View>
-                  ) : null}
-                </View>
-              )}
               {/* Subject, Unit, Grade */}
               <>
               <SafeFieldRow style={styles.fieldRow}>
@@ -4445,7 +4254,7 @@ export default function TaskCreateModal({
                       style={styles.addMaterialButton}
                       onPress={() => setShowAddMaterialModal(true)}
                     >
-                      <Plus size={14} color="#B8D7F9" />
+                      <Plus size={14} color="#5B6880" />
                       <Text style={styles.addMaterialText}>Add New</Text>
                     </TouchableOpacity>
                   </View>
@@ -4559,7 +4368,47 @@ export default function TaskCreateModal({
             )}
             </ModalSectionCard>
 
-          </ScrollView>
+            <ModalSectionCard
+              Icon={UserCircle}
+              title="Send to student"
+              subtitle="Student workflow"
+              expanded={showStudentExchangeSection}
+              onPress={() => setShowStudentExchangeSection(!showStudentExchangeSection)}
+              accent="#7C70F4"
+            >
+              <SafeView>
+                {!canSendToStudentForEvent ? (
+                  <Text style={styles.fieldHelpText}>This event type cannot be sent to student.</Text>
+                ) : assigneeIds.length === 0 ? (
+                  <Text style={styles.fieldHelpText}>Select at least one student to enable sharing.</Text>
+                ) : (
+                  <>
+                    <View style={[styles.allDayRow, { marginTop: 0 }]}>
+                      <Text style={styles.fieldLabel}>Send after save</Text>
+                      <Switch
+                        value={queueSendToStudentAfterSave}
+                        onValueChange={setQueueSendToStudentAfterSave}
+                        trackColor={{ false: BORDER, true: '#AECBFA' }}
+                        thumbColor={queueSendToStudentAfterSave ? '#45A29E' : '#f9fafb'}
+                      />
+                    </View>
+                    {queueSendToStudentAfterSave ? (
+                      <TextInput
+                        placeholder="Optional note for student"
+                        placeholderTextColor={MUTED}
+                        value={queueSendToStudentNote}
+                        onChangeText={setQueueSendToStudentNote}
+                        style={[styles.input, styles.notesInput, { minHeight: 64, marginTop: 8, marginBottom: 0 }]}
+                        multiline
+                        textAlignVertical="top"
+                      />
+                    ) : null}
+                  </>
+                )}
+              </SafeView>
+            </ModalSectionCard>
+
+          </View>
           </AppModalShell>
         </Animated.View>
       </Animated.View>
@@ -5304,7 +5153,7 @@ const styles = StyleSheet.create({
   modal: {
     width: '100%',
     maxWidth: 860,
-    maxHeight: Platform.OS === 'web' ? '90vh' : '90%',
+    maxHeight: Platform.OS === 'web' ? '78vh' : '84%',
     backgroundColor: 'transparent',
     borderRadius: 0,
     flexDirection: 'column',
@@ -5313,6 +5162,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     elevation: 0,
     overflow: 'visible',
+  },
+  modalShell: {
+    height: Platform.OS === 'web' ? '78vh' : '84%',
   },
   shellBody: {
     flex: 1,
@@ -5545,6 +5397,73 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 6,
   },
+  scheduleFieldsWrap: {
+    marginBottom: 8,
+  },
+  scheduleFieldsWrapError: {
+    borderColor: '#ef4444',
+  },
+  dateTimeInlineRow: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 8,
+    marginBottom: 10,
+  },
+  dateTimeInlineRowWeb: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 12,
+  },
+  dateFieldInline: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 220,
+  },
+  inlineSwitchField: {
+    minWidth: 84,
+    alignItems: 'flex-start',
+    justifyContent: 'flex-end',
+    ...(Platform.OS === 'web' && {
+      marginBottom: 6,
+    }),
+  },
+  inlineSwitchRow: {
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  inlineSwitchLabel: {
+    marginBottom: 0,
+  },
+  allDayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 10,
+    marginTop: 2,
+  },
+  repeatToggleTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 10,
+    marginBottom: 2,
+  },
+  repeatToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  repeatToggleLabel: {
+    color: SUB,
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 4,
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   timeSection: {
     borderWidth: 1,
     borderColor: BORDER,
@@ -5663,6 +5582,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
+  timeInputsRowInline: {
+    flex: 1,
+    minWidth: 220,
+  },
   timeField: {
     flex: 1,
   },
@@ -5670,6 +5593,8 @@ const styles = StyleSheet.create({
     color: SUB,
     fontSize: 12,
     marginBottom: 4,
+    fontWeight: '500',
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -5677,7 +5602,7 @@ const styles = StyleSheet.create({
   timeInput: {
     borderWidth: 1,
     borderColor: BORDER,
-    borderRadius: 10,
+    borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 12,
     color: FG,
@@ -5686,10 +5611,14 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  timeInputDisabled: {
+    backgroundColor: '#F8FAFC',
+    color: MUTED,
+  },
   input: {
     borderWidth: 1,
     borderColor: BORDER,
-    borderRadius: 10,
+    borderRadius: 14,
     padding: 10,
     color: FG,
     marginBottom: 8,
@@ -5816,10 +5745,41 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   recurringSectionContent: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: BORDER,
+    marginTop: 8,
+    paddingTop: 0,
+  },
+  recurrenceTopRow: {
+    ...(Platform.OS === 'web' && {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 16,
+    }),
+  },
+  recurrenceTopColumn: {
+    ...(Platform.OS === 'web' && {
+      flex: 1,
+      minWidth: 0,
+    }),
+  },
+  recurrenceEndsRow: {
+    ...(Platform.OS === 'web' && {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 16,
+    }),
+  },
+  recurrenceEndsControl: {
+    ...(Platform.OS === 'web' && {
+      flex: 1,
+      minWidth: 0,
+    }),
+  },
+  recurrenceEndsInputWrap: {
+    ...(Platform.OS === 'web' && {
+      flex: 1,
+      minWidth: 0,
+      marginLeft: -6,
+    }),
   },
   recurringBadge: {
     backgroundColor: ACCENT,
@@ -5925,6 +5885,28 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  assigneePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  assigneePillText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  assigneePillTextActive: {
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   selectContainer: {
     position: 'relative',
     zIndex: 1000,
@@ -5935,7 +5917,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: BORDER,
-    borderRadius: 10,
+    borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 12,
     backgroundColor: '#fff',
@@ -5961,7 +5943,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: BORDER,
-    borderRadius: 10,
+    borderRadius: 14,
     marginTop: 4,
     maxHeight: 200,
     zIndex: 10000,
@@ -6073,21 +6055,22 @@ const styles = StyleSheet.create({
   addMaterialButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 38,
+    paddingHorizontal: 14,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#B8D7F9',
-    backgroundColor: '#FFFFFF',
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   addMaterialText: {
-    fontSize: 13,
-    color: '#1e40af',
+    fontSize: 14,
+    color: '#5B6880',
     fontWeight: '600',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   standardsSelectorContainer: {

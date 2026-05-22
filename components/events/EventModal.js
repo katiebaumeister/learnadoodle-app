@@ -25,13 +25,15 @@ export default function EventModal({
   viewerRole = null,
   /** Child/tutor: parent disabled add/edit events in User Controls */
   denyFamilyEventEdit = false,
-  /** null | 'help' | 'submission' — parent opens respond/review modal once linked assignment loads */
+  /** null | 'help' | 'submission' | 'send' — parent opens matching assignment/send flow once data loads */
   parentEventFocus = null,
   onParentEventFocusConsumed,
   /** From planner chip conflict icon — show top banner with Auto reschedule / Ignore */
   openConflictResolution = false,
   conflictResolutionContext = null,
   onOpenConflictResolutionConsumed,
+  /** true = only open Send to student modal (no EventDetails shell in background) */
+  sendOnlyMode = false,
 }) {
   const [event, setEvent] = useState(initialEvent);
   const [syllabus, setSyllabus] = useState(null);
@@ -372,7 +374,7 @@ export default function EventModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={styles.overlay}>
+      <View style={[styles.overlay, sendOnlyMode && styles.overlayTransparent]}>
         <View
           style={StyleSheet.absoluteFill}
           accessibilityRole={Platform.OS === 'web' ? 'button' : undefined}
@@ -381,7 +383,13 @@ export default function EventModal({
             ? { onClick: onClose, onMouseDown: onClose }
             : { onTouchEnd: onClose })}
         />
-        <View style={[styles.container, isEditing && styles.containerEditMode]}>
+        <View
+          style={[
+            styles.container,
+            isEditing && styles.containerEditMode,
+            sendOnlyMode && styles.containerHidden,
+          ]}
+        >
           {/* Content */}
           {loading ? (
             <View style={styles.loadingContainer}>
@@ -413,6 +421,7 @@ export default function EventModal({
                   openConflictResolution={openConflictResolution}
                   conflictResolutionContext={conflictResolutionContext}
                   onOpenConflictResolutionConsumed={onOpenConflictResolutionConsumed}
+                  sendOnlyMode={sendOnlyMode}
                 />
               ) : (
                 <View style={styles.loadingContainer}>
@@ -435,13 +444,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
+  overlayTransparent: {
+    backgroundColor: 'transparent',
+    padding: 0,
+  },
   container: {
     backgroundColor: colors.card || '#ffffff',
     borderRadius: 30,
     width: '100%',
     maxWidth: 860,
-    maxHeight: Platform.OS === 'web' ? '86vh' : '86%',
-    minHeight: Platform.OS === 'web' ? 340 : '52%',
+    maxHeight: Platform.OS === 'web' ? '78vh' : '84%',
+    minHeight: Platform.OS === 'web' ? 320 : '46%',
     ...(Platform.OS === 'web' && {
       height: 'auto',
     }),
@@ -455,11 +468,19 @@ const styles = StyleSheet.create({
   containerEditMode: {
     width: '100%',
     maxWidth: 860,
-    maxHeight: Platform.OS === 'web' ? '86vh' : '86%',
-    minHeight: Platform.OS === 'web' ? 420 : '60%',
+    maxHeight: Platform.OS === 'web' ? '78vh' : '84%',
+    minHeight: Platform.OS === 'web' ? 360 : '52%',
     ...(Platform.OS === 'web' && {
       height: 'auto',
     }),
+  },
+  containerHidden: {
+    width: 0,
+    height: 0,
+    minHeight: 0,
+    maxHeight: 0,
+    opacity: 0,
+    overflow: 'hidden',
   },
   header: {
     flexDirection: 'row',

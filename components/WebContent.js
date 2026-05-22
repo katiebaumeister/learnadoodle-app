@@ -30,6 +30,7 @@ const PLANNER_CTX_ICON_PATHS = {
   edit2:
     'M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7 M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z',
   trash2: 'M3 6h18 M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6 M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2',
+  send: 'M22 2 11 13 M22 2 15 22 11 13 2 9 22 2z',
   calendar:
     'M8 2v4 M16 2v4 M3 10h18 M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
   rotateCcw:
@@ -5181,7 +5182,27 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         text: 'Edit Event',
         iconKey: 'edit2',
         action: () => {
-          window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev } }));
+          window.dispatchEvent(new CustomEvent('openEventModal', {
+            detail: {
+              eventId: ev?.id,
+              initialEvent: ev,
+              schedulingMode: true,
+            },
+          }));
+        },
+      });
+      menuItems.push({
+        text: 'Send to student',
+        iconKey: 'send',
+        action: () => {
+          window.dispatchEvent(new CustomEvent('openEventModal', {
+            detail: {
+              eventId: ev?.id,
+              initialEvent: ev,
+              parentEventFocus: 'send',
+              sendOnlyMode: true,
+            },
+          }));
         },
       });
       const isSeriesGroup = isDeletableSeriesGroup(ev);
@@ -8935,6 +8956,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               detail: {
                 eventId: event?.id,
                 initialEvent: event,
+                schedulingMode: true,
                 openConflictResolution: hasActiveConflictContext,
                 conflictResolutionContext: hasActiveConflictContext
                   ? {

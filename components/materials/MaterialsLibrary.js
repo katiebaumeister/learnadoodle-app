@@ -621,23 +621,10 @@ export default function MaterialsLibrary({
     }
   };
 
-  const handleEditDetails = async (item) => {
-    // Reload material to ensure we have latest data including reviews
-    try {
-      const { getMaterial } = await import('../../lib/services/materialsClient');
-      const freshMaterial = await getMaterial(item.data.id);
-      setViewingMaterial(freshMaterial);
-    } catch (error) {
-      console.error('[MaterialsLibrary] Error loading material for view:', error);
-      // Fallback to using the data we have
-      setViewingMaterial(item.data);
-    }
-  };
-
   const handleEditFromDetails = async (material) => {
     if (!ensureCanEditMaterials()) return;
-    // Close the details modal first
-    setViewingMaterial(null);
+    // Open edit immediately so details -> edit feels seamless.
+    setEditingMaterial(material);
     // Reload material to ensure we have latest data including reviews
     try {
       const { getMaterial } = await import('../../lib/services/materialsClient');
@@ -771,9 +758,8 @@ export default function MaterialsLibrary({
       existingMenu.remove();
     }
     
-     const menuItems = [
-       { text: 'Attachment details', action: () => handleEditDetails(item), icon: FileText },
-       { text: 'Edit attachment details', action: () => handleEditAttachment(item), icon: Edit2 },
+    const menuItems = [
+      { text: 'Edit attachment details', action: () => handleEditAttachment(item), icon: Edit2 },
        { text: 'Create assignment from material', action: () => handleCreateAssignmentFromMaterial(item), icon: FileText },
        { text: 'Open in new tab', action: () => handleOpenInNewTab(item), icon: ExternalLink },
        { text: 'Delete', action: () => handleDeleteItem(item), isDelete: true, icon: Trash2 }
@@ -1793,7 +1779,7 @@ export default function MaterialsLibrary({
 
       {/* Material Details Modal (View Mode) */}
       <MaterialDetailsModal
-        visible={!!viewingMaterial}
+        visible={!!viewingMaterial && !editingMaterial}
         onClose={() => setViewingMaterial(null)}
         material={viewingMaterial}
         familyId={familyId}

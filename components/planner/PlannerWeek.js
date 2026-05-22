@@ -185,6 +185,8 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
                   key={ev.id}
                   {...(typeof window !== 'undefined' && {
                     onMouseDown: (e) => {
+                      const mouseButton = typeof e.button === 'number' ? e.button : e.nativeEvent?.button;
+                      if (typeof mouseButton === 'number' && mouseButton !== 0) return; // Left click only when provided
                       console.log('[PlannerWeek] onMouseDown triggered', { canDrag, hasHandler: !!onMouseDragStart, eventId: ev.id });
                       if (canDrag && onMouseDragStart) {
                         e.stopPropagation();
@@ -193,7 +195,7 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
                     },
                     onClick: (e) => {
                       // Only handle click if not dragging
-                      if (!isDragging && !isDraggingRef.current) {
+                      if (!isDragging) {
                         e.stopPropagation();
                         if (onEventClick) {
                           onEventClick(ev);
@@ -229,7 +231,7 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
                     onChanged={(patched) => onEventChanged(ev.id, patched)}
                     onClick={(clickedEv) => {
                       // Only handle click if not dragging
-                      if (!isDragging && !isDraggingRef.current && onEventClick) {
+                      if (!isDragging && onEventClick) {
                         onEventClick(clickedEv);
                       }
                     }}
@@ -326,6 +328,14 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   const [dragState, setDragState] = useState(null); // { eventId, startX, startY, currentX, currentY }
   const dragRef = useRef(null); // Ref to track drag element
   const isDraggingRef = useRef(false); // Track if we're actually dragging (not just clicking)
+  const [dragDebugInfo, setDragDebugInfo] = useState({
+    status: 'idle',
+    eventId: null,
+    targetDateIso: null,
+    lastError: null,
+    lines: [],
+  });
+  const lastMoveDebugAtRef = useRef(0);
   const [isWeekFrozen, setIsWeekFrozen] = useState(false); // Track if current week is frozen
   const [freezeLoading, setFreezeLoading] = useState(false); // Loading state for freeze toggle
   const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false);
@@ -354,6 +364,35 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   const monthYearText = useMemo(() => {
     return weekStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   }, [weekStart.getFullYear(), weekStart.getMonth()]);
+
+  const pushDragDebug = useCallback((phase, payload = {}) => {
+    if (typeof window === 'undefined' || Platform.OS !== 'web') return;
+    const now = new Date();
+    const timeLabel = now.toLocaleTimeString();
+    const safePayload = Object.fromEntries(
+      Object.entries(payload).filter(([, value]) => {
+        const t = typeof value;
+        return value == null || t === 'string' || t === 'number' || t === 'boolean';
+      })
+    );
+    const line = `${timeLabel} ${phase} ${JSON.stringify(safePayload)}`;
+    console.log('[PlannerWeek][DND DEBUG]', phase, safePayload);
+    setDragDebugInfo(prev => ({
+      status: payload.status || phase,
+      eventId: payload.eventId ?? prev.eventId,
+      targetDateIso: payload.targetDateIso ?? prev.targetDateIso,
+      lastError: payload.error ?? prev.lastError,
+      lines: [line, ...prev.lines].slice(0, 12),
+    }));
+    window.__plannerWeekDragDebug = {
+      at: now.toISOString(),
+      phase,
+      payload: safePayload,
+    };
+    window.dispatchEvent(new CustomEvent('plannerWeekDragDebug', {
+      detail: { at: now.toISOString(), phase, payload: safePayload },
+    }));
+  }, []);
 
   // Listen for openNoteEditor custom event
   useEffect(() => {
@@ -1670,11 +1709,20 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   const handleMouseDragStart = useCallback((e, eventId) => {
     if (readOnly) return;
     if (typeof window === 'undefined') return;
+    const mouseButton = typeof e.button === 'number' ? e.button : e.nativeEvent?.button;
+    if (typeof mouseButton === 'number' && mouseButton !== 0) return; // Left click only when provided
 
     // Don't prevent default immediately - let the drag start naturally
     const startX = e.clientX;
     const startY = e.clientY;
     const originalTarget = e.currentTarget;
+    pushDragDebug('mouse_down', {
+      status: 'mouse_down',
+      eventId,
+      button: mouseButton ?? 'unknown',
+      startX: Math.round(startX),
+      startY: Math.round(startY),
+    });
     
     // Reset drag flag
     isDraggingRef.current = false;
@@ -1696,7 +1744,15 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       // Lower threshold to 3px for more responsive drag detection
       if (deltaX > 3 || deltaY > 3) {
         if (!isDraggingRef.current) {
+          moveEvent.preventDefault();
+          moveEvent.stopPropagation();
           console.log('[PlannerWeek] Drag detected! deltaX:', deltaX, 'deltaY:', deltaY);
+          pushDragDebug('drag_detected', {
+            status: 'dragging',
+            eventId,
+            deltaX: Math.round(deltaX),
+            deltaY: Math.round(deltaY),
+          });
           isDraggingRef.current = true;
           setDraggedEventId(eventId);
           dragRef.current = originalTarget;
@@ -1758,10 +1814,33 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         ghost.style.left = (moveEvent.clientX - rect.width / 2) + 'px';
         ghost.style.top = (moveEvent.clientY - rect.height / 2) + 'px';
       }
+      if (isDraggingRef.current) {
+        const now = Date.now();
+        if (now - lastMoveDebugAtRef.current > 250) {
+          lastMoveDebugAtRef.current = now;
+          const elementBelow = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+          const hoverDate = elementBelow?.closest?.('[data-day-date]')?.getAttribute?.('data-day-date') || null;
+          pushDragDebug('drag_move', {
+            status: 'dragging',
+            eventId,
+            x: Math.round(moveEvent.clientX),
+            y: Math.round(moveEvent.clientY),
+            hoverTag: elementBelow?.tagName || null,
+            hoverDate,
+          });
+        }
+      }
     };
     
     const handleMouseUp = async (upEvent) => {
       console.log('[PlannerWeek] handleMouseUp called', { wasDragging: isDraggingRef.current, eventId });
+      pushDragDebug('mouse_up', {
+        status: isDraggingRef.current ? 'drop_pending' : 'click_release',
+        eventId,
+        x: Math.round(upEvent.clientX),
+        y: Math.round(upEvent.clientY),
+        wasDragging: !!isDraggingRef.current,
+      });
       
       // Find which day column we're over
       const elementBelow = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
@@ -1773,6 +1852,11 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       
       if (!elementBelow) {
         console.log('[PlannerWeek] No element below, cleaning up');
+        pushDragDebug('drop_cancelled_no_element', {
+          status: 'drop_failed',
+          eventId,
+          error: 'No element under cursor',
+        });
         setDragState(null);
         setDraggedEventId(null);
         dragRef.current = null;
@@ -1784,11 +1868,13 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       // Find the day column - calculate based on position since data attributes might not work
       let dayColumn = null;
       let targetDateIso = null;
+      let targetDetectionMethod = 'none';
       
       // Method 1: Try to find by data attribute (if it exists)
       dayColumn = elementBelow.closest('[data-day-date]');
       if (dayColumn) {
         targetDateIso = dayColumn.getAttribute('data-day-date');
+        targetDetectionMethod = 'closest';
       }
       
       // Method 2: If not found, search up the tree for data attribute
@@ -1799,6 +1885,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           if (parent.getAttribute && parent.getAttribute('data-day-date')) {
             dayColumn = parent;
             targetDateIso = parent.getAttribute('data-day-date');
+            targetDetectionMethod = 'ancestor';
             break;
           }
           parent = parent.parentElement;
@@ -1861,6 +1948,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                 const targetDate = new Date(weekStart);
                 targetDate.setDate(targetDate.getDate() + dayIndex);
                 targetDateIso = getLocalDateString(targetDate);
+                targetDetectionMethod = 'position';
                 console.log('[PlannerWeek] Found day column by position', { 
                   childIndex: i,
                   dayIndex, 
@@ -1881,6 +1969,13 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
         found: !!dayColumn,
         targetDateIso,
         tagName: dayColumn?.tagName
+      });
+      pushDragDebug('drop_target_resolved', {
+        status: dayColumn && targetDateIso ? 'drop_target_found' : 'drop_target_missing',
+        eventId,
+        targetDateIso: targetDateIso || null,
+        detection: targetDetectionMethod,
+        found: !!dayColumn,
       });
       
       if (dayColumn && targetDateIso) {
@@ -2079,6 +2174,13 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           });
           
           try {
+            pushDragDebug('api_reschedule_start', {
+              status: 'api_pending',
+              eventId,
+              targetDateIso,
+              startTs: newStart.toISOString(),
+              endTs: newEnd.toISOString(),
+            });
             const { data: updatedEvent, error } = await rescheduleEvent(
               eventId,
               newStart.toISOString(),
@@ -2097,6 +2199,12 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
             if (error) {
               // Revert optimistic update on error
               console.error('[PlannerWeek] Reschedule error', error);
+              pushDragDebug('api_reschedule_error', {
+                status: 'api_error',
+                eventId,
+                targetDateIso,
+                error: error.message || 'unknown_error',
+              });
               setLocalEvents(prev => {
                 const next = { ...prev };
                 delete next[eventId];
@@ -2110,6 +2218,12 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
             } else {
               // Success - keep optimistic update until refresh completes
               console.log('[PlannerWeek] Reschedule successful');
+              pushDragDebug('api_reschedule_success', {
+                status: 'api_success',
+                eventId,
+                targetDateIso,
+                hasUpdatedEvent: !!updatedEvent,
+              });
               // Don't overwrite optimistic update with server response - it might have old date_local
               // The optimistic update already has the correct date_local (targetDateIso)
               // We'll keep it until fresh data arrives from the refresh
@@ -2135,6 +2249,12 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           } catch (err) {
             // Revert optimistic update on exception
             console.error('[PlannerWeek] Reschedule exception', err);
+            pushDragDebug('api_reschedule_exception', {
+              status: 'api_exception',
+              eventId,
+              targetDateIso,
+              error: err.message || 'unknown_exception',
+            });
             setLocalEvents(prev => {
               const next = { ...prev };
               delete next[eventId];
@@ -2175,6 +2295,11 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       setDraggedEventId(null);
       dragRef.current = null;
       isDraggingRef.current = false;
+      pushDragDebug('drag_cleanup', {
+        status: wasDragging ? 'idle_after_drop' : 'idle_after_click',
+        eventId,
+        wasDragging,
+      });
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
       
@@ -2187,9 +2312,9 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
       }
     };
     
-    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mousemove', handleMouseMove, { passive: false });
     document.addEventListener('mouseup', handleMouseUp);
-  }, [readOnly, data.events, selectedChildIds, weekStart, handleWeekStartChange, familyId]);
+  }, [readOnly, data.events, selectedChildIds, weekStart, handleWeekStartChange, familyId, pushDragDebug]);
 
   // Always render week view with current data (no loading screen); data updates in place when refetches complete
   return (
@@ -2363,7 +2488,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
             </ScrollView>
           </View>
         </View>
-
       {/* Event Modal */}
       <EventModal
         eventId={selectedEventId}

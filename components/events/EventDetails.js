@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated, ActivityIndicator, Image } from 'react-native';
 import {
   LearnerPill,
   resolveLearnerChild,
@@ -8,7 +8,7 @@ import {
   mapChildrenForConflict,
   sharedConflictBannerStyles as cb,
 } from '../planner/conflictBannerShared';
-import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2 } from 'lucide-react';
+import { Clock, UserCircle, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2, Send } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { formatDate, apiRequest, pushEventToGoogleCalendar } from '../../lib/apiClient';
@@ -33,7 +33,6 @@ import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
 import TutorEventHelpPanel from '../tutor/TutorEventHelpPanel';
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
-import { defaultRequiresSubmissionHomeForEventType } from '../../lib/eventRequiresSubmissionHome';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 import { findFirstConflictEvent } from '../../lib/utils/conflictDetection';
@@ -48,6 +47,33 @@ import {
 // Session-level guard: if this environment does not expose `lesson_standards`,
 // don't keep retrying the same failing request on every EventDetails mount.
 let lessonStandardsUnavailableSession = false;
+
+const AVATAR_SOURCES = {
+  prof1: require('../../assets/prof1.png'),
+  prof2: require('../../assets/prof2.png'),
+  prof3: require('../../assets/prof3.png'),
+  prof4: require('../../assets/prof4.png'),
+  prof5: require('../../assets/prof5.png'),
+  prof6: require('../../assets/prof6.png'),
+  prof7: require('../../assets/prof7.png'),
+  prof8: require('../../assets/prof8.png'),
+  prof9: require('../../assets/prof9.png'),
+  prof10: require('../../assets/prof10.png'),
+};
+
+function resolveStudentAvatarSource(rawAvatar) {
+  if (!rawAvatar || typeof rawAvatar !== 'string') return AVATAR_SOURCES.prof1;
+  const trimmed = rawAvatar.trim();
+  if (!trimmed) return AVATAR_SOURCES.prof1;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
+    return { uri: trimmed };
+  }
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/^.*[\\/]/, '')
+    .replace(/\.(png|jpg|jpeg|gif|webp)$/i, '');
+  return AVATAR_SOURCES[normalized] || AVATAR_SOURCES.prof1;
+}
 
 /** Display name for Add to plan? / plan banners from an academic_years row (never "Loading…"). */
 function formatAcademicYearPlanLabel(ay) {
@@ -700,6 +726,17 @@ const MUTED = '#9ca3af';
 const ACCENT = '#d4a256';
 const CHIP_BG = '#f3f4f6';
 const CHIP_BORDER = '#e5e7eb';
+const RECURRENCE_WEEKDAY_OPTIONS = [
+  { value: 'SU', label: 'Sun' },
+  { value: 'MO', label: 'Mon' },
+  { value: 'TU', label: 'Tue' },
+  { value: 'WE', label: 'Wed' },
+  { value: 'TH', label: 'Thu' },
+  { value: 'FR', label: 'Fri' },
+  { value: 'SA', label: 'Sat' },
+];
+const WEEKDAY_FROM_DATE = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const CLASS_DAY_DEFAULT_WEEKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR'];
 
 // Helper functions
 function addDays(d, n) {
@@ -710,6 +747,31 @@ function addDays(d, n) {
 
 function fmt(d) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function normalizeByWeekday(value) {
+  const raw = Array.isArray(value) ? value : value != null ? [value] : [];
+  return Array.from(
+    new Set(
+      raw
+        .flatMap((entry) => {
+          if (typeof entry === 'string' && entry.includes(',')) {
+            return entry.split(',').map((part) => part.trim()).filter(Boolean);
+          }
+          return [entry];
+        })
+        .map((entry) => {
+          if (typeof entry === 'string') return entry.slice(0, 2).toUpperCase();
+          if (typeof entry === 'number' && Number.isInteger(entry)) return WEEKDAY_FROM_DATE[(entry % 7 + 7) % 7] || null;
+          if (entry && typeof entry === 'object') {
+            const candidate = entry.weekday || entry.value || entry.code || null;
+            return typeof candidate === 'string' ? candidate.slice(0, 2).toUpperCase() : null;
+          }
+          return null;
+        })
+        .filter((code) => RECURRENCE_WEEKDAY_OPTIONS.some((option) => option.value === code))
+    )
+  );
 }
 
 function formatConflictSuggestionMessage(startDate, endDate) {
@@ -831,7 +893,7 @@ function ChipRow({ children, style }) {
   return <View style={style}>{safeChildren}</View>;
 }
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed, openConflictResolution = false, conflictResolutionContext = null, onOpenConflictResolutionConsumed }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed, openConflictResolution = false, conflictResolutionContext = null, onOpenConflictResolutionConsumed, sendOnlyMode = false }) {
   const session = useSession();
   const { user: authUser } = useAuth();
   const toast = useToast();
@@ -863,6 +925,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     () => !!(event?.location || event?.mode || event?.instructor)
   );
   const [showNotesSection, setShowNotesSection] = useState(false); // Collapsed by default (match Add Subject)
+  const [showStudentExchangeSection, setShowStudentExchangeSection] = useState(false);
   const [draftMaterialId, setDraftMaterialId] = useState(null);
   const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
   const [selectedMaterialId, setSelectedMaterialId] = useState(null);
@@ -907,12 +970,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [subjectIds, setSubjectIds] = useState(() => extractSubjectIdsFromEvent(event));
   const [subjectId, setSubjectId] = useState(() => extractSubjectIdsFromEvent(event)[0] ?? null);
   const [countsTowardPlan, setCountsTowardPlan] = useState(() => event?.counts_toward_plan !== false);
-  const [showRequiresSubmissionHome, setShowRequiresSubmissionHome] = useState(() => {
-    if (!event) return false;
-    if (typeof event.requires_submission_home === 'boolean') return event.requires_submission_home;
-    const loadedType = normalizeEventTypeForDisplay(event.event_type || 'Lesson');
-    return defaultRequiresSubmissionHomeForEventType(loadedType === 'Class Day' ? 'Lesson' : loadedType);
-  });
   const [academicYearId, setAcademicYearId] = useState(() => event?.academic_year_id ?? null);
   const [academicYears, setAcademicYears] = useState(() =>
     Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0 ? [...preloadedAcademicYears] : []
@@ -997,6 +1054,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [recurrenceEndAfter, setRecurrenceEndAfter] = useState(null);
   const [recurrenceEndAfterText, setRecurrenceEndAfterText] = useState('');
   const [recurrenceEndDate, setRecurrenceEndDate] = useState(null);
+  const [recurrenceWeekdays, setRecurrenceWeekdays] = useState([]);
   const [showEndDateCalendarPicker, setShowEndDateCalendarPicker] = useState(false);
   const [endDateCalendarViewMonth, setEndDateCalendarViewMonth] = useState(() => {
     try {
@@ -1288,6 +1346,198 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return () => window.removeEventListener('parentAssignmentsNeedRefresh', handler);
   }, [loadEventLinkedParentAssignments]);
 
+  const sendTrackingSummary = useMemo(() => {
+    const linkedAssignments = Array.isArray(parentLinkedAssignments) ? parentLinkedAssignments : [];
+    const sentAssignments = linkedAssignments.filter((assignment) => assignment?.assigned_by != null);
+
+    const formatDateLabel = (value) => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return null;
+      return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+
+    const formatRelativeDateLabel = (value) => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return null;
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const target = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+      const diffDays = Math.round((today.getTime() - target.getTime()) / (24 * 60 * 60 * 1000));
+      if (diffDays === 0) return 'Today';
+      if (diffDays === 1) return 'Yesterday';
+      return formatDateLabel(parsed);
+    };
+
+    const nameForAssignment = (assignment) => {
+      const childId = assignment?.child_id;
+      const joinedName = assignment?.child?.first_name || assignment?.child?.name || '';
+      if (joinedName && String(joinedName).trim()) return String(joinedName).trim();
+      const member = (familyMembers || []).find((m) => String(m?.id) === String(childId));
+      return (member?.name || member?.first_name || 'student').trim();
+    };
+
+    const latestSent = sentAssignments
+      .slice()
+      .sort((a, b) => {
+        const aTs = new Date(a?.updated_at || a?.created_at || 0).getTime();
+        const bTs = new Date(b?.updated_at || b?.created_at || 0).getTime();
+        return bTs - aTs;
+      })[0] || null;
+
+    const sentOnLabel = formatRelativeDateLabel(latestSent?.updated_at || latestSent?.created_at) || 'Not sent yet';
+
+    const returnedAssignment =
+      sentAssignments.find((assignment) => {
+        const status = String(assignment?.status || '').toLowerCase();
+        return status === 'submitted' || status === 'reviewed' || status === 'accepted';
+      }) || null;
+
+    const returnedOnLabel = formatRelativeDateLabel(
+      returnedAssignment?.submitted_at || returnedAssignment?.updated_at || returnedAssignment?.created_at
+    );
+
+    const returnedLabel = returnedAssignment
+      ? (returnedOnLabel ? `Yes (${returnedOnLabel})` : 'Yes')
+      : 'No';
+
+    const parseHelpLog = (rawLog) => {
+      if (Array.isArray(rawLog)) return rawLog;
+      if (typeof rawLog === 'string') {
+        try {
+          const parsed = JSON.parse(rawLog);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+          return [];
+        }
+      }
+      return [];
+    };
+
+    const formatWhen = (value) => {
+      if (!value) return 'Date unknown';
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return 'Date unknown';
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const target = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+      const diffDays = Math.round((today.getTime() - target.getTime()) / (24 * 60 * 60 * 1000));
+      const time = parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      if (diffDays === 0) return `today at ${time}`;
+      if (diffDays === 1) return `yesterday at ${time}`;
+      const date = parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return `${date} at ${time}`;
+    };
+
+    const statusForAssignment = (assignment) => {
+      const status = String(assignment?.status || '').toLowerCase();
+      const reviewStatus = String(assignment?.review_status || '').toLowerCase();
+      if (reviewStatus === 'approved' || status === 'accepted' || status === 'reviewed') return 'COMPLETED';
+      if (status === 'submitted' && (reviewStatus === '' || reviewStatus === 'needs_revision')) return 'NEEDS_REVIEW';
+      if (status === 'submitted') return 'RETURNED';
+      if (status === 'in_progress') return 'IN_PROGRESS';
+      return 'SENT';
+    };
+
+    const statusPresentation = (statusKey) => {
+      switch (statusKey) {
+        case 'COMPLETED':
+          return { label: 'Completed', dotColor: '#16A34A', pillKey: 'COMPLETED' };
+        case 'NEEDS_REVIEW':
+          return { label: 'Needs review', dotColor: '#F59E0B', pillKey: 'NEEDSREVIEW' };
+        case 'RETURNED':
+          return { label: 'Returned', dotColor: '#22C55E', pillKey: 'RETURNED' };
+        case 'IN_PROGRESS':
+          return { label: 'In progress', dotColor: '#14B8A6', pillKey: 'INPROGRESS' };
+        case 'NOT_YET_SHARED':
+          return { label: 'NOT SHARED', dotColor: '#9CA3AF', pillKey: 'NOTYETSHARED' };
+        default:
+          return { label: 'Sent', dotColor: '#8B5CF6', pillKey: 'SENT' };
+      }
+    };
+
+    const assigneeSet = new Set((assigneeIds || []).map((id) => String(id)));
+    const candidateStudents = (familyMembers || []).filter((member) => assigneeSet.has(String(member?.id)));
+    const studentRows = candidateStudents.map((member) => {
+      const assignment = sentAssignments.find((a) => String(a?.child_id) === String(member?.id)) || null;
+      const status = assignment ? statusForAssignment(assignment) : 'NOT_YET_SHARED';
+      const statusUi = statusPresentation(status);
+      const sentAt = assignment?.updated_at || assignment?.created_at || null;
+      const subLabel = assignment ? `Shared ${formatWhen(sentAt)}` : 'Not shared yet';
+      const trailLines = [];
+      if (assignment) {
+        const statusTs = assignment?.submitted_at || assignment?.updated_at || assignment?.created_at || null;
+        if (status === 'RETURNED' || status === 'NEEDS_REVIEW' || status === 'COMPLETED') {
+          trailLines.push(`Sent back ${formatWhen(statusTs)}`);
+        } else if (status === 'IN_PROGRESS') {
+          trailLines.push(`In progress ${formatWhen(statusTs)}`);
+        }
+
+        const helpLog = parseHelpLog(assignment?.help_message_log);
+        const noteLines = helpLog
+          .map((entry) => {
+            const text = String(
+              (entry && (entry.reason || entry.body || entry.message || entry.text || entry.note)) || ''
+            ).trim();
+            if (!text) return null;
+            const ts = entry?.created_at || entry?.timestamp || assignment?.updated_at || assignment?.created_at || null;
+            return {
+              ts: new Date(ts || 0).getTime(),
+              label: `Note ${formatWhen(ts)}: ${text.length > 90 ? `${text.slice(0, 90)}...` : text}`,
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => b.ts - a.ts)
+          .slice(0, 2)
+          .map((n) => n.label);
+        trailLines.push(...noteLines);
+      }
+
+      return {
+        id: String(member?.id),
+        name: (member?.name || member?.first_name || 'Student').trim(),
+        avatarRaw: member?.avatar || member?.avatar_url || assignment?.child?.avatar || null,
+        status,
+        statusLabel: statusUi.label,
+        statusPillKey: statusUi.pillKey,
+        dotColor: statusUi.dotColor,
+        subLabel,
+        trailLines,
+        hasAssignment: !!assignment,
+      };
+    });
+
+    const sharedCount = studentRows.filter((row) => row.hasAssignment).length;
+    const totalCount = studentRows.length;
+    const ctaLabel = sharedCount > 0
+      ? 'Send again'
+      : totalCount > 1
+        ? 'Send to students'
+        : 'Send to student';
+    const workflowContext = sharedCount === 0
+      ? 'This assignment has not been shared yet.'
+      : studentRows.some((row) => ['RETURNED', 'NEEDS_REVIEW', 'COMPLETED'].includes(row.status))
+        ? 'Student activity detected.'
+        : 'Awaiting student response.';
+
+    return {
+      hasShared: sentAssignments.length > 0,
+      sharedCount,
+      totalCount,
+      ctaLabel,
+      workflowContext,
+      studentRows,
+    };
+  }, [parentLinkedAssignments, familyMembers, assigneeIds]);
+
+  useEffect(() => {
+    if (!parentLinkedReady) return;
+    if (sendTrackingSummary.hasShared) {
+      setShowStudentExchangeSection(true);
+    }
+  }, [parentLinkedReady, sendTrackingSummary.hasShared]);
+
   useEffect(() => {
     if (!parentLinkedReady || !parentEventFocus) return;
     const helpA = parentLinkedAssignments.find((a) => a.need_help);
@@ -1307,6 +1557,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setParentSubmissionModalAssignment(subA);
         setShowParentSubmissionModal(true);
       }
+      onParentEventFocusConsumed?.();
+    } else if (parentEventFocus === 'send') {
+      setShowSendToStudentModal(true);
       onParentEventFocusConsumed?.();
     }
   }, [parentLinkedReady, parentEventFocus, parentLinkedAssignments, onParentEventFocusConsumed]);
@@ -1400,6 +1653,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return p ? `${p}\n\n${n}` : n;
   };
 
+  const closeSendToStudentModal = useCallback(() => {
+    if (sendToStudentSubmitting) return;
+    setShowSendToStudentModal(false);
+    setSendToStudentNote('');
+    if (sendOnlyMode) {
+      onClose?.();
+    }
+  }, [sendToStudentSubmitting, sendOnlyMode, onClose]);
+
   const sendWorkToStudents = useCallback(
     async (note) => {
       if (!familyId || !event?.id || assigneeIds.length === 0) {
@@ -1472,6 +1734,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         toast.push('Sent to student', 'success');
         setShowSendToStudentModal(false);
         setSendToStudentNote('');
+        if (sendOnlyMode) {
+          onClose?.();
+        }
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
           window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
@@ -1483,7 +1748,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setSendToStudentSubmitting(false);
       }
     },
-    [familyId, event, assigneeIds, authUser?.id, draftTitle, eventType, subjectId, toast]
+    [familyId, event, assigneeIds, authUser?.id, draftTitle, eventType, subjectId, toast, sendOnlyMode, onClose]
   );
 
   const startPeriod = useMemo(() => {
@@ -1506,7 +1771,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     const current = normalizeStatus(event?.status);
     return Array.from(new Set([...STATUS_BASE, current].filter(Boolean)));
   }, [event?.status]);
-
+  const isClassDayEventType = useMemo(
+    () => normalizeEventTypeForDisplay(eventType) === 'Class Day',
+    [eventType]
+  );
+  const academicSectionTitle = useMemo(() => {
+    const normalized = String(eventType || '').trim().toLowerCase();
+    if (normalized === 'lesson' || normalized === 'class day') return 'Learning details';
+    if (normalized === 'assignment') return 'Assignment settings';
+    if (normalized === 'exam') return 'Assessment details';
+    if (normalized === 'activity') return 'Activity details';
+    return 'Academic details';
+  }, [eventType]);
   // Helper functions matching TaskCreateModal
   const showAcademicFields = () => {
     return eventType && ['Lesson', 'Activity', 'Assignment', 'Class Day', 'Scheduled Class Day', 'Schedule Block', 'ClassDay'].includes(eventType);
@@ -1524,9 +1800,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       assignee: 'select at least one assignee',
       time: 'enter a start time',
       endDate: 'set a valid end date',
+      recurrenceWeekdays: 'choose at least one repeat day',
       recurrenceEnd: 'set a valid recurrence end',
     };
-    const orderedKeys = ['title', 'eventType', 'date', 'assignee', 'time', 'endDate', 'recurrenceEnd'];
+    const orderedKeys = ['title', 'eventType', 'date', 'assignee', 'time', 'endDate', 'recurrenceWeekdays', 'recurrenceEnd'];
     const missing = orderedKeys
       .filter((key) => Boolean(errors?.[key]))
       .map((key) => messagesByKey[key])
@@ -1548,20 +1825,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       errors.date = 'Date is required';
     }
     
-    // End date is required for multi-day event types (Project, Trip, Holiday, Other)
-    const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
-    if (isMultiDayEventType && placement === 'calendar' && !eventEndDate) {
-      errors.endDate = 'End date is required for ' + eventType + ' events';
-    }
-    if (isMultiDayEventType && eventEndDate && dueDate) {
-      // Compare dates only (ignore time)
-      const startDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
-      const endDateOnly = new Date(eventEndDate.getFullYear(), eventEndDate.getMonth(), eventEndDate.getDate());
-      if (endDateOnly < startDateOnly) {
-        errors.endDate = 'End date must be on or after start date';
-      }
-    }
-    
     // Time is required if calendar placement and not all day
     if (placement === 'calendar' && !allDay && !startTime.trim()) {
       errors.time = 'Start time is required';
@@ -1576,6 +1839,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
 
     if (isRecurring && placement === 'calendar') {
+      if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
+        errors.recurrenceWeekdays = 'Select at least one weekday';
+      }
       if (recurrenceEndType === 'after') {
         const fromNum = recurrenceEndAfter != null ? Number(recurrenceEndAfter) : NaN;
         const fromText = recurrenceEndAfterText ? parseInt(recurrenceEndAfterText, 10) : NaN;
@@ -1605,6 +1871,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     const isMultiDayEvent = false; // No multi-day events in new system
     if (isMultiDayEvent && placement === 'calendar' && !eventEndDate) return false;
     if (isRecurring && placement === 'calendar') {
+      if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) return false;
       if (recurrenceEndType === 'after') {
         const fromNum = recurrenceEndAfter != null ? Number(recurrenceEndAfter) : NaN;
         const fromText = recurrenceEndAfterText ? parseInt(recurrenceEndAfterText, 10) : NaN;
@@ -1641,6 +1908,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     eventType,
     assigneeIds,
     isRecurring,
+    recurrenceType,
+    recurrenceWeekdays,
     recurrenceEndType,
     recurrenceEndAfter,
     recurrenceEndAfterText,
@@ -2113,14 +2382,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     // Academic fields
     applySubjectSelection(extractSubjectIdsFromEvent(event));
     setCountsTowardPlan(event.counts_toward_plan !== false);
-    const loadedType = normalizeEventTypeForDisplay(event.event_type || 'Lesson');
-    setShowRequiresSubmissionHome(
-      typeof event.requires_submission_home === 'boolean'
-        ? event.requires_submission_home
-        : defaultRequiresSubmissionHomeForEventType(
-            loadedType === 'Class Day' ? 'Lesson' : loadedType
-          )
-    );
     setAcademicYearId(event.academic_year_id || null);
     setInstructionalMinutesOverride(event.instructional_minutes != null ? String(event.instructional_minutes) : '');
     const unitStr = ((event.unit || event.curriculum_unit_title || '') + '').trim();
@@ -2161,6 +2422,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setIsRecurring(true);
         setRecurrenceType(rule.frequency?.toLowerCase() || 'daily');
         setRecurrenceInterval(rule.interval || null);
+        const parsedWeekdays = normalizeByWeekday(rule.byweekday);
+        setRecurrenceWeekdays(parsedWeekdays.length > 0 ? parsedWeekdays : (normalizeEventTypeForDisplay(event?.event_type || eventType) === 'Class Day' ? CLASS_DAY_DEFAULT_WEEKDAYS : []));
         if (rule.count) {
           setRecurrenceEndType('after');
           setRecurrenceEndAfter(rule.count);
@@ -2179,6 +2442,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setIsRecurring(true);
       setRecurrenceType('weekly');
       setRecurrenceInterval(null);
+      setRecurrenceWeekdays([WEEKDAY_FROM_DATE[new Date(event?.due_date || new Date()).getDay()] || 'MO']);
       setRecurrenceEndType('never');
       setRecurrenceEndAfter(null);
       setRecurrenceEndAfterText('');
@@ -2187,6 +2451,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setIsRecurring(false);
       setRecurrenceType('daily');
       setRecurrenceInterval(null);
+      setRecurrenceWeekdays([]);
       setRecurrenceEndType('never');
       setRecurrenceEndAfter(null);
       setRecurrenceEndAfterText('');
@@ -2219,6 +2484,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setIsRecurring(true);
         setRecurrenceType(rule.frequency?.toLowerCase() || 'daily');
         setRecurrenceInterval(rule.interval || null);
+        const parsedWeekdays = normalizeByWeekday(rule.byweekday);
+        setRecurrenceWeekdays(parsedWeekdays.length > 0 ? parsedWeekdays : (isClassDayEventType ? CLASS_DAY_DEFAULT_WEEKDAYS : []));
         if (rule.count) {
           setRecurrenceEndType('after');
           setRecurrenceEndAfter(rule.count);
@@ -2237,6 +2504,49 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       cancelled = true;
     };
   }, [event?.id, event?.recurrence_rule, event?.parent_event_id, event?.recurrence_id, event?.generated_by, event?.source_block_id]);
+
+  useEffect(() => {
+    if (!isRecurring || placement !== 'calendar' || recurrenceType !== 'weekly') return;
+    if (Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 0) return;
+    if (isPlanYearBlockSeries(event) && event?.academic_year_id) return;
+    const fallback = WEEKDAY_FROM_DATE[new Date(dueDate || new Date()).getDay()] || 'MO';
+    setRecurrenceWeekdays([fallback]);
+  }, [isRecurring, placement, recurrenceType, recurrenceWeekdays, dueDate, event]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!isRecurring || placement !== 'calendar' || recurrenceType !== 'weekly') return;
+      if (Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 0) return;
+      if (!isPlanYearBlockSeries(event) || !event?.academic_year_id) return;
+      try {
+        const { data, error } = await supabase
+          .from('academic_years')
+          .select('allowed_weekdays')
+          .eq('id', event.academic_year_id)
+          .maybeSingle();
+        if (cancelled || error) return;
+        const normalized = normalizeByWeekday(data?.allowed_weekdays);
+        if (normalized.length > 0) {
+          setRecurrenceWeekdays(normalized);
+          return;
+        }
+      } catch (_) {
+        // ignore and fallback below
+      }
+      if (!cancelled) {
+        if (isClassDayEventType) {
+          setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
+        } else {
+          const fallback = WEEKDAY_FROM_DATE[new Date(dueDate || new Date()).getDay()] || 'MO';
+          setRecurrenceWeekdays([fallback]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isRecurring, placement, recurrenceType, recurrenceWeekdays, event, dueDate, isClassDayEventType]);
 
   // Load materials when event opens (guarded against repeated same-key execution).
   useEffect(() => {
@@ -3506,57 +3816,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         }
         startDateObj = resolvedStart;
 
-        // Check if this is a multi-day event type with an end date set
-        const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
-        console.log('[EventDetails] Checking end date logic:', {
-          isMultiDayEventType,
-          eventType,
-          hasEventEndDate: !!eventEndDate,
-          eventEndDate: eventEndDate?.toISOString(),
-          hasEndTime: !!(endTime.trim() || draftEndTime.trim())
-        });
-        
-        if (isMultiDayEventType && eventEndDate) {
-          console.log('[EventDetails] Multi-day event detected:', { eventType, eventEndDate: eventEndDate.toISOString(), startDateObj: startDateObj.toISOString() });
-          // For multi-day events, set end date to end of the selected day (23:59)
-          // This ensures the project spans the full day
-          // Create a new date from the eventEndDate to avoid timezone issues
-          const endDateYear = eventEndDate.getFullYear();
-          const endDateMonth = eventEndDate.getMonth();
-          const endDateDay = eventEndDate.getDate();
-          endDateObj = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
-          
-          console.log('[EventDetails] Created endDateObj from eventEndDate:', {
-            eventEndDate: eventEndDate.toISOString(),
-            endDateYear,
-            endDateMonth,
-            endDateDay,
-            endDateObj: endDateObj.toISOString()
-          });
-          
-          // If end date is before start date, that's invalid - use start date + 1 day
-          // But allow same-day projects (end date = start date)
-          const startDateOnly = new Date(startDateObj.getFullYear(), startDateObj.getMonth(), startDateObj.getDate());
-          const endDateOnly = new Date(endDateObj.getFullYear(), endDateObj.getMonth(), endDateObj.getDate());
-          
-          console.log('[EventDetails] Comparing dates:', {
-            startDateOnly: startDateOnly.toISOString(),
-            endDateOnly: endDateOnly.toISOString(),
-            comparison: endDateOnly.getTime() < startDateOnly.getTime()
-          });
-          
-          if (endDateOnly.getTime() < startDateOnly.getTime()) {
-            console.warn('[EventDetails] End date is before start date, adjusting to start date + 1 day');
-            endDateObj = new Date(startDateObj);
-            endDateObj.setDate(endDateObj.getDate() + 1);
-            endDateObj.setHours(23, 59, 59, 999);
-          }
-          console.log('[EventDetails] Final endDateObj for multi-day event:', {
-            endDateObj: endDateObj.toISOString(),
-            startDateObj: startDateObj.toISOString(),
-            daysDifference: Math.round((endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 60 * 60 * 24))
-          });
-        } else if (endTime.trim() || draftEndTime.trim()) {
+        if (endTime.trim() || draftEndTime.trim()) {
           // Single-day event with end time
           const endTimeToUse = endTime.trim() || draftEndTime.trim();
           let resolvedEnd = applyTimeToDate(dueDate || new Date(dateToUse), endTimeToUse);
@@ -3586,6 +3846,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           frequency: recurrenceType.toUpperCase(),
           interval: interval,
         };
+        if (recurrenceType === 'weekly') {
+          const fallback = WEEKDAY_FROM_DATE[new Date(dueDate || new Date()).getDay()] || 'MO';
+          const weekdays = Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 0
+            ? recurrenceWeekdays
+            : [fallback];
+          rule.byweekday = weekdays;
+        }
         if (recurrenceEndType === 'after') {
           const countValue = recurrenceEndAfter || (recurrenceEndAfterText ? parseInt(recurrenceEndAfterText, 10) : null);
           if (countValue && !isNaN(countValue) && countValue > 0) {
@@ -3622,7 +3889,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         instructor: (instructor && instructor.trim()) ? instructor.trim() : null,
         goal_link: goalLink || null,
         recurrence_rule: recurrenceRule ? JSON.stringify(recurrenceRule) : null,
-        requires_submission_home: showRequiresSubmissionHome,
       };
 
       const cmSave = parseCurriculumMetadata(event);
@@ -3857,7 +4123,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               child_ids: childIdsForFallback, // Use full array from cleanUpdates
               is_flexible: true
             };
-            fallbackUpdate.requires_submission_home = showRequiresSubmissionHome;
 
             const fallbackResult = await supabase
               .from('events')
@@ -4344,75 +4609,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
           {showChipConflictBanner ? renderPersistentConflictContainer(false) : null}
 
-          {/* Banner when event is connected to a plan - at top */}
-          {countsTowardPlan && academicYearId && (() => {
-            const planLabel = formatAcademicYearPlanLabel(resolvedAcademicYearRow) || 'this plan';
-            return (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => {
-                  if (typeof window !== 'undefined') {
-                    handleDismissEventModal();
-                    window.dispatchEvent(
-                      new CustomEvent('openPlanYearModal', {
-                        detail: {
-                          from: 'event_details',
-                          openInSubjectsSchedule: true,
-                      academicYearId:
-                        academicYearId ||
-                        event?.academic_year_id ||
-                        event?.data?.academic_year_id ||
-                        null,
-                          subjectId:
-                            event?.subject_id != null ? String(event.subject_id) : null,
-                          skipPlanSummary: true,
-                      openToEditList: !(
-                        academicYearId ||
-                        event?.academic_year_id ||
-                        event?.data?.academic_year_id
-                      ),
-                        },
-                      })
-                    );
-                  }
-                }}
-                style={[styles.connectedPlanBanner, { marginTop: 8 }]}
-                {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
-              >
-                <Text style={styles.connectedPlanBannerText}>
-                  This event is connected to {planLabel}. To make changes to the connected plan{' '}
-                  <Text style={styles.connectedPlanBannerLink}>click here.</Text>
-                </Text>
-              </TouchableOpacity>
-            );
-          })()}
-
-          {isParentView &&
-            !readOnly &&
-            event?.id &&
-            familyId &&
-            isSchoolWorkEventType(event?.event_type || eventType) &&
-            assigneeIds.length > 0 &&
-            hasInvitedAssignee && (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => setShowSendToStudentModal(true)}
-                style={[
-                  styles.connectedPlanBanner,
-                  styles.sendToStudentBanner,
-                  (countsTowardPlan && academicYearId) || showParentAlertsRow ? { marginTop: 8 } : { marginTop: 14 },
-                ]}
-                {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
-                accessibilityRole="button"
-                accessibilityLabel="Send to student"
-              >
-                <Text style={styles.connectedPlanBannerText}>
-                  To send this to your student as a required submission,{' '}
-                  <Text style={styles.connectedPlanBannerLink}>click here.</Text>
-                </Text>
-              </TouchableOpacity>
-            )}
-
           {/* Event Type - at top */}
           {eventType && (
             <SafeFieldRow style={[styles.fieldRow, { marginTop: 10, marginBottom: 8 }]}>
@@ -4516,17 +4712,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           {placement === 'calendar' && (
             <SafeView style={styles.fieldRow}>
               <View style={styles.timeSection}>
-                <View style={styles.timeToggleRow}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Text style={styles.sectionLabel}>Schedule time</Text>
-                  </View>
-                  {isRecurring && (
-                    <View style={styles.allDayControl}>
-                      <Text style={styles.allDayLabel}>Recurring</Text>
-                      <Text style={{ color: FG, fontSize: 13, marginTop: 4 }}>Enabled</Text>
-                    </View>
-                  )}
-                </View>
                 {!allDay && (
                   <View style={styles.timeInputsRow}>
                     <View style={[styles.timeField, { minWidth: 120 }]}>
@@ -4928,7 +5113,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   deleting && styles.deleteEventButtonDisabled,
                 ]}
               >
-                <Trash2 size={17} color="#FFFFFF" />
+                <Trash2 size={17} color="#DC2626" />
                 <Text style={[styles.deleteEventButtonText, deleting && { opacity: 0.8 }]}>
                   {deleting ? 'Deleting…' : 'Delete Event'}
                 </Text>
@@ -4960,38 +5145,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
     return (
     <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
-      {/* Header: title only (matches plan summary header) */}
-      <View style={styles.headerEditEvent}>
-        <View style={styles.headerBadge}>
-          <Text style={styles.headerBadgeText}>EDIT EVENT</Text>
-        </View>
-        <TextInput
-          placeholder="Event name"
-          placeholderTextColor={MUTED}
-          value={draftTitle}
-          onChangeText={(text) => {
-            setDraftTitle(text);
-            if (validationErrors.title) {
-              setValidationErrors({ ...validationErrors, title: null });
-            }
-          }}
-          style={[
-            styles.titleInput,
-            validationErrors.title && styles.inputError,
-          ]}
-          autoFocus
-        />
-        {validationErrors.title && (
-          <Text style={styles.errorText}>{validationErrors.title}</Text>
-        )}
-      </View>
-      <View style={styles.headerDivider} />
-      {validationBanner ? (
-        <View style={styles.validationBannerContainer}>
-          <Text style={styles.validationBannerText}>{validationBanner}</Text>
-        </View>
-      ) : null}
-
       {/* Scrollable Content */}
       <ScrollView 
         style={styles.bodyScroll}
@@ -5007,6 +5160,61 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           },
         })}
       >
+      {/* Header */}
+      <View style={styles.headerEditEvent}>
+        <View style={styles.headerContent}>
+          <View style={styles.headerTextWrap}>
+            <View style={styles.headerBadge}>
+              <Text style={styles.headerBadgeText}>EDIT EVENT</Text>
+            </View>
+            <Text style={styles.headerTitleLarge}>
+              {draftTitle?.trim() || event?.title || 'Edit Event'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={handleDismissEventModal}
+            style={styles.headerCloseButton}
+            accessibilityRole="button"
+            accessibilityLabel="Close edit event"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <X size={18} color="#64748B" />
+          </TouchableOpacity>
+        </View>
+      </View>
+      <View style={styles.headerDivider} />
+      <SafeFieldRow style={[styles.fieldRow, { marginTop: 12, marginBottom: 8 }]}>
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>
+            Name <Text style={{ color: '#ef4444' }}>*</Text>
+          </Text>
+          <TextInput
+            placeholder="Name"
+            placeholderTextColor={MUTED}
+            value={draftTitle}
+            onChangeText={(text) => {
+              setDraftTitle(text);
+              if (validationErrors.title) {
+                setValidationErrors({ ...validationErrors, title: null });
+              }
+            }}
+            style={[
+              styles.titleInputHero,
+              validationErrors.title && styles.inputError,
+            ]}
+            autoFocus
+          />
+          {validationErrors.title && (
+            <Text style={styles.errorText}>{validationErrors.title}</Text>
+          )}
+        </View>
+      </SafeFieldRow>
+      {validationBanner ? (
+        <View style={styles.validationBannerContainer}>
+          <Text style={styles.validationBannerText}>{validationBanner}</Text>
+        </View>
+      ) : null}
+
       {showChipConflictBanner ? renderPersistentConflictContainer(false) : conflictWarning && (
         <View
           style={[
@@ -5085,75 +5293,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         </View>
       )}
 
-      {/* Plan link banner + Send to student — top of form, under plan context (matches read-only order) */}
-      {countsTowardPlan && academicYearId && (() => {
-        const planLabel = formatAcademicYearPlanLabel(resolvedAcademicYearRow) || 'this plan';
-        return (
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => {
-              if (typeof window !== 'undefined') {
-                handleDismissEventModal();
-                window.dispatchEvent(
-                  new CustomEvent('openPlanYearModal', {
-                    detail: {
-                      from: 'event_details',
-                      openInSubjectsSchedule: true,
-                      academicYearId:
-                        academicYearId ||
-                        event?.academic_year_id ||
-                        event?.data?.academic_year_id ||
-                        null,
-                      subjectId:
-                        event?.subject_id != null ? String(event.subject_id) : null,
-                      skipPlanSummary: true,
-                      openToEditList: !(
-                        academicYearId ||
-                        event?.academic_year_id ||
-                        event?.data?.academic_year_id
-                      ),
-                    },
-                  })
-                );
-              }
-            }}
-            style={[styles.connectedPlanBanner, { marginTop: 8 }]}
-            {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
-          >
-            <Text style={styles.connectedPlanBannerText}>
-              This event is connected to {planLabel}. To make changes to the connected plan{' '}
-              <Text style={styles.connectedPlanBannerLink}>click here.</Text>
-            </Text>
-          </TouchableOpacity>
-        );
-      })()}
-
-      {isParentView &&
-        !readOnly &&
-        event?.id &&
-        familyId &&
-        isSchoolWorkEventType(eventType) &&
-        assigneeIds.length > 0 &&
-        hasInvitedAssignee && (
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => setShowSendToStudentModal(true)}
-            style={[
-              styles.connectedPlanBanner,
-              styles.sendToStudentBanner,
-              (countsTowardPlan && academicYearId) ? { marginTop: 8 } : { marginTop: 14 },
-            ]}
-            {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
-            accessibilityRole="button"
-            accessibilityLabel="Send to student"
-          >
-            <Text style={styles.connectedPlanBannerText}>
-              To send this to your student as a required submission,{' '}
-              <Text style={styles.connectedPlanBannerLink}>click here.</Text>
-            </Text>
-          </TouchableOpacity>
-        )}
-
       {/* Event Type - at top above Schedule on calendar/backlog */}
       <SafeFieldRow style={[styles.fieldRow, { marginTop: 12, marginBottom: 8 }]}>
         <View style={styles.field}>
@@ -5169,9 +5308,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 key={type}
                 onPress={() => {
                   setEventType(type);
-                  setShowRequiresSubmissionHome(
-                    defaultRequiresSubmissionHomeForEventType(type === 'Class Day' ? 'Lesson' : type)
-                  );
                   if (validationErrors.eventType) {
                     setValidationErrors({ ...validationErrors, eventType: null });
                   }
@@ -5198,246 +5334,251 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         </View>
       </SafeFieldRow>
 
-      {/* Placement toggle */}
-      <View style={styles.modeToggle}>
-        {[
-          { key: 'calendar', label: 'Schedule on calendar' },
-          { key: 'backlog', label: 'Add to backlog' },
-        ].map((option) => (
-          <TouchableOpacity
-            key={option.key}
-            onPress={() => {
-              setPlacement(option.key);
-              if (option.key === 'backlog' && validationErrors.time) {
-                setValidationErrors({ ...validationErrors, time: null });
-              }
-            }}
-            style={[
-              styles.modeOption,
-              placement === option.key && styles.modeOptionActive,
-            ]}
-          >
-            <Text
-              style={[
-                styles.modeOptionText,
-                placement === option.key && styles.modeOptionTextActive,
-              ]}
-            >
-              {option.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {placement === 'backlog' && (
-        <View style={styles.modeInfo}>
-          <Text style={styles.modeInfoText}>
-            Backlog tasks stay off the calendar until you schedule them.
-          </Text>
-        </View>
-      )}
+      {/* Placement toggle hidden for now */}
       
-      {/* Chip Row */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chipRow}
-        style={{ marginBottom: 0 }}
-      >
-        {/* Date picker - single date or date range based on event type */}
-        {placement === 'calendar' && (() => {
-          const isMultiDayEvent = ['Trip', 'Holiday', 'Project', 'Other'].includes(eventType);
-          
-          if (isMultiDayEvent) {
-            // Start date picker for multi-day events
-            return (
-              <View style={[styles.chip, validationErrors.date && styles.chipFieldError]}>
-                <Text style={[styles.chipLabel, { marginRight: 8 }]}>Start:</Text>
-                <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, -1))}>
-                  <ChevronLeft size={16} color={FG} />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  onPress={() => {
-                    setCalendarViewMonth(dueDate);
-                    setShowCalendarPicker(true);
-                  }}
-                  style={{ flex: 1, paddingHorizontal: 8 }}
-                >
-                  <Text style={styles.chipText}>{fmt(dueDate)}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, +1))}>
-                  <ChevronRight size={16} color={FG} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setDueDate(new Date())} style={styles.todayButton}>
-                  <Text style={styles.todayText}>Today</Text>
-                </TouchableOpacity>
-              </View>
-            );
-          } else {
-            // Single date picker for regular events
-            return (
-              <View style={[styles.chip, validationErrors.date && styles.chipFieldError]}>
-                <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, -1))}>
-                  <ChevronLeft size={16} color={FG} />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  onPress={() => {
-                    setCalendarViewMonth(dueDate);
-                    setShowCalendarPicker(true);
-                  }}
-                  style={{ flex: 1, paddingHorizontal: 8 }}
-                >
-                  <Text style={styles.chipText}>{fmt(dueDate)}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setDueDate(addDays(dueDate, +1))}>
-                  <ChevronRight size={16} color={FG} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setDueDate(new Date())} style={styles.todayButton}>
-                  <Text style={styles.todayText}>Today</Text>
-                </TouchableOpacity>
-              </View>
-            );
-          }
-        })()}
-
-        {/* Assignee chip — error text sits under this column, not full modal width */}
-        {familyMembers.length > 0 && (
-          <View style={styles.assigneeChipColumn}>
-            <View style={[styles.chip, validationErrors.assignee && styles.chipFieldError]}>
-              <View>
-                <Text style={styles.chipLabel}>Assignee <Text style={{ color: '#ef4444' }}>*</Text></Text>
-              </View>
-              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                {familyMembers.map((m) => {
-                  const isSelected = assigneeIds.includes(m.id);
-                  return (
-                    <TouchableOpacity
-                      key={m.id}
-                      onPress={() => {
-                        if (validationErrors.assignee) {
-                          setValidationErrors((prev) => {
-                            if (!prev.assignee) return prev;
-                            const next = { ...prev };
-                            delete next.assignee;
-                            return next;
-                          });
-                        }
-                        if (isSelected) {
-                          setAssigneeIds(assigneeIds.filter(id => id !== m.id));
-                        } else {
-                          setAssigneeIds([...assigneeIds, m.id]);
-                        }
-                      }}
+      <SafeFieldRow style={[styles.fieldRow, { marginTop: 0, marginBottom: 8 }]}>
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Students <Text style={{ color: '#ef4444' }}>*</Text></Text>
+          <SafeView style={[
+            styles.dropdownContainer,
+            validationErrors.assignee && styles.dropdownContainerError,
+          ]}>
+            <ChipRow style={styles.dropdownRow}>
+              {familyMembers.map((m) => {
+                const isSelected = assigneeIds.includes(m.id);
+                return (
+                  <TouchableOpacity
+                    key={m.id}
+                    onPress={() => {
+                      if (validationErrors.assignee) {
+                        setValidationErrors((prev) => {
+                          if (!prev.assignee) return prev;
+                          const next = { ...prev };
+                          delete next.assignee;
+                          return next;
+                        });
+                      }
+                      if (isSelected) {
+                        setAssigneeIds(assigneeIds.filter(id => id !== m.id));
+                      } else {
+                        setAssigneeIds([...assigneeIds, m.id]);
+                      }
+                    }}
+                    style={[
+                      styles.dropdownOption,
+                      styles.assigneePill,
+                      isSelected && styles.dropdownOptionActive,
+                    ]}
+                  >
+                    <Text
                       style={[
-                        styles.chipOption,
-                        isSelected && styles.chipOptionActive,
+                        styles.dropdownOptionText,
+                        styles.assigneePillText,
+                        isSelected && [styles.assigneePillTextActive, styles.dropdownOptionTextActive],
                       ]}
                     >
-                      <Text
-                        style={[
-                          styles.chipOptionText,
-                          isSelected && styles.chipOptionTextActive,
-                        ]}
-                      >
-                        {m.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </View>
-            {validationErrors.assignee ? (
-              <Text style={styles.assigneeErrorText}>{validationErrors.assignee}</Text>
-            ) : null}
-          </View>
-        )}
-      </ScrollView>
-      {validationErrors.date ? (
-        <View style={{ marginTop: 4, marginBottom: 4, paddingHorizontal: 0 }}>
-          <Text style={styles.errorTextSmall}>{validationErrors.date}</Text>
+                      {m.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ChipRow>
+          </SafeView>
+          {validationErrors.assignee ? (
+            <Text style={styles.errorTextSmall}>{validationErrors.assignee}</Text>
+          ) : null}
         </View>
-      ) : null}
-
-
-      {/* End date picker - shown below start date for multi-day events */}
-      {placement === 'calendar' && ['Trip', 'Holiday', 'Project', 'Other'].includes(eventType) && (
-        <View style={{ marginTop: 8, marginBottom: 8, paddingHorizontal: 0 }}>
-          <View style={[
-            styles.chip,
-            { alignSelf: 'flex-start', marginRight: 0 },
-            validationErrors.endDate && { borderColor: '#ef4444', borderWidth: 1.5 }
-          ]}>
-            <Text style={[styles.chipLabel, { marginRight: 12 }]}>End:</Text>
-            <TouchableOpacity onPress={() => eventEndDate && setEventEndDate(addDays(eventEndDate, -1))}>
-              <ChevronLeft size={16} color={FG} />
-            </TouchableOpacity>
-            <TouchableOpacity 
-              onPress={() => {
-                if (eventEndDate) {
-                  setEventEndDateCalendarViewMonth(eventEndDate);
-                } else {
-                  const defaultEnd = new Date(dueDate);
-                  defaultEnd.setDate(defaultEnd.getDate() + 1);
-                  setEventEndDateCalendarViewMonth(defaultEnd);
-                }
-                setShowEventEndDatePicker(true);
-                if (validationErrors.endDate) {
-                  setValidationErrors({ ...validationErrors, endDate: null });
-                }
-              }}
-              style={[
-                { flex: 1, paddingHorizontal: 8 },
-                validationErrors.endDate && { borderColor: '#ef4444', borderWidth: 1, borderRadius: 4 }
-              ]}
-            >
-              <Text style={[
-                styles.chipText,
-                validationErrors.endDate && { color: '#ef4444' }
-              ]}>
-                {eventEndDate ? fmt(eventEndDate) : 'Select end date'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => eventEndDate && setEventEndDate(addDays(eventEndDate, +1))}>
-              <ChevronRight size={16} color={FG} />
-            </TouchableOpacity>
-            <TouchableOpacity 
-              onPress={() => {
-                const today = new Date();
-                const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-                setEventEndDate(todayDateOnly);
-                setEventEndDateCalendarViewMonth(todayDateOnly);
-              }} 
-              style={styles.todayButton}
-            >
-              <Text style={styles.todayText}>Today</Text>
-            </TouchableOpacity>
-          </View>
-          {validationErrors.endDate && (
-            <Text style={styles.errorTextSmall}>{validationErrors.endDate}</Text>
-          )}
-        </View>
-      )}
+      </SafeFieldRow>
 
       <SafeView>
         {placement === 'calendar' && (
-          <View style={[styles.timeSection, validationErrors.time && styles.timeSectionError]}>
-            <View style={styles.timeToggleRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text style={styles.sectionLabel}>Schedule time <Text style={{ color: '#ef4444' }}>*</Text></Text>
+          <View style={[styles.scheduleFieldsWrap, validationErrors.time && styles.scheduleFieldsWrapError]}>
+            <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
+              <View style={[styles.timeField, styles.dateFieldInline]}>
+                <Text style={styles.timeLabel}>Date <Text style={{ color: '#ef4444' }}>*</Text></Text>
+                <View style={[styles.chip, validationErrors.date && styles.chipFieldError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setDueDate(addDays(dueDate, -1));
+                      if (validationErrors.date) {
+                        setValidationErrors((prev) => ({ ...prev, date: null }));
+                      }
+                    }}
+                  >
+                    <ChevronLeft size={16} color={FG} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setCalendarViewMonth(dueDate);
+                      setShowCalendarPicker(true);
+                      if (validationErrors.date) {
+                        setValidationErrors((prev) => ({ ...prev, date: null }));
+                      }
+                    }}
+                    style={{ flex: 1, paddingHorizontal: 8 }}
+                  >
+                    <Text style={styles.chipText}>{fmt(dueDate)}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setDueDate(addDays(dueDate, +1));
+                      if (validationErrors.date) {
+                        setValidationErrors((prev) => ({ ...prev, date: null }));
+                      }
+                    }}
+                  >
+                    <ChevronRight size={16} color={FG} />
+                  </TouchableOpacity>
+                </View>
+                {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
               </View>
-              <View style={styles.timeToggleControls}>
-                <View style={styles.allDayControl}>
-                  <Text style={styles.allDayLabel}>All day</Text>
-        <Switch
+              <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
+                  <View style={styles.timeField}>
+                    <Text style={styles.timeLabel}>Start</Text>
+                    {Platform.OS === 'web' ? (
+                      <input
+                        type="time"
+                        value={startTime ? (() => {
+                          const parts = parseTimeString(startTime);
+                          if (parts) {
+                            return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
+                          }
+                          return '';
+                        })() : ''}
+                        onChange={(e) => {
+                          const [hours, minutes] = e.target.value.split(':').map(Number);
+                          if (!isNaN(hours) && !isNaN(minutes)) {
+                            const hour12 = hours % 12 || 12;
+                            const period = hours >= 12 ? 'PM' : 'AM';
+                            const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                            setStartTime(formatted);
+                            setDraftStartTime(formatted);
+                            if (validationErrors.time) {
+                              setValidationErrors({ ...validationErrors, time: null });
+                            }
+                          }
+                        }}
+                        disabled={allDay}
+                        style={{
+                          backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
+                          borderRadius: 14,
+                          paddingTop: 10,
+                          paddingBottom: 10,
+                          paddingLeft: 12,
+                          paddingRight: 12,
+                          borderWidth: 1,
+                          borderColor: validationErrors.time ? '#ef4444' : '#e5e7eb',
+                          borderStyle: 'solid',
+                          fontSize: 14,
+                          color: allDay ? MUTED : '#111827',
+                          width: '100%',
+                          maxWidth: 100,
+                          height: 'auto',
+                          outline: 'none',
+                          opacity: allDay ? 0.9 : 1,
+                          ...(validationErrors.time && {
+                            borderColor: '#ef4444',
+                          }),
+                        }}
+                      />
+                    ) : (
+                      <TextInput
+                        placeholder="e.g. 9:00 AM"
+                        placeholderTextColor={MUTED}
+                        value={startTime}
+                        onChangeText={(text) => {
+                          const formatted = formatTimeInput(text);
+                          setStartTime(formatted);
+                          setDraftStartTime(formatted);
+                          if (validationErrors.time) {
+                            setValidationErrors({ ...validationErrors, time: null });
+                          }
+                        }}
+                        style={[
+                          styles.timeInputEdit,
+                          allDay && styles.timeInputDisabled,
+                          validationErrors.time && styles.inputError,
+                        ]}
+                        editable={!allDay}
+                        autoCapitalize="characters"
+                      />
+                    )}
+                    {validationErrors.time && (
+                      <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
+                    )}
+                  </View>
+                  <View style={styles.timeField}>
+                    <Text style={styles.timeLabel}>End</Text>
+                    {Platform.OS === 'web' ? (
+                      <input
+                        type="time"
+                        value={endTime ? (() => {
+                          const parts = parseTimeString(endTime);
+                          if (parts) {
+                            return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
+                          }
+                          return '';
+                        })() : ''}
+                        onChange={(e) => {
+                          const [hours, minutes] = e.target.value.split(':').map(Number);
+                          if (!isNaN(hours) && !isNaN(minutes)) {
+                            const hour12 = hours % 12 || 12;
+                            const period = hours >= 12 ? 'PM' : 'AM';
+                            const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
+                            setEndTime(formatted);
+                            setDraftEndTime(formatted);
+                          }
+                        }}
+                        disabled={allDay}
+                        style={{
+                          backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
+                          borderRadius: 14,
+                          paddingTop: 10,
+                          paddingBottom: 10,
+                          paddingLeft: 12,
+                          paddingRight: 12,
+                          borderWidth: 1,
+                          borderColor: '#e5e7eb',
+                          borderStyle: 'solid',
+                          fontSize: 14,
+                          color: allDay ? MUTED : '#111827',
+                          width: '100%',
+                          maxWidth: 100,
+                          height: 'auto',
+                          outline: 'none',
+                          opacity: allDay ? 0.9 : 1,
+                        }}
+                      />
+                    ) : (
+                      <TextInput
+                        placeholder="Optional"
+                        placeholderTextColor={MUTED}
+                        value={endTime}
+                        onChangeText={(text) => {
+                          const formatted = formatTimeInput(text);
+                          setEndTime(formatted);
+                          setDraftEndTime(formatted);
+                        }}
+                        style={[styles.timeInputEdit, allDay && styles.timeInputDisabled]}
+                        editable={!allDay}
+                        autoCapitalize="characters"
+                      />
+                    )}
+                  </View>
+                </View>
+              <View style={styles.inlineSwitchField}>
+                <View style={[styles.allDayRow, styles.inlineSwitchRow]}>
+                  <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>All day</Text>
+                  <Switch
                     value={allDay}
-          onValueChange={(value) => {
+                    onValueChange={(value) => {
                       setAllDay(value);
-            setDraftAllDay(value);
-            if (value) {
+                      setDraftAllDay(value);
+                      if (value) {
                         setStartTime('');
                         setEndTime('');
-              setDraftStartTime('');
-              setDraftEndTime('');
+                        setDraftStartTime('');
+                        setDraftEndTime('');
                         if (validationErrors.time) {
                           setValidationErrors({ ...validationErrors, time: null });
                         }
@@ -5448,15 +5589,26 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     }}
                     trackColor={{ false: BORDER, true: '#AECBFA' }}
                     thumbColor={allDay ? '#45A29E' : '#f9fafb'}
-        />
-      </View>
-                <View style={styles.allDayControl}>
-                  <Text style={styles.allDayLabel}>Recurring</Text>
+                  />
+                </View>
+              </View>
+              <View style={styles.inlineSwitchField}>
+                <View style={[styles.repeatToggleTopRow, styles.inlineSwitchRow]}>
+                  <Text style={[styles.repeatToggleLabel, styles.inlineSwitchLabel]}>Repeat</Text>
                   <Switch
                     value={isRecurring}
-                    onValueChange={(v) => {
-                      setIsRecurring(v);
-                      if (validationErrors.recurrenceEnd) {
+                    onValueChange={(value) => {
+                      setIsRecurring(value);
+                      if (value) {
+                        if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
+                          if (isClassDayEventType) {
+                            setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
+                          } else {
+                            const fallback = WEEKDAY_FROM_DATE[new Date(dueDate || new Date()).getDay()] || 'MO';
+                            setRecurrenceWeekdays([fallback]);
+                          }
+                        }
+                      } else if (validationErrors.recurrenceEnd) {
                         setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
                       }
                     }}
@@ -5466,175 +5618,43 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 </View>
               </View>
             </View>
-            {!allDay && (
-              <View style={styles.timeInputsRow}>
-                <View style={styles.timeField}>
-                  <Text style={styles.timeLabel}>Start</Text>
-                  {Platform.OS === 'web' ? (
-                    <input
-                      type="time"
-                      value={startTime ? (() => {
-                        // Convert "9:00 AM" to "09:00" format
-                        const parts = parseTimeString(startTime);
-                        if (parts) {
-                          return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                        }
-                        return '';
-                      })() : ''}
-                      onChange={(e) => {
-                        // Convert "09:00" to "9:00 AM" format
-                        const [hours, minutes] = e.target.value.split(':').map(Number);
-                        if (!isNaN(hours) && !isNaN(minutes)) {
-                          const hour12 = hours % 12 || 12;
-                          const period = hours >= 12 ? 'PM' : 'AM';
-                          const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-                          setStartTime(formatted);
-                          setDraftStartTime(formatted);
-                          if (validationErrors.time) {
-                            setValidationErrors({ ...validationErrors, time: null });
-                          }
-                        }
-                      }}
-                      style={{
-                        backgroundColor: '#ffffff',
-                        borderRadius: 10,
-                        paddingTop: 10,
-                        paddingBottom: 10,
-                        paddingLeft: 12,
-                        paddingRight: 12,
-                        borderWidth: 1,
-                        borderColor: validationErrors.time ? '#ef4444' : '#e5e7eb',
-                        borderStyle: 'solid',
-                        fontSize: 14,
-                        color: '#111827',
-                        width: '100%',
-                        maxWidth: 100,
-                        height: 'auto',
-                        outline: 'none',
-                        ...(validationErrors.time && {
-                          borderColor: '#ef4444',
-                        }),
-                      }}
-                    />
-                  ) : (
-            <TextInput
-                      placeholder="e.g. 9:00 AM"
-                      placeholderTextColor={MUTED}
-                      value={startTime}
-                      onChangeText={(text) => {
-                        const formatted = formatTimeInput(text);
-                        setStartTime(formatted);
-                setDraftStartTime(formatted);
-                        if (validationErrors.time) {
-                          setValidationErrors({ ...validationErrors, time: null });
-                        }
-                      }}
-                      style={[
-                        styles.timeInputEdit,
-                        validationErrors.time && styles.inputError,
-                      ]}
-                      autoCapitalize="characters"
-                    />
-                  )}
-                  {validationErrors.time && (
-                    <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
-                  )}
-                </View>
-                <View style={styles.timeField}>
-                  <Text style={styles.timeLabel}>End</Text>
-                  {Platform.OS === 'web' ? (
-                    <input
-                      type="time"
-                      value={endTime ? (() => {
-                        // Convert "10:00 AM" to "10:00" format
-                        const parts = parseTimeString(endTime);
-                        if (parts) {
-                          return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                        }
-                        return '';
-                      })() : ''}
-                      onChange={(e) => {
-                        // Convert "10:00" to "10:00 AM" format
-                        const [hours, minutes] = e.target.value.split(':').map(Number);
-                        if (!isNaN(hours) && !isNaN(minutes)) {
-                          const hour12 = hours % 12 || 12;
-                          const period = hours >= 12 ? 'PM' : 'AM';
-                          const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-                          setEndTime(formatted);
-                          setDraftEndTime(formatted);
-                        }
-                      }}
-                      style={{
-                        backgroundColor: '#ffffff',
-                        borderRadius: 10,
-                        paddingTop: 10,
-                        paddingBottom: 10,
-                        paddingLeft: 12,
-                        paddingRight: 12,
-                        borderWidth: 1,
-                        borderColor: '#e5e7eb',
-                        borderStyle: 'solid',
-                        fontSize: 14,
-                        color: '#111827',
-                        width: '100%',
-                        maxWidth: 100,
-                        height: 'auto',
-                        outline: 'none',
-                      }}
-                    />
-                  ) : (
-                    <TextInput
-                      placeholder="Optional"
-                      placeholderTextColor={MUTED}
-                      value={endTime}
-                      onChangeText={(text) => {
-                        const formatted = formatTimeInput(text);
-                        setEndTime(formatted);
-                        setDraftEndTime(formatted);
-                      }}
-                      style={styles.timeInputEdit}
-                      autoCapitalize="characters"
-                    />
-                  )}
-                </View>
-              </View>
-            )}
             {isRecurring && (
               <View style={styles.recurringSectionContent}>
-                {/* Repeat and Every in one row */}
-                <View style={{ marginBottom: 16, flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Repeat</Text>
+                <View style={recurrenceType === 'weekly' ? styles.recurrenceTopRow : null}>
+                  <View
+                    style={[
+                      { marginBottom: 14 },
+                      recurrenceType === 'weekly' && styles.recurrenceTopColumn,
+                    ]}
+                  >
+                    <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Repeat pattern</Text>
                     <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
                       {['daily', 'weekly', 'monthly'].map((type) => (
                         <TouchableOpacity
                           key={type}
-                          onPress={() => setRecurrenceType(type)}
+                          onPress={() => {
+                            setRecurrenceType(type);
+                            if (type === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
+                              if (isClassDayEventType) {
+                                setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
+                              } else {
+                                const fallback = WEEKDAY_FROM_DATE[new Date(dueDate || new Date()).getDay()] || 'MO';
+                                setRecurrenceWeekdays([fallback]);
+                              }
+                            }
+                            if (validationErrors.recurrenceWeekdays) {
+                              setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
+                            }
+                          }}
                           style={[
-                            {
-                              paddingVertical: 6,
-                              paddingHorizontal: 12,
-                              borderRadius: 8,
-                              borderWidth: 1,
-                              borderColor: CHIP_BORDER,
-                              backgroundColor: '#fff',
-                            },
-                            recurrenceType === type && {
-                              backgroundColor: '#e0f2fe',
-                              borderColor: '#bae6fd',
-                            },
+                          styles.dropdownOption,
+                          recurrenceType === type && styles.dropdownOptionActive,
                           ]}
                         >
                           <Text
                             style={[
-                              {
-                                color: FG,
-                                fontSize: 12,
-                              },
-                              recurrenceType === type && {
-                                fontWeight: '600',
-                                color: FG,
-                              },
+                            styles.dropdownOptionText,
+                            recurrenceType === type && styles.dropdownOptionTextActive,
                             ]}
                           >
                             {type.charAt(0).toUpperCase() + type.slice(1)}
@@ -5643,15 +5663,65 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ))}
                     </ChipRow>
                   </View>
+                  {recurrenceType === 'weekly' && (
+                    <View style={[{ marginBottom: 14 }, styles.recurrenceTopColumn]}>
+                      <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Repeats on</Text>
+                      <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
+                        {RECURRENCE_WEEKDAY_OPTIONS.map((day) => {
+                          const isSelected = Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.includes(day.value);
+                          return (
+                            <TouchableOpacity
+                              key={day.value}
+                              onPress={() => {
+                                setRecurrenceWeekdays((prev) => {
+                                  const prevSafe = Array.isArray(prev) ? prev : [];
+                                  if (prevSafe.includes(day.value)) {
+                                    return prevSafe.filter((value) => value !== day.value);
+                                  }
+                                  return [...prevSafe, day.value];
+                                });
+                                if (validationErrors.recurrenceWeekdays) {
+                                  setValidationErrors((prev) => ({ ...prev, recurrenceWeekdays: null }));
+                                }
+                              }}
+                              style={[
+                                styles.dropdownOption,
+                                isSelected && styles.dropdownOptionActive,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.dropdownOptionText,
+                                  isSelected && styles.dropdownOptionTextActive,
+                                ]}
+                              >
+                                {day.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ChipRow>
+                      {validationErrors.recurrenceWeekdays ? (
+                        <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.recurrenceWeekdays}</Text>
+                      ) : null}
+                    </View>
+                  )}
                 </View>
-                
-                {/* Ends and Number of occurrences/End date in one row */}
-                <View style={{ marginBottom: 16, flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
-                  <View style={{ flex: 1 }}>
+                <View
+                  style={[
+                    recurrenceEndType !== 'never' && styles.recurrenceEndsRow,
+                  ]}
+                >
+                  <View
+                    style={[
+                      { marginBottom: 8 },
+                      recurrenceEndType !== 'never' && styles.recurrenceEndsControl,
+                    ]}
+                  >
                     <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Ends</Text>
                     <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
                       {['never', 'after', 'on'].map((endType) => (
-              <TouchableOpacity
+                        <TouchableOpacity
                           key={endType}
                           onPress={() => {
                             setRecurrenceEndType(endType);
@@ -5660,30 +5730,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                             }
                           }}
                           style={[
-                            {
-                              paddingVertical: 6,
-                              paddingHorizontal: 12,
-                              borderRadius: 8,
-                              borderWidth: 1,
-                              borderColor: CHIP_BORDER,
-                              backgroundColor: '#fff',
-                            },
-                            recurrenceEndType === endType && {
-                              backgroundColor: '#e0f2fe',
-                              borderColor: '#bae6fd',
-                            },
+                            styles.dropdownOption,
+                            recurrenceEndType === endType && styles.dropdownOptionActive,
                           ]}
                         >
                           <Text
                             style={[
-                              {
-                                color: FG,
-                                fontSize: 12,
-                              },
-                              recurrenceEndType === endType && {
-                                fontWeight: '600',
-                                color: FG,
-                              },
+                              styles.dropdownOptionText,
+                              recurrenceEndType === endType && styles.dropdownOptionTextActive,
                             ]}
                           >
                             {endType === 'never' ? 'Never' : endType === 'after' ? 'After' : 'On date'}
@@ -5692,21 +5746,23 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ))}
                     </ChipRow>
                   </View>
-                  {recurrenceEndType === 'after' && (
-                    <View style={{ flex: 1 }}>
+                  {recurrenceEndType === 'after' ? (
+                    <View style={[{ marginBottom: 8, maxWidth: 220 }, styles.recurrenceEndsInputWrap]}>
                       <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>Number of occurrences</Text>
                       <TextInput
                         style={{
                           borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? 1.5 : 1,
                           borderColor:
-                            validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? '#ef4444' : BORDER,
-                          borderRadius: 10,
-                          width: 100,
+                            validationErrors.recurrenceEnd && recurrenceEndType === 'after' ? '#ef4444' : CHIP_BORDER,
+                          borderRadius: 999,
+                          width: 116,
                           marginBottom: 0,
-                          paddingVertical: 6,
-                          paddingHorizontal: 12,
-                          height: 'auto',
+                          paddingVertical: 0,
+                          paddingHorizontal: 14,
+                          height: 36,
                           color: FG,
+                          backgroundColor: '#FFFFFF',
+                          fontSize: 12,
                         }}
                         value={recurrenceEndAfterText}
                         onChangeText={(text) => {
@@ -5734,22 +5790,26 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         keyboardType="numeric"
                       />
                     </View>
-                  )}
-                  {recurrenceEndType === 'on' && (
-                    <View style={{ flex: 1 }}>
+                  ) : null}
+                  {recurrenceEndType === 'on' ? (
+                    <View style={[{ marginBottom: 8, maxWidth: 240 }, styles.recurrenceEndsInputWrap]}>
                       <Text style={{ color: SUB, fontSize: 12, marginBottom: 8, fontWeight: '500' }}>End date</Text>
                       <TouchableOpacity
                         style={{
                           borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? 1.5 : 1,
                           borderColor:
-                            validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? '#ef4444' : BORDER,
-                          borderRadius: 10,
+                            validationErrors.recurrenceEnd && recurrenceEndType === 'on' ? '#ef4444' : CHIP_BORDER,
+                          borderRadius: 999,
                           marginBottom: 0,
-                          paddingVertical: 6,
-                          paddingHorizontal: 12,
-                          height: 'auto',
+                          paddingVertical: 0,
+                          paddingHorizontal: 14,
+                          height: 36,
+                          justifyContent: 'center',
+                          backgroundColor: '#FFFFFF',
+                          width: '100%',
+                          maxWidth: 220,
                         }}
-                onPress={() => {
+                        onPress={() => {
                           if (validationErrors.recurrenceEnd) {
                             setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
                           }
@@ -5763,12 +5823,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                           setShowEndDateCalendarPicker(true);
                         }}
                       >
-                        <Text style={{ color: recurrenceEndDate ? FG : MUTED }}>
+                        <Text style={{ color: recurrenceEndDate ? FG : MUTED, fontSize: 12 }}>
                           {recurrenceEndDate ? fmt(recurrenceEndDate) : 'Select end date'}
                         </Text>
                       </TouchableOpacity>
                     </View>
-                  )}
+                  ) : null}
                 </View>
                 {validationErrors.recurrenceEnd ? (
                   <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.recurrenceEnd}</Text>
@@ -5778,123 +5838,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </View>
         )}
       </SafeView>
-        {/* Logistical details section */}
-        <ModalSectionCard
-          Icon={MapPin}
-          title="Logistical details"
-          subtitle="Location, mode, and host"
-          expanded={showLogisticDetails}
-          onPress={() => setShowLogisticDetails(!showLogisticDetails)}
-          accent="#7C70F4"
-        >
-              <SafeFieldRow style={styles.fieldRow}>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Location (optional)</Text>
-                  <TextInput
-                    placeholder="e.g. Library, Park, etc."
-                    placeholderTextColor={MUTED}
-                    value={location}
-                    onChangeText={setLocation}
-                    style={styles.input}
-                  />
-                  <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Instructor / Host (optional)</Text>
-                  <TextInput
-                    placeholder="e.g. Elisa"
-                    placeholderTextColor={MUTED}
-                    value={instructor}
-                    onChangeText={setInstructor}
-                    style={styles.input}
-                  />
-                </View>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Mode (optional)</Text>
-                  <SafeView style={styles.dropdownContainer}>
-                    <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>{MODE_OPTIONS.map((m) => (
-                      <TouchableOpacity
-                        key={m}
-                        onPress={() => setMode(mode === m ? '' : m)}
-                        style={[
-                          styles.dropdownOption,
-                          mode === m && styles.dropdownOptionActive,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.dropdownOptionText,
-                            mode === m && styles.dropdownOptionTextActive,
-                          ]}
-                        >
-                          {m.charAt(0).toUpperCase() + m.slice(1)}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}</ChipRow>
-                  </SafeView>
-                  <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add to connected calendar</Text>
-                  <SafeView style={styles.dropdownContainer}>
-                    <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
-                      {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
-                        const isSelected = connectedCalendarTargets.includes(provider.value);
-                        return (
-                          <TouchableOpacity
-                            key={provider.value}
-                            onPress={() =>
-                              setConnectedCalendarTargets((prev) =>
-                                prev.includes(provider.value)
-                                  ? prev.filter((value) => value !== provider.value)
-                                  : [...prev, provider.value]
-                              )
-                            }
-                            style={[
-                              styles.dropdownOption,
-                              styles.calendarConnectionOption,
-                              isSelected && styles.dropdownOptionActive,
-                            ]}
-                          >
-                            <View style={styles.calendarConnectionOptionContent}>
-                              {isSelected ? <Check size={12} color="#6BB3E8" /> : null}
-                              <Text
-                                style={[
-                                  styles.dropdownOptionText,
-                                  isSelected && styles.dropdownOptionTextActive,
-                                ]}
-                              >
-                                {provider.label}
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </ChipRow>
-                  </SafeView>
-                </View>
-              </SafeFieldRow>
-        </ModalSectionCard>
-
         {/* Academic details section */}
         <ModalSectionCard
           Icon={GraduationCap}
-          title="Academic details"
+          title={academicSectionTitle}
           subtitle="Scheduling and grading context"
           expanded={showAcademicDetails}
           onPress={() => setShowAcademicDetails(!showAcademicDetails)}
           accent="#7C70F4"
         >
-          {/* Academic toggles */}
-          {placement === 'calendar' && (
-            <View style={{ marginTop: 0, marginBottom: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', flexGrow: 1, flexShrink: 1, minWidth: 220 }}>
-                <Text style={{ fontSize: 14, color: SUB, marginRight: 8, flexShrink: 1 }} numberOfLines={2}>
-                  Show in student home as &apos;Requires Submission&apos;
-                </Text>
-                <Switch
-                  value={showRequiresSubmissionHome}
-                  onValueChange={setShowRequiresSubmissionHome}
-                  trackColor={{ false: BORDER, true: '#AECBFA' }}
-                  thumbColor={showRequiresSubmissionHome ? '#45A29E' : '#f9fafb'}
-                />
-              </View>
-            </View>
-          )}
           {/* Subject + Unit row */}
           <SafeFieldRow style={styles.fieldRow}>
             <View style={styles.field}>
@@ -6205,7 +6157,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   style={styles.addMaterialButton}
                   onPress={() => setShowAddMaterialModal(true)}
                 >
-                  <Plus size={14} color="#B8D7F9" />
+                  <Plus size={14} color="#5B6880" />
                   <Text style={styles.addMaterialText}>Add New</Text>
                 </TouchableOpacity>
               </View>
@@ -6319,6 +6271,76 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           )}
         </ModalSectionCard>
 
+        <ModalSectionCard
+          Icon={UserCircle}
+          title="Send to student"
+          subtitle="Student workflow"
+          expanded={showStudentExchangeSection}
+          onPress={() => setShowStudentExchangeSection(!showStudentExchangeSection)}
+          accent="#7C70F4"
+        >
+          {placement === 'calendar' && isParentView && isSchoolWorkEventType(eventType) ? (
+            <>
+              <View style={styles.workflowHeaderRow}>
+                <TouchableOpacity
+                  onPress={() => setShowSendToStudentModal(true)}
+                  disabled={!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee}
+                  style={[
+                    styles.workflowActionButton,
+                    (!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee) && styles.workflowActionButtonDisabled,
+                  ]}
+                  {...(Platform.OS === 'web' && { cursor: (!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee) ? 'default' : 'pointer' })}
+                >
+                  <View style={styles.workflowActionButtonRow}>
+                    <Send size={12} color="#5B6880" />
+                    <Text style={styles.workflowActionButtonText}>{sendTrackingSummary.ctaLabel || 'Send to student'}</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+              {!parentLinkedReady ? (
+                <Text style={styles.fieldHelpText}>Loading...</Text>
+              ) : sendTrackingSummary.studentRows.length === 0 ? (
+                <View style={styles.workflowEmptyWrap}>
+                  <Text style={styles.fieldHelpText}>No students assigned to this event yet.</Text>
+                </View>
+              ) : (
+                <View style={styles.studentRowsWrap}>
+                  {sendTrackingSummary.studentRows.map((row) => (
+                    <View key={row.id} style={styles.studentRow}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <View style={styles.studentIdentityRow}>
+                          <Image source={resolveStudentAvatarSource(row.avatarRaw)} style={styles.studentAvatar} />
+                          <Text style={styles.studentRowName}>{row.name}</Text>
+                        </View>
+                        <View style={styles.studentMetaRow}>
+                          <Text style={styles.studentRowMeta}>{row.subLabel}</Text>
+                        </View>
+                        {Array.isArray(row.trailLines) && row.trailLines.length > 0
+                          ? row.trailLines.map((line, index) => (
+                              <Text key={`${row.id}-trail-${index}`} style={styles.studentTrailLine}>
+                                {line}
+                              </Text>
+                            ))
+                          : null}
+                      </View>
+                      <View style={styles.studentRowRight}>
+                        <View style={[styles.statusPill, styles[`statusPill${row.statusPillKey}`] || styles.statusPillSENT]}>
+                          <Text style={styles.statusPillText}>{row.statusLabel || row.status}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+            </>
+          ) : (
+            <Text style={styles.fieldHelpText}>
+              Available for calendar schoolwork events with student assignees.
+            </Text>
+          )}
+        </ModalSectionCard>
+
       </ScrollView>
 
       {session?.role_flags?.isChild && event?.id && isSchoolWorkEventType(eventType) && (
@@ -6427,7 +6449,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 deleting && styles.deleteEventButtonDisabled,
               ]}
             >
-              <Trash2 size={17} color="#FFFFFF" />
+              <Trash2 size={17} color="#DC2626" />
               <Text style={[styles.deleteEventButtonText, deleting && { opacity: 0.8 }]}>
                 {deleting ? 'Deleting…' : 'Delete Event'}
               </Text>
@@ -6442,14 +6464,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           disabled={saving}
           style={[
             styles.createButton,
-            (saving || !isFormValid()) && styles.createButtonDisabled,
-            Platform.OS === 'web' && !saving && !isFormValid() && { cursor: 'pointer' },
+            saving && styles.createButtonDisabled,
           ]}
         >
           <Check size={16} color="#FFF" />
           <Text style={[
             styles.createButtonText,
-            (saving || !isFormValid()) && styles.createButtonTextDisabled,
+            saving && styles.createButtonTextDisabled,
           ]}>
             {saving ? 'Saving…' : 'Save changes'}
           </Text>
@@ -6762,8 +6783,19 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               ...(Platform.OS === 'web' ? { boxShadow: '0 10px 25px rgba(0,0,0,0.12)' } : {}),
             }}
           >
-            <Text style={[{ fontSize: 18, fontWeight: '700', color: '#111827' }, webCooper('700')]}>
-              {isPlanYearBlockSeries(event) ? 'Delete plan lessons?' : 'Delete recurring event?'}
+            <Text
+              style={[
+                {
+                  fontSize: 18,
+                  fontWeight: '700',
+                  color: '#111827',
+                  ...(Platform.OS === 'web' && {
+                    fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                  }),
+                },
+              ]}
+            >
+              {isPlanYearBlockSeries(event) ? 'Delete past lessons?' : 'Delete recurring event?'}
             </Text>
             <Text style={{ marginTop: 12, fontSize: 14, color: '#6b7280', lineHeight: 20 }}>
               {isPlanYearBlockSeries(event)
@@ -6771,49 +6803,65 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 : 'This event is part of a series. Delete only this occurrence, or remove every occurrence in the series.'}
             </Text>
             <View style={{ marginTop: 22, gap: 12 }}>
-              <TouchableOpacity
-                {...(Platform.OS === 'web' && { type: 'button' })}
-                onPress={async () => {
-                  setShowRecurringDeleteModal(false);
-                  await performDeleteSingleOccurrence();
-                }}
-                disabled={deleting}
-                style={{
-                  paddingVertical: 12,
-                  paddingHorizontal: 16,
-                  borderRadius: 10,
-                  backgroundColor: '#f3f4f6',
-                  alignItems: 'center',
-                  ...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' }),
-                }}
-              >
-                <Text style={{ fontSize: 15, fontWeight: '600', color: '#374151' }}>Delete this occurrence</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                {...(Platform.OS === 'web' && { type: 'button' })}
-                onPress={async () => {
-                  setShowRecurringDeleteModal(false);
-                  await performDeleteEntireSeries();
-                }}
-                disabled={deleting}
-                style={{
-                  paddingVertical: 12,
-                  paddingHorizontal: 16,
-                  borderRadius: 10,
-                  backgroundColor: '#dc2626',
-                  alignItems: 'center',
-                  ...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' }),
-                }}
-              >
-                <Text style={{ fontSize: 15, fontWeight: '600', color: '#ffffff' }}>Delete all in series</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  {...(Platform.OS === 'web' && { type: 'button' })}
+                  onPress={async () => {
+                    setShowRecurringDeleteModal(false);
+                    await performDeleteSingleOccurrence();
+                  }}
+                  disabled={deleting}
+                  style={{
+                    flex: 1,
+                    minHeight: 48,
+                    paddingHorizontal: 14,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: '#CBD5E1',
+                    backgroundColor: '#F8FAFC',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    ...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' }),
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Trash2 size={15} color="#64748B" />
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: '#334155' }}>Delete this day</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  {...(Platform.OS === 'web' && { type: 'button' })}
+                  onPress={async () => {
+                    setShowRecurringDeleteModal(false);
+                    await performDeleteEntireSeries();
+                  }}
+                  disabled={deleting}
+                  style={{
+                    flex: 1,
+                    minHeight: 48,
+                    paddingHorizontal: 14,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: '#FECACA',
+                    backgroundColor: '#FEF2F2',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    ...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' }),
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Trash2 size={15} color="#DC2626" />
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: '#DC2626' }}>Delete all in series</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
               <TouchableOpacity
                 {...(Platform.OS === 'web' && { type: 'button' })}
                 onPress={() => !deleting && setShowRecurringDeleteModal(false)}
                 disabled={deleting}
                 style={{ paddingVertical: 8, alignItems: 'center', ...(Platform.OS === 'web' && { cursor: 'pointer' }) }}
               >
-                <Text style={{ fontSize: 15, fontWeight: '500', color: '#2563eb' }}>Cancel</Text>
+                <Text style={{ fontSize: 15, fontWeight: '500', color: '#64748B' }}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
@@ -6889,12 +6937,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             visible
             transparent
             animationType="fade"
-            onRequestClose={() => {
-              if (!sendToStudentSubmitting) {
-                setShowSendToStudentModal(false);
-                setSendToStudentNote('');
-              }
-            }}
+            onRequestClose={closeSendToStudentModal}
           >
             <TouchableOpacity
               style={{
@@ -6905,12 +6948,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 padding: 16,
               }}
               activeOpacity={1}
-              onPress={() => {
-                if (!sendToStudentSubmitting) {
-                  setShowSendToStudentModal(false);
-                  setSendToStudentNote('');
-                }
-              }}
+              onPress={closeSendToStudentModal}
               accessibilityRole="button"
               accessibilityLabel="Dismiss"
             >
@@ -6930,12 +6968,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 }}
               >
                 <TouchableOpacity
-                  onPress={() => {
-                    if (!sendToStudentSubmitting) {
-                      setShowSendToStudentModal(false);
-                      setSendToStudentNote('');
-                    }
-                  }}
+                  onPress={closeSendToStudentModal}
                   style={{
                     position: 'absolute',
                     top: 14,
@@ -7025,12 +7058,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => {
-                        if (!sendToStudentSubmitting) {
-                          setShowSendToStudentModal(false);
-                          setSendToStudentNote('');
-                        }
-                      }}
+                      onPress={closeSendToStudentModal}
                       disabled={sendToStudentSubmitting}
                       style={{ paddingVertical: 12, alignItems: 'center', marginTop: 4 }}
                       {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'default' : 'pointer' })}
@@ -8446,6 +8474,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   headerEditEvent: {
+    marginHorizontal: -20,
     paddingHorizontal: 24,
     paddingTop: 18,
     paddingBottom: 14,
@@ -8508,7 +8537,7 @@ const styles = StyleSheet.create({
   headerDivider: {
     height: 1,
     backgroundColor: '#EEF0F5',
-    marginHorizontal: 0,
+    marginHorizontal: -20,
     marginTop: 0,
   },
   validationBannerContainer: {
@@ -8556,7 +8585,7 @@ const styles = StyleSheet.create({
   },
   bodyScroll: {
     flex: 1,
-    maxHeight: Platform.OS === 'web' ? 'min(70vh, calc(100vh - 220px))' : undefined,
+    maxHeight: Platform.OS === 'web' ? 'min(60vh, calc(100vh - 300px))' : undefined,
   },
   bodyContent: {
     paddingHorizontal: 20,
@@ -8783,6 +8812,28 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  assigneePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  assigneePillText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  assigneePillTextActive: {
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   dropdownContainerError: {
     borderColor: '#ef4444',
     borderWidth: 1.5,
@@ -8793,6 +8844,246 @@ const styles = StyleSheet.create({
     color: MUTED,
     fontSize: 12,
     fontStyle: 'italic',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  helpBubble: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  workflowHeading: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: FG,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  workflowHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginBottom: 8,
+  },
+  workflowActionButton: {
+    height: 38,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D6DCE8',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  workflowActionButtonDisabled: {
+    opacity: 0.5,
+  },
+  workflowActionButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 14,
+    color: '#5B6880',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  workflowActionButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  workflowContextText: {
+    fontSize: 12,
+    color: MUTED,
+    marginBottom: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  workflowDivider: {
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginVertical: 10,
+  },
+  workflowEmptyWrap: {
+    marginBottom: 8,
+  },
+  studentRowsWrap: {
+    marginBottom: 2,
+    gap: 4,
+  },
+  studentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  studentIdentityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  studentAvatar: {
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    backgroundColor: '#E5E7EB',
+  },
+  studentRowName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  studentRowMeta: {
+    marginTop: 1,
+    fontSize: 12,
+    color: MUTED,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  studentTrailLine: {
+    marginTop: 1,
+    fontSize: 11,
+    color: '#9CA3AF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderWidth: 1,
+  },
+  statusPillSENT: {
+    backgroundColor: '#EEF2FF',
+    borderColor: '#C7D2FE',
+  },
+  statusPillNOTVIEWED: {
+    backgroundColor: '#F3F4F6',
+    borderColor: '#D1D5DB',
+  },
+  statusPillNOTYETSHARED: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+  },
+  statusPillINPROGRESS: {
+    backgroundColor: '#F0FDFA',
+    borderColor: '#CCFBF1',
+  },
+  statusPillRETURNED: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#BBF7D0',
+  },
+  statusPillCOMPLETED: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  statusPillNEEDSREVIEW: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: FG,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  studentMetaRow: {
+    marginTop: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  studentRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  activityList: {
+    gap: 4,
+    marginBottom: 10,
+  },
+  activityItem: {
+    fontSize: 12,
+    color: SUB,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  timelineWrap: {
+    marginTop: 6,
+    gap: 8,
+  },
+  timelineItem: {
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  timelineItemParent: {
+    backgroundColor: '#EEF6FF',
+    borderColor: '#BFDBFE',
+  },
+  timelineItemStudent: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  timelineItemSystem: {
+    backgroundColor: '#F8FAFC',
+    borderColor: BORDER,
+  },
+  timelineHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+    gap: 8,
+  },
+  timelineRole: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: FG,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  timelineDate: {
+    fontSize: 11,
+    color: MUTED,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  timelineBody: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: FG,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -8808,6 +9099,73 @@ const styles = StyleSheet.create({
   timeSectionError: {
     borderColor: '#ef4444',
     borderWidth: 1.5,
+  },
+  scheduleFieldsWrap: {
+    marginBottom: 8,
+  },
+  scheduleFieldsWrapError: {
+    borderColor: '#ef4444',
+  },
+  dateTimeInlineRow: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 8,
+    marginBottom: 10,
+  },
+  dateTimeInlineRowWeb: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 12,
+  },
+  dateFieldInline: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 220,
+  },
+  inlineSwitchField: {
+    minWidth: 84,
+    alignItems: 'flex-start',
+    justifyContent: 'flex-end',
+    ...(Platform.OS === 'web' && {
+      marginBottom: 6,
+    }),
+  },
+  inlineSwitchRow: {
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  inlineSwitchLabel: {
+    marginBottom: 0,
+  },
+  allDayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 10,
+    marginTop: 2,
+  },
+  repeatToggleTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    marginBottom: 2,
+    gap: 10,
+  },
+  repeatToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  repeatToggleLabel: {
+    color: SUB,
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 4,
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   timeToggleRow: {
     flexDirection: 'row',
@@ -8844,6 +9202,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
+  timeInputsRowInline: {
+    flex: 1,
+    minWidth: 220,
+  },
   timeField: {
     flex: 1,
   },
@@ -8851,6 +9213,8 @@ const styles = StyleSheet.create({
     color: SUB,
     fontSize: 12,
     marginBottom: 4,
+    fontWeight: '500',
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -8858,7 +9222,7 @@ const styles = StyleSheet.create({
   timeInputEdit: {
     borderWidth: 1,
     borderColor: BORDER,
-    borderRadius: 10,
+    borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 12,
     color: FG,
@@ -8867,10 +9231,14 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  timeInputDisabled: {
+    backgroundColor: '#F8FAFC',
+    color: MUTED,
+  },
   input: {
     borderWidth: 1,
     borderColor: BORDER,
-    borderRadius: 10,
+    borderRadius: 14,
     padding: 10,
     color: FG,
     marginBottom: 8,
@@ -8947,27 +9315,26 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 18,
     borderRadius: 16,
-    backgroundColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
     borderWidth: 1,
-    borderColor: '#EF4444',
+    borderColor: '#FECACA',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 12px rgba(239,68,68,0.24)',
       cursor: 'pointer',
     }),
   },
   deleteEventButtonDisabled: {
-    backgroundColor: '#FCA5A5',
-    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
     ...(Platform.OS === 'web' && {
       cursor: 'not-allowed',
     }),
   },
   deleteEventButtonText: {
-    color: '#FFFFFF',
+    color: '#B91C1C',
     fontWeight: '700',
     fontSize: 16,
     ...(Platform.OS === 'web' && {
@@ -9065,10 +9432,41 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   recurringSectionContent: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: BORDER,
+    marginTop: 8,
+    paddingTop: 0,
+  },
+  recurrenceTopRow: {
+    ...(Platform.OS === 'web' && {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 16,
+    }),
+  },
+  recurrenceTopColumn: {
+    ...(Platform.OS === 'web' && {
+      flex: 1,
+      minWidth: 0,
+    }),
+  },
+  recurrenceEndsRow: {
+    ...(Platform.OS === 'web' && {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 16,
+    }),
+  },
+  recurrenceEndsControl: {
+    ...(Platform.OS === 'web' && {
+      flex: 1,
+      minWidth: 0,
+    }),
+  },
+  recurrenceEndsInputWrap: {
+    ...(Platform.OS === 'web' && {
+      flex: 1,
+      minWidth: 0,
+      marginLeft: -6,
+    }),
   },
   academicSection: {
     borderWidth: 1,
@@ -9093,7 +9491,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     borderWidth: 1,
     borderColor: BORDER,
-    borderRadius: 10,
+    borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 12,
     backgroundColor: '#fff',
@@ -9119,7 +9517,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: BORDER,
-    borderRadius: 10,
+    borderRadius: 14,
     marginTop: 4,
     maxHeight: 200,
     zIndex: 10000,
@@ -9262,19 +9660,23 @@ const styles = StyleSheet.create({
   addMaterialButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 38,
+    paddingHorizontal: 14,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#B8D7F9',
-    backgroundColor: '#FFFFFF',
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   addMaterialText: {
-    fontSize: 13,
-    color: '#1e40af',
+    fontSize: 14,
+    color: '#5B6880',
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   pdfModalOverlay: {
     flex: 1,

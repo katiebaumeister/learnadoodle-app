@@ -14,6 +14,7 @@ export default function TasksView({
   onEventComplete,
   onCreateTask,
   children = [],
+  monthDate = null,
   familyId: familyIdProp = null,
   preloadedBacklogEvents = null,
   preloadedTrashEvents = null,
@@ -175,7 +176,7 @@ export default function TasksView({
   }, [familyIdProp, events]);
 
   const fetchSectionEvents = useCallback(async (section) => {
-    if (!['today', 'tomorrow', 'next2weeks', 'completed'].includes(section)) {
+    if (!['today', 'tomorrow', 'thismonth', 'completed'].includes(section)) {
       setSectionEvents([]);
       return;
     }
@@ -199,6 +200,16 @@ export default function TasksView({
           .eq('status', 'done')
           .order('start_ts', { ascending: false, nullsFirst: false })
           .limit(300);
+      } else if (section === 'thismonth') {
+        const anchor = monthDate ? new Date(monthDate) : new Date();
+        const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 0, 0, 0, 0);
+        const monthEnd = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0, 23, 59, 59, 999);
+        query = query
+          .or('is_backlog.is.false,is_backlog.is.null')
+          .gte('start_ts', monthStart.toISOString())
+          .lte('start_ts', monthEnd.toISOString())
+          .order('start_ts', { ascending: true })
+          .limit(1000);
       } else {
         const today = startOfToday();
         const start = new Date(today);
@@ -222,7 +233,7 @@ export default function TasksView({
     } catch (error) {
       console.error(`[TasksView] Error fetching ${section} events:`, error);
     }
-  }, [familyIdProp, events]);
+  }, [familyIdProp, events, monthDate]);
 
   useEffect(() => {
     if (preloadedBacklogEvents != null) {
@@ -373,7 +384,7 @@ export default function TasksView({
       // Check URL parameter for section on mount
       const urlParams = new URLSearchParams(window.location.search);
       const sectionParam = urlParams.get('section');
-      if (sectionParam && ['today', 'tomorrow', 'next2weeks', 'backlog', 'completed', 'trash'].includes(sectionParam)) {
+      if (sectionParam && ['today', 'tomorrow', 'thismonth', 'backlog', 'completed', 'trash'].includes(sectionParam)) {
         setActiveSection(sectionParam);
         setSelectedList(null);
       }
@@ -381,7 +392,7 @@ export default function TasksView({
       // Listen for custom event to change section
       const handleSectionChange = (event) => {
         const section = event.detail?.section;
-        if (section && ['today', 'tomorrow', 'next2weeks', 'backlog', 'completed', 'trash'].includes(section)) {
+        if (section && ['today', 'tomorrow', 'thismonth', 'backlog', 'completed', 'trash'].includes(section)) {
           setActiveSection(section);
           setSelectedList(null);
         }
@@ -519,23 +530,19 @@ export default function TasksView({
           return isSameDay(d, tomorrow);
         });
       
-      case 'next2weeks':
+      case 'thismonth':
         return combinedEvents.filter(ev => {
-          // Exclude backlog items and soft-deleted events from next 2 weeks view
+          // Exclude backlog items and soft-deleted events from month list view
           if (ev.is_backlog === true) return false;
           if (ev.deleted || ev.deleted_at) return false;
           if (ev.status === 'done') return false;
           const evDate = ev.start || ev.start_ts || ev.start_local;
           if (!evDate) return false;
           const d = new Date(evDate);
-          // Normalize dates to start of day for comparison
-          d.setHours(0, 0, 0, 0);
-          const todayNormalized = new Date(today);
-          todayNormalized.setHours(0, 0, 0, 0);
-          const twoWeeksFromNowNormalized = new Date(twoWeeksFromNow);
-          twoWeeksFromNowNormalized.setHours(23, 59, 59, 999);
-          // For expanded events, the start_ts is already set to the specific day, so we check if it's in range
-          return d >= todayNormalized && d <= twoWeeksFromNowNormalized;
+          const anchor = monthDate ? new Date(monthDate) : new Date();
+          const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 0, 0, 0, 0);
+          const monthEnd = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0, 23, 59, 59, 999);
+          return d >= monthStart && d <= monthEnd;
         });
       
       case 'backlog':
@@ -777,62 +784,17 @@ export default function TasksView({
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'next2weeks' && styles.sidebarItemActive]}
+              style={[styles.sidebarItem, activeSection === 'thismonth' && styles.sidebarItemActive]}
               onPress={() => {
-                setActiveSection('next2weeks');
+                setActiveSection('thismonth');
                 setSelectedList(null);
               }}
             >
               <Text style={[
                 styles.sidebarItemText,
-                activeSection === 'next2weeks' && styles.sidebarItemTextActive
+                activeSection === 'thismonth' && styles.sidebarItemTextActive
               ]}>
-                Next 2 Weeks
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'backlog' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('backlog');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'backlog' && styles.sidebarItemTextActive
-              ]}>
-                Backlog
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'completed' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('completed');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'completed' && styles.sidebarItemTextActive
-              ]}>
-                Completed
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'trash' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('trash');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'trash' && styles.sidebarItemTextActive
-              ]}>
-                Trash
+                This month
               </Text>
             </TouchableOpacity>
 
@@ -877,7 +839,7 @@ export default function TasksView({
           <Text style={styles.headerTitle}>
             {activeSection === 'today' && 'Today'}
             {activeSection === 'tomorrow' && 'Tomorrow'}
-            {activeSection === 'next2weeks' && 'Next 2 Weeks'}
+            {activeSection === 'thismonth' && 'This month'}
             {activeSection === 'backlog' && 'Backlog'}
             {activeSection === 'completed' && 'Completed'}
             {activeSection === 'trash' && 'Trash'}

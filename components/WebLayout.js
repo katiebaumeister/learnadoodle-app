@@ -222,6 +222,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [eventModalParentFocus, setEventModalParentFocus] = useState(null);
   /** Plan "Dates with events" row edit → open EventModal in edit form, not read-only details */
   const [eventModalSchedulingMode, setEventModalSchedulingMode] = useState(false);
+  /** true = open only the Send to student modal (no EventDetails shell) */
+  const [eventModalSendOnlyMode, setEventModalSendOnlyMode] = useState(false);
   /** Planner chip warning → open EventModal with top conflict banner (Auto reschedule / Ignore) */
   const [eventModalOpenConflictResolution, setEventModalOpenConflictResolution] = useState(false);
   const [eventModalConflictResolutionContext, setEventModalConflictResolutionContext] = useState(null);
@@ -2345,6 +2347,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const initialEvent = detail.initialEvent || null;
       const parentEventFocus = detail.parentEventFocus ?? null;
       const schedulingMode = !!detail.schedulingMode;
+      const sendOnlyMode = !!detail.sendOnlyMode;
       const openConflictResolution = !!detail.openConflictResolution;
       let conflictResolutionContext = detail.conflictResolutionContext || null;
       if (!conflictResolutionContext && openConflictResolution && Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2376,10 +2379,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setEventModalEventId(eventId);
       setEventModalInitialEvent(initialEvent);
       setEventModalSchedulingMode(schedulingMode);
+      setEventModalSendOnlyMode(sendOnlyMode);
       setEventModalOpenConflictResolution(openConflictResolution);
       setEventModalConflictResolutionContext(conflictResolutionContext);
       setEventModalParentFocus(
-        parentEventFocus === 'help' || parentEventFocus === 'submission' ? parentEventFocus : null
+        parentEventFocus === 'help' || parentEventFocus === 'submission' || parentEventFocus === 'send'
+          ? parentEventFocus
+          : null
       );
       setShowEventModal(true);
     };
@@ -3884,7 +3890,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     {[
                       { key: 'month', label: 'Month' },
                       { key: 'board', label: 'Week' },
-                      { key: 'tasks', label: 'To-do lists' },
+                      { key: 'tasks', label: 'List' },
                     ].map((view) => {
                       const isActive = showTopPlannerSegmentHighlight && currentView === view.key;
                       return (
@@ -4971,6 +4977,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         schedulingMode={eventModalSchedulingMode}
         openConflictResolution={eventModalOpenConflictResolution}
         conflictResolutionContext={eventModalConflictResolutionContext}
+        sendOnlyMode={eventModalSendOnlyMode}
         onOpenConflictResolutionConsumed={() => setEventModalOpenConflictResolution(false)}
         familyId={familyId}
         children={children}
@@ -4995,6 +5002,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setEventModalInitialEvent(null);
           setEventModalParentFocus(null);
           setEventModalSchedulingMode(false);
+          setEventModalSendOnlyMode(false);
           setEventModalOpenConflictResolution(false);
           setEventModalConflictResolutionContext(null);
         }}

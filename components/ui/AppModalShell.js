@@ -14,6 +14,7 @@ export default function AppModalShell({
   footer,
   contentContainerStyle,
   bodyStyle,
+  shellStyle,
   disableShellScroll = false,
 }) {
   const ShellScroller = disableShellScroll ? View : ScrollView;
@@ -25,7 +26,7 @@ export default function AppModalShell({
         showsVerticalScrollIndicator: false,
       };
   return (
-    <View style={styles.modal}>
+    <View style={[styles.modal, shellStyle]}>
       <ShellScroller {...shellScrollerProps}>
         <View style={[styles.header, { backgroundColor: accentSoft }]}>
           <View style={styles.headerLeft}>

@@ -1519,6 +1519,12 @@ export default function SubjectsPlanBuilder({
   const [showFullSchedulePreview, setShowFullSchedulePreview] = useState(false);
   const [showSubjectPickerModal, setShowSubjectPickerModal] = useState(false);
   const [subjectPickerAction, setSubjectPickerAction] = useState('add'); // add | edit
+  const [classDayActionPickerState, setClassDayActionPickerState] = useState({
+    visible: false,
+    action: 'attendance', // attendance | add_event
+    row: null,
+    options: [],
+  });
   const [saving, setSaving] = useState(false);
   const [applyingSuggestionSubjectId, setApplyingSuggestionSubjectId] = useState(null);
   const [expandedYearTargetSuggestionId, setExpandedYearTargetSuggestionId] = useState(null);
@@ -4531,6 +4537,12 @@ export default function SubjectsPlanBuilder({
         }
         return;
       }
+      const fallbackBootstrapTargetDays = Number(familyPlannerSettings?.default_target_days);
+      const bootstrapTargetInstructionalDays = requestedTargetKind === 'days' && Number.isFinite(targetDays) && targetDays > 0
+        ? Math.max(1, Math.round(targetDays))
+        : (Number.isFinite(fallbackBootstrapTargetDays) && fallbackBootstrapTargetDays > 0
+          ? Math.max(1, Math.round(fallbackBootstrapTargetDays))
+          : 180);
       const bootstrapPayload = {
         family_id: familyId,
         start_date: fallbackRange.start_date,
@@ -4541,11 +4553,11 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         create_calendar_events: true,
         blocks: fallbackBlocks,
-        // New bootstrap plans for Fix Gap should default to Learning days.
-        attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
+        // Preserve the current attendance mode; do not force-switch on Fix gap bootstrap.
+        attendance_tracking_mode: resolvedAttendanceTrackingMode,
         run_scope_type: 'full_year',
         school_duration_scope: 'custom_duration',
-        target_instructional_days: 180,
+        target_instructional_days: bootstrapTargetInstructionalDays,
         use_defaults: false,
         timezone: getClientTimezone(),
         year_name: `${displaySchoolYear?.label || 'School Year'} · Subjects schedule`,
@@ -4568,22 +4580,6 @@ export default function SubjectsPlanBuilder({
         setFixingGapRowId(null);
         toast?.push?.('No saved plan found. Auto-create did not return a plan id.', 'error');
         return;
-      }
-      const bootstrapSchoolYearLabel = String(schoolYearLabel || '').trim() || null;
-      if (bootstrapSchoolYearLabel) {
-        saveFamilyPlannerSettings(
-          familyId,
-          {
-            attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
-            target_scope: 'overall',
-            default_constraint_mode: 'days',
-            default_target_days: 180,
-          },
-          bootstrapSchoolYearLabel
-        ).catch(() => {});
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('refreshPlanDefaults', { detail: { schoolYearLabel: bootstrapSchoolYearLabel } }));
-        }
       }
       // Keep pre-confirmation flow quiet: show the Fix Gap confirmation modal first.
     }
@@ -4630,6 +4626,12 @@ export default function SubjectsPlanBuilder({
         setShowFixGapSetupModal(true);
         return;
       }
+      const fallbackBootstrapTargetDays = Number(familyPlannerSettings?.default_target_days);
+      const bootstrapTargetInstructionalDays = requestedTargetKind === 'days' && Number.isFinite(targetDays) && targetDays > 0
+        ? Math.max(1, Math.round(targetDays))
+        : (Number.isFinite(fallbackBootstrapTargetDays) && fallbackBootstrapTargetDays > 0
+          ? Math.max(1, Math.round(fallbackBootstrapTargetDays))
+          : 180);
       const bootstrapPayload = {
         family_id: familyId,
         start_date: fallbackRange.start_date,
@@ -4640,12 +4642,11 @@ export default function SubjectsPlanBuilder({
         replace_placeholders: true,
         create_calendar_events: true,
         blocks: fallbackBlocks,
-        attendance_tracking_mode: scope === 'overall'
-          ? ATTENDANCE_MODES.CLASS_DAY
-          : resolvedAttendanceTrackingMode,
+        // Preserve the current attendance mode; do not force-switch on Fix gap bootstrap.
+        attendance_tracking_mode: resolvedAttendanceTrackingMode,
         run_scope_type: 'full_year',
         school_duration_scope: 'custom_duration',
-        target_instructional_days: 180,
+        target_instructional_days: bootstrapTargetInstructionalDays,
         use_defaults: false,
         timezone: getClientTimezone(),
         year_name: `${displaySchoolYear?.label || 'School Year'} · Subjects schedule`,
@@ -4661,22 +4662,6 @@ export default function SubjectsPlanBuilder({
       if (bootstrapError) throw bootstrapError;
       academicYearId = String(bootstrapData?.academic_year_id || '').trim();
       setOverviewReloadKey((k) => k + 1);
-      const bootstrapSchoolYearLabel = String(schoolYearLabel || '').trim() || null;
-      if (bootstrapSchoolYearLabel) {
-        saveFamilyPlannerSettings(
-          familyId,
-          {
-            attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
-            target_scope: 'overall',
-            default_constraint_mode: 'days',
-            default_target_days: 180,
-          },
-          bootstrapSchoolYearLabel
-        ).catch(() => {});
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('refreshPlanDefaults', { detail: { schoolYearLabel: bootstrapSchoolYearLabel } }));
-        }
-      }
       // Keep pre-confirmation flow quiet: show the Fix Gap confirmation modal first.
     }
 
@@ -5031,6 +5016,29 @@ export default function SubjectsPlanBuilder({
     return { ids: effectiveIds, label };
   }, [allChildIds, childNameById]);
 
+  const buildClassDayActionSubjectOptions = useCallback((row) => {
+    const rowSubjectIds = Array.isArray(row?.subjectIds)
+      ? row.subjectIds.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+    const allowedIds = rowSubjectIds.length > 0 ? new Set(rowSubjectIds) : null;
+    const resolved = (baseSubjects || [])
+      .map((subject) => {
+        const subjectId = String(subject?.id || '').trim();
+        if (!subjectId) return null;
+        if (allowedIds && !allowedIds.has(subjectId)) return null;
+        const studentMeta = getSubjectStudentMeta(subject);
+        return {
+          id: subjectId,
+          name: String(subject?.name || '').trim() || 'Subject',
+          childIds: studentMeta.ids,
+          studentLabel: studentMeta.label,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return resolved;
+  }, [baseSubjects, getSubjectStudentMeta]);
+
   const openAddSubjectForCurrentSlot = useCallback((termId = null) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const resolvedTerm = termId || displayTerm || null;
@@ -5105,10 +5113,35 @@ export default function SubjectsPlanBuilder({
 
   const openAddEventModalForSubjectRow = useCallback((row) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const subjectId = String(row?.id || '').trim();
+    let resolvedRow = row;
+    if (row?.isClassDayAggregate === true) {
+      const subjectOptions = buildClassDayActionSubjectOptions(row);
+      if (subjectOptions.length === 0) {
+        toast?.push?.('Add a subject first to create an event.', 'error');
+        return;
+      }
+      if (subjectOptions.length > 1) {
+        setClassDayActionPickerState({
+          visible: true,
+          action: 'add_event',
+          row,
+          options: subjectOptions,
+        });
+        return;
+      }
+      const onlyOption = subjectOptions[0];
+      resolvedRow = {
+        ...(row || {}),
+        id: onlyOption.id,
+        name: onlyOption.name,
+        isClassDayAggregate: false,
+        attachedStudentIds: onlyOption.childIds,
+      };
+    }
+    const subjectId = String(resolvedRow?.id || '').trim();
     if (!subjectId) return;
-    const childIds = Array.isArray(row?.attachedStudentIds)
-      ? row.attachedStudentIds.map((id) => String(id || '').trim()).filter(Boolean)
+    const childIds = Array.isArray(resolvedRow?.attachedStudentIds)
+      ? resolvedRow.attachedStudentIds.map((id) => String(id || '').trim()).filter(Boolean)
       : [];
     const firstChildId = childIds[0] || null;
     window.dispatchEvent(
@@ -5122,7 +5155,7 @@ export default function SubjectsPlanBuilder({
         },
       })
     );
-  }, []);
+  }, [buildClassDayActionSubjectOptions, toast]);
 
   const openSubjectEventsModal = useCallback((row, termSectionTitle) => {
     setSubjectEventsModalData({
@@ -5147,8 +5180,34 @@ export default function SubjectsPlanBuilder({
   }, []);
 
   const openAttendanceBulkActionsModal = useCallback(async (row) => {
-    const subjectId = String(row?.id || '').trim();
-    const isAggregate = row?.isAggregate === true;
+    let resolvedRow = row;
+    if (row?.isClassDayAggregate === true) {
+      const subjectOptions = buildClassDayActionSubjectOptions(row);
+      if (subjectOptions.length === 0) {
+        toast?.push?.('Add a subject first to edit attendance.', 'error');
+        return;
+      }
+      if (subjectOptions.length > 1) {
+        setClassDayActionPickerState({
+          visible: true,
+          action: 'attendance',
+          row,
+          options: subjectOptions,
+        });
+        return;
+      }
+      const onlyOption = subjectOptions[0];
+      resolvedRow = {
+        ...(row || {}),
+        id: onlyOption.id,
+        name: onlyOption.name,
+        isClassDayAggregate: false,
+        isAggregate: false,
+        attachedStudentIds: onlyOption.childIds,
+      };
+    }
+    const subjectId = String(resolvedRow?.id || '').trim();
+    const isAggregate = resolvedRow?.isAggregate === true;
     const normalizeEventsForAttendanceModal = (events = [], fallbackSubjectId = null) => (
       (Array.isArray(events) ? events : []).map((eventItem) => ({
         id: eventItem?.id ? String(eventItem.id) : null,
@@ -5176,7 +5235,7 @@ export default function SubjectsPlanBuilder({
         is_backlog: eventItem?.is_backlog === true,
       })).filter((eventItem) => Boolean(eventItem?.id))
     );
-    const fallbackEvents = normalizeEventsForAttendanceModal(row?.eventItems, subjectId);
+    const fallbackEvents = normalizeEventsForAttendanceModal(resolvedRow?.eventItems, subjectId);
     let modalEvents = fallbackEvents;
     if (!isAggregate && subjectId && familyId) {
       try {
@@ -5246,11 +5305,46 @@ export default function SubjectsPlanBuilder({
     }
     setAttendanceModalData({
       subjectId: isAggregate ? null : subjectId,
-      subjectName: row?.name || (isAggregate ? 'All subjects' : 'Subject'),
+      subjectName: resolvedRow?.name || (isAggregate ? 'All subjects' : 'Subject'),
       events: modalEvents,
     });
     setShowPastEventsAttendanceModal(true);
-  }, [displaySchoolYear, familyId, familyPlannerSettings]);
+  }, [buildClassDayActionSubjectOptions, displaySchoolYear, familyId, familyPlannerSettings, toast]);
+
+  const closeClassDayActionPicker = useCallback(() => {
+    setClassDayActionPickerState({
+      visible: false,
+      action: 'attendance',
+      row: null,
+      options: [],
+    });
+  }, []);
+
+  const handlePickClassDayActionSubject = useCallback((subjectOption) => {
+    const action = classDayActionPickerState?.action === 'add_event' ? 'add_event' : 'attendance';
+    const sourceRow = classDayActionPickerState?.row || null;
+    const subjectId = String(subjectOption?.id || '').trim();
+    if (!sourceRow || !subjectId) {
+      closeClassDayActionPicker();
+      return;
+    }
+    const selectedRow = {
+      ...(sourceRow || {}),
+      id: subjectId,
+      name: String(subjectOption?.name || sourceRow?.name || '').trim() || 'Subject',
+      isClassDayAggregate: false,
+      isAggregate: false,
+      attachedStudentIds: Array.isArray(subjectOption?.childIds) && subjectOption.childIds.length > 0
+        ? subjectOption.childIds
+        : sourceRow?.attachedStudentIds,
+    };
+    closeClassDayActionPicker();
+    if (action === 'add_event') {
+      openAddEventModalForSubjectRow(selectedRow);
+      return;
+    }
+    openAttendanceBulkActionsModal(selectedRow);
+  }, [classDayActionPickerState, closeClassDayActionPicker, openAddEventModalForSubjectRow, openAttendanceBulkActionsModal]);
 
   const formatLearningDaysOwnerLabel = useCallback((row) => {
     const namesFromIds = (Array.isArray(row?.attachedStudentIds) ? row.attachedStudentIds : [])
@@ -5911,46 +6005,33 @@ export default function SubjectsPlanBuilder({
                                   </View>
 
                                   <View style={[styles.subjectRowActions, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay]}>
-                                    {row?.isClassDayAggregate ? null : (
-                                      <>
-                                        <TouchableOpacity
-                                          style={styles.subjectRowActionLink}
-                                          onPress={() => openSubjectEditModal(row.id)}
-                                          accessibilityLabel={`Edit ${row.name || 'subject'}`}
-                                          activeOpacity={0.8}
-                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                        >
-                                          <Text style={styles.subjectRowActionLinkText}>Edit Subject</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity
-                                          style={styles.subjectRowActionLink}
-                                          onPress={openPlanningPreferences}
-                                          accessibilityLabel={`Edit target for ${row.name || 'subject'}`}
-                                          activeOpacity={0.8}
-                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                        >
-                                          <Text style={styles.subjectRowActionLinkText}>Edit Target</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity
-                                          style={styles.subjectRowActionLink}
-                                          onPress={() => openAttendanceBulkActionsModal(row)}
-                                          accessibilityLabel={`Edit attendance for ${row.name || 'subject'}`}
-                                          activeOpacity={0.8}
-                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                        >
-                                          <Text style={styles.subjectRowActionLinkText}>Edit Attendance</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity
-                                          style={styles.subjectRowActionLink}
-                                          onPress={() => openAddEventModalForSubjectRow(row)}
-                                          accessibilityLabel={`Add subject event for ${row.name || 'subject'}`}
-                                          activeOpacity={0.8}
-                                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                        >
-                                          <Text style={styles.subjectRowActionLinkText}>Add event</Text>
-                                        </TouchableOpacity>
-                                      </>
-                                    )}
+                                    <TouchableOpacity
+                                      style={styles.subjectRowActionLink}
+                                      onPress={openPlanningPreferences}
+                                      accessibilityLabel={`Edit target for ${row.name || 'subject'}`}
+                                      activeOpacity={0.8}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                    >
+                                      <Text style={styles.subjectRowActionLinkText}>Edit Target</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={styles.subjectRowActionLink}
+                                      onPress={() => openAttendanceBulkActionsModal(row)}
+                                      accessibilityLabel={`Edit attendance for ${row.name || 'subject'}`}
+                                      activeOpacity={0.8}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                    >
+                                      <Text style={styles.subjectRowActionLinkText}>Edit Attendance</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={styles.subjectRowActionLink}
+                                      onPress={() => openAddEventModalForSubjectRow(row)}
+                                      accessibilityLabel={`Add subject event for ${row.name || 'subject'}`}
+                                      activeOpacity={0.8}
+                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                    >
+                                      <Text style={styles.subjectRowActionLinkText}>Add event</Text>
+                                    </TouchableOpacity>
                                   </View>
 
                                 </View>
@@ -6970,6 +7051,88 @@ export default function SubjectsPlanBuilder({
                   >
                     {fixGapConfirmContent.confirmLabel || 'Fix gap'}
                   </Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+        <Modal
+          visible={classDayActionPickerState.visible}
+          transparent
+          animationType="none"
+          onRequestClose={closeClassDayActionPicker}
+        >
+          <TouchableOpacity
+            style={styles.subjectPickerOverlay}
+            activeOpacity={1}
+            onPress={closeClassDayActionPicker}
+          >
+            <TouchableOpacity style={styles.subjectPickerModal} activeOpacity={1} onPress={() => {}}>
+              <View style={styles.subjectPickerHeader}>
+                <View style={styles.subjectPickerHeaderTextWrap}>
+                  <Text style={styles.subjectPickerTitle}>
+                    {classDayActionPickerState.action === 'add_event'
+                      ? 'Choose a subject for this event'
+                      : 'Choose a subject for attendance'}
+                  </Text>
+                  <Text style={styles.subjectPickerSubtitle}>
+                    {classDayActionPickerState.action === 'add_event'
+                      ? 'Pick the subject that this new event belongs to.'
+                      : 'Pick the subject whose attendance you want to update.'}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.subjectPickerClose}
+                  onPress={closeClassDayActionPicker}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <X size={20} color="#6b7280" />
+                </TouchableOpacity>
+              </View>
+
+              {Array.isArray(classDayActionPickerState.options) && classDayActionPickerState.options.length > 0 ? (
+                <View style={styles.subjectPickerList}>
+                  {classDayActionPickerState.options.map((option, index) => (
+                    <TouchableOpacity
+                      key={`${String(option?.id || '')}-${index}`}
+                      style={[
+                        styles.subjectPickerItem,
+                        index === classDayActionPickerState.options.length - 1 && styles.subjectPickerItemLast,
+                      ]}
+                      onPress={() => handlePickClassDayActionSubject(option)}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <View style={styles.subjectPickerItemTextWrap}>
+                        <Text style={styles.subjectPickerItemText}>{option?.name || 'Subject'}</Text>
+                        {option?.studentLabel ? (
+                          <View style={styles.subjectPickerStudentsRow}>
+                            <ChildAvatarCluster
+                              childIds={option?.childIds || []}
+                              familyChildren={children}
+                              size={28}
+                              overlap={-8}
+                            />
+                            <Text style={styles.subjectPickerStudentsText}>{option.studentLabel}</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <ChevronRight size={16} color="#6b7280" />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                <View style={styles.subjectPickerEmptyWrap}>
+                  <Text style={styles.subjectPickerEmptyText}>No subjects available.</Text>
+                </View>
+              )}
+
+              <View style={styles.subjectPickerActions}>
+                <TouchableOpacity
+                  style={styles.subjectPickerCancelBtn}
+                  onPress={closeClassDayActionPicker}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.subjectPickerCancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
             </TouchableOpacity>

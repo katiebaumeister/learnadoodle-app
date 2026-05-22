@@ -3064,19 +3064,34 @@ export default function SubjectDetailPage({
           <View style={styles.gradesSectionHeader}>
             <View style={styles.gradesSectionTitleRow}>
               <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
-              {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
-                <TouchableOpacity
-                  style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
-                  onPress={() => setShowPastEventsGradesModal(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="Bulk add grades"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={16} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
-                </TouchableOpacity>
-              ) : null}
+              <View style={styles.gradesHeaderActions}>
+                {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
+                  <TouchableOpacity
+                    style={[styles.emptyStateButton, styles.gradesHeaderActionButton]}
+                    onPress={() => setShowAssignedToStudentModal(true)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="View work assigned to student that has not been submitted"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Calendar size={18} color="#6B7280" />
+                    <Text style={styles.emptyStateButtonText}>Assigned to student</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {Platform.OS === 'web' && isParentViewer && (subjectData?.events || []).length > 0 ? (
+                  <TouchableOpacity
+                    style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
+                    onPress={() => setShowPastEventsGradesModal(true)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Bulk add grades"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Plus size={16} color="#6B7280" />
+                    <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
             {hasGradesAttention && isParentViewer ? (
               <Text style={styles.attentionHintText} accessibilityRole="text">
@@ -3144,38 +3159,12 @@ export default function SubjectDetailPage({
                   );
                 })}
               </View>
-              {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
-                <TouchableOpacity
-                  style={[styles.emptyStateButton, styles.gradesAssignedToStudentButton]}
-                  onPress={() => setShowAssignedToStudentModal(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="View work assigned to student that has not been submitted"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Calendar size={18} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Assigned to student</Text>
-                </TouchableOpacity>
-              ) : null}
             </View>
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.emptyStateText}>
                 Grades appear once you add grades to assignments or assessments for this subject.
               </Text>
-              {isParentViewer && assignmentsAssignedToStudent.length > 0 ? (
-                <TouchableOpacity
-                  style={styles.emptyStateButton}
-                  onPress={() => setShowAssignedToStudentModal(true)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel="View work assigned to student that has not been submitted"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Calendar size={18} color="#6B7280" />
-                  <Text style={styles.emptyStateButtonText}>Assigned to student</Text>
-                </TouchableOpacity>
-              ) : null}
             </View>
           )}
         </View>
@@ -3673,8 +3662,17 @@ const styles = StyleSheet.create({
     }),
   },
   /** Grades: spacing for Assigned to student below the list (same idea as attendance past-lessons CTA) */
-  gradesHeaderAddButton: {
+  gradesHeaderActions: {
     marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  gradesHeaderActionButton: {
+    marginTop: 0,
+  },
+  gradesHeaderAddButton: {
+    marginLeft: 0,
   },
   gradesBulkActionsButton: {
     marginTop: 8,

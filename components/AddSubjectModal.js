@@ -1,20 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput, Alert } from 'react-native';
-import { ChevronDown, ChevronUp, Plus, Trash2, CheckCircle, AlertTriangle, BookOpen, Library, SlidersHorizontal, FileText, Calendar, Sparkles, Upload, Pencil, MapPin } from 'lucide-react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput } from 'react-native';
+import { ChevronDown, ChevronUp, Trash2, CheckCircle, AlertTriangle, BookOpen, FileText } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
-import { getMaterials } from '../lib/services/materialsClient';
-import { useSession } from '../contexts/SessionContext';
-import AddMaterialModal from './materials/AddMaterialModal';
 import { parseChildIds } from '../lib/services/subjectsClient';
-import { getFamilyPlannerSettings, saveFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
 import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
 import { getSubjectProgressCache, mergeSubjectProgressCache } from '../lib/subjectProgressPlanCache';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
-import ConfirmDialog from './ConfirmDialog';
-import { PLANNING_PREFERENCES_UI } from './planner/planningPreferencesUiCopy';
-import { deriveRoleFromTags, DOCUMENT_ROLES } from '../lib/docs/roles';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
@@ -45,24 +38,6 @@ function gradeSortValue(normalizedGrade) {
   return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
 }
 
-/** Matches child / grade chips and primary actions (green). */
-const PLANNING_CHIP_SELECTED = {
-  border: '#45A29E',
-  background: 'rgba(69, 162, 158, 0.18)',
-};
-
-const MATERIAL_SLOT = { SYLLABUS: 'syllabus', LESSON_PLAN: 'lesson_plan' };
-
-function materialEligibleForSyllabusPicker(m) {
-  const r = deriveRoleFromTags(m.tags);
-  return r == null || r === DOCUMENT_ROLES.SYLLABUS;
-}
-
-function materialEligibleForLessonPicker(m) {
-  const r = deriveRoleFromTags(m.tags);
-  return r == null || r === DOCUMENT_ROLES.LESSON_PLAN;
-}
-
 // School year options: 2025/26 through 2040/41 (16 years)
 function getSchoolYearOptions() {
   const options = [];
@@ -77,22 +52,6 @@ const TERM_OPTIONS = [
   { id: 'fall_term', label: 'Fall term' },
   { id: 'spring_term', label: 'Spring term' },
 ];
-const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
-const CALENDAR_CONNECTION_OPTIONS = [
-  { value: 'google', label: 'Google' },
-  { value: 'apple', label: 'Apple' },
-];
-
-const parsePositiveIntOrNull = (value) => {
-  const n = parseInt(String(value ?? '').trim(), 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
-};
-
-const parsePositiveFloatOrNull = (value) => {
-  const n = parseFloat(String(value ?? '').trim());
-  return Number.isFinite(n) && n > 0 ? n : null;
-};
-
 const normalizeCalendarTargets = (raw) => {
   if (Array.isArray(raw)) return raw.map((v) => String(v).toLowerCase()).filter(Boolean);
   if (typeof raw === 'string') {
@@ -152,58 +111,29 @@ export default function AddSubjectModal({
   const [schoolTerm, setSchoolTerm] = useState(initialSchoolTerm || getDefaultSchoolTerm());
   const [showSchoolTermDropdown, setShowSchoolTermDropdown] = useState(false);
   const [credits, setCredits] = useState('');
-  const [defaultTargetDays, setDefaultTargetDays] = useState('');
-  const [defaultTargetHours, setDefaultTargetHours] = useState('');
   const [logisticalLocation, setLogisticalLocation] = useState('');
   const [logisticalMode, setLogisticalMode] = useState('');
   const [logisticalInstructor, setLogisticalInstructor] = useState('');
   const [connectedCalendarTargets, setConnectedCalendarTargets] = useState([]);
-  const [goalModeForSubject, setGoalModeForSubject] = useState('overall'); // 'overall' | 'per_subject'
-  const [targetMode, setTargetMode] = useState('none'); // 'none' | 'days' | 'hours'
-  const [familyPlannerContext, setFamilyPlannerContext] = useState(null); // { targetScope, mode, days, hours } for prefill/display
-  const [planningPrefilledFromFamily, setPlanningPrefilledFromFamily] = useState(false);
   const [children, setChildren] = useState(propChildren || []);
   const [loadingChildren, setLoadingChildren] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const toast = useToast();
-  const session = useSession();
-
-  // Materials/attachments state (syllabus + lesson plan rows)
-  const [materials, setMaterials] = useState([]);
-  const [loadingMaterials, setLoadingMaterials] = useState(false);
-  const [materialDropdownSlot, setMaterialDropdownSlot] = useState(null); // null | 'syllabus' | 'lesson_plan'
-  const [selectedSyllabusMaterialId, setSelectedSyllabusMaterialId] = useState(null);
-  const [selectedLessonPlanMaterialId, setSelectedLessonPlanMaterialId] = useState(null);
-  const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
-  const [addMaterialDefaultRole, setAddMaterialDefaultRole] = useState(null); // 'syllabus' | 'lesson_plan'
   const overlayRef = useRef(null);
   useModalStackElevation(overlayRef, visible);
   const hasSetChildIdsRef = useRef(false);
   const lastSubjectIdRef = useRef(null);
-  const hasPrefilledFromFamilyRef = useRef(false);
   const cleanupDraftInFlightRef = useRef(false);
   
   // Event management state
   const [subjectEvents, setSubjectEvents] = useState([]);
-  const [loadingEvents, setLoadingEvents] = useState(false);
   const [curriculumUnits, setCurriculumUnits] = useState([]);
   const [loadingCurriculum, setLoadingCurriculum] = useState(false);
   const [hasLoadedCurriculumOnce, setHasLoadedCurriculumOnce] = useState(false);
-  const [deletingEvents, setDeletingEvents] = useState(false);
-  const [deleteEventsConfirm, setDeleteEventsConfirm] = useState({ visible: false });
-  const [markingAttended, setMarkingAttended] = useState(false);
 
   // Accordion state (all collapsed by default)
-  const [showMaterialsAccordion, setShowMaterialsAccordion] = useState(false);
-
-  useEffect(() => {
-    if (!showMaterialsAccordion) setMaterialDropdownSlot(null);
-  }, [showMaterialsAccordion]);
-  const [showPlanningAccordion, setShowPlanningAccordion] = useState(false);
-  const [showLogisticsAccordion, setShowLogisticsAccordion] = useState(false);
   const [showAdditionalNotesAccordion, setShowAdditionalNotesAccordion] = useState(false);
-  const [showEventMgmtAccordion, setShowEventMgmtAccordion] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
   const [confirmDeleteSubjectName, setConfirmDeleteSubjectName] = useState('');
   const [deletingSubject, setDeletingSubject] = useState(false);
@@ -236,8 +166,7 @@ export default function AddSubjectModal({
         setChildren(propChildren);
         setLoadingChildren(false);
       }
-      loadMaterials();
-      
+
       // If editing a subject, populate fields (but wait for children to load for child IDs)
       if (subject) {
         setSubjectName(subject.name || '');
@@ -247,17 +176,10 @@ export default function AddSubjectModal({
         setSchoolYear(subject.school_year || getDefaultSchoolYear());
         setSchoolTerm(subject.school_term || getDefaultSchoolTerm());
         setCredits(subject.credits ? String(subject.credits) : '');
-        setDefaultTargetDays(subject.default_target_days != null ? String(subject.default_target_days) : '');
-        setDefaultTargetHours(subject.default_target_hours != null ? String(subject.default_target_hours) : '');
         setLogisticalLocation(subject.location || '');
         setLogisticalMode(subject.mode || '');
         setLogisticalInstructor(subject.instructor || '');
         setConnectedCalendarTargets(normalizeCalendarTargets(subject.connected_calendar_targets));
-        const hasSubjectValues = subject.default_constraint_mode != null || subject.default_target_days != null || subject.default_target_hours != null;
-        setGoalModeForSubject(hasSubjectValues ? 'per_subject' : 'overall');
-        const mode = subject.default_constraint_mode || (subject.default_target_days != null ? 'days' : subject.default_target_hours != null ? 'hours' : 'none');
-        setTargetMode(mode);
-        setPlanningPrefilledFromFamily(!hasSubjectValues);
         setShowDangerZone(false);
         setConfirmDeleteSubjectName('');
         // Child IDs will be set in the next useEffect after children load
@@ -270,9 +192,6 @@ export default function AddSubjectModal({
         setGradeManuallyEdited(false);
         setSchoolYear(initialSchoolYear || getDefaultSchoolYear());
         setSchoolTerm(initialSchoolTerm || getDefaultSchoolTerm());
-        setSelectedSyllabusMaterialId(null);
-        setSelectedLessonPlanMaterialId(null);
-        setMaterialDropdownSlot(null);
         setLogisticalLocation('');
         setLogisticalMode('');
         setLogisticalInstructor('');
@@ -298,36 +217,18 @@ export default function AddSubjectModal({
       setSchoolTerm(getDefaultSchoolTerm());
       setShowSchoolTermDropdown(false);
       setCredits('');
-      setDefaultTargetDays('');
-      setDefaultTargetHours('');
       setLogisticalLocation('');
       setLogisticalMode('');
       setLogisticalInstructor('');
       setConnectedCalendarTargets([]);
-      setGoalModeForSubject('overall');
-      setTargetMode('none');
-      setFamilyPlannerContext(null);
-      setPlanningPrefilledFromFamily(false);
       setError(null);
-      setMaterialDropdownSlot(null);
-      setSelectedSyllabusMaterialId(null);
-      setSelectedLessonPlanMaterialId(null);
-      setAddMaterialDefaultRole(null);
       setSubjectEvents([]);
-      setLoadingEvents(false);
-      setDeletingEvents(false);
-      setMarkingAttended(false);
       setCurriculumUnits([]);
       setLoadingCurriculum(false);
       setHasLoadedCurriculumOnce(false);
-      setShowMaterialsAccordion(false);
-      setShowPlanningAccordion(false);
-      setShowLogisticsAccordion(false);
       setShowAdditionalNotesAccordion(false);
-      setShowEventMgmtAccordion(false);
       setDraftSubjectId(null);
       setOpeningAddUnits(false);
-      hasPrefilledFromFamilyRef.current = false;
     }
   }, [visible, defaultChildId, defaultChildIds, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject]);
 
@@ -369,61 +270,6 @@ export default function AddSubjectModal({
     setError(null);
   }, [error, subjectName, selectedChildIds, familyId]);
 
-  // Load family planner settings for prefill when modal opens (used when subject has no custom values)
-  useEffect(() => {
-    if (!visible || !familyId) return;
-    let cancelled = false;
-    getFamilyPlannerSettings(familyId, schoolYear).then(({ data: s }) => {
-      if (cancelled) return;
-      if (!s) {
-        setFamilyPlannerContext({ targetScope: 'overall', mode: 'none', days: '', hours: '' });
-        return;
-      }
-      const scope = s.target_scope || 'overall';
-      const mode = s.default_constraint_mode || 'none';
-      const days = s.default_target_days != null ? String(s.default_target_days) : '';
-      const hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
-      setFamilyPlannerContext({ targetScope: scope, mode, days, hours });
-    });
-    return () => { cancelled = true; };
-  }, [visible, familyId, schoolYear]);
-
-  // Stay in sync when Plan Year, Family → Planning Preferences, or another client updates planner settings / subject targets.
-  const reloadPlannerSyncData = useCallback(async () => {
-    if (!familyId) return;
-    const { data: s } = await getFamilyPlannerSettings(familyId, schoolYear);
-    if (s) {
-      const scope = s.target_scope || 'overall';
-      const mode = s.default_constraint_mode || 'none';
-      const days = s.default_target_days != null ? String(s.default_target_days) : '';
-      const hours = s.default_target_hours != null ? String(s.default_target_hours) : '';
-      setFamilyPlannerContext({ targetScope: scope, mode, days, hours });
-    } else {
-      setFamilyPlannerContext({ targetScope: 'overall', mode: 'none', days: '', hours: '' });
-    }
-    if (subject?.id) {
-      const { data, error } = await supabase
-        .from('subject')
-        .select('default_constraint_mode, default_target_days, default_target_hours')
-        .eq('id', subject.id)
-        .eq('family_id', familyId)
-        .maybeSingle();
-      if (error || !data) return;
-      setDefaultTargetDays(data.default_target_days != null ? String(data.default_target_days) : '');
-      setDefaultTargetHours(data.default_target_hours != null ? String(data.default_target_hours) : '');
-      const hasSubjectValues =
-        data.default_constraint_mode != null ||
-        data.default_target_days != null ||
-        data.default_target_hours != null;
-      setGoalModeForSubject(hasSubjectValues ? 'per_subject' : 'overall');
-      const tm =
-        data.default_constraint_mode ||
-        (data.default_target_days != null ? 'days' : data.default_target_hours != null ? 'hours' : 'none');
-      setTargetMode(tm);
-      setPlanningPrefilledFromFamily(!hasSubjectValues);
-    }
-  }, [familyId, subject?.id, schoolYear]);
-
   const buildSubjectPayload = useCallback(() => {
     const childIdString = selectedChildIds.length > 0 ? selectedChildIds.join(';') : '';
     return {
@@ -439,19 +285,6 @@ export default function AddSubjectModal({
       mode: logisticalMode || null,
       instructor: logisticalInstructor.trim() || null,
       connected_calendar_targets: connectedCalendarTargets.length > 0 ? connectedCalendarTargets : [],
-      default_constraint_mode: goalModeForSubject === 'per_subject' ? targetMode : null,
-      default_target_days:
-        goalModeForSubject === 'per_subject' &&
-        targetMode === 'days' &&
-        defaultTargetDays.trim()
-          ? parseInt(defaultTargetDays, 10) || null
-          : null,
-      default_target_hours:
-        goalModeForSubject === 'per_subject' &&
-        targetMode === 'hours' &&
-        defaultTargetHours.trim()
-          ? parseFloat(defaultTargetHours) || null
-          : null,
     };
   }, [
     selectedChildIds,
@@ -465,10 +298,6 @@ export default function AddSubjectModal({
     logisticalMode,
     logisticalInstructor,
     connectedCalendarTargets,
-    goalModeForSubject,
-    targetMode,
-    defaultTargetDays,
-    defaultTargetHours,
   ]);
 
   const cleanupDraftSubject = useCallback(async (candidateDraftId) => {
@@ -593,71 +422,10 @@ export default function AddSubjectModal({
     ]
   );
 
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (!visible || !familyId) return;
-    const onSync = () => {
-      if (isSubmitting) return;
-      reloadPlannerSyncData();
-    };
-    window.addEventListener('refreshPlanDefaults', onSync);
-    window.addEventListener('refreshSubjects', onSync);
-    return () => {
-      window.removeEventListener('refreshPlanDefaults', onSync);
-      window.removeEventListener('refreshSubjects', onSync);
-    };
-  }, [visible, familyId, isSubmitting, reloadPlannerSyncData]);
-
-  // Pre-select syllabus / lesson plan materials when editing (linked by subject_id + role tag)
-  useEffect(() => {
-    if (!visible || !subject?.id || !familyId) return;
-    let cancelled = false;
-    (async () => {
-      const { data, error } = await supabase
-        .from('materials')
-        .select('id, tags')
-        .eq('subject_id', subject.id)
-        .eq('family_id', familyId)
-        .is('deleted_at', null);
-      if (cancelled || error) return;
-      let syllabusId = null;
-      let lessonId = null;
-      for (const m of data || []) {
-        const r = deriveRoleFromTags(m.tags);
-        if (r === DOCUMENT_ROLES.SYLLABUS && !syllabusId) syllabusId = m.id;
-        if (r === DOCUMENT_ROLES.LESSON_PLAN && !lessonId) lessonId = m.id;
-      }
-      setSelectedSyllabusMaterialId(syllabusId);
-      setSelectedLessonPlanMaterialId(lessonId);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [visible, subject?.id, familyId]);
-
-  // When family planner context loads and we're in add mode, set goal mode from family scope
-  useEffect(() => {
-    if (!familyPlannerContext || subject) return;
-    setGoalModeForSubject(familyPlannerContext.targetScope === 'per_subject' ? 'per_subject' : 'overall');
-    setPlanningPrefilledFromFamily(true);
-  }, [familyPlannerContext, subject]);
-
-  // Prefill target fields from family when subject has no values and user is in per_subject mode
-  useEffect(() => {
-    if (!familyPlannerContext || goalModeForSubject !== 'per_subject') return;
-    if (defaultTargetDays !== '' || defaultTargetHours !== '') return; // User has values
-    if (hasPrefilledFromFamilyRef.current) return;
-    hasPrefilledFromFamilyRef.current = true;
-    setTargetMode(familyPlannerContext.mode);
-    setDefaultTargetDays(familyPlannerContext.days);
-    setDefaultTargetHours(familyPlannerContext.hours);
-  }, [familyPlannerContext, goalModeForSubject, defaultTargetDays, defaultTargetHours]);
-
   // Load events for the subject
   const loadSubjectEvents = async (subjectId) => {
     if (!subjectId || !familyId) return;
-    
-    setLoadingEvents(true);
+
     try {
       const { data, error } = await supabase
         .from('events')
@@ -674,8 +442,6 @@ export default function AddSubjectModal({
     } catch (error) {
       console.error('Error loading subject events:', error);
       setSubjectEvents([]);
-    } finally {
-      setLoadingEvents(false);
     }
   };
 
@@ -774,7 +540,7 @@ export default function AddSubjectModal({
   }, [visible, effectiveSubjectId, familyId, curriculumAcademicYearIds, loadSubjectCurriculum]);
 
   // After Add Units closes, WebLayout emits refreshSubjectDetail for this subject id.
-  // Refresh events and surface the Event management card so linked events are visible immediately.
+  // Refresh events and curriculum so action pills reflect the latest subject content.
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     if (!visible || !effectiveSubjectId) return;
@@ -783,138 +549,11 @@ export default function AddSubjectModal({
       if (!sid || String(sid) !== String(effectiveSubjectId)) return;
       loadSubjectEvents(effectiveSubjectId);
       loadSubjectCurriculum(effectiveSubjectId, curriculumAcademicYearIds);
-      setShowEventMgmtAccordion(true);
     };
     window.addEventListener('refreshSubjectDetail', onRefreshSubjectDetail);
     return () => window.removeEventListener('refreshSubjectDetail', onRefreshSubjectDetail);
   }, [visible, effectiveSubjectId, familyId, loadSubjectCurriculum, curriculumAcademicYearIds]);
   
-  // Delete all events for this subject
-  const performDeleteAllEvents = async () => {
-    if (!effectiveSubjectId || subjectEvents.length === 0) return;
-    const previousEvents = Array.isArray(subjectEvents) ? [...subjectEvents] : [];
-    // Optimistic UI: immediately reflect empty state in Event management.
-    setSubjectEvents([]);
-    setDeletingEvents(true);
-    try {
-      const eventIds = previousEvents.map((e) => e.id);
-      const { error } = await supabase
-        .from('events')
-        .update({ deleted_at: new Date().toISOString() })
-        .in('id', eventIds)
-        .eq('family_id', familyId);
-      if (error) throw error;
-      toast?.push?.('All events deleted successfully', 'success');
-      setSubjectEvents([]);
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        // Keep Subject Detail / Progress attendance sections in sync after bulk event delete.
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        window.dispatchEvent(new CustomEvent('refreshSubjectDetail', {
-          detail: { subjectId: effectiveSubjectId },
-        }));
-        window.dispatchEvent(new CustomEvent('refreshEvents'));
-        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-        window.dispatchEvent(new CustomEvent('subjectUpdated'));
-      }
-    } catch (error) {
-      console.error('Error deleting events:', error);
-      // Roll back optimistic clear if delete fails.
-      setSubjectEvents(previousEvents);
-      toast?.push?.('Failed to delete events', 'error');
-    } finally {
-      setDeletingEvents(false);
-    }
-  };
-
-  const handleDeleteAllEvents = async () => {
-    if (!effectiveSubjectId || subjectEvents.length === 0) return;
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      setDeleteEventsConfirm({ visible: true });
-      return;
-    }
-    const confirmed = await new Promise((resolve) => {
-      Alert.alert(
-        'Delete All Events',
-        `Are you sure you want to delete all ${subjectEvents.length} event${subjectEvents.length === 1 ? '' : 's'} for this subject? This action cannot be undone.`,
-        [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Delete All', style: 'destructive', onPress: () => resolve(true) }
-        ]
-      );
-    });
-    if (!confirmed) return;
-    await performDeleteAllEvents();
-  };
-  
-  // Mark all events as attended
-  const handleMarkAllAttended = async () => {
-    if (!effectiveSubjectId || subjectEvents.length === 0) return;
-    
-    const unattendedEvents = subjectEvents.filter(e => e.status !== 'done');
-    if (unattendedEvents.length === 0) {
-      toast?.push?.('All events are already marked as attended', 'info');
-      return;
-    }
-    
-    // Web-compatible confirmation
-    let confirmed = false;
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm) {
-      confirmed = window.confirm(
-        `Mark ${unattendedEvents.length} event${unattendedEvents.length === 1 ? '' : 's'} as attended?`
-      );
-    } else {
-      // Native Alert.alert
-      confirmed = await new Promise((resolve) => {
-        Alert.alert(
-          'Mark All Events as Attended',
-          `Mark ${unattendedEvents.length} event${unattendedEvents.length === 1 ? '' : 's'} as attended?`,
-          [
-            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-            {
-              text: 'Mark All Attended',
-              onPress: () => resolve(true),
-            }
-          ]
-        );
-      });
-    }
-    
-    if (!confirmed) return;
-    
-    setMarkingAttended(true);
-    try {
-      const eventIds = unattendedEvents.map(e => e.id);
-      
-      // Update events to done status
-      const { error } = await supabase
-        .from('events')
-        .update({ 
-          status: 'done',
-          updated_at: new Date().toISOString()
-        })
-        .in('id', eventIds)
-        .eq('family_id', familyId);
-      
-      if (error) throw error;
-      
-      toast?.push?.(`${unattendedEvents.length} event${unattendedEvents.length === 1 ? '' : 's'} marked as attended`, 'success');
-      
-      // Reload events
-      await loadSubjectEvents(effectiveSubjectId);
-      
-      // Refresh events in the app
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshEvents'));
-        window.dispatchEvent(new CustomEvent('subjectUpdated'));
-      }
-    } catch (error) {
-      console.error('Error marking events as attended:', error);
-      toast?.push?.('Failed to mark events as attended', 'error');
-    } finally {
-      setMarkingAttended(false);
-    }
-  };
-
   // Delete subject permanently (Danger Zone)
   const performDeleteSubject = async () => {
     if (!subject || !subject.id || !familyId) return;
@@ -974,34 +613,6 @@ export default function AddSubjectModal({
       setSelectedChildIds([children[0].id]);
     }
   }, [children, visible, defaultChildId, defaultChildIds, selectedChildIds.length, subject]);
-
-  const loadMaterials = async () => {
-    if (!familyId) return;
-    setLoadingMaterials(true);
-    try {
-      const materialsData = await getMaterials(familyId, {}, session);
-      setMaterials(materialsData || []);
-    } catch (error) {
-      console.error('Error loading materials:', error);
-      setMaterials([]);
-    } finally {
-      setLoadingMaterials(false);
-    }
-  };
-
-  const handleMaterialDropdownToggle = (slot) => {
-    setMaterialDropdownSlot((prev) => (prev === slot ? null : slot));
-  };
-
-  const setSlotSelection = (slot, materialId) => {
-    if (slot === MATERIAL_SLOT.SYLLABUS) {
-      setSelectedSyllabusMaterialId(materialId);
-      setSelectedLessonPlanMaterialId((prev) => (materialId && prev === materialId ? null : prev));
-    } else {
-      setSelectedLessonPlanMaterialId(materialId);
-      setSelectedSyllabusMaterialId((prev) => (materialId && prev === materialId ? null : prev));
-    }
-  };
 
   const fetchChildren = async () => {
     try {
@@ -1133,62 +744,6 @@ export default function AddSubjectModal({
         throw insertError;
       }
 
-      // Link syllabus + lesson plan materials (clear prior syllabus/lesson_plan links on this subject, then attach selections)
-      if (newSubjects && newSubjects.length > 0) {
-        try {
-          const subjectId = newSubjects[0].id;
-          const pickIds = [selectedSyllabusMaterialId, selectedLessonPlanMaterialId].filter(Boolean);
-          const uniquePickIds = [...new Set(pickIds)];
-
-          const { data: linkedRows, error: linkedErr } = await supabase
-            .from('materials')
-            .select('id, tags')
-            .eq('subject_id', subjectId)
-            .eq('family_id', familyId)
-            .is('deleted_at', null);
-
-          if (!linkedErr && linkedRows?.length) {
-            const toClear = linkedRows
-              .filter((row) => {
-                const r = deriveRoleFromTags(row.tags);
-                return r === DOCUMENT_ROLES.SYLLABUS || r === DOCUMENT_ROLES.LESSON_PLAN;
-              })
-              .map((row) => row.id);
-            if (toClear.length) {
-              const { error: clearErr } = await supabase
-                .from('materials')
-                .update({ subject_id: null })
-                .in('id', toClear);
-              if (clearErr) console.warn('Failed to clear prior subject materials:', clearErr);
-            }
-          }
-
-          if (uniquePickIds.length > 0) {
-            const { error: materialUpdateError } = await supabase
-              .from('materials')
-              .update({ subject_id: subjectId })
-              .in('id', uniquePickIds);
-
-            if (materialUpdateError) {
-              console.warn('Failed to link materials to subject:', materialUpdateError);
-            }
-          }
-        } catch (materialError) {
-          console.warn('Error linking materials to subject:', materialError);
-        }
-      }
-
-      if (familyId && goalModeForSubject === 'per_subject' && (targetMode === 'days' || targetMode === 'hours')) {
-        const daysValue = targetMode === 'days' ? parsePositiveIntOrNull(defaultTargetDays) : null;
-        const hoursValue = targetMode === 'hours' ? parsePositiveFloatOrNull(defaultTargetHours) : null;
-        await saveFamilyPlannerSettings(familyId, {
-          target_scope: 'per_subject',
-          default_constraint_mode: targetMode,
-          default_target_days: targetMode === 'days' ? daysValue : null,
-          default_target_hours: targetMode === 'hours' ? hoursValue : null,
-        }, schoolYear);
-      }
-
       // Success
       finalizedSubjectSaveRef.current = true;
       const isEdit = !!(subject && subject.id);
@@ -1271,6 +826,7 @@ export default function AddSubjectModal({
             accentSoft="#ECFDF5"
             HeroIcon={BookOpen}
             onClose={handleCloseWithDraftCleanup}
+            shellStyle={styles.compactSubjectShell}
             contentContainerStyle={styles.scrollContent}
             bodyStyle={styles.shellBody}
             footer={(
@@ -1495,470 +1051,10 @@ export default function AddSubjectModal({
               </View>
             </View>
 
-            {/* Accordion B: Syllabus and lesson plan attachments */}
-            {familyId && (() => {
-              const syllabusPickerMaterials = materials.filter(materialEligibleForSyllabusPicker);
-              const lessonPickerMaterials = materials.filter(materialEligibleForLessonPicker);
-              const dropdownSlot = materialDropdownSlot;
-              const dropdownList =
-                dropdownSlot === MATERIAL_SLOT.SYLLABUS ? syllabusPickerMaterials : dropdownSlot === MATERIAL_SLOT.LESSON_PLAN ? lessonPickerMaterials : [];
-              const dropdownSelectedId =
-                dropdownSlot === MATERIAL_SLOT.SYLLABUS
-                  ? selectedSyllabusMaterialId
-                  : dropdownSlot === MATERIAL_SLOT.LESSON_PLAN
-                    ? selectedLessonPlanMaterialId
-                    : null;
-
-              const renderAttachmentRow = (slot, sectionLabel, addLabel, selectedId) => (
-                <View
-                  style={[
-                    styles.formGroup,
-                    { marginBottom: 14 },
-                    materialDropdownSlot === slot && styles.materialAttachmentFormGroupOpen,
-                  ]}
-                >
-                  <Text style={styles.label}>{sectionLabel}</Text>
-                  <View style={styles.materialSelectorContainer}>
-                    <View style={[styles.materialSelectorFieldWrap, materialDropdownSlot === slot && styles.materialSelectorFieldWrapOpen]}>
-                      <TouchableOpacity
-                        style={styles.materialSelector}
-                        onPress={() => handleMaterialDropdownToggle(slot)}
-                      >
-                        <Text
-                          style={[
-                            styles.materialSelectorText,
-                            !selectedId && styles.materialSelectorPlaceholder,
-                          ]}
-                        >
-                          {selectedId
-                            ? (materials.find((m) => m.id === selectedId)?.title ||
-                                materials.find((m) => m.id === selectedId)?.provider_name ||
-                                'Select attachment...')
-                            : 'Select attachment...'}
-                        </Text>
-                        <ChevronDown size={16} color="#6b7280" />
-                      </TouchableOpacity>
-                      {materialDropdownSlot === slot ? (
-                        <View style={styles.materialDropdownList}>
-                          <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
-                            {loadingMaterials ? (
-                              <View style={{ padding: 12 }}>
-                                <Text style={{ fontSize: 13, color: '#6b7280' }}>Loading...</Text>
-                              </View>
-                            ) : dropdownList.length === 0 ? (
-                              <View style={{ padding: 12 }}>
-                                <Text style={{ fontSize: 13, color: '#6b7280' }}>No materials yet</Text>
-                              </View>
-                            ) : (
-                              <>
-                                <TouchableOpacity
-                                  style={styles.dropdownOption}
-                                  onPress={() => {
-                                    setSlotSelection(slot, null);
-                                    setMaterialDropdownSlot(null);
-                                  }}
-                                >
-                                  <Text style={styles.dropdownOptionText}>None</Text>
-                                </TouchableOpacity>
-                                {dropdownList.map((material) => (
-                                  <TouchableOpacity
-                                    key={material.id}
-                                    style={[styles.dropdownOption, dropdownSelectedId === material.id && styles.dropdownOptionSelected]}
-                                    onPress={() => {
-                                      setSlotSelection(slot, material.id);
-                                      setMaterialDropdownSlot(null);
-                                    }}
-                                  >
-                                    <Text style={[styles.dropdownOptionText, dropdownSelectedId === material.id && styles.dropdownOptionTextSelected]}>
-                                      {material.title || material.provider_name || 'Untitled Material'}
-                                    </Text>
-                                    {dropdownSelectedId === material.id ? <CheckCircle size={16} color="#3b82f6" /> : null}
-                                  </TouchableOpacity>
-                                ))}
-                              </>
-                            )}
-                          </ScrollView>
-                        </View>
-                      ) : null}
-                    </View>
-                    {selectedId ? (
-                      <TouchableOpacity
-                        style={styles.clearMaterialButton}
-                        onPress={() => setSlotSelection(slot, null)}
-                      >
-                        <Text style={styles.clearMaterialText}>Clear</Text>
-                      </TouchableOpacity>
-                    ) : null}
-                    <TouchableOpacity
-                      style={styles.addMaterialButton}
-                      onPress={() => {
-                        setMaterialDropdownSlot(null);
-                        setAddMaterialDefaultRole(slot === MATERIAL_SLOT.SYLLABUS ? 'syllabus' : 'lesson_plan');
-                        setShowAddMaterialModal(true);
-                      }}
-                    >
-                      <Plus size={14} color="#B8D7F9" />
-                      <Text style={styles.addMaterialText}>{addLabel}</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-
-              const addUnitsLinkWeb = Platform.OS === 'web' ? { cursor: 'pointer' } : {};
-
-              const canOpenUnitsFlows = Boolean(subject?.id);
-              const canRenderUnitsActionRow = !canOpenUnitsFlows ? false : (hasLoadedCurriculumOnce || hasUnitsOrLessonsContent);
-              const hasExistingUnits = canOpenUnitsFlows && hasUnitsOrLessonsContent;
-              return (
-                <>
-                  {canOpenUnitsFlows && canRenderUnitsActionRow ? (
-                    <View style={styles.addUnitsPillsRow}>
-                      {hasExistingUnits ? (
-                        <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                          <View style={styles.secondaryActionInner}>
-                            <Pencil size={14} color="#5E6C84" />
-                            <Text style={styles.secondaryActionText}>Edit current units</Text>
-                          </View>
-                        </TouchableOpacity>
-                      ) : (
-                        <>
-                          <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('manual')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                            <View style={styles.secondaryActionInner}>
-                              <Plus size={14} color="#5E6C84" />
-                              <Text style={styles.secondaryActionText}>Manually add units</Text>
-                            </View>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('generate')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                            <View style={styles.secondaryActionInner}>
-                              <Sparkles size={14} color="#5E6C84" />
-                              <Text style={styles.secondaryActionText}>Generate curriculum</Text>
-                            </View>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('upload')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                            <View style={styles.secondaryActionInner}>
-                              <Upload size={14} color="#5E6C84" />
-                              <Text style={styles.secondaryActionText}>Upload material</Text>
-                            </View>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.secondaryActionPill} onPress={() => openAddUnitsCurriculumAction('paste')} activeOpacity={0.8} {...addUnitsLinkWeb}>
-                            <View style={styles.secondaryActionInner}>
-                              <Pencil size={14} color="#5E6C84" />
-                              <Text style={styles.secondaryActionText}>Paste plain text</Text>
-                            </View>
-                          </TouchableOpacity>
-                        </>
-                      )}
-                    </View>
-                  ) : null}
-                <View
-                  style={[
-                    styles.materialsAccordionWrap,
-                    materialDropdownSlot && styles.materialsAccordionWrapOpen,
-                  ]}
-                >
-                  <ModalSectionCard
-                    Icon={Library}
-                    title="Syllabus and lesson plan"
-                    subtitle="Units, pacing, and lesson structure"
-                    expanded={showMaterialsAccordion}
-                    onPress={() => setShowMaterialsAccordion(!showMaterialsAccordion)}
-                    accent="#45A29E"
-                    allowOverflow
-                  >
-                      <View style={styles.accordionContent}>
-                        {renderAttachmentRow(
-                          MATERIAL_SLOT.SYLLABUS,
-                          'Syllabus',
-                          'Add syllabus',
-                          selectedSyllabusMaterialId
-                        )}
-                        {renderAttachmentRow(
-                          MATERIAL_SLOT.LESSON_PLAN,
-                          'Lesson plan',
-                          'Add lesson plan',
-                          selectedLessonPlanMaterialId
-                        )}
-                      </View>
-                  </ModalSectionCard>
-                </View>
-                </>
-              );
-            })()}
-
-            {/* Accordion C: Planning preferences */}
-            <ModalSectionCard
-              Icon={SlidersHorizontal}
-              title={PLANNING_PREFERENCES_UI.subjectModalAccordionTitle}
-              subtitle="Cadence, defaults, and planner behavior"
-              expanded={showPlanningAccordion}
-              onPress={() => setShowPlanningAccordion(!showPlanningAccordion)}
-              accent="#45A29E"
-            >
-                <View style={styles.accordionContent}>
-                  <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
-                    <Text style={styles.planningPrefSectionLabel}>Learning goals</Text>
-                    <View style={styles.planningPrefChipRow}>
-                      <TouchableOpacity
-                        style={[
-                          styles.planningPrefChip,
-                          goalModeForSubject === 'overall'
-                            ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
-                            : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
-                        ]}
-                        onPress={() => { setGoalModeForSubject('overall'); setPlanningPrefilledFromFamily(false); }}
-                        activeOpacity={0.8}
-                      >
-                        <Text
-                          style={[
-                            styles.planningPrefChipText,
-                            {
-                              fontWeight: goalModeForSubject === 'overall' ? '600' : '500',
-                              color: goalModeForSubject === 'overall' ? PLANNING_CHIP_SELECTED.border : '#9ca3af',
-                            },
-                          ]}
-                        >
-                          Overall
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.planningPrefChip,
-                          goalModeForSubject === 'per_subject'
-                            ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
-                            : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
-                        ]}
-                        onPress={() => { setGoalModeForSubject('per_subject'); setPlanningPrefilledFromFamily(false); }}
-                        activeOpacity={0.8}
-                      >
-                        <Text
-                          style={[
-                            styles.planningPrefChipText,
-                            {
-                              fontWeight: goalModeForSubject === 'per_subject' ? '600' : '500',
-                              color: goalModeForSubject === 'per_subject' ? PLANNING_CHIP_SELECTED.border : '#9ca3af',
-                            },
-                          ]}
-                        >
-                          Per subject
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                    {goalModeForSubject === 'overall' && (
-                      <View style={{ marginTop: 12, padding: 10, backgroundColor: '#f9fafb', borderRadius: 8 }}>
-                        {familyPlannerContext ? (
-                          <>
-                            <Text style={{ fontSize: 13, color: '#374151' }}>
-                              {familyPlannerContext.mode === 'days' && familyPlannerContext.days
-                                ? `Target: ${familyPlannerContext.days} days per year`
-                                : familyPlannerContext.mode === 'hours' && familyPlannerContext.hours
-                                  ? `Target: ${familyPlannerContext.hours} hours per year`
-                                  : 'No target set'}
-                            </Text>
-                            {planningPrefilledFromFamily && (
-                              <Text style={{ fontSize: 12, color: '#9ca3af', marginTop: 6 }}>
-                                {`Settings for ${schoolYear} • ${(TERM_OPTIONS.find((opt) => opt.id === schoolTerm) || TERM_OPTIONS[0]).label}. Prefilled from family planning settings. Make changes here and it will sync in both places.`}
-                              </Text>
-                            )}
-                          </>
-                        ) : (
-                          <Text style={{ fontSize: 13, color: '#6b7280' }}>Loading…</Text>
-                        )}
-                      </View>
-                    )}
-                  </View>
-
-                  {goalModeForSubject === 'per_subject' && (
-                    <View style={[styles.formGroup, styles.planningDefaultsField, styles.planningDefaultsStack]}>
-                      <Text style={styles.planningPrefSectionLabel}>Target</Text>
-                      <View style={[styles.planningPrefChipRow, { marginBottom: 8 }]}>
-                        <TouchableOpacity
-                          style={[
-                            styles.planningPrefChip,
-                            targetMode === 'none'
-                              ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
-                              : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
-                          ]}
-                          onPress={() => { setTargetMode('none'); setPlanningPrefilledFromFamily(false); }}
-                          activeOpacity={0.8}
-                        >
-                          <Text
-                            style={[
-                              styles.planningPrefChipText,
-                              {
-                                fontWeight: targetMode === 'none' ? '600' : '500',
-                                color: targetMode === 'none' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
-                              },
-                            ]}
-                          >
-                            None
-                          </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.planningPrefChip,
-                            targetMode === 'days'
-                              ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
-                              : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
-                          ]}
-                          onPress={() => { setTargetMode('days'); setPlanningPrefilledFromFamily(false); }}
-                          activeOpacity={0.8}
-                        >
-                          <Text
-                            style={[
-                              styles.planningPrefChipText,
-                              {
-                                fontWeight: targetMode === 'days' ? '600' : '500',
-                                color: targetMode === 'days' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
-                              },
-                            ]}
-                          >
-                            Days
-                          </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.planningPrefChip,
-                            targetMode === 'hours'
-                              ? { borderColor: PLANNING_CHIP_SELECTED.border, backgroundColor: PLANNING_CHIP_SELECTED.background }
-                              : { borderColor: '#e5e7eb', backgroundColor: '#fff' },
-                          ]}
-                          onPress={() => { setTargetMode('hours'); setPlanningPrefilledFromFamily(false); }}
-                          activeOpacity={0.8}
-                        >
-                          <Text
-                            style={[
-                              styles.planningPrefChipText,
-                              {
-                                fontWeight: targetMode === 'hours' ? '600' : '500',
-                                color: targetMode === 'hours' ? PLANNING_CHIP_SELECTED.border : '#6b7280',
-                              },
-                            ]}
-                          >
-                            Hours
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                      {targetMode === 'days' && (
-                        <View style={{ marginTop: 0 }}>
-                          <Text style={[styles.label, { fontSize: 12, marginBottom: 4 }]}>Days per year</Text>
-                          <TextInput
-                            style={styles.input}
-                            value={defaultTargetDays}
-                            onChangeText={(v) => { setDefaultTargetDays(v); setPlanningPrefilledFromFamily(false); }}
-                            placeholder="e.g. 36"
-                            placeholderTextColor="#9ca3af"
-                            keyboardType="number-pad"
-                          />
-                        </View>
-                      )}
-                      {targetMode === 'hours' && (
-                        <View style={{ marginTop: 0 }}>
-                          <Text style={[styles.label, { fontSize: 12, marginBottom: 4 }]}>Hours per year</Text>
-                          <TextInput
-                            style={styles.input}
-                            value={defaultTargetHours}
-                            onChangeText={(v) => { setDefaultTargetHours(v); setPlanningPrefilledFromFamily(false); }}
-                            placeholder="e.g. 72"
-                            placeholderTextColor="#9ca3af"
-                            keyboardType="decimal-pad"
-                          />
-                        </View>
-                      )}
-                      {planningPrefilledFromFamily && familyPlannerContext && (familyPlannerContext.days || familyPlannerContext.hours) && (
-                        <Text style={{ fontSize: 12, color: '#9ca3af', marginTop: 10 }}>
-                          {`Settings for ${schoolYear} • ${(TERM_OPTIONS.find((opt) => opt.id === schoolTerm) || TERM_OPTIONS[0]).label}. Prefilled from family planning settings. Make changes here and it will sync in both places.`}
-                        </Text>
-                      )}
-                    </View>
-                  )}
-                </View>
-            </ModalSectionCard>
-
-            <ModalSectionCard
-              Icon={MapPin}
-              title="Logistical details"
-              subtitle="Location, mode, and calendar sync"
-              expanded={showLogisticsAccordion}
-              onPress={() => setShowLogisticsAccordion(!showLogisticsAccordion)}
-              accent="#45A29E"
-            >
-              <View style={styles.accordionContent}>
-                <View style={styles.logisticsRow}>
-                  <View style={styles.logisticsField}>
-                    <Text style={styles.label}>Location (optional)</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={logisticalLocation}
-                      onChangeText={setLogisticalLocation}
-                      placeholder="e.g. Library, Park, etc."
-                      placeholderTextColor="#9ca3af"
-                    />
-                    <View style={{ marginTop: 12 }}>
-                      <Text style={styles.label}>Instructor / Host (optional)</Text>
-                      <TextInput
-                        style={styles.input}
-                        value={logisticalInstructor}
-                        onChangeText={setLogisticalInstructor}
-                        placeholder="e.g. Elisa"
-                        placeholderTextColor="#9ca3af"
-                      />
-                    </View>
-                  </View>
-                  <View style={styles.logisticsField}>
-                    <Text style={styles.label}>Mode (optional)</Text>
-                    <View style={styles.logisticsChipRow}>
-                      {MODE_OPTIONS.map((option) => {
-                        const isActive = logisticalMode === option;
-                        return (
-                          <TouchableOpacity
-                            key={option}
-                            onPress={() => setLogisticalMode(isActive ? '' : option)}
-                            style={[styles.logisticsChip, isActive && styles.logisticsChipActive]}
-                            activeOpacity={0.8}
-                          >
-                            <Text style={[styles.logisticsChipText, isActive && styles.logisticsChipTextActive]}>
-                              {option.charAt(0).toUpperCase() + option.slice(1)}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    <Text style={[styles.label, { marginTop: 10 }]}>Add to connected calendar</Text>
-                    <View style={styles.logisticsChipRow}>
-                      {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
-                        const isSelected = connectedCalendarTargets.includes(provider.value);
-                        return (
-                          <TouchableOpacity
-                            key={provider.value}
-                            onPress={() =>
-                              setConnectedCalendarTargets((prev) =>
-                                prev.includes(provider.value)
-                                  ? prev.filter((value) => value !== provider.value)
-                                  : [...prev, provider.value]
-                              )
-                            }
-                            style={[styles.logisticsChip, isSelected && styles.logisticsChipActive]}
-                            activeOpacity={0.8}
-                          >
-                            <View style={styles.calendarChipContent}>
-                              {isSelected ? <CheckCircle size={12} color="#45A29E" /> : null}
-                              <Text style={[styles.logisticsChipText, isSelected && styles.logisticsChipTextActive]}>
-                                {provider.label}
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </View>
-                </View>
-              </View>
-            </ModalSectionCard>
-
-            {/* Additional notes — same card pattern as Add Child */}
+            {/* Notes */}
             <ModalSectionCard
               Icon={FileText}
-              title="Additional notes"
+              title="Notes"
               subtitle="Anything extra for this subject"
               expanded={showAdditionalNotesAccordion}
               onPress={() => setShowAdditionalNotesAccordion(!showAdditionalNotesAccordion)}
@@ -1979,88 +1075,6 @@ export default function AddSubjectModal({
                   </View>
                 </View>
             </ModalSectionCard>
-
-            {/* Event management (edit + draft mode after Add Units) */}
-            {effectiveSubjectId && (
-              <ModalSectionCard
-                Icon={Calendar}
-                title="Event management"
-                subtitle={
-                  loadingEvents || loadingCurriculum
-                    ? 'Loading linked events and lessons...'
-                    : `${subjectEvents.length} linked event${subjectEvents.length === 1 ? '' : 's'}${unscheduledLessons.length ? ` · ${unscheduledLessons.length} unscheduled lesson${unscheduledLessons.length === 1 ? '' : 's'}` : ''}`
-                }
-                expanded={showEventMgmtAccordion}
-                onPress={() => setShowEventMgmtAccordion(!showEventMgmtAccordion)}
-                accent="#45A29E"
-              >
-                <View style={styles.accordionContent}>
-                  <View style={[styles.eventManagementSection, { marginTop: 0, paddingTop: 0, borderTopWidth: 0 }]}>
-                    <View style={styles.eventManagementHeader}>
-                      <Text style={styles.eventManagementTitle}>Event Management</Text>
-                      {loadingEvents ? (
-                        <Text style={styles.eventCountText}>Loading...</Text>
-                      ) : (
-                        <Text style={styles.eventCountText}>
-                          {subjectEvents.length} event{subjectEvents.length === 1 ? '' : 's'} found
-                        </Text>
-                      )}
-                    </View>
-
-                    {subjectEvents.length > 0 && (
-                      <View style={styles.eventActions}>
-                        <TouchableOpacity
-                          style={[
-                            styles.eventActionButton,
-                            styles.markAttendedButton,
-                            (markingAttended || deletingEvents) && styles.eventActionButtonDisabled
-                          ]}
-                          onPress={handleMarkAllAttended}
-                          disabled={markingAttended || deletingEvents}
-                        >
-                          <CheckCircle size={16} color="#10B981" />
-                          <Text style={[styles.eventActionButtonText, styles.markAttendedButtonText]}>
-                            {markingAttended ? 'Marking...' : 'Mark All as Attended'}
-                          </Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={[
-                            styles.eventActionButton,
-                            styles.deleteEventsButton,
-                            (deletingEvents || markingAttended) && styles.eventActionButtonDisabled
-                          ]}
-                          onPress={handleDeleteAllEvents}
-                          disabled={deletingEvents || markingAttended}
-                        >
-                          <Trash2 size={16} color="#EF4444" />
-                          <Text style={[styles.eventActionButtonText, styles.deleteEventsButtonText]}>
-                            {deletingEvents ? 'Deleting...' : 'Delete All Events'}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                    {unscheduledLessons.length > 0 && (
-                      <View style={styles.unscheduledLessonsWrap}>
-                        <Text style={styles.unscheduledLessonsTitle}>
-                          Unscheduled lessons ({unscheduledLessons.length})
-                        </Text>
-                        {unscheduledLessons.slice(0, 8).map((row) => (
-                          <Text key={row.id} style={styles.unscheduledLessonRow}>
-                            {row.unitTitle} · {row.lessonTitle}
-                          </Text>
-                        ))}
-                        {unscheduledLessons.length > 8 ? (
-                          <Text style={styles.unscheduledLessonsMore}>
-                            +{unscheduledLessons.length - 8} more
-                          </Text>
-                        ) : null}
-                      </View>
-                    )}
-                  </View>
-                </View>
-              </ModalSectionCard>
-            )}
 
             {/* Accordion E: Danger zone (edit mode only) */}
             {subject && subject.id && (
@@ -2116,53 +1130,8 @@ export default function AddSubjectModal({
         </TouchableOpacity>
       </View>
 
-      <ConfirmDialog
-        visible={deleteEventsConfirm.visible}
-        title="Delete All Events"
-        message={`Are you sure you want to delete all ${subjectEvents.length} event${subjectEvents.length === 1 ? '' : 's'} for this subject? This action cannot be undone.`}
-        confirmLabel="OK"
-        cancelLabel="Cancel"
-        onConfirm={async () => {
-          setDeleteEventsConfirm({ visible: false });
-          await performDeleteAllEvents();
-        }}
-        onCancel={() => setDeleteEventsConfirm({ visible: false })}
-      />
-
     </RNModal>
 
-    <AddMaterialModal
-      key={
-        showAddMaterialModal
-          ? `subject-add-material-${addMaterialDefaultRole ?? 'any'}-${subjectName.trim()}-${selectedChildIds.join(',')}`
-          : 'subject-add-material-closed'
-      }
-      visible={showAddMaterialModal}
-      onClose={() => {
-        setShowAddMaterialModal(false);
-        setAddMaterialDefaultRole(null);
-      }}
-      onSaved={(newMaterial) => {
-        loadMaterials();
-        if (newMaterial?.id && addMaterialDefaultRole) {
-          const slot =
-            addMaterialDefaultRole === 'syllabus' ? MATERIAL_SLOT.SYLLABUS : MATERIAL_SLOT.LESSON_PLAN;
-          setSlotSelection(slot, newMaterial.id);
-        }
-        setAddMaterialDefaultRole(null);
-      }}
-      familyId={familyId}
-      children={children}
-      defaultRole={addMaterialDefaultRole ?? null}
-      defaultSubjectId={subject?.id ?? draftSubjectId ?? null}
-      defaultSubjectName={!subject && subjectName.trim() ? subjectName.trim() : null}
-      defaultChildIds={selectedChildIds}
-      draftSubjectForMaterial={
-        !subject && subjectName.trim()
-          ? { name: subjectName.trim(), childIds: selectedChildIds.length > 0 ? [...selectedChildIds] : [] }
-          : null
-      }
-    />
     </>
   );
 }
@@ -2178,6 +1147,11 @@ const styles = StyleSheet.create({
   modalWrap: {
     width: '100%',
     maxWidth: 860,
+  },
+  compactSubjectShell: {
+    ...(Platform.OS === 'web'
+      ? { height: '74vh' }
+      : { height: '80%' }),
   },
   shellBody: {
     paddingTop: 18,

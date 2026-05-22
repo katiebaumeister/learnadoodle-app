@@ -15,7 +15,7 @@ const DEFAULT_VIEW = 'Month';
 /** Lowercase keys from URL / WebLayout must map to PascalCase mode (render branches use 'Month', 'Week', …). */
 const KNOWN_MODES = {
   month: 'Month',
-  week: 'Week',
+  week: 'Board',
   day: 'Day',
   board: 'Board',
   tasks: 'Tasks',
@@ -209,8 +209,6 @@ export default function CenterPane({
         minHeight: 0,
       }),
     }}>
-
-
       {/* Center view */}
       {isMobile ? (
         <MobileCardView
@@ -306,11 +304,13 @@ export default function CenterPane({
               onEventRightClick={onEventRightClick}
               onEventComplete={readOnly ? undefined : onEventComplete}
               children={children}
+              familyId={familyId}
             />
           )}
           {mode === 'Tasks' && (
             <TasksView
               events={filtered}
+              monthDate={viewDate}
               onEventPress={onEventSelect}
               onEventRightClick={onEventRightClick}
               onEventComplete={readOnly ? undefined : onEventComplete}
