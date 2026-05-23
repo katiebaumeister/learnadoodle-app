@@ -1586,19 +1586,39 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             }
             return ids;
           };
-          const movedChildIds = Array.from(
+          let movedChildIds = Array.from(
             new Set([
               ...collectChildIds(updatedEvent),
               ...collectChildIds(updatedEvent.data || null),
             ].filter(Boolean))
           );
-          const childId = movedChildIds[0] || null;
+          let childId = movedChildIds[0] || null;
           
           // Try to get familyId from event if not available from state
           const eventFamilyId = familyId || updatedEvent.family_id || updatedEvent.familyId ||
                                (updatedEvent.data && (updatedEvent.data.family_id || updatedEvent.data.familyId));
           
-          if (movedChildIds.length === 0 || !dateKey || !eventFamilyId) {
+          // Week drag payloads can occasionally omit assignee fields; backfill from DB by event id.
+          if (movedChildIds.length === 0 && eventFamilyId && eventId) {
+            try {
+              const { data: movedEventRow } = await supabase
+                .from('events')
+                .select('child_id, child_ids')
+                .eq('id', eventId)
+                .eq('family_id', eventFamilyId)
+                .maybeSingle();
+              movedChildIds = Array.from(
+                new Set([
+                  ...movedChildIds,
+                  ...collectChildIds(movedEventRow || null),
+                ].filter(Boolean)),
+              );
+              childId = movedChildIds[0] || null;
+            } catch (_) {
+            }
+          }
+
+          if (!dateKey || !eventFamilyId || movedChildIds.length === 0) {
             console.log('[WebContent] Missing required data for conflict detection:', { 
               childId,
               movedChildIds,
@@ -2252,6 +2272,21 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               
               // Keep the optimistic update visible
               pendingOptimisticUpdatesRef.current.add(eventId);
+              // Conflict is resolved from a UI perspective (no overlap on current placement),
+              // so clear any active/dismissed conflict notifications for this event.
+              setConflictBanner((prev) => {
+                if (prev.eventId === eventId) {
+                  return { ...prev, visible: false };
+                }
+                return prev;
+              });
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(
+                  new CustomEvent('plannerDragConflictResolved', {
+                    detail: { eventId },
+                  }),
+                );
+              }
               
               // Show error alert to user
               if (Platform.OS === 'web' && typeof window !== 'undefined') {

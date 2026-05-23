@@ -14,6 +14,7 @@ import { X, CheckCircle2, Trash2 } from 'lucide-react';
 import { completeEvent } from '../../lib/services/attendanceClient';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import { getAttendanceRecordsForEventIds } from '../../lib/services/recordsClient';
+import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 import { useToast } from '../Toast';
 
 /** In-memory cache so reopening the modal shows attendance badges immediately; fetch still runs to sync. */
@@ -104,13 +105,34 @@ function errorText(err) {
   return compact.length > 220 ? `${compact.slice(0, 220)}...` : compact;
 }
 
-function notifyAttendanceAndSubjectRefresh(subjectId) {
+function notifyAttendanceAndSubjectRefresh(subjectId, patchedAttendances = []) {
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const latestByEventId = new Map();
+    (Array.isArray(patchedAttendances) ? patchedAttendances : []).forEach((item) => {
+      const rawEventId = String(item?.eventId || '').trim();
+      if (!rawEventId) return;
+      const normalizedEventId = cleanPlannerEventId(rawEventId);
+      const normalized = String(item?.status || '').trim().toLowerCase();
+      const status =
+        normalized === 'completed' || normalized === 'present' || normalized === 'done'
+          ? 'done'
+          : 'scheduled';
+      latestByEventId.set(rawEventId, status);
+      if (normalizedEventId) latestByEventId.set(normalizedEventId, status);
+    });
+    latestByEventId.forEach((status, eventId) => {
+      window.dispatchEvent(
+        new CustomEvent('eventAttendancePatched', {
+          detail: { eventId, status },
+        })
+      );
+    });
     window.dispatchEvent(
       new CustomEvent('refreshCalendar', {
-        detail: { skipCacheClear: true },
+        detail: { skipCacheClear: true, forceInvalidate: true },
       })
     );
+    window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
     window.dispatchEvent(new CustomEvent('refreshSubjects'));
     if (subjectId) {
       window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId } }));
@@ -266,6 +288,7 @@ export default function SubjectPastEventsAttendanceModal({
       let ok = 0;
       let failed = 0;
       let firstError = null;
+      const patchedAttendances = [];
       for (const group of actionableGroups) {
         let groupFailed = false;
         for (const ev of group.events || []) {
@@ -274,6 +297,8 @@ export default function SubjectPastEventsAttendanceModal({
           if (error != null) {
             groupFailed = true;
             if (!firstError) firstError = error;
+          } else {
+            patchedAttendances.push({ eventId: ev.id, status: 'done' });
           }
         }
         if (groupFailed) failed += 1;
@@ -284,7 +309,7 @@ export default function SubjectPastEventsAttendanceModal({
           `Updated ${ok} lesson${ok !== 1 ? 's' : ''} (completed & attended).${failed ? ` ${failed} could not be updated.` : ''}`,
           failed ? 'info' : 'success'
         );
-        notifyAttendanceAndSubjectRefresh(subjectId);
+        notifyAttendanceAndSubjectRefresh(subjectId, patchedAttendances);
         onCompleted?.();
         await refreshLogs();
         setCutoffIndex(null);
@@ -312,6 +337,7 @@ export default function SubjectPastEventsAttendanceModal({
       let succeeded = 0;
       let failed = 0;
       let firstError = null;
+      const patchedAttendances = [];
       try {
         for (const group of pastEventGroupsChronological) {
           let groupFailed = false;
@@ -321,6 +347,8 @@ export default function SubjectPastEventsAttendanceModal({
             if (error) {
               groupFailed = true;
               if (!firstError) firstError = error;
+            } else {
+              patchedAttendances.push({ eventId: ev.id, status: 'done' });
             }
           }
           if (groupFailed) failed += 1;
@@ -338,7 +366,7 @@ export default function SubjectPastEventsAttendanceModal({
             'error'
           );
         }
-        notifyAttendanceAndSubjectRefresh(subjectId);
+        notifyAttendanceAndSubjectRefresh(subjectId, patchedAttendances);
         onCompleted?.();
         await refreshLogs();
         setPendingAction(null);

@@ -264,17 +264,14 @@ export default function TodayScheduleCard({
                       ) : null}
                       <View style={styles.titleStack}>
                         <Text
-                          style={[
-                            styles.eventPrimaryTitle,
-                            done && styles.eventTitleDone,
-                          ]}
+                          style={styles.eventPrimaryTitle}
                           numberOfLines={2}
                         >
                           {primaryLabel}
                         </Text>
                         {showTitleSubtitle ? (
                           <Text
-                            style={[styles.eventSubtitle, done && styles.eventTitleDone]}
+                            style={styles.eventSubtitle}
                             numberOfLines={2}
                           >
                             {rawTitle}
@@ -291,7 +288,7 @@ export default function TodayScheduleCard({
                             size={28}
                             overlap={-8}
                           />
-                          <Text style={[styles.childLabelText, done && styles.eventMetaDone]}>
+                          <Text style={styles.childLabelText}>
                             {formatChildNamesLine(eventChildIds)}
                           </Text>
                         </View>
@@ -332,7 +329,7 @@ export default function TodayScheduleCard({
                       >
                         {done ? (
                           <View style={styles.attendanceChecked}>
-                            <Check size={12} color="#10B981" strokeWidth={2.5} />
+                            <Check size={12} color="#FFFFFF" strokeWidth={2.5} />
                           </View>
                         ) : (
                           <View style={styles.attendanceUnchecked} />
@@ -541,7 +538,7 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    backgroundColor: '#10B981',
     alignItems: 'center',
     justifyContent: 'center',
   },

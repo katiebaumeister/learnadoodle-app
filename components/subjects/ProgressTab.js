@@ -1381,6 +1381,7 @@ export default function ProgressTab({
     () => `${savedProfileGradeLabel || 'No saved grade'} - ${subjectsForYearLabel}`,
     [savedProfileGradeLabel, subjectsForYearLabel]
   );
+  const progressDisplayName = selectedStudent?.name || 'Student';
   const learningHighlights = useMemo(() => {
     const now = Date.now();
     const futureUnits = new Set();
@@ -1555,7 +1556,7 @@ export default function ProgressTab({
           </View>
         </View>
         <View style={[styles.section, styles.subjectsSection]}>
-          <Text style={styles.sectionTitle}>Subjects</Text>
+          <Text style={styles.sectionTitle}>{`${progressDisplayName}'s Subjects`}</Text>
           {subjectProgressRows.length === 0 ? (
             <Text style={styles.emptyStateText}>
               {`No subjects found for ${selectedStudent?.name || 'this student'} in ${selectedAcademicYearLabel}. Add a subject for this school year to see progress details here.`}
@@ -1582,7 +1583,7 @@ export default function ProgressTab({
           <>
             <View style={styles.section}>
               <View style={styles.attendanceSectionHeader}>
-                <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
+                <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>{`${progressDisplayName}'s Attendance - All Subjects`}</Text>
                 <View style={styles.sectionHeaderActions}>
                   <TouchableOpacity
                     style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
@@ -1693,7 +1694,7 @@ export default function ProgressTab({
             <View style={styles.section}>
               <View style={styles.gradesSectionHeader}>
                 <View style={styles.gradesSectionTitleRow}>
-                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Grades</Text>
+                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>{`${progressDisplayName}'s Grades - All Subjects`}</Text>
                   <TouchableOpacity
                     style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
                     onPress={() => openSubjectPicker('grades_add')}

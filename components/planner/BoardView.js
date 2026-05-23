@@ -492,6 +492,61 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
         targetDateIso,
         newStart: newStart.toISOString(),
       });
+      if (typeof window !== 'undefined') {
+        const mergeIds = (...lists) =>
+          [...new Set(lists.flat().map((v) => String(v || '').trim()).filter(Boolean))];
+        const sourceChildIds = mergeIds(
+          Array.isArray(source?.child_ids) ? source.child_ids : [],
+          Array.isArray(source?.assignees) ? source.assignees : [],
+          Array.isArray(source?.data?.child_ids) ? source.data.child_ids : [],
+          Array.isArray(source?.data?.assignees) ? source.data.assignees : [],
+          source?.child_id,
+          source?.childId,
+          source?.student_id,
+          source?.data?.child_id,
+          source?.data?.childId,
+          source?.data?.student_id,
+        );
+        const primaryChildId =
+          source?.child_id ||
+          source?.childId ||
+          source?.student_id ||
+          source?.data?.child_id ||
+          source?.data?.childId ||
+          source?.data?.student_id ||
+          sourceChildIds[0] ||
+          null;
+        const optimisticEvent = {
+          ...source,
+          ...((source && typeof source.data === 'object') ? source.data : {}),
+          start_ts: newStart.toISOString(),
+          end_ts: newEnd.toISOString(),
+          start: newStart.toISOString(),
+          end: newEnd.toISOString(),
+          date_local: targetDateIso,
+          family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
+          child_id: primaryChildId,
+          child_ids: sourceChildIds,
+          assignees: sourceChildIds,
+          data: {
+            ...((source && typeof source.data === 'object') ? source.data : {}),
+            start_ts: newStart.toISOString(),
+            end_ts: newEnd.toISOString(),
+            date_local: targetDateIso,
+            family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
+            child_id: primaryChildId,
+            child_ids: sourceChildIds,
+            assignees: sourceChildIds,
+          },
+        };
+        window.dispatchEvent(new CustomEvent('eventRescheduled', {
+          detail: {
+            eventId,
+            updatedEvent: optimisticEvent,
+            previousDateLocal: sourceDayIso,
+          },
+        }));
+      }
 
       cleanup();
 
@@ -504,6 +559,29 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
         familyId || source.family_id || null
       );
       if (error) {
+        const mergeIds = (...lists) =>
+          [...new Set(lists.flat().map((v) => String(v || '').trim()).filter(Boolean))];
+        const sourceChildIds = mergeIds(
+          Array.isArray(source?.child_ids) ? source.child_ids : [],
+          Array.isArray(source?.assignees) ? source.assignees : [],
+          Array.isArray(source?.data?.child_ids) ? source.data.child_ids : [],
+          Array.isArray(source?.data?.assignees) ? source.data.assignees : [],
+          source?.child_id,
+          source?.childId,
+          source?.student_id,
+          source?.data?.child_id,
+          source?.data?.childId,
+          source?.data?.student_id,
+        );
+        const primaryChildId =
+          source?.child_id ||
+          source?.childId ||
+          source?.student_id ||
+          source?.data?.child_id ||
+          source?.data?.childId ||
+          source?.data?.student_id ||
+          sourceChildIds[0] ||
+          null;
         const errorMessage = String(error?.message || '');
         const errorStatus = Number(error?.status || 0);
         const lower = errorMessage.toLowerCase();
@@ -524,13 +602,28 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
         });
         const optimisticEvent = {
           ...source,
+          ...((source && typeof source.data === 'object') ? source.data : {}),
           start_ts: newStart.toISOString(),
           end_ts: newEnd.toISOString(),
           start: newStart.toISOString(),
           end: newEnd.toISOString(),
           date_local: targetDateIso,
+          family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
+          child_id: primaryChildId,
+          child_ids: sourceChildIds,
+          assignees: sourceChildIds,
           start_local: `${String(newStart.getHours()).padStart(2, '0')}:${String(newStart.getMinutes()).padStart(2, '0')}`,
           end_local: `${String(newEnd.getHours()).padStart(2, '0')}:${String(newEnd.getMinutes()).padStart(2, '0')}`,
+          data: {
+            ...((source && typeof source.data === 'object') ? source.data : {}),
+            start_ts: newStart.toISOString(),
+            end_ts: newEnd.toISOString(),
+            date_local: targetDateIso,
+            family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
+            child_id: primaryChildId,
+            child_ids: sourceChildIds,
+            assignees: sourceChildIds,
+          },
         };
         if (isConflictLike && typeof window !== 'undefined') {
           // Match month-view behavior: keep optimistic placement for conflict-like failures
@@ -558,17 +651,55 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
           Alert.alert('Error', `Failed to move event: ${errorMessage || 'Unknown error'}`);
         }
       } else if (typeof window !== 'undefined') {
+        const mergeIds = (...lists) =>
+          [...new Set(lists.flat().map((v) => String(v || '').trim()).filter(Boolean))];
+        const sourceChildIds = mergeIds(
+          Array.isArray(source?.child_ids) ? source.child_ids : [],
+          Array.isArray(source?.assignees) ? source.assignees : [],
+          Array.isArray(source?.data?.child_ids) ? source.data.child_ids : [],
+          Array.isArray(source?.data?.assignees) ? source.data.assignees : [],
+          source?.child_id,
+          source?.childId,
+          source?.student_id,
+          source?.data?.child_id,
+          source?.data?.childId,
+          source?.data?.student_id,
+        );
+        const primaryChildId =
+          source?.child_id ||
+          source?.childId ||
+          source?.student_id ||
+          source?.data?.child_id ||
+          source?.data?.childId ||
+          source?.data?.student_id ||
+          sourceChildIds[0] ||
+          null;
         debugDrag('api_reschedule_success', { eventId, targetDateIso });
         window.dispatchEvent(new CustomEvent('eventRescheduled', {
           detail: {
             eventId,
             updatedEvent: {
               ...source,
+              ...((source && typeof source.data === 'object') ? source.data : {}),
               start_ts: newStart.toISOString(),
               end_ts: newEnd.toISOString(),
               start: newStart.toISOString(),
               end: newEnd.toISOString(),
               date_local: targetDateIso,
+              family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
+              child_id: primaryChildId,
+              child_ids: sourceChildIds,
+              assignees: sourceChildIds,
+              data: {
+                ...((source && typeof source.data === 'object') ? source.data : {}),
+                start_ts: newStart.toISOString(),
+                end_ts: newEnd.toISOString(),
+                date_local: targetDateIso,
+                family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
+                child_id: primaryChildId,
+                child_ids: sourceChildIds,
+                assignees: sourceChildIds,
+              },
             },
             fromApi: true,
           },

@@ -70,6 +70,7 @@ import RebalanceModal from './year/RebalanceModal';
 import { applySetupProgressFromNavigation, isSetupGuideComplete } from '../lib/doodleSetupGuide';
 import { preloadProviderConnectionLogos } from '../lib/preloadConnectedAccountAssets';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
+import { cleanPlannerEventId } from '../lib/utils/recurringEventUtils';
 
 /**
  * Parent-only post-onboarding explorer tour (spotlight copy).
@@ -93,6 +94,12 @@ const EXPLORER_PARENT_STEPS = [
     body: "Explore Learnadoodle's planning actions and analytics.",
   },
 ];
+
+const normalizeConflictEventId = (rawId) => {
+  const trimmed = String(rawId || '').trim();
+  if (!trimmed) return '';
+  return cleanPlannerEventId(trimmed) || trimmed;
+};
 
 const EXPORT_CALENDAR_WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY = 'ld_pending_subject_schedule_plan_open';
@@ -636,7 +643,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         .filter((item) => item && item.eventId)
         .slice(0, 12)
         .map((item) => ({
-          eventId: String(item.eventId),
+          eventId: normalizeConflictEventId(item.eventId),
           eventTitle: item.eventTitle || 'Event',
           conflictCount: Number(item.conflictCount || 0),
           conflictMessage: item.conflictMessage || null,
@@ -670,8 +677,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const raw = window.sessionStorage.getItem(DISMISSED_CONFLICTS_STORAGE_KEY);
         const parsed = raw ? JSON.parse(raw) : [];
         const current = Array.isArray(parsed) ? parsed : [];
-        const key = String(active.eventId);
-        const remaining = current.filter((item) => String(item?.eventId || '') !== key);
+        const key = normalizeConflictEventId(active.eventId);
+        const remaining = current.filter(
+          (item) => normalizeConflictEventId(item?.eventId || '') !== key,
+        );
         const next = [
           {
             eventId: key,
@@ -1099,9 +1108,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     const handleConflictDismissed = (event) => {
       const detail = event?.detail || {};
       if (!detail?.eventId) return;
-      const key = String(detail.eventId);
+      const key = normalizeConflictEventId(detail.eventId);
       setDismissedConflictNotifications((prev) => {
-        const remaining = prev.filter((item) => String(item.eventId) !== key);
+        const remaining = prev.filter(
+          (item) => normalizeConflictEventId(item.eventId) !== key,
+        );
         const next = [
           {
             eventId: key,
@@ -1125,14 +1136,33 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handleConflictResolved = (event) => {
-      const resolvedId = String(event?.detail?.eventId || '').trim();
+      const resolvedId = normalizeConflictEventId(event?.detail?.eventId || '');
       if (!resolvedId) return;
       setDismissedConflictNotifications((prev) =>
-        (prev || []).filter((item) => String(item?.eventId || '') !== resolvedId),
+        (prev || []).filter(
+          (item) => normalizeConflictEventId(item?.eventId || '') !== resolvedId,
+        ),
       );
     };
     window.addEventListener('plannerDragConflictResolved', handleConflictResolved);
     return () => window.removeEventListener('plannerDragConflictResolved', handleConflictResolved);
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handleEventRescheduled = (event) => {
+      const detail = event?.detail || {};
+      if (detail?.apiError) return;
+      const resolvedId = normalizeConflictEventId(detail?.eventId || '');
+      if (!resolvedId) return;
+      setDismissedConflictNotifications((prev) =>
+        (prev || []).filter(
+          (item) => normalizeConflictEventId(item?.eventId || '') !== resolvedId,
+        ),
+      );
+    };
+    window.addEventListener('eventRescheduled', handleEventRescheduled);
+    return () => window.removeEventListener('eventRescheduled', handleEventRescheduled);
   }, []);
 
   // Handle click outside Planner Settings popover
