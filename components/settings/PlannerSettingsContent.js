@@ -341,45 +341,6 @@ export default function PlannerSettingsContent({
   const loadDefaultsRequestRef = useRef(0);
   const resetDefaultsWhenNoSubjectsInFlightRef = useRef(false);
 
-  const resetDefaultsWhenNoSubjects = useCallback(async () => {
-    if (!familyId || readOnly || resetDefaultsWhenNoSubjectsInFlightRef.current) return;
-    resetDefaultsWhenNoSubjectsInFlightRef.current = true;
-    try {
-      setAttendanceTrackingMode(ATTENDANCE_MODES.CLASS_DAY);
-      setTargetScope('overall');
-      setGoalMode('days');
-      setTargetDays('180');
-      const schoolYearStart = `${selectedYearMeta.start}-01-01`;
-      const schoolYearEnd = `${selectedYearMeta.end}-12-31`;
-      await supabase
-        .from('academic_years')
-        .update({ attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY })
-        .eq('family_id', familyId)
-        .gte('start_date', schoolYearStart)
-        .lte('start_date', schoolYearEnd);
-      await saveFamilyPlannerSettings(
-        familyId,
-        {
-          attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
-          target_scope: 'overall',
-          default_constraint_mode: 'days',
-          default_target_days: 180,
-          default_target_hours: null,
-        },
-        selectedSchoolYearLabel
-      );
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        window.dispatchEvent(new CustomEvent('refreshCalendar'));
-      }
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn('[PlannerSettings] Failed resetting defaults after last subject deletion:', err);
-    } finally {
-      resetDefaultsWhenNoSubjectsInFlightRef.current = false;
-    }
-  }, [familyId, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start]);
   const stateRef = useRef({});
   const initialSnapshot = getInitialPlannerSettingsSnapshot({
     embeddedInModal,
@@ -471,6 +432,7 @@ export default function PlannerSettingsContent({
   const schoolYearTriggerRef = useRef(null);
   const attendanceModeTriggerRef = useRef(null);
   const hasHydratedSnapshotRef = useRef(Boolean(initialSnapshot));
+  const appliedInitialDataKeyRef = useRef('');
   const normalizedLockedSchoolYearLabel = useMemo(
     () => normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim()),
     [lockedSchoolYearLabel]
@@ -514,9 +476,6 @@ export default function PlannerSettingsContent({
     setDefaultSpringEndDate(cached.defaultSpringEndDate || '');
     setSubjects(Array.isArray(cached.subjects) ? cached.subjects : []);
     setSubjectTargets(cached.subjectTargets && typeof cached.subjectTargets === 'object' ? cached.subjectTargets : {});
-    if (!isSchoolYearLocked && cached.selectedSchoolYearLabel) {
-      setSelectedSchoolYearLabel(normalizeSchoolYearLabel(cached.selectedSchoolYearLabel));
-    }
     hasHydratedSnapshotRef.current = true;
     setLoading(false);
     return true;
@@ -630,6 +589,46 @@ export default function PlannerSettingsContent({
   const yearRangeMinYmd = `${selectedYearMeta.start}-01-01`;
   const yearRangeMaxYmd = `${selectedYearMeta.end}-12-31`;
 
+  const resetDefaultsWhenNoSubjects = useCallback(async () => {
+    if (!familyId || readOnly || resetDefaultsWhenNoSubjectsInFlightRef.current) return;
+    resetDefaultsWhenNoSubjectsInFlightRef.current = true;
+    try {
+      setAttendanceTrackingMode(ATTENDANCE_MODES.CLASS_DAY);
+      setTargetScope('overall');
+      setGoalMode('days');
+      setTargetDays('180');
+      const schoolYearStart = `${selectedYearMeta.start}-01-01`;
+      const schoolYearEnd = `${selectedYearMeta.end}-12-31`;
+      await supabase
+        .from('academic_years')
+        .update({ attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY })
+        .eq('family_id', familyId)
+        .gte('start_date', schoolYearStart)
+        .lte('start_date', schoolYearEnd);
+      await saveFamilyPlannerSettings(
+        familyId,
+        {
+          attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
+          target_scope: 'overall',
+          default_constraint_mode: 'days',
+          default_target_days: 180,
+          default_target_hours: null,
+        },
+        selectedSchoolYearLabel
+      );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar'));
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[PlannerSettings] Failed resetting defaults after last subject deletion:', err);
+    } finally {
+      resetDefaultsWhenNoSubjectsInFlightRef.current = false;
+    }
+  }, [familyId, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start]);
+
   useEffect(() => {
     const seeded = schoolYearRangeDefaults(selectedSchoolYearLabel);
     setDefaultYearStartDate(seeded.yearStart);
@@ -688,6 +687,14 @@ export default function PlannerSettingsContent({
     const initialDataYearLabel = normalizeSchoolYearLabel(
       s.school_year_label || s.default_school_year
     );
+    const initialDataApplyKey = [
+      isSchoolYearLocked ? 'locked' : 'unlocked',
+      normalizedLockedSchoolYearLabel || '',
+      selectedYearLabel || '',
+      initialDataYearLabel || '',
+    ].join('::');
+    if (appliedInitialDataKeyRef.current === initialDataApplyKey) return;
+    appliedInitialDataKeyRef.current = initialDataApplyKey;
     const matchesInitialDataYear = Boolean(
       selectedYearLabel
       && initialDataYearLabel

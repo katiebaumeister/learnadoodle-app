@@ -324,6 +324,10 @@ class CommitParsedDraftRequest(BaseModel):
         True,
         description="Remove prior is_curriculum_related events for this subject with source=plain_text_parsed before insert",
     )
+    create_calendar_events: bool = Field(
+        True,
+        description="When false, persist units/lessons only and skip event materialization.",
+    )
 
 
 class CommitParsedDraftResponse(BaseModel):
@@ -386,6 +390,10 @@ class CommitManualDraftRequest(BaseModel):
     replace_existing: bool = Field(
         False,
         description="If true, delete existing manual curriculum events for this subject before inserting (edit/save).",
+    )
+    create_calendar_events: bool = Field(
+        True,
+        description="When false, persist units/lessons only and skip event materialization.",
     )
 
 
@@ -682,6 +690,91 @@ async def get_subject_curriculum_events_structure(
         if not fid or str(fid) != str(family_id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Family ID mismatch")
         supabase = get_admin_client()
+        if not academic_year_id:
+            # Prefer curriculum_units/curriculum_lessons for subject-detail "saved units" so
+            # unit/lesson editing can exist independently from planner events.
+            subject_res = (
+                supabase.table("subject")
+                .select("name")
+                .eq("id", subject_id)
+                .eq("family_id", family_id)
+                .limit(1)
+                .execute()
+            )
+            subject_name = (subject_res.data or [{}])[0].get("name") if subject_res.data else None
+            subject_name = (subject_name or "").strip()
+            if subject_name:
+                # Prefer precise subject_id metadata match. Fall back to historical subject_tags rows.
+                unit_rows: List[Dict[str, Any]] = []
+                try:
+                    units_res_by_meta = (
+                        supabase.table("curriculum_units")
+                        .select("id, title, source_type, created_at")
+                        .eq("family_id", family_id)
+                        .contains("metadata", {"subject_id": str(subject_id)})
+                        .order("created_at", desc=False)
+                        .execute()
+                    )
+                    unit_rows = units_res_by_meta.data or []
+                except Exception:
+                    unit_rows = []
+                if not unit_rows:
+                    units_res = (
+                        supabase.table("curriculum_units")
+                        .select("id, title, source_type, created_at")
+                        .eq("family_id", family_id)
+                        .contains("subject_tags", [subject_name])
+                        .order("created_at", desc=False)
+                        .execute()
+                    )
+                    unit_rows = units_res.data or []
+                if unit_rows:
+                    unit_ids = [u.get("id") for u in unit_rows if u.get("id")]
+                    lessons_by_unit: Dict[str, List[Dict[str, Any]]] = {str(uid): [] for uid in unit_ids}
+                    if unit_ids:
+                        lessons_res = (
+                            supabase.table("curriculum_lessons")
+                            .select("id, unit_id, title, sequence_index, minutes_est")
+                            .in_("unit_id", unit_ids)
+                            .order("sequence_index", desc=False)
+                            .execute()
+                        )
+                        for lesson in (lessons_res.data or []):
+                            uid = str(lesson.get("unit_id") or "")
+                            if not uid:
+                                continue
+                            lessons_by_unit.setdefault(uid, []).append(
+                                {
+                                    "id": lesson.get("id"),
+                                    "title": (lesson.get("title") or "Untitled Lesson"),
+                                    "type": "lesson",
+                                    "sequence": lesson.get("sequence_index") or 0,
+                                    "minutes": lesson.get("minutes_est") if isinstance(lesson.get("minutes_est"), int) else 60,
+                                    "date": None,
+                                }
+                            )
+                    units_out: List[Dict[str, Any]] = []
+                    source_candidates: List[str] = []
+                    for unit in unit_rows:
+                        uid = str(unit.get("id") or "")
+                        title = (unit.get("title") or "").strip() or "Untitled Unit"
+                        source_type = (unit.get("source_type") or "").strip()
+                        if source_type:
+                            source_candidates.append(source_type)
+                        unit_lessons = sorted(
+                            lessons_by_unit.get(uid, []),
+                            key=lambda x: (x.get("sequence") or 0, x.get("title") or ""),
+                        )
+                        units_out.append({"title": title, "lessons": unit_lessons})
+                    saved_content_source = None
+                    for pref in ("manual", "plain_text_parsed", "ai_generated"):
+                        if pref in source_candidates:
+                            saved_content_source = pref
+                            break
+                    if not saved_content_source and source_candidates:
+                        saved_content_source = source_candidates[0]
+                    return {"units": units_out, "saved_content_source": saved_content_source}
+
         select_cols = (
             "id, title, curriculum_unit_title, unit, lesson, curriculum_lesson_sequence, curriculum_metadata, "
             "start_ts, is_reference_date, is_curriculum_related, counts_toward_plan"
@@ -785,7 +878,7 @@ async def delete_manual_curriculum_events(
     user: dict = Depends(get_current_user),
     __: None = Depends(rate_limiter),
 ):
-    """Remove Plan Year manual curriculum rows for one subject (source=manual, is_curriculum_related)."""
+    """Remove manual curriculum rows for one subject (events + curriculum_units/lessons)."""
     try:
         fid = get_family_id_for_user(user["id"])
         if not fid or str(fid) != str(family_id):
@@ -794,6 +887,29 @@ async def delete_manual_curriculum_events(
         supabase.table("events").delete().eq("family_id", family_id).eq("subject_id", subject_id).eq(
             "is_curriculum_related", True
         ).eq("source", "manual").is_("deleted_at", "null").execute()
+        subject_res = (
+            supabase.table("subject")
+            .select("name")
+            .eq("id", subject_id)
+            .eq("family_id", family_id)
+            .limit(1)
+            .execute()
+        )
+        subject_name = (subject_res.data or [{}])[0].get("name") if subject_res.data else None
+        subject_name = (subject_name or "").strip()
+        if subject_name:
+            units_res = (
+                supabase.table("curriculum_units")
+                .select("id")
+                .eq("family_id", family_id)
+                .eq("source_type", "manual")
+                .contains("subject_tags", [subject_name])
+                .execute()
+            )
+            unit_ids = [str(row.get("id")) for row in (units_res.data or []) if row.get("id")]
+            if unit_ids:
+                supabase.table("curriculum_lessons").delete().in_("unit_id", unit_ids).execute()
+                supabase.table("curriculum_units").delete().in_("id", unit_ids).execute()
         log_event(
             "curriculum.manual_curriculum_cleared",
             family_id=family_id,
@@ -1467,7 +1583,7 @@ async def commit_parsed_draft_endpoint(
 
         calendar_event_ids: List[str] = []
         slots_filled = 0
-        if flat_for_events:
+        if body.create_calendar_events and flat_for_events:
             ay_body = (body.academic_year_id or "").strip() if body.academic_year_id else ""
             sids = [str(s).strip() for s in (body.student_ids or []) if s]
             calendar_event_ids, slots_filled, _ = _materialize_plan_year_curriculum_events(
@@ -1826,7 +1942,7 @@ def _validate_manual_draft(draft: ManualDraftPayload) -> None:
         if not (u.title or "").strip():
             raise ValueError(f"Unit {i + 1} must have a title.")
         if not u.lessons:
-            raise ValueError(f"Unit '{u.title}' must have at least one lesson.")
+            continue
         for j, le in enumerate(u.lessons):
             if not (le.title or "").strip():
                 raise ValueError(f"Lesson {j + 1} in unit '{u.title}' must have a title.")
@@ -1860,9 +1976,66 @@ async def commit_manual_draft_endpoint(
             ch_res = supabase.table("children").select("id").eq("family_id", family_id).execute()
             sid_list = [str(r["id"]) for r in (ch_res.data or []) if r.get("id")]
 
+        now_iso = datetime.now(timezone.utc).isoformat()
+        subject_tags = [subject_name]
+        unit_ids: List[str] = []
+        lesson_ids: List[str] = []
         flat_rows: List[Dict[str, Any]] = []
+
+        # In "edit current units" flow, replace_existing should overwrite saved unit/lesson
+        # structure for this subject instead of appending more curriculum_units rows.
+        if body.replace_existing:
+            existing_unit_rows: List[Dict[str, Any]] = []
+            # Prefer precise subject_id metadata match (new writes include this metadata key).
+            try:
+                by_meta_res = (
+                    supabase.table("curriculum_units")
+                    .select("id")
+                    .eq("family_id", body.family_id)
+                    .eq("source_type", "manual")
+                    .contains("metadata", {"subject_id": str(body.subject_id)})
+                    .execute()
+                )
+                existing_unit_rows = by_meta_res.data or []
+            except Exception:
+                existing_unit_rows = []
+            # Backward compatibility for older rows that only used subject_tags.
+            if not existing_unit_rows and subject_name:
+                by_tag_res = (
+                    supabase.table("curriculum_units")
+                    .select("id")
+                    .eq("family_id", body.family_id)
+                    .eq("source_type", "manual")
+                    .contains("subject_tags", [subject_name])
+                    .execute()
+                )
+                existing_unit_rows = by_tag_res.data or []
+            existing_unit_ids = [str(r.get("id")) for r in existing_unit_rows if r.get("id")]
+            if existing_unit_ids:
+                supabase.table("curriculum_lessons").delete().in_("unit_id", existing_unit_ids).execute()
+                supabase.table("curriculum_units").delete().in_("id", existing_unit_ids).execute()
+
         for ui, u in enumerate(body.draft.units):
             unit_title = (u.title or "").strip() or f"Unit {ui + 1}"
+            unit_row = {
+                "family_id": body.family_id,
+                "created_by_uid": user["id"],
+                "title": unit_title,
+                "source_type": "manual",
+                "source_ref": None,
+                "grade_band": None,
+                "subject_tags": subject_tags,
+                "student_ids": [],
+                "total_minutes_est": 0,
+                "weeks_est": 1,
+                "metadata": {"builder_mode": body.builder_mode, "subject_id": str(body.subject_id)},
+                "updated_at": now_iso,
+            }
+            ins_u = supabase.table("curriculum_units").insert(unit_row).execute()
+            if not ins_u.data or len(ins_u.data) == 0:
+                raise HTTPException(status_code=500, detail="Failed to insert curriculum unit")
+            unit_id = str(ins_u.data[0]["id"])
+            unit_ids.append(unit_id)
             for seq, le in enumerate(u.lessons, start=1):
                 lesson_title = (le.title or "").strip() or f"Lesson {seq}"
                 if not lesson_title:
@@ -1883,6 +2056,28 @@ async def commit_manual_draft_endpoint(
                 cadence_meta = getattr(le, "cadence_metadata", None) or {}
                 if not isinstance(cadence_meta, dict):
                     cadence_meta = {}
+                lesson_row = {
+                    "unit_id": unit_id,
+                    "sequence_index": seq,
+                    "title": lesson_title,
+                    "objective": (le.objective or "").strip() or None,
+                    "minutes_est": minutes,
+                    "modality": modality,
+                    "difficulty": "standard",
+                    "materials": le.materials if isinstance(le.materials, list) else [],
+                    "assessment": {
+                        "lesson_type": lt,
+                        "cadence_metadata": cadence_meta,
+                        "notes": (le.notes or "").strip() or None,
+                    },
+                    "prereqs": [],
+                    "links": [],
+                }
+                les_ins = supabase.table("curriculum_lessons").insert(lesson_row).execute()
+                lid_str = None
+                if les_ins.data and len(les_ins.data) > 0:
+                    lid_str = str(les_ins.data[0]["id"])
+                    lesson_ids.append(lid_str)
                 flat_rows.append(
                     {
                         "unit_title": unit_title,
@@ -1896,31 +2091,34 @@ async def commit_manual_draft_endpoint(
                         "materials": le.materials if isinstance(le.materials, list) else [],
                         "is_placeholder": bool(getattr(le, "is_placeholder", False)),
                         "cadence_metadata": cadence_meta,
-                        "curriculum_lesson_id": None,
+                        "curriculum_lesson_id": lid_str,
                         "metadata_extra": {},
                     }
                 )
 
-        event_ids, slots_filled, lesson_count = _materialize_plan_year_curriculum_events(
-            supabase,
-            family_id=body.family_id,
-            subject_id=body.subject_id,
-            subject_name=subject_name,
-            academic_year_id=ay_id,
-            student_ids=sid_list,
-            event_source="manual",
-            builder_mode_label=body.builder_mode,
-            flat_lessons=flat_rows,
-            replace_existing=body.replace_existing,
-        )
-        unit_count = len(body.draft.units)
+        event_ids: List[str] = []
+        slots_filled = 0
+        if body.create_calendar_events and flat_rows:
+            event_ids, slots_filled, _ = _materialize_plan_year_curriculum_events(
+                supabase,
+                family_id=body.family_id,
+                subject_id=body.subject_id,
+                subject_name=subject_name,
+                academic_year_id=ay_id,
+                student_ids=sid_list,
+                event_source="manual",
+                builder_mode_label=body.builder_mode,
+                flat_lessons=flat_rows,
+                replace_existing=body.replace_existing,
+            )
+        unit_count = len(unit_ids)
 
         log_event(
             "curriculum.commit_manual.ok",
             family_id=body.family_id,
             subject_id=body.subject_id,
             units_created=unit_count,
-            lessons_created=lesson_count,
+            lessons_created=len(lesson_ids),
             events_created=len(event_ids),
             plan_slots_filled=slots_filled,
             user_id=user["id"],
@@ -1931,9 +2129,9 @@ async def commit_manual_draft_endpoint(
             source_type="manual",
             builder_mode=body.builder_mode,
             units_created_count=unit_count,
-            lessons_created_count=lesson_count,
-            unit_ids=[],  # No longer using curriculum_units
-            lesson_ids=event_ids,  # Return event IDs instead
+            lessons_created_count=len(lesson_ids),
+            unit_ids=unit_ids,
+            lesson_ids=lesson_ids,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

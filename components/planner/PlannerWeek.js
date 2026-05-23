@@ -958,8 +958,8 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
           }, 
           isDelete: true 
         });
-        if (!event.academic_year_id) menuItems.push({ 
-          text: 'Delete All in Series', 
+        menuItems.push({ 
+          text: 'Delete Series', 
           action: async () => {
             if (window.confirm('Are you sure you want to delete all occurrences in this series?')) {
               try {

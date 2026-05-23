@@ -1148,7 +1148,7 @@ export default function SubjectDetailPage({
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const onCacheUpdate = (e) => {
-      const { familyId: fid, subjectId: sid } = e.detail || {};
+      const { familyId: fid, subjectId: sid, forceCurriculumClear } = e.detail || {};
       if (String(fid) !== String(familyId) || String(sid) !== String(subject?.id)) return;
       const cached = getSubjectProgressCache(familyId, subject.id);
       setSubjectPlanYearId(cached?.academicYearId || subjectPlanYearIdFromEvents || null);
@@ -1156,7 +1156,7 @@ export default function SubjectDetailPage({
       const cachedUnits = Array.isArray(cached?.curriculumUnits) ? cached.curriculumUnits : [];
       const currentUnits = Array.isArray(learningGoalsUnitsRef.current) ? learningGoalsUnitsRef.current : [];
       // Promote warmed cache data when available, but never wipe visible units with an empty cache update.
-      if (cachedUnits.length > 0 || currentUnits.length === 0) {
+      if (forceCurriculumClear || cachedUnits.length > 0 || currentUnits.length === 0) {
         setLearningGoalsUnits(cachedUnits);
         setLearningGoalsSource(cached?.curriculumSavedContentSource || null);
       }
@@ -2073,17 +2073,19 @@ export default function SubjectDetailPage({
   const showAssignedToStudentButton = false;
 
   const handleOpenEventDetails = useCallback((eventId, initialEvent) => {
-    const subjectForEdit = subjectData?.subject || subject;
-    if (typeof onEditSubject === 'function' && subjectForEdit) {
-      onEditSubject(subjectForEdit);
+    if (!eventId) return;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('openEventModal', {
+          detail: { eventId, initialEvent: initialEvent || null, schedulingMode: true },
+        })
+      );
       return;
     }
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openEventModal', {
-        detail: { eventId, initialEvent: initialEvent || null },
-      }));
+    if (initialEvent?.subject_id || initialEvent?.subjectId) {
+      onEditSubject?.(initialEvent.subject_id || initialEvent.subjectId);
     }
-  }, [subjectData?.subject, subject, onEditSubject]);
+  }, [onEditSubject]);
   const handleOpenAddEventForDate = useCallback((dateKey) => {
     const normKey = String(dateKey || '').slice(0, 10);
     if (!normKey || Platform.OS !== 'web' || typeof window === 'undefined') return;

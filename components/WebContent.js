@@ -24,6 +24,7 @@ import {
   isPlanYearBlockSeries,
   cleanPlannerEventId,
   resolveSeriesMasterEventId,
+  resolveSeriesLinkIds,
   softDeleteEventSeries,
 } from '../lib/utils/recurringEventUtils'
 
@@ -3294,13 +3295,24 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const deletedId = event.detail?.eventId || event.detail?.id;
       const deletedAcademicYearId = event.detail?.academicYearId || event.detail?.academic_year_id;
       const deletedSeriesMasterId = event.detail?.seriesMasterEventId || event.detail?.series_master_event_id;
+      const deletedSeriesLinkIds = Array.isArray(event.detail?.seriesLinkIds)
+        ? event.detail.seriesLinkIds
+        : [];
       const deletedSourceBlockId = event.detail?.sourceBlockId || event.detail?.source_block_id;
       const deletedSeriesAcademicYearId = event.detail?.seriesAcademicYearId || event.detail?.series_academic_year_id;
-      if (!deletedId && !deletedAcademicYearId && !deletedSeriesMasterId && !deletedSourceBlockId) return;
+      if (!deletedId && !deletedAcademicYearId && !deletedSeriesMasterId && deletedSeriesLinkIds.length === 0 && !deletedSourceBlockId) return;
       const idStr = deletedId ? String(deletedId) : null;
       const academicYearIdStr = deletedAcademicYearId ? String(deletedAcademicYearId) : null;
       const seriesMasterIdStr = deletedSeriesMasterId ? String(deletedSeriesMasterId) : null;
       const cleanSeriesMasterId = seriesMasterIdStr ? cleanPlannerEventId(seriesMasterIdStr) : null;
+      const cleanSeriesLinkIds = Array.from(
+        new Set(
+          deletedSeriesLinkIds
+            .map((value) => cleanPlannerEventId(String(value || '')))
+            .filter(Boolean)
+            .concat(cleanSeriesMasterId ? [cleanSeriesMasterId] : [])
+        )
+      );
       const sourceBlockIdStr = deletedSourceBlockId ? String(deletedSourceBlockId) : null;
       const seriesAcademicYearIdStr = deletedSeriesAcademicYearId ? String(deletedSeriesAcademicYearId) : null;
       const hideUntil = Date.now() + 15000;
@@ -3312,6 +3324,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       if (cleanSeriesMasterId) {
         recentlyDeletedEventIdsRef.current.set(cleanSeriesMasterId, hideUntil);
       }
+      cleanSeriesLinkIds.forEach((seriesId) => {
+        recentlyDeletedEventIdsRef.current.set(seriesId, hideUntil);
+      });
       if (academicYearIdStr) {
         recentlyDeletedAcademicYearsRef.current.set(academicYearIdStr, hideUntil);
       }
@@ -3329,11 +3344,17 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               const eventId = String(e.id || '');
               if (eventId === idStr || cleanPlannerEventId(eventId) === cleanPlannerEventId(idStr)) return false;
             }
-            if (cleanSeriesMasterId) {
+            if (cleanSeriesLinkIds.length > 0) {
               const rowId = cleanPlannerEventId(String(e.id || ''));
               const rowParentId = cleanPlannerEventId(String(e.parent_event_id || ''));
               const rowRecurrenceId = cleanPlannerEventId(String(e.recurrence_id || ''));
-              if (rowId === cleanSeriesMasterId || rowParentId === cleanSeriesMasterId || rowRecurrenceId === cleanSeriesMasterId) return false;
+              if (
+                cleanSeriesLinkIds.includes(rowId) ||
+                cleanSeriesLinkIds.includes(rowParentId) ||
+                cleanSeriesLinkIds.includes(rowRecurrenceId)
+              ) {
+                return false;
+              }
             }
             if (sourceBlockIdStr && seriesAcademicYearIdStr) {
               if (String(e.source_block_id || '') === sourceBlockIdStr && String(e.academic_year_id || '') === seriesAcademicYearIdStr) return false;
@@ -3366,11 +3387,17 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                 const eventId = String(e.id || '');
                 if (eventId === idStr || cleanPlannerEventId(eventId) === cleanPlannerEventId(idStr)) return false;
               }
-              if (cleanSeriesMasterId) {
+              if (cleanSeriesLinkIds.length > 0) {
                 const rowId = cleanPlannerEventId(String(e.id || ''));
                 const rowParentId = cleanPlannerEventId(String(e.parent_event_id || ''));
                 const rowRecurrenceId = cleanPlannerEventId(String(e.recurrence_id || ''));
-                if (rowId === cleanSeriesMasterId || rowParentId === cleanSeriesMasterId || rowRecurrenceId === cleanSeriesMasterId) return false;
+                if (
+                  cleanSeriesLinkIds.includes(rowId) ||
+                  cleanSeriesLinkIds.includes(rowParentId) ||
+                  cleanSeriesLinkIds.includes(rowRecurrenceId)
+                ) {
+                  return false;
+                }
               }
               if (sourceBlockIdStr && seriesAcademicYearIdStr) {
                 if (String(e.source_block_id || '') === sourceBlockIdStr && String(e.academic_year_id || '') === seriesAcademicYearIdStr) return false;
@@ -4662,6 +4689,33 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [eventModalVisible, setEventModalVisible] = useState(false)
   const [eventModalEventId, setEventModalEventId] = useState(null)
   const [eventModalSchedulingMode, setEventModalSchedulingMode] = useState(false)
+  const [seriesEditScopePrompt, setSeriesEditScopePrompt] = useState({
+    visible: false,
+    event: null,
+    options: {},
+  })
+  const dispatchOpenEventModal = useCallback((ev, options = {}) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !ev?.id) return;
+    const detail = {
+      eventId: ev.id,
+      initialEvent: ev,
+      schedulingMode: true,
+      ...(options || {}),
+    };
+    window.dispatchEvent(new CustomEvent('openEventModal', { detail }));
+  }, []);
+  const openEventEditorWithScopePrompt = useCallback((ev, options = {}) => {
+    if (!ev?.id) return;
+    if (!isDeletableSeriesGroup(ev)) {
+      dispatchOpenEventModal(ev, { ...options, editScope: 'single' });
+      return;
+    }
+    setSeriesEditScopePrompt({
+      visible: true,
+      event: ev,
+      options: options || {},
+    });
+  }, [dispatchOpenEventModal]);
   const [showNoteEditor, setShowNoteEditor] = useState(false)
   const [noteEditorProps, setNoteEditorProps] = useState({
     linkedEventId: null,
@@ -5430,19 +5484,31 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       } else {
       let eventId = ev._originalId || ev.originalId || ev.id;
       eventId = cleanPlannerEventId(eventId);
-      menuItems.push({
-        text: 'Edit Event',
-        iconKey: 'edit2',
-        action: () => {
-          window.dispatchEvent(new CustomEvent('openEventModal', {
-            detail: {
-              eventId: ev?.id,
-              initialEvent: ev,
-              schedulingMode: true,
-            },
-          }));
-        },
-      });
+      const isSeriesGroup = isDeletableSeriesGroup(ev);
+      if (isSeriesGroup) {
+        menuItems.push({
+          text: 'Edit This Event',
+          iconKey: 'edit2',
+          action: () => {
+            dispatchOpenEventModal(ev, { editScope: 'single' });
+          },
+        });
+        menuItems.push({
+          text: 'Edit Series',
+          iconKey: 'edit2',
+          action: () => {
+            dispatchOpenEventModal(ev, { editScope: 'series' });
+          },
+        });
+      } else {
+        menuItems.push({
+          text: 'Edit Event',
+          iconKey: 'edit2',
+          action: () => {
+            dispatchOpenEventModal(ev, { editScope: 'single' });
+          },
+        });
+      }
       menuItems.push({
         text: 'Send to student',
         iconKey: 'send',
@@ -5457,7 +5523,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           }));
         },
       });
-      const isSeriesGroup = isDeletableSeriesGroup(ev);
       if (isSeriesGroup) {
         menuItems.push({
           text: 'Delete This Event',
@@ -5499,8 +5564,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             });
           },
         });
-        if (!ev.academic_year_id) menuItems.push({
-          text: 'Delete All in Series',
+        menuItems.push({
+          text: 'Delete Series',
           isDelete: true,
           iconKey: 'trash2',
           action: () => {
@@ -5511,7 +5576,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               visible: true,
               title: 'Delete all in series?',
               message: 'Are you sure you want to delete all occurrences in this series?',
-              confirmLabel: 'Delete all',
+              confirmLabel: 'Delete series',
               cancelLabel: 'Cancel',
               destructive: true,
               onConfirm: async () => {
@@ -5527,6 +5592,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                       }
                     : {
                         seriesMasterEventId: resolveSeriesMasterEventId(ev, cleanId),
+                        seriesLinkIds: resolveSeriesLinkIds(ev, cleanId),
                       };
                   window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: idForHooks, ...seriesDeleteDetail } }));
                   window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
@@ -6099,7 +6165,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   useEffect(() => {
     setConfirmDialogRef.current = setConfirmDialog;
   }, []);
-  
+
   const [newEventFormData, setNewEventFormData] = useState({
     title: '',
     description: '',
@@ -9211,22 +9277,17 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                 (conflictBanner.eventId && String(conflictBanner.eventId) === String(event?.id)) ||
                 (conflictBanner.conflictEvent?.id && String(conflictBanner.conflictEvent.id) === String(event?.id))
               );
-            window.dispatchEvent(new CustomEvent('openEventModal', {
-              detail: {
-                eventId: event?.id,
-                initialEvent: event,
-                schedulingMode: true,
-                openConflictResolution: hasActiveConflictContext,
-                conflictResolutionContext: hasActiveConflictContext
-                  ? {
-                      conflictEvent: conflictBanner.conflictEvent,
-                      movedEvent: conflictBanner.movedEvent,
-                      conflictMessage: conflictBanner.conflictMessage,
-                      suggestedChange: conflictBanner.suggestedChange,
-                    }
-                  : null,
-              },
-            }));
+            openEventEditorWithScopePrompt(event, {
+              openConflictResolution: hasActiveConflictContext,
+              conflictResolutionContext: hasActiveConflictContext
+                ? {
+                    conflictEvent: conflictBanner.conflictEvent,
+                    movedEvent: conflictBanner.movedEvent,
+                    conflictMessage: conflictBanner.conflictMessage,
+                    suggestedChange: conflictBanner.suggestedChange,
+                  }
+                : null,
+            });
           }
         }}
         onEventRightClick={(ev, e) => {
@@ -9848,6 +9909,143 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         defaultChildIds={addMaterialModalDefaultChildIds}
         defaultProviderUrl={addMaterialModalDefaultProviderUrl}
       />
+      <Modal
+        visible={seriesEditScopePrompt.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSeriesEditScopePrompt({ visible: false, event: null, options: {} })}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setSeriesEditScopePrompt({ visible: false, event: null, options: {} })}
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(15, 23, 42, 0.4)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: 20,
+          }}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={(e) => {
+              if (Platform.OS === 'web' && e?.stopPropagation) e.stopPropagation();
+            }}
+            style={{
+              width: '100%',
+              maxWidth: 380,
+              borderRadius: 16,
+              backgroundColor: '#fff',
+              borderWidth: 1,
+              borderColor: '#e5e7eb',
+              padding: 18,
+              ...(Platform.OS === 'web' ? { boxShadow: '0 14px 32px rgba(15,23,42,0.14)' } : {}),
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: '700',
+                color: '#111827',
+                ...(Platform.OS === 'web' && {
+                  fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                }),
+              }}
+            >
+              Edit recurring event
+            </Text>
+            <Text style={{ marginTop: 8, fontSize: 14, color: '#64748b', lineHeight: 20 }}>
+              This event belongs to a series. Choose whether to edit only this occurrence or the whole series.
+            </Text>
+            <View style={{ marginTop: 16, gap: 10 }}>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  const next = seriesEditScopePrompt.event;
+                  const opts = seriesEditScopePrompt.options || {};
+                  setSeriesEditScopePrompt({ visible: false, event: null, options: {} });
+                  if (next) dispatchOpenEventModal(next, { ...opts, editScope: 'single' });
+                }}
+                style={{
+                  flex: 1,
+                  minHeight: 46,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#dbeafe',
+                  backgroundColor: '#eff6ff',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+                {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: '700',
+                    color: '#1d4ed8',
+                    ...(Platform.OS === 'web' && {
+                      fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }),
+                  }}
+                >
+                  Edit this event
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  const next = seriesEditScopePrompt.event;
+                  const opts = seriesEditScopePrompt.options || {};
+                  setSeriesEditScopePrompt({ visible: false, event: null, options: {} });
+                  if (next) dispatchOpenEventModal(next, { ...opts, editScope: 'series' });
+                }}
+                style={{
+                  flex: 1,
+                  minHeight: 46,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: '#bfdbfe',
+                  backgroundColor: '#dbeafe',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+                {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: '700',
+                    color: '#1e40af',
+                    ...(Platform.OS === 'web' && {
+                      fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }),
+                  }}
+                >
+                  Edit entire series
+                </Text>
+              </TouchableOpacity>
+              </View>
+              <TouchableOpacity
+                onPress={() => setSeriesEditScopePrompt({ visible: false, event: null, options: {} })}
+                style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 6 }}
+                {...(Platform.OS === 'web' && { type: 'button', cursor: 'pointer' })}
+              >
+                <Text
+                  style={{
+                    fontSize: 14,
+                    fontWeight: '600',
+                    color: '#64748b',
+                    ...(Platform.OS === 'web' && {
+                      fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }),
+                  }}
+                >
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
       <ConfirmDialog
         visible={confirmDialog.visible}
         title={confirmDialog.title}

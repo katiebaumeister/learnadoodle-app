@@ -2752,6 +2752,29 @@ export default function TaskCreateModal({
               }
             }
 
+            if (!rpcError && createdSeriesIds.length > 1) {
+              const groupedRecurrenceId = String(createdSeriesIds[0]);
+              // Keep split-per-weekday generation, but link all weekday series with one recurrence_id
+              // so edit/delete-all can treat them as a single logical weekly series.
+              for (const seriesIdRaw of createdSeriesIds) {
+                const seriesId = String(seriesIdRaw || '').trim();
+                if (!seriesId) continue;
+                const { error: linkErr } = await supabase
+                  .from('events')
+                  .update({ recurrence_id: groupedRecurrenceId })
+                  .eq('family_id', userFamilyId)
+                  .or(`id.eq.${seriesId},parent_event_id.eq.${seriesId},recurrence_id.eq.${seriesId}`)
+                  .is('deleted_at', null);
+                if (linkErr) {
+                  console.warn('[TaskCreateModal] Failed to link split weekday series recurrence_id:', {
+                    groupedRecurrenceId,
+                    seriesId,
+                    error: linkErr,
+                  });
+                }
+              }
+            }
+
             if (!rpcError && createdSeriesIds.length > 0) {
               // Return the first created series event for downstream patching and callbacks.
               rpcData = { ok: true, id: createdSeriesIds[0] };
@@ -5572,6 +5595,7 @@ const styles = StyleSheet.create({
   },
   titleInputRow: {
     width: '100%',
+    alignSelf: 'stretch',
     borderBottomWidth: 0,
     paddingBottom: 4,
     marginBottom: 2,

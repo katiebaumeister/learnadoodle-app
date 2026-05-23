@@ -15,7 +15,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { Search, FileText, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles } from 'lucide-react';
+import { Search, FileText, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Plus } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import { useSession } from '../../contexts/SessionContext';
@@ -1429,18 +1429,23 @@ export default function MaterialsLibrary({
       ) : hasNoMaterials ? (
         <>
           {renderMaterialFilterChipRows()}
-          {renderListColumnHeaders()}
-          <ScrollView style={styles.listContainer} contentContainerStyle={styles.listContent}>
-            <View style={[styles.listItem, Platform.OS === 'web' && { cursor: 'default' }]}>
-              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
-                <View style={styles.listItemContent}>
-                  <Text style={[styles.listItemTitle, { color: colors.muted, fontWeight: '500' }]}>
-                    No materials added
-                  </Text>
-                </View>
-              </View>
-            </View>
-          </ScrollView>
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyTitle}>No materials yet</Text>
+            <Text style={styles.emptyText}>
+              Upload materials to connect artifacts to learning.
+            </Text>
+            <TouchableOpacity
+              style={styles.emptyButton}
+              onPress={() => {
+                if (!ensureCanEditMaterials()) return;
+                setAddModalDefaultRole(null);
+                setShowAddModal(true);
+              }}
+            >
+              <Plus size={16} color="#5AAEF2" />
+              <Text style={styles.emptyButtonText}>Add</Text>
+            </TouchableOpacity>
+          </View>
         </>
       ) : (
         <>
@@ -3586,41 +3591,55 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 24,
+  },
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text,
+    color: '#374151',
+    marginTop: 16,
     marginBottom: 8,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   emptyText: {
     fontSize: 14,
-    color: colors.muted,
+    color: '#6B7280',
     textAlign: 'center',
-    marginBottom: 24,
+    maxWidth: 900,
+    lineHeight: 20,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   emptyButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
+    gap: 10,
+    marginTop: 20,
+    minHeight: 42,
+    paddingHorizontal: 18,
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: colors.accent,
-    backgroundColor: colors.accentLight,
+    borderStyle: 'dashed',
+    borderColor: '#9ED3FF',
+    backgroundColor: '#F8FCFF',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
   },
   emptyButtonText: {
     fontSize: 14,
-    fontWeight: '500',
-    color: colors.accent,
+    fontWeight: '600',
+    color: '#5AAEF2',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   errorContainer: {

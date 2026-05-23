@@ -66,7 +66,6 @@ import {
   ChevronRight,
   Plus, 
   Trash2, 
-  Save,
   FileText,
   Clock,
   Target,
@@ -109,7 +108,7 @@ import { getPlanDefaultsFromSettings, getAcademicYearExclusions, getFamilyPlanne
 import { supabase } from '../../lib/supabase';
 import { deleteEvent as deletePlannerEventSoft, restoreEventFromTrash } from '../../lib/services/plannerClientWithOffline';
 import { t, s, STRINGS } from '../../lib/i18n/strings';
-import { buildCurriculum, commitCurriculum, previewPacing, parsePlainTextStream, generateCurriculumDraftStream, commitManualDraft, commitParsedDraft, getManualCommitValidationError, fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
+import { buildCurriculum, commitCurriculum, previewPacing, parsePlainTextStream, generateCurriculumDraftStream, commitManualDraft, commitParsedDraft, getManualCommitValidationError, fetchSubjectCurriculumEventsStructure, clearManualCurriculumEvents } from '../../lib/services/curriculumClient';
 import { buildHumanPreviewFromPartialJson, buildImportStreamPreviewDisplay } from '../../lib/parseStreamHumanPreview';
 import { getMaterials } from '../../lib/services/materialsClient';
 import {
@@ -2125,49 +2124,88 @@ export default function PlanYearModal({
   }, [draftData, manualDraft]);
   
   const addDraftLesson = useCallback((unitIndex) => {
+    const appendLesson = (draft, requestedUnitIndex) => {
+      if (!draft?.units || draft.units.length === 0) return draft;
+      const safeUnitIndex =
+        Number.isInteger(requestedUnitIndex) && requestedUnitIndex >= 0 && requestedUnitIndex < draft.units.length
+          ? requestedUnitIndex
+          : 0;
+      const units = [...draft.units];
+      const u = units[safeUnitIndex];
+      if (!u) return draft;
+      const lessons = [...(u.lessons || [])];
+      const seq = lessons.length + 1;
+      lessons.push({
+        temp_id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        title: `Lesson ${seq}`,
+        lesson_type: 'lesson',
+        sequence_index: seq,
+        minutes_est: 60,
+      });
+      units[safeUnitIndex] = { ...u, lessons };
+      return { ...draft, units };
+    };
+
     if (draftData) {
-      setDraftData((prev) => {
-        if (!prev?.units) return prev;
-        const units = [...prev.units];
-        const u = units[unitIndex];
-        if (!u) return prev;
-        const lessons = [...(u.lessons || [])];
-        const seq = lessons.length + 1;
-        lessons.push({
-          temp_id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-          title: `Lesson ${seq}`,
-          lesson_type: 'lesson',
-          sequence_index: seq,
-          minutes_est: 60,
-        });
-        units[unitIndex] = { ...u, lessons };
-        return { ...prev, units };
-      });
-    } else if (manualDraft) {
-      setManualDraft((prev) => {
-        if (!prev?.units) return prev;
-        const units = [...prev.units];
-        const u = units[unitIndex];
-        if (!u) return prev;
-        const lessons = [...(u.lessons || [])];
-        const seq = lessons.length + 1;
-        lessons.push({
-          temp_id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-          title: `Lesson ${seq}`,
-          lesson_type: 'lesson',
-          sequence_index: seq,
-          minutes_est: 60,
-        });
-        units[unitIndex] = { ...u, lessons };
-        return { ...prev, units };
-      });
+      setDraftData((prev) => appendLesson(prev, unitIndex));
+      setExpandedUnits((prev) => new Set([...prev, unitIndex]));
+      return;
     }
-  }, [draftData, manualDraft]);
+
+    setManualDraft((prev) => {
+      const seeded =
+        prev
+        || manualDraftFromUnitStructureData(unitStructureData)
+        || createInitialManualDraft();
+      return appendLesson(seeded, unitIndex);
+    });
+    setExpandedUnits((prev) => new Set([...prev, unitIndex]));
+  }, [draftData, unitStructureData]);
   
-  const deleteDraftUnit = useCallback((unitIndex) => {
+  const deleteDraftUnit = useCallback(async (unitIndex) => {
+    const currentDraft = draftData || manualDraft;
+    const unitCount = Array.isArray(currentDraft?.units) ? currentDraft.units.length : 0;
+    const deletingLastUnitInSubjectDetail =
+      returnToSubjectModalAfterUnitSave && unitCount <= 1;
+    if (deletingLastUnitInSubjectDetail) {
+      const subjectIdToClear = String(initialSubjectId || '').trim();
+      if (familyId && subjectIdToClear) {
+        const { error: clearErr } = await clearManualCurriculumEvents(familyId, subjectIdToClear);
+        if (clearErr) {
+          toast?.push?.(clearErr?.message || 'Failed to delete units.', 'error');
+          return;
+        }
+        mergeSubjectProgressCache(familyId, subjectIdToClear, {
+          curriculumUnits: [],
+          curriculumSavedContentSource: null,
+        });
+      }
+      if (typeof window !== 'undefined') {
+        if (familyId && subjectIdToClear) {
+          window.dispatchEvent(
+            new CustomEvent('subjectProgressPlanCacheUpdated', {
+              detail: {
+                familyId: String(familyId),
+                subjectId: String(subjectIdToClear),
+                forceCurriculumClear: true,
+              },
+            })
+          );
+        }
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(
+          new CustomEvent('refreshSubjectDetail', {
+            detail: { subjectId: String(subjectIdToClear || '') },
+          })
+        );
+      }
+      toast?.push?.('Units and lessons deleted.', 'success');
+      onClose?.();
+      return;
+    }
     if (draftData) {
       setDraftData((prev) => {
-        if (!prev?.units || prev.units.length <= 1) return prev;
+        if (!prev?.units) return prev;
         const units = prev.units.filter((_, i) => i !== unitIndex);
         return { ...prev, units };
       });
@@ -2184,7 +2222,7 @@ export default function PlanYearModal({
       });
     } else if (manualDraft) {
       setManualDraft((prev) => {
-        if (!prev?.units || prev.units.length <= 1) return prev;
+        if (!prev?.units) return prev;
         const units = prev.units.filter((_, i) => i !== unitIndex);
         return { ...prev, units };
       });
@@ -2199,7 +2237,15 @@ export default function PlanYearModal({
         return adjusted;
       });
     }
-  }, [draftData, manualDraft]);
+  }, [
+    draftData,
+    manualDraft,
+    returnToSubjectModalAfterUnitSave,
+    initialSubjectId,
+    familyId,
+    toast,
+    onClose,
+  ]);
   
   const moveDraftLesson = useCallback((unitIndex, lessonIndex, direction) => {
     const currentDraft = draftData || manualDraft;
@@ -8930,14 +8976,11 @@ export default function PlanYearModal({
     if (unitStructureStep !== 'input') return;
     if (draftData) return;
     if (!unitPipelineSubjectId || !familyId) return;
+    // In subject-detail "Edit current units", wait for backend structure before
+    // seeding a new blank draft to avoid a brief "Unit 1" flash.
+    if (returnToSubjectModalAfterUnitSave && !unitStructureData) return;
     if (suppressManualCurriculumHydrateRef.current) return;
-    const isSeedBlankManualDraft =
-      !!manualDraft &&
-      Array.isArray(manualDraft.units) &&
-      manualDraft.units.length === 1 &&
-      String(manualDraft.units[0]?.title || '').trim().toLowerCase() === 'unit 1' &&
-      ((manualDraft.units[0]?.lessons || []).length === 0);
-    if (manualDraft && !isSeedBlankManualDraft) return;
+    if (manualDraft) return;
     const persisted = (unitStructureData?.units || []).some((u) => (u.lessons || []).length > 0);
     if (persisted) {
       const loaded = manualDraftFromUnitStructureData(unitStructureData);
@@ -8960,10 +9003,21 @@ export default function PlanYearModal({
     manualDraft,
     unitPipelineSubjectId,
     familyId,
+    returnToSubjectModalAfterUnitSave,
     unitStructureData,
   ]);
 
   const unitStructureSaveManualChangesLabel = t('planMyYear.multiSubjectUnits.footerSaveManualChanges');
+  const manualDraftValidationError = useMemo(
+    () => (manualDraft ? getManualCommitValidationError(manualDraft) : null),
+    [manualDraft],
+  );
+  const allowUnitOnlySaveInSubjectDetail = useMemo(() => {
+    if (!returnToSubjectModalAfterUnitSave || !manualDraftValidationError) return false;
+    return /lesson/i.test(String(manualDraftValidationError));
+  }, [returnToSubjectModalAfterUnitSave, manualDraftValidationError]);
+  const manualDraftBlockingError = allowUnitOnlySaveInSubjectDetail ? null : manualDraftValidationError;
+  const unitStructureFooterBusy = loadingUnitStructure || unitStructureStep === 'saving';
 
   const stepScopeComplete = !!planningScope;
   const stepSourceComplete = true; // Choose method always has a selection (default: placeholders)
@@ -9667,7 +9721,7 @@ export default function PlanYearModal({
               style={{ paddingVertical: 10, paddingHorizontal: 12 }}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithPrevious')}</Text>
+              <Text style={{ fontSize: 14, color: FG, ...(Platform.OS === 'web' ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' } : {}) }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithPrevious')}</Text>
             </TouchableOpacity>
           ) : null}
           {unitIdx < currentUnits.length - 1 ? (
@@ -9676,7 +9730,7 @@ export default function PlanYearModal({
               style={{ paddingVertical: 10, paddingHorizontal: 12 }}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithNext')}</Text>
+              <Text style={{ fontSize: 14, color: FG, ...(Platform.OS === 'web' ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' } : {}) }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithNext')}</Text>
             </TouchableOpacity>
           ) : null}
           <TouchableOpacity
@@ -9687,14 +9741,14 @@ export default function PlanYearModal({
             style={{ paddingVertical: 10, paddingHorizontal: 12 }}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitAddLesson')}</Text>
+            <Text style={{ fontSize: 14, color: FG, ...(Platform.OS === 'web' ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' } : {}) }}>{s('planMyYear.multiSubjectUnits.draftUnitAddLesson')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => addDraftUnitBelowIndex(unitIdx)}
             style={{ paddingVertical: 10, paddingHorizontal: 12 }}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitAddUnitBelow')}</Text>
+            <Text style={{ fontSize: 14, color: FG, ...(Platform.OS === 'web' ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' } : {}) }}>{s('planMyYear.multiSubjectUnits.draftUnitAddUnitBelow')}</Text>
           </TouchableOpacity>
         </View>
       </>,
@@ -9801,7 +9855,7 @@ export default function PlanYearModal({
 
                 // If we have draft data (after parsing/generating), show the structure editor
                 const currentDraft = draftData || manualDraft;
-                if (currentDraft && currentDraft.units && currentDraft.units.length > 0) {
+                if (currentDraft && Array.isArray(currentDraft.units)) {
                   const units = currentDraft.units || [];
                   const totalLessons = units.reduce((sum, u) => sum + (u.lessons || []).length, 0);
                   const totalAssessments = units.reduce((sum, u) => sum + (u.lessons || []).filter(l => (l.lesson_type === 'assessment' || l.lesson_type === 'exam')).length, 0);
@@ -10221,7 +10275,7 @@ export default function PlanYearModal({
                                           style={{ paddingVertical: 10, paddingHorizontal: 12 }}
                                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                         >
-                                          <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithPrevious')}</Text>
+                                          <Text style={{ fontSize: 14, color: FG, ...(Platform.OS === 'web' ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' } : {}) }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithPrevious')}</Text>
                                         </TouchableOpacity>
                                       ) : null}
                                       {unitIdx < units.length - 1 ? (
@@ -10230,7 +10284,7 @@ export default function PlanYearModal({
                                           style={{ paddingVertical: 10, paddingHorizontal: 12 }}
                                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                         >
-                                          <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithNext')}</Text>
+                                          <Text style={{ fontSize: 14, color: FG, ...(Platform.OS === 'web' ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' } : {}) }}>{s('planMyYear.multiSubjectUnits.draftUnitMergeWithNext')}</Text>
                                         </TouchableOpacity>
                                       ) : null}
                                       <TouchableOpacity
@@ -10241,14 +10295,14 @@ export default function PlanYearModal({
                                         style={{ paddingVertical: 10, paddingHorizontal: 12 }}
                                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                       >
-                                        <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitAddLesson')}</Text>
+                                        <Text style={{ fontSize: 14, color: FG, ...(Platform.OS === 'web' ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' } : {}) }}>{s('planMyYear.multiSubjectUnits.draftUnitAddLesson')}</Text>
                                       </TouchableOpacity>
                                       <TouchableOpacity
                                         onPress={() => addDraftUnitBelowIndex(unitIdx)}
                                         style={{ paddingVertical: 10, paddingHorizontal: 12 }}
                                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                       >
-                                        <Text style={{ fontSize: 14, color: FG }}>{s('planMyYear.multiSubjectUnits.draftUnitAddUnitBelow')}</Text>
+                                        <Text style={{ fontSize: 14, color: FG, ...(Platform.OS === 'web' ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' } : {}) }}>{s('planMyYear.multiSubjectUnits.draftUnitAddUnitBelow')}</Text>
                                       </TouchableOpacity>
                                     </View>
                                   ) : null}
@@ -14276,17 +14330,21 @@ export default function PlanYearModal({
                             setUnitStructureError('Subject not found.');
                             return;
                           }
+                          const saveCurriculumOnly = returnToSubjectModalAfterUnitSave === true;
                           setUnitStructureStep('saving');
                           setUnitStructureError(null);
                           try {
                             if (manualDraft) {
                               const availSlot =
                                 s('planMyYear.multiSubjectUnits.availableInstructionalSlot') || 'Available slot';
-                              const draftForCommit = mergeManualDraftWithInstructionalSlotDates(
-                                JSON.parse(JSON.stringify(manualDraft)),
-                                lessonSchedulePreviewPlan,
-                                availSlot,
-                              );
+                              const draftClone = JSON.parse(JSON.stringify(manualDraft));
+                              const draftForCommit = saveCurriculumOnly
+                                ? draftClone
+                                : mergeManualDraftWithInstructionalSlotDates(
+                                    draftClone,
+                                    lessonSchedulePreviewPlan,
+                                    availSlot,
+                                  );
                               const { data, error: err } = await commitManualDraft({
                                 subject_id: availableSubject?.id,
                                 family_id: familyId,
@@ -14294,8 +14352,12 @@ export default function PlanYearModal({
                                 draft: draftForCommit,
                                 builder_mode: 'rich_units',
                                 replace_existing: true,
-                                academic_year_id: academicYearId || undefined,
-                                student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                                ...(saveCurriculumOnly
+                                  ? { create_calendar_events: false }
+                                  : {
+                                      academic_year_id: academicYearId || undefined,
+                                      student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                                    }),
                               });
                               if (err || !data) {
                                 setUnitStructureError(
@@ -14310,8 +14372,12 @@ export default function PlanYearModal({
                                 family_id: familyId,
                                 subject_name: availableSubject?.name || '',
                                 draft: draftData,
-                                academic_year_id: academicYearId || undefined,
-                                student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                                ...(saveCurriculumOnly
+                                  ? { replace_existing_events: false, create_calendar_events: false }
+                                  : {
+                                      academic_year_id: academicYearId || undefined,
+                                      student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                                    }),
                               });
                               if (err || !data) {
                                 setUnitStructureError(err?.message || 'Failed to save curriculum');
@@ -14334,8 +14400,12 @@ export default function PlanYearModal({
                                 draft: generatedAsManualDraft,
                                 builder_mode: 'rich_units',
                                 replace_existing: true,
-                                academic_year_id: academicYearId || undefined,
-                                student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                                ...(saveCurriculumOnly
+                                  ? { create_calendar_events: false }
+                                  : {
+                                      academic_year_id: academicYearId || undefined,
+                                      student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                                    }),
                               });
                               if (err || !data) {
                                 setUnitStructureError(err?.message || 'Failed to save curriculum');
@@ -14422,32 +14492,37 @@ export default function PlanYearModal({
                         }}
                         style={{
                           width: '100%',
-                          backgroundColor: UNIT_STRUCTURE_OVERLAY_PRIMARY_BG,
+                          backgroundColor: isSubjectDetailAddUnitsMode ? '#9ECFFB' : UNIT_STRUCTURE_OVERLAY_PRIMARY_BG,
                           paddingVertical: 14,
                           paddingHorizontal: 16,
                           borderRadius: 12,
                           alignItems: 'center',
                           justifyContent: 'center',
                           opacity:
-                            unitStructureStep === 'saving' ||
-                            (manualDraft && getManualCommitValidationError(manualDraft))
+                            unitStructureFooterBusy ||
+                            manualDraftBlockingError
                               ? 0.65
                               : 1,
                         }}
                         disabled={
-                          unitStructureStep === 'saving' ||
-                          Boolean(manualDraft && getManualCommitValidationError(manualDraft))
+                          unitStructureFooterBusy ||
+                          Boolean(manualDraftBlockingError)
                         }
                         {...(Platform.OS === 'web' && {
                           cursor:
-                            unitStructureStep === 'saving' ||
-                            (manualDraft && getManualCommitValidationError(manualDraft))
+                            unitStructureFooterBusy ||
+                            manualDraftBlockingError
                               ? 'not-allowed'
                               : 'pointer',
                         })}
                       >
-                        {unitStructureStep === 'saving' ? (
+                        {unitStructureFooterBusy ? (
                           <ActivityIndicator size="small" color="#ffffff" />
+                        ) : isSubjectDetailAddUnitsMode ? (
+                          <View style={styles.footerPrimaryActionInner}>
+                            <Sparkles size={14} color="#FFFFFF" />
+                            <Text style={styles.footerPrimaryActionText}>Save</Text>
+                          </View>
                         ) : (
                           <Text
                             style={[styles.primaryButtonText, { textAlign: 'center', lineHeight: 22 }]}
@@ -15182,6 +15257,7 @@ export default function PlanYearModal({
                         setUnitStructureError('Subject not found.');
                         return;
                       }
+                      const saveCurriculumOnly = returnToSubjectModalAfterUnitSave === true;
                       
                       setUnitStructureStep('saving');
                       setUnitStructureError(null);
@@ -15189,11 +15265,14 @@ export default function PlanYearModal({
                         if (manualDraft) {
                           const availSlot =
                             s('planMyYear.multiSubjectUnits.availableInstructionalSlot') || 'Available slot';
-                          const draftForCommit = mergeManualDraftWithInstructionalSlotDates(
-                            JSON.parse(JSON.stringify(manualDraft)),
-                            lessonSchedulePreviewPlan,
-                            availSlot,
-                          );
+                          const draftClone = JSON.parse(JSON.stringify(manualDraft));
+                          const draftForCommit = saveCurriculumOnly
+                            ? draftClone
+                            : mergeManualDraftWithInstructionalSlotDates(
+                                draftClone,
+                                lessonSchedulePreviewPlan,
+                                availSlot,
+                              );
                           const { data, error: err } = await commitManualDraft({
                             subject_id: availableSubject?.id,
                             family_id: familyId,
@@ -15201,8 +15280,12 @@ export default function PlanYearModal({
                             draft: draftForCommit,
                             builder_mode: 'rich_units',
                             replace_existing: true,
-                            academic_year_id: academicYearId || undefined,
-                            student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                            ...(saveCurriculumOnly
+                              ? { create_calendar_events: false }
+                              : {
+                                  academic_year_id: academicYearId || undefined,
+                                  student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                                }),
                           });
                           if (err || !data) {
                             setUnitStructureError(
@@ -15218,8 +15301,12 @@ export default function PlanYearModal({
                             family_id: familyId,
                             subject_name: availableSubject?.name || '',
                             draft: draftData,
-                            academic_year_id: academicYearId || undefined,
-                            student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                            ...(saveCurriculumOnly
+                              ? { replace_existing_events: false, create_calendar_events: false }
+                              : {
+                                  academic_year_id: academicYearId || undefined,
+                                  student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                                }),
                           });
                           if (err || !data) {
                             setUnitStructureError(err?.message || 'Failed to save curriculum');
@@ -15242,8 +15329,12 @@ export default function PlanYearModal({
                             draft: generatedAsManualDraft,
                             builder_mode: 'rich_units',
                             replace_existing: true,
-                            academic_year_id: academicYearId || undefined,
-                            student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                            ...(saveCurriculumOnly
+                              ? { create_calendar_events: false }
+                              : {
+                                  academic_year_id: academicYearId || undefined,
+                                  student_ids: allFamilyChildIds.map((id) => String(id)).filter(Boolean),
+                                }),
                           });
                           if (err || !data) {
                             setUnitStructureError(err?.message || 'Failed to save curriculum');
@@ -15334,33 +15425,36 @@ export default function PlanYearModal({
                     style={[
                       styles.primaryButton,
                       isSubjectDetailAddUnitsMode && styles.footerPrimaryActionButton,
-                      (unitStructureStep === 'saving' ||
-                        (manualDraft && getManualCommitValidationError(manualDraft))) &&
+                      (unitStructureFooterBusy ||
+                        manualDraftBlockingError) &&
                         styles.primaryButtonDisabled,
-                      (unitStructureStep === 'saving' ||
-                        (manualDraft && getManualCommitValidationError(manualDraft))) &&
+                      (unitStructureFooterBusy ||
+                        manualDraftBlockingError) &&
                         isSubjectDetailAddUnitsMode &&
                         styles.footerPrimaryActionButtonDisabled,
                     ]}
                     disabled={
-                      unitStructureStep === 'saving' ||
-                      Boolean(manualDraft && getManualCommitValidationError(manualDraft))
+                      unitStructureFooterBusy ||
+                      Boolean(manualDraftBlockingError)
                     }
                     {...(Platform.OS === 'web' && {
                       cursor:
-                        unitStructureStep === 'saving' ||
-                        (manualDraft && getManualCommitValidationError(manualDraft))
+                        unitStructureFooterBusy ||
+                        manualDraftBlockingError
                           ? 'not-allowed'
                           : 'pointer',
                     })}
                   >
-                    {unitStructureStep === 'saving' ? (
+                    {unitStructureFooterBusy ? (
                       <>
                         <ActivityIndicator size="small" color={BG} style={{ marginRight: 8 }} />
-                        <Text style={styles.primaryButtonText}>{s('global.status.saving')}</Text>
+                        <Text style={styles.primaryButtonText}>
+                          {loadingUnitStructure ? 'Loading...' : s('global.status.saving')}
+                        </Text>
                       </>
                     ) : isSubjectDetailAddUnitsMode ? (
                       <View style={styles.footerPrimaryActionInner}>
+                        <Sparkles size={14} color="#FFFFFF" />
                         <Text style={styles.footerPrimaryActionText}>Save</Text>
                       </View>
                     ) : renderFooterPrimaryLabel(
@@ -18115,10 +18209,10 @@ const styles = StyleSheet.create({
   footerPrimaryActionButton: {
     minHeight: 50,
     borderRadius: 16,
-    backgroundColor: '#10B981',
+    backgroundColor: '#9ECFFB',
     paddingHorizontal: 18,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 12px rgba(16,185,129,0.35)',
+      boxShadow: 'none',
     }),
   },
   footerPrimaryActionButtonDisabled: {

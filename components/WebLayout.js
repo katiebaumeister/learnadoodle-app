@@ -228,6 +228,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [eventModalParentFocus, setEventModalParentFocus] = useState(null);
   /** Plan "Dates with events" row edit → open EventModal in edit form, not read-only details */
   const [eventModalSchedulingMode, setEventModalSchedulingMode] = useState(false);
+  /** 'single' | 'series' */
+  const [eventModalEditScope, setEventModalEditScope] = useState('single');
   /** true = open only the Send to student modal (no EventDetails shell) */
   const [eventModalSendOnlyMode, setEventModalSendOnlyMode] = useState(false);
   /** Planner chip warning → open EventModal with top conflict banner (Auto reschedule / Ignore) */
@@ -2376,6 +2378,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const initialEvent = detail.initialEvent || null;
       const parentEventFocus = detail.parentEventFocus ?? null;
       const schedulingMode = !!detail.schedulingMode;
+      const editScope = detail.editScope === 'series' ? 'series' : 'single';
       const sendOnlyMode = !!detail.sendOnlyMode;
       const openConflictResolution = !!detail.openConflictResolution;
       let conflictResolutionContext = detail.conflictResolutionContext || null;
@@ -2408,6 +2411,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setEventModalEventId(eventId);
       setEventModalInitialEvent(initialEvent);
       setEventModalSchedulingMode(schedulingMode);
+      setEventModalEditScope(editScope);
       setEventModalSendOnlyMode(sendOnlyMode);
       setEventModalOpenConflictResolution(openConflictResolution);
       setEventModalConflictResolutionContext(conflictResolutionContext);
@@ -4995,6 +4999,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         eventId={eventModalEventId}
         initialEvent={eventModalInitialEvent}
         schedulingMode={eventModalSchedulingMode}
+        editScope={eventModalEditScope}
         openConflictResolution={eventModalOpenConflictResolution}
         conflictResolutionContext={eventModalConflictResolutionContext}
         sendOnlyMode={eventModalSendOnlyMode}
@@ -5022,6 +5027,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setEventModalInitialEvent(null);
           setEventModalParentFocus(null);
           setEventModalSchedulingMode(false);
+          setEventModalEditScope('single');
           setEventModalSendOnlyMode(false);
           setEventModalOpenConflictResolution(false);
           setEventModalConflictResolutionContext(null);

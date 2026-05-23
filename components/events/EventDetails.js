@@ -44,6 +44,7 @@ import {
   isDeletableSeriesGroup,
   cleanPlannerEventId,
   resolveSeriesMasterEventId,
+  resolveSeriesLinkIds,
   softDeleteEventSeries,
 } from '../../lib/utils/recurringEventUtils';
 
@@ -826,6 +827,27 @@ function resolveWeekdayCodeFromEventOrDueDate(event, dueDate) {
   return 'MO';
 }
 
+function hhmmUtcFromTs(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+function durationMinutesFromTs(startValue, endValue) {
+  const s = new Date(startValue || '');
+  const e = new Date(endValue || '');
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return null;
+  return Math.max(0, Math.round((e.getTime() - s.getTime()) / 60000));
+}
+
+function normalizedChildIdsKey(value) {
+  const arr = Array.isArray(value)
+    ? value.map((v) => String(v || '').trim()).filter(Boolean).sort()
+    : [];
+  return arr.join('|');
+}
+
 function formatConflictSuggestionMessage(startDate, endDate) {
   if (!startDate || !endDate) return '';
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -945,7 +967,7 @@ function ChipRow({ children, style }) {
   return <View style={style}>{safeChildren}</View>;
 }
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, readOnly = false, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed, openConflictResolution = false, conflictResolutionContext = null, onOpenConflictResolutionConsumed, sendOnlyMode = false }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, editScope = 'single', readOnly = false, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed, openConflictResolution = false, conflictResolutionContext = null, onOpenConflictResolutionConsumed, sendOnlyMode = false }) {
   const { width: viewportWidth } = useWindowDimensions();
   const session = useSession();
   const { user: authUser } = useAuth();
@@ -953,6 +975,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [deleting, setDeleting] = useState(false);
   const [showRecurringDeleteModal, setShowRecurringDeleteModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const isSeriesGroupEvent = isDeletableSeriesGroup(event);
+  const isSeriesEditScope = editScope === 'series' && isSeriesGroupEvent;
+  const isSingleSeriesOccurrenceEdit = isSeriesGroupEvent && !isSeriesEditScope;
   const [editing, setEditing] = useState(initialSchedulingMode); // Start in edit mode if scheduling
   const [saving, setSaving] = useState(false);
   const [schedulingBacklog, setSchedulingBacklog] = useState(initialSchedulingMode); // State for "Add to schedule" mode
@@ -2021,6 +2046,24 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return `Please ${missing.slice(0, -1).join(', ')}, and ${missing[missing.length - 1]} before saving.`;
   }, []);
 
+  /** Academic year row for this event's plan — local list first, then shell preload (stable Add to plan? / banners). */
+  const resolvedAcademicYearRow = useMemo(() => {
+    if (!academicYearId) return null;
+    const fromState = academicYears.find((a) => a.id === academicYearId);
+    if (fromState) return fromState;
+    if (Array.isArray(preloadedAcademicYears)) {
+      return preloadedAcademicYears.find((a) => a.id === academicYearId) || null;
+    }
+    return null;
+  }, [academicYearId, academicYears, preloadedAcademicYears]);
+
+  const recurrenceSavedTermEnd = useMemo(() => {
+    const ymd = String(resolvedAcademicYearRow?.end_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+    const parsed = new Date(`${ymd}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [resolvedAcademicYearRow]);
+
   const validateFields = ({ showBanner = false } = {}) => {
     const errors = {};
     
@@ -2679,14 +2722,37 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const masterId = event.parent_event_id || event.recurrence_id;
       const selfId = cleanPlannerEventId(String(event.id));
       if (!masterId || masterId === selfId) return;
-      const { data, error } = await supabase
+      let recurrenceRulePayload = null;
+      const { data: byIdData, error: byIdError } = await supabase
         .from('events')
         .select('recurrence_rule')
         .eq('id', masterId)
         .maybeSingle();
-      if (cancelled || error || !data?.recurrence_rule) return;
+      if (byIdData?.recurrence_rule) {
+        recurrenceRulePayload = byIdData.recurrence_rule;
+      } else {
+        // Some instance rows store a shared recurrence_id token rather than the master event id.
+        const { data: bySeriesData, error: bySeriesError } = await supabase
+          .from('events')
+          .select('recurrence_rule')
+          .eq('recurrence_id', masterId)
+          .not('recurrence_rule', 'is', null)
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (bySeriesData?.recurrence_rule) {
+          recurrenceRulePayload = bySeriesData.recurrence_rule;
+        } else if (byIdError && bySeriesError) {
+          return;
+        } else {
+          return;
+        }
+      }
+      if (cancelled || !recurrenceRulePayload) return;
       try {
-        const rule = typeof data.recurrence_rule === 'string' ? JSON.parse(data.recurrence_rule) : data.recurrence_rule;
+        const rule = typeof recurrenceRulePayload === 'string'
+          ? JSON.parse(recurrenceRulePayload)
+          : recurrenceRulePayload;
         setIsRecurring(true);
         setRecurrenceType(rule.frequency?.toLowerCase() || 'daily');
         setRecurrenceInterval(rule.interval || null);
@@ -2710,6 +2776,166 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       cancelled = true;
     };
   }, [event?.id, event?.recurrence_rule, event?.parent_event_id, event?.recurrence_id, event?.generated_by, event?.source_block_id]);
+
+  // Split-weekday series store one weekday per master rule.
+  // When those masters are linked by a shared recurrence_id, merge weekdays for edit UX.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!event?.id) return;
+      if (!isRecurring || recurrenceType !== 'weekly') return;
+      if (Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 1) return;
+      const recurrenceGroupId = cleanPlannerEventId(String(event?.recurrence_id || ''));
+      if (!recurrenceGroupId) return;
+      const { data, error } = await supabase
+        .from('events')
+        .select('recurrence_rule, start_ts')
+        .eq('recurrence_id', recurrenceGroupId)
+        .not('recurrence_rule', 'is', null)
+        .is('deleted_at', null);
+      if (cancelled || error || !Array.isArray(data) || data.length === 0) return;
+      const collected = [];
+      data.forEach((row) => {
+        if (!row?.recurrence_rule) return;
+        try {
+          const parsed = typeof row.recurrence_rule === 'string'
+            ? JSON.parse(row.recurrence_rule)
+            : row.recurrence_rule;
+          if (parsed?.byweekday != null) {
+            collected.push(parsed.byweekday);
+          }
+        } catch (_) {
+          // ignore bad rows
+        }
+        const rowStart = row?.start_ts ? new Date(row.start_ts) : null;
+        if (rowStart instanceof Date && !Number.isNaN(rowStart.getTime())) {
+          const weekdayFromStart = WEEKDAY_FROM_DATE[rowStart.getDay()];
+          if (weekdayFromStart) {
+            collected.push(weekdayFromStart);
+          }
+        }
+      });
+      const mergedWeekdays = normalizeByWeekday(collected);
+      if (mergedWeekdays.length > 1) {
+        setRecurrenceWeekdays(mergedWeekdays);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, event?.recurrence_id, isRecurring, recurrenceType]);
+
+  // Backward compatibility: older split-weekday series may not share recurrence_id.
+  // Infer sibling weekday masters by near-identical metadata and merge weekdays for edit UI.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!event?.id || !familyId) return;
+      if (!isRecurring || recurrenceType !== 'weekly') return;
+      if (Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 1) return;
+
+      const anchorMasterId = cleanPlannerEventId(String(event.parent_event_id || event.recurrence_id || event.id || ''));
+      if (!anchorMasterId) return;
+      const { data: anchor, error: anchorErr } = await supabase
+        .from('events')
+        .select('id, title, subject_id, event_type, child_id, child_ids, start_ts, end_ts, recurrence_rule, created_at, deleted_at')
+        .eq('id', anchorMasterId)
+        .maybeSingle();
+      if (cancelled || anchorErr || !anchor || anchor.deleted_at) return;
+
+      let anchorRule = null;
+      try {
+        anchorRule = typeof anchor.recurrence_rule === 'string'
+          ? JSON.parse(anchor.recurrence_rule)
+          : anchor.recurrence_rule;
+      } catch (_) {
+        anchorRule = null;
+      }
+      const anchorFreq = String(anchorRule?.frequency || anchorRule?.freq || '').toUpperCase();
+      if (anchorFreq !== 'WEEKLY') return;
+      if (!anchor.created_at) return;
+      const createdAt = new Date(anchor.created_at);
+      if (Number.isNaN(createdAt.getTime())) return;
+      const windowStart = new Date(createdAt.getTime() - 5 * 60 * 1000).toISOString();
+      const windowEnd = new Date(createdAt.getTime() + 5 * 60 * 1000).toISOString();
+
+      let query = supabase
+        .from('events')
+        .select('recurrence_rule, child_id, child_ids, start_ts, end_ts')
+        .eq('family_id', familyId)
+        .is('deleted_at', null)
+        .eq('title', anchor.title || '')
+        .gte('created_at', windowStart)
+        .lte('created_at', windowEnd)
+        .not('recurrence_rule', 'is', null);
+      query = anchor.event_type == null ? query.is('event_type', null) : query.eq('event_type', anchor.event_type);
+      query = anchor.subject_id == null ? query.is('subject_id', null) : query.eq('subject_id', anchor.subject_id);
+      query = anchor.child_id == null ? query.is('child_id', null) : query.eq('child_id', anchor.child_id);
+      const { data: siblings, error: siblingsErr } = await query;
+      if (cancelled || siblingsErr || !Array.isArray(siblings) || siblings.length === 0) return;
+
+      const targetInterval = String(anchorRule?.interval || 1);
+      const targetUntil = String(anchorRule?.until || '');
+      const anchorChildIds = normalizedChildIdsKey(anchor.child_ids);
+      const anchorStartTime = hhmmUtcFromTs(anchor.start_ts);
+      const anchorDuration = durationMinutesFromTs(anchor.start_ts, anchor.end_ts);
+      const weekdayBuckets = [];
+      let totalCount = 0;
+      let everyRuleHasCount = true;
+      siblings.forEach((row) => {
+        let rule = null;
+        try {
+          rule = typeof row?.recurrence_rule === 'string'
+            ? JSON.parse(row.recurrence_rule)
+            : row?.recurrence_rule;
+        } catch (_) {
+          rule = null;
+        }
+        const freq = String(rule?.frequency || rule?.freq || '').toUpperCase();
+        if (freq !== 'WEEKLY') return;
+        if (String(rule?.interval || 1) !== targetInterval) return;
+        if (String(rule?.until || '') !== targetUntil) return;
+        if (String(row?.child_id || '') !== String(anchor.child_id || '')) return;
+        if (normalizedChildIdsKey(row?.child_ids) !== anchorChildIds) return;
+        if (hhmmUtcFromTs(row?.start_ts) !== anchorStartTime) return;
+        if (durationMinutesFromTs(row?.start_ts, row?.end_ts) !== anchorDuration) return;
+        if (rule?.byweekday != null) weekdayBuckets.push(rule.byweekday);
+        const rowStart = row?.start_ts ? new Date(row.start_ts) : null;
+        if (rowStart instanceof Date && !Number.isNaN(rowStart.getTime())) {
+          const weekdayFromStart = WEEKDAY_FROM_DATE[rowStart.getDay()];
+          if (weekdayFromStart) {
+            weekdayBuckets.push(weekdayFromStart);
+          }
+        }
+        const countNum = Number(rule?.count);
+        if (Number.isFinite(countNum) && countNum > 0) {
+          totalCount += countNum;
+        } else {
+          everyRuleHasCount = false;
+        }
+      });
+      const mergedWeekdays = normalizeByWeekday(weekdayBuckets);
+      if (!cancelled && mergedWeekdays.length > 1) {
+        setRecurrenceWeekdays(mergedWeekdays);
+      }
+      if (!cancelled && everyRuleHasCount && totalCount > 0) {
+        setRecurrenceEndType('after');
+        setRecurrenceEndAfter(totalCount);
+        setRecurrenceEndAfterText(String(totalCount));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    event?.id,
+    event?.parent_event_id,
+    event?.recurrence_id,
+    familyId,
+    isRecurring,
+    recurrenceType,
+    recurrenceWeekdays,
+  ]);
 
   useEffect(() => {
     if (!isRecurring || placement !== 'calendar' || recurrenceType !== 'weekly') return;
@@ -3101,24 +3327,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     ? resolvedSubjectLabels.join(', ')
     : ((event?.generated_by === 'plan_year' && event?.title) || subjectName || null);
 
-  /** Academic year row for this event's plan — local list first, then shell preload (stable Add to plan? / banners). */
-  const resolvedAcademicYearRow = useMemo(() => {
-    if (!academicYearId) return null;
-    const fromState = academicYears.find((a) => a.id === academicYearId);
-    if (fromState) return fromState;
-    if (Array.isArray(preloadedAcademicYears)) {
-      return preloadedAcademicYears.find((a) => a.id === academicYearId) || null;
-    }
-    return null;
-  }, [academicYearId, academicYears, preloadedAcademicYears]);
-
-  const recurrenceSavedTermEnd = useMemo(() => {
-    const ymd = String(resolvedAcademicYearRow?.end_date || '').slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
-    const parsed = new Date(`${ymd}T00:00:00`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }, [resolvedAcademicYearRow]);
-
   /** Chips for Add to plan?: merge fetched rows + shell preload without dropping merged ids. */
   const academicYearsForPlanChips = useMemo(() => {
     const byId = new Map();
@@ -3166,6 +3374,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             }
           : {
               seriesMasterEventId: resolveSeriesMasterEventId(event, cleanId),
+              seriesLinkIds: resolveSeriesLinkIds(event, cleanId),
             };
         window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: idForHooks, ...seriesDeleteDetail } }));
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
@@ -4038,9 +4247,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     try {
       const isBacklog = event.is_backlog === true || event.data?.is_backlog === true;
       
-      // Build recurrence rule if recurring
+      // Build recurrence rule if recurring. In single-occurrence scope, keep existing series rule untouched.
       let recurrenceRule = null;
-      if (isRecurring && placement === 'calendar') {
+      if (isSingleSeriesOccurrenceEdit) {
+        if (event?.recurrence_rule == null) {
+          recurrenceRule = null;
+        } else {
+          recurrenceRule =
+            typeof event.recurrence_rule === 'string'
+              ? event.recurrence_rule
+              : JSON.stringify(event.recurrence_rule);
+        }
+      } else if (isRecurring && placement === 'calendar') {
         const interval = recurrenceInterval || 1;
         const rule = {
           frequency: recurrenceType.toUpperCase(),
@@ -4176,6 +4394,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       // Using empty array [] instead of null ensures Supabase processes the update
       cleanUpdates.child_ids = newChildIds;
       cleanUpdates.child_id = assigneeIds.length > 0 ? assigneeIds[0] : null;
+      const targetEventId = cleanPlannerEventId(String(event.id));
+      const seriesLinkIds = isSeriesEditScope
+        ? resolveSeriesLinkIds(event, targetEventId)
+        : [];
+      const seriesSharedUpdates = isSeriesEditScope
+        ? Object.fromEntries(
+            Object.entries(cleanUpdates).filter(([key]) => key !== 'start_ts' && key !== 'end_ts')
+          )
+        : null;
 
       // Plan events are real events; attach/detach from plan via "Count as instructional time" and plan attachment.
       // No placeholder flip — preserve academic_year_id, generated_by, source_block_id for plan linkage.
@@ -4195,13 +4422,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         originalUpdates: updates,
         cleanUpdatesChildIds: cleanUpdates.child_ids,
         cleanUpdatesChildId: cleanUpdates.child_id,
-        childIdsChanged
+        childIdsChanged,
+        isSeriesEditScope,
       });
       
       let { error, data } = await supabase
         .from('events')
         .update(cleanUpdates)
-        .eq('id', cleanPlannerEventId(String(event.id)))
+        .eq('id', targetEventId)
         .select();
       
       // Log the response from the database
@@ -4470,6 +4698,38 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           JSON.stringify(newChildIds) === '[]'
       });
 
+      if (
+        isSeriesEditScope &&
+        seriesSharedUpdates &&
+        Object.keys(seriesSharedUpdates).length > 0 &&
+        seriesLinkIds.length > 0
+      ) {
+        const filterClauses = seriesLinkIds.flatMap((id) => [
+          `id.eq.${id}`,
+          `parent_event_id.eq.${id}`,
+          `recurrence_id.eq.${id}`,
+        ]);
+        try {
+          let seriesQuery = supabase
+            .from('events')
+            .update(seriesSharedUpdates)
+            .or(filterClauses.join(','))
+            .is('deleted_at', null);
+          const scopedFamilyId = String(familyId || event?.family_id || '').trim();
+          if (scopedFamilyId) {
+            seriesQuery = seriesQuery.eq('family_id', scopedFamilyId);
+          }
+          const { error: seriesUpdateError } = await seriesQuery;
+          if (seriesUpdateError) {
+            console.warn('[EventDetails] Series update partially failed:', seriesUpdateError);
+            toast.push('Updated this event, but could not apply all series changes.', 'error');
+          }
+        } catch (seriesErr) {
+          console.warn('[EventDetails] Series update threw:', seriesErr);
+          toast.push('Updated this event, but could not apply all series changes.', 'error');
+        }
+      }
+
       // Attach standards if any were selected
       if (attachedStandards.length > 0) {
         try {
@@ -4609,7 +4869,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       
       // Show toast for regular edits (not backlog moves, which already showed toast above)
       if (!isBacklog || !startDateObj) {
-        toast.push('Event updated', 'success');
+        if (isSeriesEditScope) {
+          toast.push('Series updated', 'success');
+        } else {
+          toast.push('Event updated', 'success');
+        }
       }
 
       if (typeof window !== 'undefined') {
@@ -5389,7 +5653,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         <View style={styles.headerContent}>
           <View style={styles.headerTextWrap}>
             <View style={styles.headerBadge}>
-              <Text style={styles.headerBadgeText}>EDIT EVENT</Text>
+              <Text style={styles.headerBadgeText}>{isSeriesEditScope ? 'EDIT SERIES' : 'EDIT EVENT'}</Text>
             </View>
             <Text style={styles.headerTitleLarge}>
               {draftTitle?.trim() || event?.title || 'Edit Event'}
@@ -5407,8 +5671,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         </View>
       </View>
       <View style={styles.headerDivider} />
-      <SafeFieldRow style={[styles.fieldRow, { marginTop: 12, marginBottom: 8 }]}>
-        <View style={styles.field}>
+      <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull, { marginTop: 12, marginBottom: 8 }]}>
+        <View style={[styles.field, styles.fieldStretch]}>
           <Text style={styles.fieldLabel}>
             Name <Text style={{ color: '#ef4444' }}>*</Text>
           </Text>
@@ -5424,6 +5688,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             }}
             style={[
               styles.titleInputHero,
+              styles.inputFullWidth,
               validationErrors.title && styles.inputError,
             ]}
             autoFocus
@@ -5793,31 +6058,63 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 <View style={[styles.inlineSwitchField, styles.inlineSwitchFieldStack]}>
                   <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>Repeat</Text>
                   <View style={styles.inlineSwitchControlWrap}>
-                    <Switch
-                      value={isRecurring}
-                      onValueChange={(value) => {
-                        setIsRecurring(value);
-                        if (value) {
-                          if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
-                            if (isClassDayEventType) {
-                              setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
-                            } else {
-                              const fallback = resolveWeekdayCodeFromEventOrDueDate(event, dueDate);
-                              setRecurrenceWeekdays([fallback]);
+                    {isSingleSeriesOccurrenceEdit ? (
+                      <View
+                        style={{
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 999,
+                          borderWidth: 1,
+                          borderColor: '#DBEAFE',
+                          backgroundColor: '#EFF6FF',
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            fontWeight: '700',
+                            color: '#1E40AF',
+                            ...(Platform.OS === 'web' && {
+                              fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                            }),
+                          }}
+                        >
+                          Series-managed
+                        </Text>
+                      </View>
+                    ) : (
+                      <Switch
+                        value={isRecurring}
+                        onValueChange={(value) => {
+                          setIsRecurring(value);
+                          if (value) {
+                            if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
+                              if (isClassDayEventType) {
+                                setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
+                              } else {
+                                const fallback = resolveWeekdayCodeFromEventOrDueDate(event, dueDate);
+                                setRecurrenceWeekdays([fallback]);
+                              }
                             }
+                          } else if (validationErrors.recurrenceEnd) {
+                            setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
                           }
-                        } else if (validationErrors.recurrenceEnd) {
-                          setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
-                        }
-                      }}
-                      trackColor={{ false: BORDER, true: '#AECBFA' }}
-                      thumbColor={isRecurring ? '#45A29E' : '#f9fafb'}
-                    />
+                        }}
+                        trackColor={{ false: BORDER, true: '#AECBFA' }}
+                        thumbColor={isRecurring ? '#45A29E' : '#f9fafb'}
+                      />
+                    )}
                   </View>
                 </View>
               </View>
             </View>
-            {isRecurring && (
+            {isSingleSeriesOccurrenceEdit ? (
+              <View style={[styles.recurringSectionContent, { paddingTop: 8 }]}>
+                <Text style={styles.fieldHelpText}>
+                  Edit in series to make changes to repeating series.
+                </Text>
+              </View>
+            ) : isRecurring && (
               <View style={styles.recurringSectionContent}>
                 <View style={[styles.repeatGrid, useCompactRepeatGrid && styles.repeatGridCompact]}>
                   <View style={[styles.repeatGroup, styles.repeatGroupPattern]}>
@@ -6462,9 +6759,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               {!parentLinkedReady ? (
                 <Text style={styles.fieldHelpText}>Loading...</Text>
               ) : sendTrackingSummary.totalCount === 0 ? (
-                <View style={styles.workflowEmptyWrap}>
-                  <Text style={styles.fieldHelpText}>No students assigned to this event yet.</Text>
-                </View>
+                null
               ) : (
                 <View style={styles.workflowActivityWrap}>
                   {queueSendToStudentAfterSave ? (

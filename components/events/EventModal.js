@@ -16,6 +16,7 @@ export default function EventModal({
   familyId,
   children = [],
   schedulingMode = false,
+  editScope = 'single',
   preloadedAcademicYears = null,
   /** Subjects loaded with WebLayout (id, name, child_id) — seeds EventDetails before refetch */
   preloadedSubjects = null,
@@ -411,6 +412,7 @@ export default function EventModal({
                   onEditingChange={handleEditingChange}
                   onClose={onClose}
                   initialSchedulingMode={schedulingMode}
+                  editScope={editScope}
                   readOnly={isHolidayEvent(eventId, event) || viewerRole === 'tutor' || denyFamilyEventEdit}
                   viewerRole={viewerRole}
                   preloadedAcademicYears={preloadedAcademicYears}

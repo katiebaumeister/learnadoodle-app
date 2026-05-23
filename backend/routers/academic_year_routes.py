@@ -339,6 +339,27 @@ class FixTargetGapHistoryOutput(BaseModel):
     rows: List[FixTargetGapHistoryItem] = []
 
 
+class FixTargetGapUndoInput(BaseModel):
+    academic_year_id: str
+    scope: str = "overall"  # overall | per_subject
+    subject_id: Optional[str] = None
+    history_id: Optional[str] = None
+    created_event_ids: Optional[List[str]] = None
+    removed_event_ids: Optional[List[str]] = None
+
+
+class FixTargetGapUndoOutput(BaseModel):
+    success: bool = True
+    academic_year_id: str
+    scope: str
+    subject_id: Optional[str] = None
+    restored_count: int = 0
+    removed_count: int = 0
+    restored_event_ids: List[str] = []
+    removed_event_ids: List[str] = []
+    message: Optional[str] = None
+
+
 class AcademicYearPlanSummary(BaseModel):
     """Embedded plan for edit modal: blocks + constraint targets."""
     start_date: str
@@ -3501,6 +3522,10 @@ async def fix_target_gap(
 
             selected_assignments.sort(key=lambda slot: (slot["date"], slot["subject_id"], slot["start_time"]))
             selected_dates = [slot["date"] for slot in selected_assignments]
+            max_assignments_allowed = max(0, int(before_gap_days))
+            if len(selected_assignments) > max_assignments_allowed:
+                selected_assignments = selected_assignments[:max_assignments_allowed]
+                selected_dates = [slot["date"] for slot in selected_assignments]
             assigned_count_before_revalidation = len(selected_assignments)
             preinsert_conflict_failures: List[Dict[str, Any]] = []
             if selected_assignments and not body.dry_run:
@@ -3660,6 +3685,15 @@ async def fix_target_gap(
                     "child_id": (child_ids[0] if child_ids else None),
                     "child_ids": child_ids,
                 })
+
+            # Guardrail: never insert more assignments than the currently requested gap.
+            # This keeps a single Fix Gap execution deterministic even if upstream
+            # selection/fallback logic produces extra candidates.
+            if len(created_rows) > max_assignments_allowed:
+                created_rows = created_rows[:max_assignments_allowed]
+                selected_assignments = selected_assignments[:max_assignments_allowed]
+                selected_dates = [slot["date"] for slot in selected_assignments]
+                assigned_count_before_revalidation = len(selected_assignments)
 
             duplicate_suppressed_failures: List[Dict[str, Any]] = []
             if created_rows and not body.dry_run:
@@ -5142,23 +5176,172 @@ async def get_fix_target_gap_history(
     if str(year_row.get("family_id")) != str(family_id):
         raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
 
-    history_resp = (
-        supabase.table("academic_year_fix_gap_history")
-        .select(
-            "id, created_at, scope, subject_id, subject_ids, target_kind, target_value, "
-            "before_projected_days, after_projected_days, before_gap_days, after_gap_days, "
-            "before_projected_hours, after_projected_hours, before_gap_hours, after_gap_hours, "
-            "requested_gap, assigned_count, successful_insert_count, failed_insert_count, "
-            "created_events, removed_events, assignment_slots, created_event_ids, removed_event_ids, "
-            "message, created_by_user_id"
+    try:
+        history_resp = (
+            supabase.table("academic_year_fix_gap_history")
+            .select(
+                "id, created_at, scope, subject_id, subject_ids, target_kind, target_value, "
+                "before_projected_days, after_projected_days, before_gap_days, after_gap_days, "
+                "before_projected_hours, after_projected_hours, before_gap_hours, after_gap_hours, "
+                "requested_gap, assigned_count, successful_insert_count, failed_insert_count, "
+                "created_events, removed_events, assignment_slots, created_event_ids, removed_event_ids, "
+                "message, created_by_user_id"
+            )
+            .eq("academic_year_id", academic_year_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
         )
-        .eq("academic_year_id", academic_year_id)
-        .order("created_at", desc=True)
-        .limit(limit)
+        rows = list(history_resp.data or [])
+    except Exception as history_error:
+        # Non-fatal: local/dev DB may not have this optional history table yet.
+        error_text = str(history_error or "").lower()
+        if "academic_year_fix_gap_history" in error_text and ("does not exist" in error_text or "42p01" in error_text):
+            rows = []
+        else:
+            raise
+    return {"rows": rows}
+
+
+@router.post("/fix_target_gap/undo", response_model=FixTargetGapUndoOutput)
+async def undo_fix_target_gap(
+    body: FixTargetGapUndoInput,
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter),
+):
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id:
+        raise HTTPException(status_code=403, detail="Forbidden: Family access missing")
+
+    scope = str(body.scope or "overall").strip().lower()
+    if scope not in {"overall", "per_subject"}:
+        raise HTTPException(status_code=400, detail="scope must be 'overall' or 'per_subject'")
+    subject_id = str(body.subject_id or "").strip() or None
+    if scope == "per_subject" and not subject_id:
+        raise HTTPException(status_code=400, detail="subject_id is required for per_subject scope")
+
+    supabase = get_admin_client()
+    year_resp = (
+        supabase.table("academic_years")
+        .select("id, family_id")
+        .eq("id", body.academic_year_id)
+        .limit(1)
         .execute()
     )
-    rows = list(history_resp.data or [])
-    return {"rows": rows}
+    if not year_resp.data:
+        raise HTTPException(status_code=404, detail="Academic year not found.")
+    year_row = year_resp.data[0]
+    if str(year_row.get("family_id")) != str(family_id):
+        raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
+
+    def _normalize_id_list(raw_values: Optional[List[str]]) -> List[str]:
+        values = []
+        for raw in (raw_values or []):
+            value = str(raw or "").strip()
+            if value:
+                values.append(value)
+        return list(dict.fromkeys(values))
+
+    created_event_ids = _normalize_id_list(body.created_event_ids)
+    removed_event_ids = _normalize_id_list(body.removed_event_ids)
+
+    history_id = str(body.history_id or "").strip() or None
+    if history_id:
+        try:
+            history_resp = (
+                supabase.table("academic_year_fix_gap_history")
+                .select("id, family_id, academic_year_id, scope, subject_id, created_event_ids, removed_event_ids")
+                .eq("id", history_id)
+                .limit(1)
+                .execute()
+            )
+            history_row = (history_resp.data or [None])[0]
+            if not history_row:
+                raise HTTPException(status_code=404, detail="Fix gap history entry not found.")
+            if str(history_row.get("family_id") or "") != str(family_id):
+                raise HTTPException(status_code=403, detail="Forbidden: Fix gap history family mismatch")
+            if str(history_row.get("academic_year_id") or "") != str(body.academic_year_id):
+                raise HTTPException(status_code=400, detail="Fix gap history does not belong to this academic year.")
+            if str(history_row.get("scope") or "").strip().lower() != scope:
+                raise HTTPException(status_code=400, detail="Fix gap history scope mismatch.")
+            history_subject_id = str(history_row.get("subject_id") or "").strip() or None
+            if scope == "per_subject" and subject_id and history_subject_id and history_subject_id != subject_id:
+                raise HTTPException(status_code=400, detail="Fix gap history subject mismatch.")
+
+            if not created_event_ids:
+                raw_created = history_row.get("created_event_ids")
+                created_event_ids = _normalize_id_list(raw_created if isinstance(raw_created, list) else [])
+            if not removed_event_ids:
+                raw_removed = history_row.get("removed_event_ids")
+                removed_event_ids = _normalize_id_list(raw_removed if isinstance(raw_removed, list) else [])
+        except HTTPException:
+            raise
+        except Exception as history_error:
+            # Allow explicit-id undo even when optional history table is missing in local/dev.
+            err_text = str(history_error or "").lower()
+            is_missing_table = "academic_year_fix_gap_history" in err_text and ("does not exist" in err_text or "42p01" in err_text)
+            if (not is_missing_table) or (not created_event_ids and not removed_event_ids):
+                raise
+
+    if not created_event_ids and not removed_event_ids:
+        raise HTTPException(status_code=400, detail="No created_event_ids or removed_event_ids available to undo.")
+
+    removed_now_ids: List[str] = []
+    restored_now_ids: List[str] = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+    user_id = str(user.get("id") or "").strip() or None
+
+    if created_event_ids:
+        created_rows_resp = (
+            supabase.table("events")
+            .select("id, deleted_at")
+            .eq("family_id", family_id)
+            .eq("academic_year_id", body.academic_year_id)
+            .in_("id", created_event_ids)
+            .execute()
+        )
+        created_rows = list(created_rows_resp.data or [])
+        ids_to_delete = [str(row.get("id") or "").strip() for row in created_rows if str(row.get("id") or "").strip() and not row.get("deleted_at")]
+        if ids_to_delete:
+            payload = {"deleted_at": now_iso}
+            if user_id:
+                payload["updated_by"] = user_id
+            supabase.table("events").update(payload).in_("id", ids_to_delete).eq("family_id", family_id).execute()
+            removed_now_ids = ids_to_delete
+
+    if removed_event_ids:
+        removed_rows_resp = (
+            supabase.table("events")
+            .select("id, deleted_at")
+            .eq("family_id", family_id)
+            .eq("academic_year_id", body.academic_year_id)
+            .in_("id", removed_event_ids)
+            .execute()
+        )
+        removed_rows = list(removed_rows_resp.data or [])
+        ids_to_restore = [str(row.get("id") or "").strip() for row in removed_rows if str(row.get("id") or "").strip() and row.get("deleted_at")]
+        if ids_to_restore:
+            payload = {"deleted_at": None}
+            if user_id:
+                payload["updated_by"] = user_id
+            supabase.table("events").update(payload).in_("id", ids_to_restore).eq("family_id", family_id).execute()
+            restored_now_ids = ids_to_restore
+
+    return FixTargetGapUndoOutput(
+        success=True,
+        academic_year_id=body.academic_year_id,
+        scope=scope,
+        subject_id=subject_id,
+        restored_count=len(restored_now_ids),
+        removed_count=len(removed_now_ids),
+        restored_event_ids=restored_now_ids,
+        removed_event_ids=removed_now_ids,
+        message=(
+            f"Undo applied. Restored {len(restored_now_ids)} and removed {len(removed_now_ids)} event(s)."
+            if (restored_now_ids or removed_now_ids)
+            else "Undo completed. No matching events needed changes."
+        ),
+    )
 
 
 async def sync_global_holidays_internal(

@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { Check, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Upload, X } from 'lucide-react';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
-import { applyToCalendar, fixTargetGap, getAcademicYear, getFixTargetGapHistory, getPlanHealth } from '../../lib/services/academicYearClient';
+import { applyToCalendar, fixTargetGap, getAcademicYear, getFixTargetGapHistory, getPlanHealth, undoFixTargetGap } from '../../lib/services/academicYearClient';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import { supabase } from '../../lib/supabase';
 import { getAcademicYearExclusions, getFamilyPlannerSettings, saveFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
@@ -48,7 +48,7 @@ const overviewCacheByFamily = new Map();
 const overviewInflightByFamily = new Map();
 const OVERVIEW_SESSION_PREFIX = 'ld_subjects_schedule_overview_v1::';
 const SCHEDULE_SUPPLEMENT_TTL_MS = 10 * 60 * 1000;
-const SCHEDULE_SUPPLEMENT_SCHEMA_VERSION = 3;
+const SCHEDULE_SUPPLEMENT_SCHEMA_VERSION = 4;
 const scheduleSupplementCacheByKey = new Map();
 const scheduleSupplementInflightByKey = new Map();
 const SCHEDULE_SUPPLEMENT_SESSION_PREFIX = 'ld_subjects_schedule_supplement_v2::';
@@ -1608,6 +1608,7 @@ export default function SubjectsPlanBuilder({
   const fixGapCooldownUntilByTargetRef = useRef(new Map());
   const [pendingSuggestionToApply, setPendingSuggestionToApply] = useState(null);
   const [fixingGapRowId, setFixingGapRowId] = useState(null);
+  const [undoingFixGapRowId, setUndoingFixGapRowId] = useState(null);
   const [fixGapActionRecommendationsByRowId, setFixGapActionRecommendationsByRowId] = useState({});
   const [fixGapHistoryByRowId, setFixGapHistoryByRowId] = useState({});
   const fixGapFailureToastIdsRef = useRef([]);
@@ -2040,8 +2041,9 @@ export default function SubjectsPlanBuilder({
         return;
       }
       const { cacheMatchesSubjects, hasCachedEvents } = hydrateFromCache();
-      const shouldForceEmptyCacheRefresh = cacheMatchesSubjects && !hasCachedEvents && subjectIds.length > 0;
-      const mustForce = overviewReloadKey > 0 || eventsRefreshKey > 0 || !cacheMatchesSubjects || shouldForceEmptyCacheRefresh;
+      // Always revalidate against the backend after cache hydration so Year Targets
+      // cannot stay stale after out-of-band planner deletes/edits.
+      const mustForce = true;
       try {
         await sync({ force: mustForce });
         if (!cancelled) {
@@ -2231,6 +2233,18 @@ export default function SubjectsPlanBuilder({
     }
     loadFixGapHistory(fixGapHistoryAcademicYearId);
   }, [fixGapHistoryAcademicYearId, loadFixGapHistory]);
+
+  const applyLocalFixGapHistoryEntry = useCallback((historyKey, entry) => {
+    const key = String(historyKey || '').trim();
+    if (!key || !entry || typeof entry !== 'object') return;
+    setFixGapHistoryByRowId((prev) => {
+      const existing = Array.isArray(prev?.[key]) ? prev[key] : [];
+      return {
+        ...(prev || {}),
+        [key]: [entry, ...existing].slice(0, 40),
+      };
+    });
+  }, []);
 
   const buildDayRowsFromBlocks = useCallback((blocksLite = []) => (
     WEEKDAY_NUMBERS.map((dayNum) => {
@@ -4397,6 +4411,11 @@ export default function SubjectsPlanBuilder({
     if (gapDays < 0) {
       const overByDays = Math.max(1, Math.ceil(Math.abs(gapDays)));
       const allRowEvents = Array.isArray(sourceRow?.eventItems) ? sourceRow.eventItems : [];
+      const allRowEventsById = new Map(
+        allRowEvents
+          .map((eventItem) => [String(eventItem?.id || '').trim(), eventItem])
+          .filter(([eventId]) => Boolean(eventId))
+      );
       const todayYmd = new Date().toISOString().slice(0, 10);
       const upcomingDayEventMap = new Map();
       allRowEvents.forEach((eventItem) => {
@@ -4451,11 +4470,13 @@ export default function SubjectsPlanBuilder({
       }
       let deletedCount = 0;
       let failedCount = 0;
+      const deletedEventIds = [];
       for (const eventId of selectedRemovalEventIds) {
         try {
           const { error } = await deletePlannerEvent(eventId, familyId);
           if (error) throw error;
           deletedCount += 1;
+          deletedEventIds.push(String(eventId || '').trim());
         } catch (_) {
           failedCount += 1;
         }
@@ -4493,6 +4514,38 @@ export default function SubjectsPlanBuilder({
       }
       setEventsRefreshKey((prev) => prev + 1);
       setOverviewReloadKey((prev) => prev + 1);
+      if (deletedCount > 0) {
+        const historyKey = scope === 'overall' ? 'overall' : rowId;
+        const removedSlots = selectedRemovalEventIds
+          .map((eventId) => {
+            const eventItem = allRowEventsById.get(String(eventId || '').trim()) || {};
+            const dayKey = String(eventItem?.start_ts || eventItem?.startTs || '').slice(0, 10);
+            const startHm = String(eventItem?.start_ts || eventItem?.startTs || '').slice(11, 16);
+            const endHm = String(eventItem?.end_ts || eventItem?.endTs || '').slice(11, 16);
+            return {
+              date: /^\d{4}-\d{2}-\d{2}$/.test(dayKey) ? dayKey : '',
+              start_time: /^\d{2}:\d{2}$/.test(startHm) ? startHm : '09:00',
+              end_time: /^\d{2}:\d{2}$/.test(endHm) ? endHm : '10:00',
+              subject_id: String(eventItem?.subject_id || rowId || '').trim(),
+              subject_name: String(eventItem?.subject_name || rowName || '').trim(),
+            };
+          })
+          .filter((slot) => /^\d{4}-\d{2}-\d{2}$/.test(String(slot?.date || '')));
+        applyLocalFixGapHistoryEntry(historyKey, {
+          id: `local-remove-${Date.now()}`,
+          created_at: new Date().toISOString(),
+          scope,
+          subject_id: scope === 'per_subject' ? String(rowId || '').trim() : null,
+          assignment_slots: removedSlots,
+          created_events: 0,
+          removed_events: deletedCount,
+          created_event_ids: [],
+          removed_event_ids: deletedEventIds,
+          assigned_count: deletedCount,
+          successful_insert_count: deletedCount,
+          failed_insert_count: Math.max(0, failedCount),
+        });
+      }
       if (deletedCount > 0 && failedCount === 0) {
         toast?.push?.(`Removed ${selectedRemovalDayKeys.length} learning day${selectedRemovalDayKeys.length === 1 ? '' : 's'}.`, 'success');
       } else if (deletedCount > 0) {
@@ -4899,6 +4952,55 @@ export default function SubjectsPlanBuilder({
         ]);
       }
       await loadFixGapHistory(academicYearId);
+      {
+        // Fallback for local/dev when history table is missing:
+        // keep the latest run visible in-session in the Fix gap container.
+        const historyKey = scope === 'overall' ? 'overall' : rowId;
+        const subjectNameById = new Map(
+          (yearTargetsDisplayRows || [])
+            .map((r) => [String(r?.id || '').trim(), String(r?.name || '').trim()])
+            .filter(([sid]) => Boolean(sid))
+        );
+        const rawSlots = Array.isArray(fixResult?.selectedAssignments)
+          ? fixResult.selectedAssignments
+          : (Array.isArray(fixResult?.debugSelectedSlots) ? fixResult.debugSelectedSlots : []);
+        const normalizedSlots = rawSlots
+          .map((slot) => {
+            const slotSubjectId = String(slot?.subject_id || '').trim();
+            const fallbackName = scope === 'per_subject'
+              ? String(rowName || '').trim()
+              : (subjectNameById.get(slotSubjectId) || '');
+            return {
+              date: String(slot?.date || '').slice(0, 10),
+              start_time: String(slot?.start_time || '').slice(0, 5) || '09:00',
+              end_time: String(slot?.end_time || '').slice(0, 5) || '10:00',
+              subject_id: slotSubjectId,
+              subject_name: String(slot?.subject_name || '').trim() || fallbackName,
+            };
+          })
+          .filter((slot) => /^\d{4}-\d{2}-\d{2}$/.test(slot.date));
+        if (historyKey && normalizedSlots.length > 0) {
+          const localHistoryEntry = {
+            id: `local-${Date.now()}`,
+            created_at: new Date().toISOString(),
+            scope,
+            subject_id: scope === 'per_subject' ? String(rowId || '').trim() : null,
+            assignment_slots: normalizedSlots,
+            created_events: Math.max(
+              0,
+              Number(fixResult?.createdEvents ?? fixResult?.successfulInsertCount ?? fixResult?.insertedCount ?? normalizedSlots.length)
+            ),
+            removed_events: Math.max(0, Number(fixResult?.removedEvents ?? 0)),
+            created_event_ids: Array.isArray(fixResult?.createdEventIds) ? fixResult.createdEventIds : [],
+            removed_event_ids: Array.isArray(fixResult?.removedEventIds) ? fixResult.removedEventIds : [],
+            requested_gap: Number(fixResult?.requestedGap ?? 0) || 0,
+            assigned_count: Number(fixResult?.assignedCount ?? normalizedSlots.length) || normalizedSlots.length,
+            successful_insert_count: Number(fixResult?.successfulInsertCount ?? fixResult?.insertedCount ?? normalizedSlots.length) || normalizedSlots.length,
+            failed_insert_count: Number(fixResult?.failedInsertCount ?? 0) || 0,
+          };
+          applyLocalFixGapHistoryEntry(historyKey, localHistoryEntry);
+        }
+      }
       setEventsRefreshKey((prev) => prev + 1);
       setOverviewReloadKey((prev) => prev + 1);
 
@@ -4982,6 +5084,127 @@ export default function SubjectsPlanBuilder({
     confirmFixGapAction,
     yearTargetsDisplayRows,
     loadFixGapHistory,
+    applyLocalFixGapHistoryEntry,
+  ]);
+
+  const undoLatestFixGapAction = useCallback(async (row) => {
+    const rowId = String(row?.id || '').trim();
+    if (!rowId) return;
+    const historyKey = rowId === 'overall' || row?.isOverall ? 'overall' : rowId;
+    const latestEntry = Array.isArray(fixGapHistoryByRowId?.[historyKey]) ? fixGapHistoryByRowId[historyKey][0] : null;
+    if (!latestEntry) {
+      toast?.push?.('No recent Fix gap action to undo.', 'info');
+      return;
+    }
+    const academicYearId = String(
+      fixGapHistoryAcademicYearId
+      || activeScheduleCore?.row?.id
+      || viewedScheduleCore?.row?.id
+      || ''
+    ).trim();
+    if (!academicYearId) {
+      toast?.push?.('Missing academic year for undo.', 'error');
+      return;
+    }
+    const scope = String(latestEntry?.scope || (historyKey === 'overall' ? 'overall' : 'per_subject')).trim().toLowerCase();
+    const createdEventIds = Array.isArray(latestEntry?.created_event_ids)
+      ? latestEntry.created_event_ids.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+    const removedEventIds = Array.isArray(latestEntry?.removed_event_ids)
+      ? latestEntry.removed_event_ids.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+    if (createdEventIds.length === 0 && removedEventIds.length === 0) {
+      toast?.push?.('This Fix gap action cannot be undone (missing event ids).', 'info');
+      return;
+    }
+    setUndoingFixGapRowId(rowId);
+    try {
+      const payload = {
+        academic_year_id: academicYearId,
+        scope,
+        ...(scope === 'per_subject' ? { subject_id: rowId } : {}),
+        ...(String(latestEntry?.id || '').trim() && !String(latestEntry?.id || '').startsWith('local-')
+          ? { history_id: String(latestEntry.id).trim() }
+          : {}),
+        created_event_ids: createdEventIds,
+        removed_event_ids: removedEventIds,
+      };
+      const { data, error } = await undoFixTargetGap(payload);
+      if (error) throw error;
+
+      const schoolYearLabel = String(displaySchoolYear?.label || '').trim();
+      const refreshRangeStartYmd = String(
+        row?.rangeStartYmd || familyPlannerSettings?.default_year_start_date || ''
+      ).slice(0, 10) || null;
+      const refreshRangeEndYmd = String(
+        row?.rangeEndYmd || familyPlannerSettings?.default_year_end_date || ''
+      ).slice(0, 10) || null;
+      const subjectIds = (baseSubjects || []).map((s) => String(s?.id || '').trim()).filter(Boolean);
+      scheduleSupplementRangeOverrideRef.current = {
+        schoolYearLabel: schoolYearLabel || null,
+        rangeStartYmd: refreshRangeStartYmd,
+        rangeEndYmd: refreshRangeEndYmd,
+      };
+      invalidateScheduleSupplementCache(familyId, schoolYearLabel);
+      const refreshed = await fetchAndCacheScheduleSupplement({
+        familyId,
+        schoolYearLabel,
+        startYear: displaySchoolYear?.start_year,
+        endYear: displaySchoolYear?.end_year,
+        academicYearId,
+        rangeStartYmd: refreshRangeStartYmd,
+        rangeEndYmd: refreshRangeEndYmd,
+        subjectIds,
+        force: true,
+      });
+      setFamilyPlannerSettings(refreshed.familyPlannerSettings || {});
+      setSubjectTargetSettingsById(refreshed.subjectTargetSettingsById || {});
+      setInstructionalEventsBySubject(refreshed.instructionalEventsBySubject || {});
+      setClassDayInstructionalEvents(Array.isArray(refreshed.classDayInstructionalEvents) ? refreshed.classDayInstructionalEvents : []);
+      setAttendedDayKeysBySubject(refreshed.attendedDayKeysBySubject || {});
+      setYearTargetProjectionBySubject(refreshed.yearTargetProjectionBySubject || {});
+      await loadFixGapHistory(academicYearId);
+      setFixGapHistoryByRowId((prev) => {
+        const existing = Array.isArray(prev?.[historyKey]) ? prev[historyKey] : [];
+        if (existing.length === 0) return prev || {};
+        return {
+          ...(prev || {}),
+          [historyKey]: existing.slice(1),
+        };
+      });
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+      }
+      setEventsRefreshKey((prev) => prev + 1);
+      setOverviewReloadKey((prev) => prev + 1);
+
+      const restoredCount = Number(data?.restored_count ?? 0) || 0;
+      const removedCount = Number(data?.removed_count ?? 0) || 0;
+      toast?.push?.(
+        `Undid last Fix gap action (${restoredCount} restored, ${removedCount} removed).`,
+        'success'
+      );
+    } catch (err) {
+      toast?.push?.(String(err?.message || 'Failed to undo Fix gap action.'), 'error');
+    } finally {
+      setUndoingFixGapRowId(null);
+    }
+  }, [
+    fixGapHistoryByRowId,
+    fixGapHistoryAcademicYearId,
+    activeScheduleCore?.row?.id,
+    viewedScheduleCore?.row?.id,
+    toast,
+    loadFixGapHistory,
+    displaySchoolYear?.label,
+    displaySchoolYear?.start_year,
+    displaySchoolYear?.end_year,
+    familyPlannerSettings?.default_year_start_date,
+    familyPlannerSettings?.default_year_end_date,
+    baseSubjects,
+    familyId,
   ]);
 
   const openPlannerView = () => {
@@ -6143,7 +6366,7 @@ export default function SubjectsPlanBuilder({
                 </View>
               );
             })}
-            {termSection.subjectPlans.length === 0 ? (
+            {!hasAnySubjectPlans ? (
               <View style={styles.yearTargetsSection}>
                 <View style={styles.yearTargetsSectionHeaderRow}>
                   <Text style={styles.termHeaderCompactTitle}>Year Targets</Text>
@@ -6818,6 +7041,9 @@ export default function SubjectsPlanBuilder({
                           ? fixGapHistoryByRowId[rowId]
                           : [];
                         const latestFixGapHistory = rowFixGapHistoryRuns[0] || null;
+                        const latestFixGapCreatedCount = Math.max(0, Number(latestFixGapHistory?.created_events ?? 0));
+                        const latestFixGapRemovedCount = Math.max(0, Number(latestFixGapHistory?.removed_events ?? 0));
+                        const latestFixGapActionVerb = latestFixGapRemovedCount > 0 ? 'Removed' : 'Added';
                         const latestFixGapHistorySlots = Array.isArray(latestFixGapHistory?.assignment_slots)
                           ? latestFixGapHistory.assignment_slots
                           : [];
@@ -6826,6 +7052,13 @@ export default function SubjectsPlanBuilder({
                           .map((slot) => formatFixGapHistorySlotLabel(slot))
                           .filter(Boolean);
                         const latestFixGapHistoryOverflow = Math.max(0, latestFixGapHistorySlots.length - latestFixGapHistorySlotLines.length);
+                        const latestFixGapCreatedIds = Array.isArray(latestFixGapHistory?.created_event_ids)
+                          ? latestFixGapHistory.created_event_ids
+                          : [];
+                        const latestFixGapRemovedIds = Array.isArray(latestFixGapHistory?.removed_event_ids)
+                          ? latestFixGapHistory.removed_event_ids
+                          : [];
+                        const canUndoLatestFixGap = latestFixGapCreatedIds.length > 0 || latestFixGapRemovedIds.length > 0;
                         const chevronAnim = showSuggestion ? getYearTargetChevronAnim(rowId) : null;
                         const suggestionAnim = showSuggestion ? getYearTargetSuggestionAnim(rowId) : null;
                         const chevronRotate = chevronAnim
@@ -6941,20 +7174,46 @@ export default function SubjectsPlanBuilder({
                                   <Text style={styles.yearTargetsSavedTargetButtonText}>Change saved target</Text>
                                 </TouchableOpacity>
                               </View>
-                              {latestFixGapHistory && latestFixGapHistorySlotLines.length > 0 ? (
+                              {latestFixGapHistory && (
+                                latestFixGapHistorySlotLines.length > 0
+                                || latestFixGapCreatedCount > 0
+                                || latestFixGapRemovedCount > 0
+                              ) ? (
                                 <View style={styles.yearTargetsFixGapHistoryContainer}>
                                   <Text style={styles.yearTargetsFixGapHistoryLine}>
                                     {`Fix gap history (${formatFixGapHistoryTimestamp(latestFixGapHistory?.created_at)}):`}
                                   </Text>
                                   {latestFixGapHistorySlotLines.map((line, idx) => (
                                     <Text key={`fix-gap-history-line-${rowId}-${idx}`} style={styles.yearTargetsFixGapHistoryLine}>
-                                      {`Added ${line}`}
+                                      {`${latestFixGapActionVerb} ${line}`}
                                     </Text>
                                   ))}
+                                  {(latestFixGapHistorySlots.length === 0 && (latestFixGapCreatedCount > 0 || latestFixGapRemovedCount > 0)) ? (
+                                    <Text style={styles.yearTargetsFixGapHistoryLine}>
+                                      {latestFixGapRemovedCount > 0
+                                        ? `Removed ${latestFixGapRemovedCount} event${latestFixGapRemovedCount === 1 ? '' : 's'}.`
+                                        : `Added ${latestFixGapCreatedCount} event${latestFixGapCreatedCount === 1 ? '' : 's'}.`}
+                                    </Text>
+                                  ) : null}
                                   {latestFixGapHistoryOverflow > 0 ? (
                                     <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                      {`...and ${latestFixGapHistoryOverflow} more added slot${latestFixGapHistoryOverflow === 1 ? '' : 's'}.`}
+                                      {`...and ${latestFixGapHistoryOverflow} more ${latestFixGapActionVerb.toLowerCase()} slot${latestFixGapHistoryOverflow === 1 ? '' : 's'}.`}
                                     </Text>
+                                  ) : null}
+                                  {canUndoLatestFixGap ? (
+                                    <TouchableOpacity
+                                      style={[
+                                        styles.yearTargetsUndoFixGapButton,
+                                        undoingFixGapRowId === rowId && styles.yearTargetsUndoFixGapButtonDisabled,
+                                      ]}
+                                      onPress={() => undoLatestFixGapAction(row)}
+                                      disabled={undoingFixGapRowId === rowId}
+                                      activeOpacity={0.85}
+                                    >
+                                      <Text style={styles.yearTargetsUndoFixGapButtonText}>
+                                        {undoingFixGapRowId === rowId ? 'Undoing...' : 'Undo last action'}
+                                      </Text>
+                                    </TouchableOpacity>
                                   ) : null}
                                 </View>
                               ) : null}
@@ -8648,6 +8907,27 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearTargetsUndoFixGapButton: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  yearTargetsUndoFixGapButtonDisabled: {
+    opacity: 0.6,
+  },
+  yearTargetsUndoFixGapButtonText: {
+    fontSize: 12,
+    color: '#1D4ED8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   yearTargetsPredictiveSuggestionButton: {
