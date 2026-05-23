@@ -246,6 +246,7 @@ export default function SubjectsPage({
   const [showPlanningPreferencesModal, setShowPlanningPreferencesModal] = useState(false);
   const [planningPreferencesSchoolYearLabel, setPlanningPreferencesSchoolYearLabel] = useState(null);
   const [planningPreferencesInitialDataByYear, setPlanningPreferencesInitialDataByYear] = useState({});
+  const [planningPreferencesSavedSinceOpen, setPlanningPreferencesSavedSinceOpen] = useState(false);
   const preloadPlanningPreferencesData = useCallback(async (schoolYearLabelInput) => {
     const schoolYearLabel = String(schoolYearLabelInput || '').trim();
     if (!familyId || !schoolYearLabel) return null;
@@ -279,9 +280,28 @@ export default function SubjectsPage({
   const openPlanningPreferencesModal = useCallback(async (schoolYearLabelInput) => {
     const targetYear = String(schoolYearLabelInput || '').trim() || selectedYearFilter || getCurrentSchoolYear();
     setPlanningPreferencesSchoolYearLabel(targetYear);
+    setPlanningPreferencesSavedSinceOpen(false);
     await preloadPlanningPreferencesData(targetYear);
     setShowPlanningPreferencesModal(true);
   }, [preloadPlanningPreferencesData, selectedYearFilter]);
+
+  const closePlanningPreferencesModal = useCallback(() => {
+    const closedYearLabel = String(planningPreferencesSchoolYearLabel || '').trim();
+    setShowPlanningPreferencesModal(false);
+    setPlanningPreferencesSchoolYearLabel(null);
+    if (planningPreferencesSavedSinceOpen) {
+      if (closedYearLabel) {
+        setPlanningPreferencesInitialDataByYear((prev) => {
+          if (!prev || !prev[closedYearLabel]) return prev;
+          const next = { ...prev };
+          delete next[closedYearLabel];
+          return next;
+        });
+      }
+      toast.push('Saved', 'success');
+      setPlanningPreferencesSavedSinceOpen(false);
+    }
+  }, [planningPreferencesSavedSinceOpen, planningPreferencesSchoolYearLabel, toast]);
 
   useEffect(() => {
     if (!familyId) return;
@@ -2027,18 +2047,12 @@ export default function SubjectsPage({
       visible={showPlanningPreferencesModal}
       transparent
       animationType="fade"
-      onRequestClose={() => {
-        setShowPlanningPreferencesModal(false);
-        setPlanningPreferencesSchoolYearLabel(null);
-      }}
+      onRequestClose={closePlanningPreferencesModal}
     >
       <TouchableOpacity
         style={styles.exportModalBackdrop}
         activeOpacity={1}
-        onPress={() => {
-          setShowPlanningPreferencesModal(false);
-          setPlanningPreferencesSchoolYearLabel(null);
-        }}
+        onPress={closePlanningPreferencesModal}
       >
         <TouchableOpacity style={styles.planningPreferencesModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
           <View style={styles.planningPreferencesBody}>
@@ -2047,11 +2061,9 @@ export default function SubjectsPage({
               initialData={planningPreferencesInitialDataByYear[String(planningPreferencesSchoolYearLabel || '').trim()] || null}
               embeddedInModal
               lockedSchoolYearLabel={planningPreferencesSchoolYearLabel || null}
-              onRequestClose={() => {
-                setShowPlanningPreferencesModal(false);
-                setPlanningPreferencesSchoolYearLabel(null);
-              }}
+              onRequestClose={closePlanningPreferencesModal}
               onSave={() => {
+                setPlanningPreferencesSavedSinceOpen(true);
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
                   window.dispatchEvent(new CustomEvent('refreshSubjects'));

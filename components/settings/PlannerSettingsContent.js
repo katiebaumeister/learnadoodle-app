@@ -792,9 +792,6 @@ export default function PlannerSettingsContent({
 
   const showSaved = () => {
     setSavedIndicator(true);
-    if (embeddedInModal) {
-      toast.push('Saved', 'success');
-    }
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => setSavedIndicator(false), 2000);
   };
@@ -1055,8 +1052,9 @@ export default function PlannerSettingsContent({
           attendance_tracking_mode: resolvedAttendanceMode,
           default_school_year: selectedSchoolYearLabel || null,
           default_constraint_mode: s.goalMode,
-          default_target_days: s.goalMode === 'days' ? normalizedTargetDays : null,
-          default_target_hours: s.goalMode === 'hours' ? normalizedTargetHours : null,
+          // Persist both values so switching between days/hours preserves prior input.
+          default_target_days: normalizedTargetDays,
+          default_target_hours: normalizedTargetHours,
           default_planned_hours_per_day: normalizedHoursPerDay,
           default_day_start_time: learningStartSql,
           default_day_end_time: learningEndSql,
@@ -1114,7 +1112,7 @@ export default function PlannerSettingsContent({
 
   const confirmAttendanceModeSwitch = useCallback(async ({ fromMode, toMode, isDataRich }) => {
     const title = 'Change attendance style?';
-    const baseMessage = 'Per subject tracks attendance separately for scheduled subjects.\n\nTotal class days tracks whether learning happened each day without breaking attendance into subjects.\n\nChanging this setting will update how schedules, attendance, and progress are shown for this school year.';
+    const baseMessage = 'Changing this setting will update how schedules, attendance, and progress are shown for this school year.';
     const dataRichWarning = isDataRich
       ? '\n\nThis year already has subject-based planning data. Existing subject schedules and progress may be recalculated after this change.'
       : '';
@@ -1556,6 +1554,7 @@ export default function PlannerSettingsContent({
           if (mode === 'hours') setTargetHours(normalizedHours != null ? String(normalizedHours) : '');
         }
         showSaved();
+        onSave?.();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
@@ -1566,7 +1565,7 @@ export default function PlannerSettingsContent({
         setSaving(false);
       }
     }, 400);
-  }, [toast, readOnly]);
+  }, [toast, readOnly, familyId, selectedSchoolYearLabel, onSave]);
 
   const sectionStyle = {
     paddingTop: 0,
@@ -2401,7 +2400,6 @@ export default function PlannerSettingsContent({
                     );
                     if (saveErr) toast?.push?.(saveErr?.message || 'Failed to save', 'error');
                     else {
-                      toast?.push?.('Saved', 'success');
                       if (typeof window !== 'undefined') {
                         window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
                         window.dispatchEvent(new CustomEvent('refreshSubjects'));
@@ -2464,7 +2462,7 @@ export default function PlannerSettingsContent({
                     style={{
                       width: 32,
                       height: 32,
-                      borderRadius: 6,
+                      borderRadius: 16,
                       backgroundColor: '#F8FAFC',
                       borderWidth: 1,
                       borderColor: '#E6EBF2',
@@ -2512,7 +2510,7 @@ export default function PlannerSettingsContent({
                         fontWeight: '600',
                         color: '#374151',
                         ...(Platform.OS === 'web' && {
-                          fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                         }),
                       }}
                     >
@@ -2553,7 +2551,7 @@ export default function PlannerSettingsContent({
                         fontWeight: '600',
                         color: '#FFFFFF',
                         ...(Platform.OS === 'web' && {
-                          fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                         }),
                       }}
                     >

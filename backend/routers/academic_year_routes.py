@@ -306,6 +306,39 @@ class FixTargetGapOutput(BaseModel):
     message: Optional[str] = None
 
 
+class FixTargetGapHistoryItem(BaseModel):
+    id: str
+    created_at: Optional[str] = None
+    scope: str
+    subject_id: Optional[str] = None
+    subject_ids: List[str] = []
+    target_kind: str
+    target_value: float
+    before_projected_days: Optional[int] = None
+    after_projected_days: Optional[int] = None
+    before_gap_days: Optional[int] = None
+    after_gap_days: Optional[int] = None
+    before_projected_hours: Optional[float] = None
+    after_projected_hours: Optional[float] = None
+    before_gap_hours: Optional[float] = None
+    after_gap_hours: Optional[float] = None
+    requested_gap: Optional[int] = None
+    assigned_count: Optional[int] = None
+    successful_insert_count: Optional[int] = None
+    failed_insert_count: Optional[int] = None
+    created_events: int = 0
+    removed_events: int = 0
+    assignment_slots: List[Dict[str, Any]] = []
+    created_event_ids: List[str] = []
+    removed_event_ids: List[str] = []
+    message: Optional[str] = None
+    created_by_user_id: Optional[str] = None
+
+
+class FixTargetGapHistoryOutput(BaseModel):
+    rows: List[FixTargetGapHistoryItem] = []
+
+
 class AcademicYearPlanSummary(BaseModel):
     """Embedded plan for edit modal: blocks + constraint targets."""
     start_date: str
@@ -2432,6 +2465,11 @@ async def fix_target_gap(
                 parts = [p.strip() for p in raw.replace(",", ";").split(";")]
                 return [p for p in parts if p]
 
+            def _parse_child_ids_any(raw_child_ids: Any) -> List[str]:
+                if isinstance(raw_child_ids, (list, tuple, set)):
+                    return [str(val).strip() for val in raw_child_ids if str(val).strip()]
+                return _parse_child_ids(raw_child_ids)
+
             def _day_from_ts(ts_raw: Any) -> Optional[str]:
                 day = str(ts_raw or "")[:10]
                 return day if len(day) == 10 else None
@@ -2471,8 +2509,10 @@ async def fix_target_gap(
                     selected.append(eligible_days[idx])
                 return selected
 
-            settings_scope = str(planner_settings_row.get("target_scope") or "").strip().lower()
-            effective_scope = settings_scope if settings_scope in {"overall", "per_subject"} else scope
+            # Honor the scope explicitly requested by the Fix Gap action.
+            # Do not override with family planner defaults, otherwise per-subject
+            # runs can accidentally preview/apply using overall scope data.
+            effective_scope = scope
             selected_subject_ids = (
                 [target_subject_id] if effective_scope == "per_subject" and target_subject_id
                 else (requested_subject_ids if requested_subject_ids else sorted(requested_subject_set))
@@ -2503,6 +2543,85 @@ async def fix_target_gap(
             selected_subject_ids = [sid for sid in selected_subject_ids if sid in subject_by_id]
             if not selected_subject_ids:
                 raise HTTPException(status_code=400, detail="Selected subjects are invalid for this family.")
+
+            def persist_fix_gap_history(
+                *,
+                assignment_slots: Optional[List[Dict[str, Any]]] = None,
+                created_event_ids: Optional[List[str]] = None,
+                removed_event_ids: Optional[List[str]] = None,
+                created_events: int = 0,
+                removed_events: int = 0,
+                assigned_count: Optional[int] = None,
+                successful_insert_count: Optional[int] = None,
+                failed_insert_count: Optional[int] = None,
+                before_projected_days_value: Optional[int] = None,
+                after_projected_days_value: Optional[int] = None,
+                before_gap_days_value: Optional[int] = None,
+                after_gap_days_value: Optional[int] = None,
+                before_projected_hours_value: Optional[float] = None,
+                after_projected_hours_value: Optional[float] = None,
+                before_gap_hours_value: Optional[float] = None,
+                after_gap_hours_value: Optional[float] = None,
+                message: Optional[str] = None,
+                requested_gap: Optional[int] = None,
+            ) -> None:
+                if bool(body.dry_run):
+                    return
+                if int(created_events or 0) <= 0 and int(removed_events or 0) <= 0:
+                    return
+                try:
+                    normalized_slots: List[Dict[str, Any]] = []
+                    for slot in (assignment_slots or []):
+                        day_key = str(slot.get("date") or "").strip()[:10]
+                        start_hm = str(slot.get("start_time") or "").strip()[:5]
+                        end_hm = str(slot.get("end_time") or "").strip()[:5]
+                        sid = str(slot.get("subject_id") or "").strip()
+                        subject_name = str(slot.get("subject_name") or "").strip()
+                        if not subject_name and sid:
+                            subject_name = str((subject_by_id.get(sid) or {}).get("name") or "").strip()
+                        normalized_slots.append({
+                            "date": day_key,
+                            "start_time": start_hm,
+                            "end_time": end_hm,
+                            "subject_id": sid or None,
+                            "subject_name": subject_name or None,
+                        })
+                    payload = {
+                        "family_id": family_id,
+                        "academic_year_id": body.academic_year_id,
+                        "scope": scope,
+                        "subject_id": target_subject_id if scope == "per_subject" else None,
+                        "subject_ids": list(selected_subject_ids or []),
+                        "target_kind": target_kind,
+                        "target_value": float(target_value_num),
+                        "before_projected_days": before_projected_days_value,
+                        "after_projected_days": after_projected_days_value,
+                        "before_gap_days": before_gap_days_value,
+                        "after_gap_days": after_gap_days_value,
+                        "before_projected_hours": before_projected_hours_value,
+                        "after_projected_hours": after_projected_hours_value,
+                        "before_gap_hours": before_gap_hours_value,
+                        "after_gap_hours": after_gap_hours_value,
+                        "requested_gap": requested_gap,
+                        "assigned_count": assigned_count,
+                        "successful_insert_count": successful_insert_count,
+                        "failed_insert_count": failed_insert_count,
+                        "created_events": int(created_events or 0),
+                        "removed_events": int(removed_events or 0),
+                        "assignment_slots": normalized_slots,
+                        "created_event_ids": [str(val) for val in (created_event_ids or []) if str(val).strip()],
+                        "removed_event_ids": [str(val) for val in (removed_event_ids or []) if str(val).strip()],
+                        "message": str(message or "").strip() or None,
+                        "created_by_user_id": str(user.get("id") or "").strip() or None,
+                    }
+                    supabase.table("academic_year_fix_gap_history").insert(payload).execute()
+                except Exception as history_error:
+                    log_event(
+                        "academic_year.fix_target_gap.history_persist_failed",
+                        user_id=user.get("id"),
+                        academic_year_id=body.academic_year_id,
+                        error=str(history_error),
+                    )
 
             saved_range_start = str(planner_settings_row.get("default_year_start_date") or plan_start)[:10]
             saved_range_end = str(planner_settings_row.get("default_year_end_date") or plan_end)[:10]
@@ -3165,6 +3284,15 @@ async def fix_target_gap(
                 )
 
             assignment_debug: List[Dict[str, Any]] = []
+            subject_block_child_ids: Dict[str, set] = defaultdict(set)
+            for block in filtered_blocks:
+                sid = str(block.get("subject_id") or "").strip()
+                if not sid:
+                    continue
+                for cid in _parse_child_ids_any(block.get("child_ids")):
+                    subject_block_child_ids[sid].add(cid)
+                for cid in _parse_child_ids_any(block.get("child_id")):
+                    subject_block_child_ids[sid].add(cid)
             def _slot_dt_utc_for_fix(day_key: str, hhmm: str) -> datetime:
                 safe_day = str(day_key or "").strip()[:10]
                 safe_hm = str(hhmm or "09:00").strip()[:5]
@@ -3179,7 +3307,13 @@ async def fix_target_gap(
             for req in assignment_requests:
                 sid = str(req.get("subject_id") or "").strip()
                 subject_row = subject_by_id.get(sid) or {}
-                child_ids = _parse_child_ids(subject_row.get("child_id"))
+                child_ids = sorted({
+                    str(cid).strip()
+                    for cid in (subject_block_child_ids.get(sid) or set())
+                    if str(cid).strip()
+                })
+                if not child_ids:
+                    child_ids = _parse_child_ids_any(subject_row.get("child_id"))
                 if not child_ids:
                     child_ids = sorted(affected_child_ids)
                 preferred_start, preferred_end = _normalize_slot_times_v3(
@@ -4787,6 +4921,35 @@ async def fix_target_gap(
             after_projected_hours = _projected_total_hours(after_events)
             after_gap_days = int(target_days - after_projected_days)
             after_gap_hours = round(target_hours - after_projected_hours, 2)
+            persist_fix_gap_history(
+                assignment_slots=[
+                    {
+                        "date": str(slot.get("date") or ""),
+                        "start_time": str(slot.get("start_time") or learning_window_start_hhmm),
+                        "end_time": str(slot.get("end_time") or learning_window_end_hhmm),
+                        "subject_id": str(slot.get("subject_id") or ""),
+                        "subject_name": str((subject_by_id.get(str(slot.get("subject_id") or "").strip()) or {}).get("name") or ""),
+                    }
+                    for slot in (selected_slots or [])
+                ],
+                created_event_ids=created_event_ids,
+                removed_event_ids=[],
+                created_events=int(successful_insert_count or 0),
+                removed_events=0,
+                assigned_count=int(assigned_count_for_insert or 0),
+                successful_insert_count=int(successful_insert_count or 0),
+                failed_insert_count=int(failed_insert_count or 0),
+                before_projected_days_value=before_projected_days,
+                after_projected_days_value=after_projected_days,
+                before_gap_days_value=before_gap_days,
+                after_gap_days_value=after_gap_days,
+                before_projected_hours_value=before_projected_hours,
+                after_projected_hours_value=after_projected_hours,
+                before_gap_hours_value=before_gap_hours,
+                after_gap_hours_value=after_gap_hours,
+                message="Gap fix applied." if not body.dry_run else "Dry run completed.",
+                requested_gap=int(max(0, before_gap_days)),
+            )
             return FixTargetGapOutput(
                 success=True,
                 academic_year_id=body.academic_year_id,
@@ -4904,6 +5067,26 @@ async def fix_target_gap(
         after_projected_hours = _projected_total_hours(remaining_events)
         after_gap_days = int(target_days - after_projected_days)
         after_gap_hours = round(target_hours - after_projected_hours, 2)
+        persist_fix_gap_history(
+            assignment_slots=[],
+            created_event_ids=[],
+            removed_event_ids=removed_event_ids,
+            created_events=0,
+            removed_events=len(removed_event_ids),
+            assigned_count=0,
+            successful_insert_count=0,
+            failed_insert_count=0,
+            before_projected_days_value=before_projected_days,
+            after_projected_days_value=after_projected_days,
+            before_gap_days_value=before_gap_days,
+            after_gap_days_value=after_gap_days,
+            before_projected_hours_value=before_projected_hours,
+            after_projected_hours_value=after_projected_hours,
+            before_gap_hours_value=before_gap_hours,
+            after_gap_hours_value=after_gap_hours,
+            message="Gap fix applied." if not body.dry_run else "Dry run completed.",
+            requested_gap=int(max(0, before_gap_days)),
+        )
         return FixTargetGapOutput(
             success=True,
             academic_year_id=body.academic_year_id,
@@ -4932,6 +5115,50 @@ async def fix_target_gap(
         log_event("academic_year.fix_target_gap.error", user_id=user.get("id"), error=str(e))
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to fix target gap: {str(e)}")
+
+
+@router.get("/fix_target_gap/history", response_model=FixTargetGapHistoryOutput)
+async def get_fix_target_gap_history(
+    academic_year_id: str = Query(..., description="Academic year id"),
+    limit: int = Query(25, ge=1, le=200),
+    user: dict = Depends(get_current_user),
+    __: None = Depends(rate_limiter_relaxed),
+):
+    family_id = get_family_id_for_user(user["id"])
+    if not family_id:
+        raise HTTPException(status_code=403, detail="Forbidden: Family access missing")
+
+    supabase = get_admin_client()
+    year_resp = (
+        supabase.table("academic_years")
+        .select("id, family_id")
+        .eq("id", academic_year_id)
+        .limit(1)
+        .execute()
+    )
+    if not year_resp.data:
+        raise HTTPException(status_code=404, detail="Academic year not found.")
+    year_row = year_resp.data[0]
+    if str(year_row.get("family_id")) != str(family_id):
+        raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
+
+    history_resp = (
+        supabase.table("academic_year_fix_gap_history")
+        .select(
+            "id, created_at, scope, subject_id, subject_ids, target_kind, target_value, "
+            "before_projected_days, after_projected_days, before_gap_days, after_gap_days, "
+            "before_projected_hours, after_projected_hours, before_gap_hours, after_gap_hours, "
+            "requested_gap, assigned_count, successful_insert_count, failed_insert_count, "
+            "created_events, removed_events, assignment_slots, created_event_ids, removed_event_ids, "
+            "message, created_by_user_id"
+        )
+        .eq("academic_year_id", academic_year_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    rows = list(history_resp.data or [])
+    return {"rows": rows}
 
 
 async def sync_global_holidays_internal(

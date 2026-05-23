@@ -3,21 +3,20 @@ import {
   Image,
   Modal,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { BarChart3, Calendar, Check, ChevronLeft, ChevronRight, Edit2, List, Plus } from 'lucide-react';
+import { BarChart3, Calendar, Check, ChevronLeft, ChevronRight, Edit2, List, Plus, X } from 'lucide-react';
 import {
   SubjectAttendanceMonthDrilldown,
   SubjectAttendanceYearHeatmap,
 } from './SubjectSectionDrilldownPanels';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
-import { sourceForChild } from '../ui/ChildAvatarCluster';
+import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
 import { supabase } from '../../lib/supabase';
 import { createAttendanceLog, deleteAttendanceLog, updateAttendanceLog } from '../../lib/services/recordsClient';
 
@@ -258,9 +257,47 @@ export default function ProgressTab({
       .map((subject) => ({ subject, detail: subjectDetailCache?.[subject.id] || null })),
     [filteredSubjects, subjectDetailCache]
   );
+  const allChildIds = useMemo(
+    () => (children || []).map((child) => String(child?.id || '').trim()).filter(Boolean),
+    [children]
+  );
+  const childNameById = useMemo(() => {
+    const map = {};
+    (children || []).forEach((child) => {
+      const id = String(child?.id || '').trim();
+      if (!id) return;
+      map[id] = child?.first_name || child?.name || child?.full_name || child?.display_name || 'Student';
+    });
+    return map;
+  }, [children]);
   const subjectOptions = useMemo(
-    () => subjectDetails.map(({ subject }) => ({ id: subject.id, name: subject?.name || 'Subject' })),
-    [subjectDetails]
+    () => (subjectDetails || []).map(({ subject }) => {
+      const fallbackSelectedId = String(selectedStudentId || '').trim();
+      const candidateChildIds = []
+        .concat(
+          Array.isArray(subject?.assignedChildren) ? subject.assignedChildren : [],
+          Array.isArray(subject?.assigned_children) ? subject.assigned_children : [],
+          Array.isArray(subject?.child_ids) ? subject.child_ids : [],
+          Array.isArray(subject?.childIds) ? subject.childIds : []
+        )
+        .map((id) => String(id || '').trim())
+        .filter(Boolean);
+      const dedupedChildIds = Array.from(new Set(candidateChildIds));
+      const resolvedChildIds = dedupedChildIds.length > 0
+        ? dedupedChildIds
+        : (fallbackSelectedId ? [fallbackSelectedId] : allChildIds);
+      const studentLabel = resolvedChildIds
+        .map((childId) => childNameById[childId] || null)
+        .filter(Boolean)
+        .join(', ');
+      return {
+        id: subject.id,
+        name: subject?.name || 'Subject',
+        childIds: resolvedChildIds,
+        studentLabel,
+      };
+    }),
+    [subjectDetails, selectedStudentId, allChildIds, childNameById]
   );
   const subjectById = useMemo(() => {
     const map = new Map();
@@ -362,14 +399,29 @@ export default function ProgressTab({
       });
     return () => { cancelled = true; };
   }, [familyId, selectedAcademicYearLabel]);
-  const subjectPickerPrompt = useMemo(() => {
+  const subjectPickerCopy = useMemo(() => {
     const byAction = {
-      attendance_edit: 'Select a subject to edit attendance',
-      grades_add: 'Select a subject to add grades',
-      learning_goals_add: 'Select a subject to add units',
-      learning_goals_edit: 'Select a subject to edit units',
+      attendance_edit: {
+        title: 'Choose a subject for attendance',
+        subtitle: 'Pick the subject whose attendance you want to update.',
+      },
+      grades_add: {
+        title: 'Choose a subject for grades',
+        subtitle: 'Pick the subject whose grades you want to update.',
+      },
+      learning_goals_add: {
+        title: 'Choose a subject for units',
+        subtitle: 'Pick the subject you want to add units to.',
+      },
+      learning_goals_edit: {
+        title: 'Choose a subject for units',
+        subtitle: 'Pick the subject whose units you want to edit.',
+      },
     };
-    return byAction[String(subjectPickerAction || '').trim().toLowerCase()] || 'Select a subject';
+    return byAction[String(subjectPickerAction || '').trim().toLowerCase()] || {
+      title: 'Choose a subject',
+      subtitle: 'Pick the subject you want to update.',
+    };
   }, [subjectPickerAction]);
   const openSubjectPicker = (action) => {
     if (!hasSubjectOptions) {
@@ -1775,36 +1827,73 @@ export default function ProgressTab({
       <Modal
         visible={!!subjectPickerAction}
         transparent
-        animationType="fade"
+        animationType="none"
         onRequestClose={closeSubjectPicker}
       >
-        <Pressable style={styles.subjectPickerBackdrop} onPress={closeSubjectPicker}>
-          <Pressable style={styles.subjectPickerCard} onPress={() => {}}>
-            <Text style={styles.subjectPickerTitle}>Select subject</Text>
-            <Text style={styles.subjectPickerSubtitle}>{subjectPickerPrompt}</Text>
-            <View style={styles.subjectPickerList}>
-              {subjectOptions.map((option) => (
-                <TouchableOpacity
-                  key={`subject-picker-${option.id}`}
-                  style={styles.subjectPickerRow}
-                  onPress={() => handleSubjectPickerSelect(option.id)}
-                  activeOpacity={0.75}
-                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                >
-                  <Text style={styles.subjectPickerRowText}>{option.name}</Text>
-                </TouchableOpacity>
-              ))}
+        <TouchableOpacity style={styles.subjectPickerBackdrop} activeOpacity={1} onPress={closeSubjectPicker}>
+          <TouchableOpacity style={styles.subjectPickerCard} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.subjectPickerHeader}>
+              <View style={styles.subjectPickerHeaderTextWrap}>
+                <Text style={styles.subjectPickerTitle}>{subjectPickerCopy.title}</Text>
+                <Text style={styles.subjectPickerSubtitle}>{subjectPickerCopy.subtitle}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.subjectPickerClose}
+                onPress={closeSubjectPicker}
+                activeOpacity={0.8}
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              style={styles.subjectPickerCancelBtn}
-              onPress={closeSubjectPicker}
-              activeOpacity={0.8}
-              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-            >
-              <Text style={styles.subjectPickerCancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
+            {subjectOptions.length > 0 ? (
+              <View style={styles.subjectPickerList}>
+                {subjectOptions.map((option, index) => (
+                  <TouchableOpacity
+                    key={`subject-picker-${option.id}`}
+                    style={[
+                      styles.subjectPickerItem,
+                      index === subjectOptions.length - 1 && styles.subjectPickerItemLast,
+                    ]}
+                    onPress={() => handleSubjectPickerSelect(option.id)}
+                    activeOpacity={0.75}
+                    {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                  >
+                    <View style={styles.subjectPickerItemTextWrap}>
+                      <Text style={styles.subjectPickerItemText}>{option.name}</Text>
+                      {option.studentLabel ? (
+                        <View style={styles.subjectPickerStudentsRow}>
+                          <ChildAvatarCluster
+                            childIds={option.childIds || []}
+                            familyChildren={children}
+                            size={28}
+                            overlap={-8}
+                          />
+                          <Text style={styles.subjectPickerStudentsText}>{option.studentLabel}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <ChevronRight size={16} color="#6b7280" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.subjectPickerEmptyWrap}>
+                <Text style={styles.subjectPickerEmptyText}>No subjects available.</Text>
+              </View>
+            )}
+            <View style={styles.subjectPickerActions}>
+              <TouchableOpacity
+                style={styles.subjectPickerCancelBtn}
+                onPress={closeSubjectPicker}
+                activeOpacity={0.85}
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <Text style={styles.subjectPickerCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -2206,66 +2295,135 @@ const styles = StyleSheet.create({
   subjectPickerBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.42)',
-    alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 18,
+    alignItems: 'center',
+    padding: 20,
   },
   subjectPickerCard: {
     width: '100%',
-    maxWidth: 440,
-    borderRadius: 12,
+    maxWidth: 460,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 14,
+    padding: 32,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
+    }),
+  },
+  subjectPickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  subjectPickerHeaderTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  subjectPickerClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   subjectPickerTitle: {
-    fontSize: 19,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '600',
     color: '#111827',
+    flex: 1,
     ...WEB_HEADING_FONT,
   },
   subjectPickerSubtitle: {
-    marginTop: 4,
-    marginBottom: 14,
+    marginTop: 6,
     fontSize: 13,
-    color: '#6B7280',
+    color: '#6b7280',
     ...WEB_BODY_FONT,
   },
   subjectPickerList: {
-    gap: 8,
-  },
-  subjectPickerRow: {
+    marginTop: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 10,
-    backgroundColor: '#F9FAFB',
-    paddingHorizontal: 12,
-    paddingVertical: 11,
+    overflow: 'hidden',
   },
-  subjectPickerRowText: {
-    fontSize: 14,
-    fontWeight: '600',
+  subjectPickerItem: {
+    minHeight: 56,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  subjectPickerItemLast: {
+    borderBottomWidth: 0,
+  },
+  subjectPickerItemTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  subjectPickerItemText: {
+    fontSize: 18,
+    fontWeight: '700',
     color: '#1F2937',
     ...WEB_HEADING_FONT,
   },
-  subjectPickerCancelBtn: {
+  subjectPickerStudentsRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
+  },
+  subjectPickerStudentsText: {
+    flex: 1,
+    minWidth: 0,
+    fontWeight: '400',
+    fontSize: 14,
+    color: '#94A3B8',
+    ...WEB_BODY_FONT,
+  },
+  subjectPickerEmptyWrap: {
     marginTop: 14,
-    alignSelf: 'flex-end',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
     backgroundColor: '#FFFFFF',
   },
+  subjectPickerEmptyText: {
+    fontSize: 14,
+    color: '#6B7280',
+    lineHeight: 22,
+    ...WEB_BODY_FONT,
+  },
+  subjectPickerActions: {
+    marginTop: 18,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  subjectPickerCancelBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
   subjectPickerCancelText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#4B5563',
-    ...WEB_HEADING_FONT,
+    color: '#374151',
+    ...WEB_BODY_FONT,
   },
   emptyInlineText: { fontSize: 12, color: '#94A3B8', ...WEB_BODY_FONT },
 });
