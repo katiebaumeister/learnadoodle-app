@@ -2863,6 +2863,17 @@ async def fix_target_gap(
                 before_gap_days = ui_gap_days
             else:
                 before_gap_days = int(target_days_effective - before_projected_days)
+            # Keep per-subject assignment demand aligned with the visible row values.
+            # Without this, per-subject runs can show a positive UI gap while
+            # `per_subject_gaps` remains zero (e.g. stale/missing persisted target),
+            # producing no assignment requests and a false "no open days" result.
+            if effective_scope == "per_subject" and selected_subject_ids:
+                selected_sid = str(target_subject_id or selected_subject_ids[0] or "").strip()
+                if selected_sid:
+                    if ui_gap_days is not None:
+                        per_subject_gaps[selected_sid] = max(0, int(before_gap_days))
+                    elif selected_sid not in per_subject_gaps:
+                        per_subject_gaps[selected_sid] = max(0, int(before_gap_days))
             # Keep target aligned with the baseline values the UI row is showing.
             # Without this, a stale/default backend target can drift from the
             # provided gap and incorrectly report gapAfter as 0 in no-capacity cases.
