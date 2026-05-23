@@ -21,7 +21,9 @@ import { completeEvent, updateEventStatus } from '../lib/services/attendanceClie
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext'
 import {
   isDeletableSeriesGroup,
+  isPlanYearBlockSeries,
   cleanPlannerEventId,
+  resolveSeriesMasterEventId,
   softDeleteEventSeries,
 } from '../lib/utils/recurringEventUtils'
 
@@ -656,7 +658,6 @@ import { getDisambiguation } from '../lib/assistant/responseContract.js'
 import { useOfflineSync } from '../lib/hooks/useOfflineSync'
 import { detectConflicts } from '../lib/utils/conflictDetection'
 import DragDropConflictBanner from './planner/DragDropConflictBanner'
-import PlanHealthBanner from './planner/PlanHealthBanner'
 
 /** Display name(s) for calendar conflict copy (drag-drop banner). */
 function childLabelFromEvent(ev, children) {
@@ -3292,14 +3293,24 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     const handleEventDeletedForPlanner = (event) => {
       const deletedId = event.detail?.eventId || event.detail?.id;
       const deletedAcademicYearId = event.detail?.academicYearId || event.detail?.academic_year_id;
-      if (!deletedId && !deletedAcademicYearId) return;
+      const deletedSeriesMasterId = event.detail?.seriesMasterEventId || event.detail?.series_master_event_id;
+      const deletedSourceBlockId = event.detail?.sourceBlockId || event.detail?.source_block_id;
+      const deletedSeriesAcademicYearId = event.detail?.seriesAcademicYearId || event.detail?.series_academic_year_id;
+      if (!deletedId && !deletedAcademicYearId && !deletedSeriesMasterId && !deletedSourceBlockId) return;
       const idStr = deletedId ? String(deletedId) : null;
       const academicYearIdStr = deletedAcademicYearId ? String(deletedAcademicYearId) : null;
+      const seriesMasterIdStr = deletedSeriesMasterId ? String(deletedSeriesMasterId) : null;
+      const cleanSeriesMasterId = seriesMasterIdStr ? cleanPlannerEventId(seriesMasterIdStr) : null;
+      const sourceBlockIdStr = deletedSourceBlockId ? String(deletedSourceBlockId) : null;
+      const seriesAcademicYearIdStr = deletedSeriesAcademicYearId ? String(deletedSeriesAcademicYearId) : null;
       const hideUntil = Date.now() + 15000;
       if (idStr) {
         recentlyDeletedEventIdsRef.current.set(idStr, hideUntil);
         const cleanId = cleanPlannerEventId(idStr);
         if (cleanId) recentlyDeletedEventIdsRef.current.set(cleanId, hideUntil);
+      }
+      if (cleanSeriesMasterId) {
+        recentlyDeletedEventIdsRef.current.set(cleanSeriesMasterId, hideUntil);
       }
       if (academicYearIdStr) {
         recentlyDeletedAcademicYearsRef.current.set(academicYearIdStr, hideUntil);
@@ -3317,6 +3328,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             if (idStr) {
               const eventId = String(e.id || '');
               if (eventId === idStr || cleanPlannerEventId(eventId) === cleanPlannerEventId(idStr)) return false;
+            }
+            if (cleanSeriesMasterId) {
+              const rowId = cleanPlannerEventId(String(e.id || ''));
+              const rowParentId = cleanPlannerEventId(String(e.parent_event_id || ''));
+              const rowRecurrenceId = cleanPlannerEventId(String(e.recurrence_id || ''));
+              if (rowId === cleanSeriesMasterId || rowParentId === cleanSeriesMasterId || rowRecurrenceId === cleanSeriesMasterId) return false;
+            }
+            if (sourceBlockIdStr && seriesAcademicYearIdStr) {
+              if (String(e.source_block_id || '') === sourceBlockIdStr && String(e.academic_year_id || '') === seriesAcademicYearIdStr) return false;
             }
             if (academicYearIdStr && String(e.academic_year_id || '') === academicYearIdStr) return false;
             return true;
@@ -3342,10 +3362,19 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             }
             const filtered = list.filter((e) => {
               if (!e) return false;
-            if (idStr) {
-              const eventId = String(e.id || '');
-              if (eventId === idStr || cleanPlannerEventId(eventId) === cleanPlannerEventId(idStr)) return false;
-            }
+              if (idStr) {
+                const eventId = String(e.id || '');
+                if (eventId === idStr || cleanPlannerEventId(eventId) === cleanPlannerEventId(idStr)) return false;
+              }
+              if (cleanSeriesMasterId) {
+                const rowId = cleanPlannerEventId(String(e.id || ''));
+                const rowParentId = cleanPlannerEventId(String(e.parent_event_id || ''));
+                const rowRecurrenceId = cleanPlannerEventId(String(e.recurrence_id || ''));
+                if (rowId === cleanSeriesMasterId || rowParentId === cleanSeriesMasterId || rowRecurrenceId === cleanSeriesMasterId) return false;
+              }
+              if (sourceBlockIdStr && seriesAcademicYearIdStr) {
+                if (String(e.source_block_id || '') === sourceBlockIdStr && String(e.academic_year_id || '') === seriesAcademicYearIdStr) return false;
+              }
               if (academicYearIdStr && String(e.academic_year_id || '') === academicYearIdStr) return false;
               return true;
             });
@@ -5491,7 +5520,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   const { error: seriesError, logEventId } = await softDeleteEventSeries(supabase, familyId, ev, cleanId);
                   if (seriesError) throw seriesError;
                   const idForHooks = logEventId ?? cleanId;
-                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: idForHooks } }));
+                  const seriesDeleteDetail = isPlanYearBlockSeries(ev) && ev?.source_block_id && ev?.academic_year_id
+                    ? {
+                        sourceBlockId: String(ev.source_block_id),
+                        seriesAcademicYearId: String(ev.academic_year_id),
+                      }
+                    : {
+                        seriesMasterEventId: resolveSeriesMasterEventId(ev, cleanId),
+                      };
+                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: idForHooks, ...seriesDeleteDetail } }));
                   window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                 } catch (err) {
                   Alert.alert('Error', `Failed to delete series: ${err?.message || err}`);
@@ -9123,7 +9160,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           }),
         }}
       >
-        <PlanHealthBanner familyId={familyId} visible={!plannerReadOnly && (activeTab === 'planner' || activeTab === 'calendar')} initialHealth={propPreloadedPlanHealth} />
         {Platform.OS === 'web' && familyId ? (
           <DragDropConflictBanner
             visible={Boolean(conflictBanner.visible && conflictBanner.eventId)}

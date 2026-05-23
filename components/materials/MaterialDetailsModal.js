@@ -18,6 +18,7 @@ import { colors } from '../../theme/colors';
 import { getMaterial } from '../../lib/services/materialsClient';
 import { normalizeMaterial, normalizeUpload, roleLabel as getRoleLabel } from '../../lib/docs/roles';
 import MaterialScheduleLinksSection from './MaterialScheduleLinksSection';
+import ConfirmDialog from '../ConfirmDialog';
 
 const FG = '#111827';
 const SUB = '#6b7280';
@@ -40,6 +41,7 @@ export default function MaterialDetailsModal({
   const [showProviderInfo, setShowProviderInfo] = useState(true);
   const [showPurchaseInfo, setShowPurchaseInfo] = useState(true);
   const [showReviewInfo, setShowReviewInfo] = useState(true);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     if (visible && initialMaterial?.id) {
@@ -56,6 +58,8 @@ export default function MaterialDetailsModal({
       setShowProviderInfo(true);
       setShowPurchaseInfo(true);
       setShowReviewInfo(true);
+    } else if (!visible) {
+      setShowDeleteConfirm(false);
     }
   }, [visible, initialMaterial]);
 
@@ -131,6 +135,7 @@ export default function MaterialDetailsModal({
     hasProviderMetadata || hasPurchaseMetadata || hasReviewMetadata;
 
   return (
+    <>
     <Modal
       visible={visible}
       transparent={true}
@@ -443,10 +448,7 @@ export default function MaterialDetailsModal({
                   <Text style={styles.cancelButtonText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  onPress={() => {
-                    onDelete?.(material);
-                    onClose();
-                  }}
+                  onPress={() => setShowDeleteConfirm(true)}
                   style={styles.deleteButton}
                 >
                   <Trash2 size={16} color="#FFFFFF" />
@@ -467,6 +469,21 @@ export default function MaterialDetailsModal({
         </View>
       </View>
     </Modal>
+    <ConfirmDialog
+      visible={showDeleteConfirm}
+      title="Delete material?"
+      message="This will permanently delete this material. This cannot be undone."
+      confirmLabel="Delete material"
+      cancelLabel="Cancel"
+      destructive
+      onCancel={() => setShowDeleteConfirm(false)}
+      onConfirm={async () => {
+        setShowDeleteConfirm(false);
+        await onDelete?.(material, { confirmed: true });
+        onClose?.();
+      }}
+    />
+    </>
   );
 }
 

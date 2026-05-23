@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { LEARNADOODLE_LIGHT_BLUE } from '../theme/comingSoonModalTheme';
 
 export default function SupabaseReady({ children }) {
   // On web, start ready so landing page shows immediately; we still run the check in background
@@ -83,9 +84,6 @@ export default function SupabaseReady({ children }) {
       <View style={styles.errorContainer}>
         <Text style={styles.errorTitle}>Connection Error</Text>
         <Text style={styles.errorMessage}>{error}</Text>
-        <Text style={styles.errorTip}>
-          Please check your internet connection and refresh the page.
-        </Text>
       </View>
     );
   }
@@ -101,7 +99,7 @@ export default function SupabaseReady({ children }) {
 const styles = StyleSheet.create({
   errorContainer: {
     flex: 1,
-    backgroundColor: '#9DB5D8', // Periwinkle blue background
+    backgroundColor: LEARNADOODLE_LIGHT_BLUE,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -112,6 +110,9 @@ const styles = StyleSheet.create({
     color: 'white',
     marginBottom: 20,
     textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   errorMessage: {
     fontSize: 16,
@@ -120,12 +121,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
     maxWidth: 600,
-  },
-  errorTip: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
-    textAlign: 'center',
-    lineHeight: 20,
-    maxWidth: 600,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

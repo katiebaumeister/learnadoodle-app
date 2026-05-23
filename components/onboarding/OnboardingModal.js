@@ -1,122 +1,25 @@
-// Onboarding modal: plan → add child → subjects → complete
+// Onboarding modal: planning context → add child → complete
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, Modal, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, ScrollView, Animated } from 'react-native';
 import { ChevronLeft } from 'lucide-react';
 import {
   setOnboardingPlanningMode,
   addChild,
-  createOnboardingSubject,
   completeOnboarding,
   getOnboardingStatus,
   getFamilyMembers,
   permanentDeleteChild,
 } from '../../lib/apiClient';
 import { supabase } from '../../lib/supabase';
-import { parseChildIds } from '../../lib/services/subjectsClient';
-import { saveFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
 import { persistStudentSelfSignupFromOnboarding } from '../../lib/services/accountPrefsClient';
 import { ONBOARDING_SKY } from '../../lib/constants/onboardingTheme';
 import WelcomeStep from './WelcomeStep';
 import PlanningModeStep from './PlanningModeStep';
 import LearningContextStep from './LearningContextStep';
 import AddChildStep from './AddChildStep';
-import AddSubjectStep from './AddSubjectStep';
 import CompleteStep from './CompleteStep';
 
-const STEPS = ['welcome', 'planning_mode', 'learning_context', 'add_child', 'add_subject', 'complete'];
-
-function extractCreatedSubjectId(res) {
-  const d = res?.data;
-  if (d == null) return null;
-  if (typeof d === 'string' && /^[0-9a-f-]{36}$/i.test(d.trim())) return d.trim();
-  if (typeof d !== 'object') return null;
-  const nested = d.data;
-  return (
-    d.subject_id ??
-    d.subjectId ??
-    d.id ??
-    (typeof nested === 'object' && nested != null ? nested.subject_id ?? nested.subjectId ?? nested.id : null) ??
-    (d.subject && typeof d.subject === 'object' ? d.subject.id : null) ??
-    (d.result && typeof d.result === 'object'
-      ? d.result.subject_id ?? d.result.subjectId ?? d.result.id
-      : null) ??
-    null
-  );
-}
-
-/**
- * Planning Preferences + subject "Overall" prefill read family_planner_settings.
- * Onboarding only patched `subject` before, so family-level targets stayed None.
- */
-async function syncOnboardingSubjectPlanningToFamilyPlanner(fid, subject) {
-  if (!fid || !subject) return;
-  let mode = subject.default_constraint_mode;
-  let days = null;
-  let hours = null;
-  const dv = subject.default_target_days;
-  const hv = subject.default_target_hours;
-  if (dv != null && dv !== '') {
-    const n = parseInt(dv, 10);
-    if (!Number.isNaN(n)) {
-      days = n;
-      mode = 'days';
-    }
-  } else if (hv != null && hv !== '') {
-    const n = parseFloat(hv);
-    if (!Number.isNaN(n)) {
-      hours = n;
-      mode = 'hours';
-    }
-  }
-  if (mode !== 'days' && mode !== 'hours') return;
-  if (mode === 'days' && days == null) return;
-  if (mode === 'hours' && hours == null) return;
-
-  const { error } = await saveFamilyPlannerSettings(fid, {
-    target_scope: 'overall',
-    default_constraint_mode: mode,
-    default_target_days: mode === 'days' ? days : null,
-    default_target_hours: mode === 'hours' ? hours : null,
-  });
-  if (error) {
-    console.warn('[OnboardingModal] Family planner settings sync failed:', error);
-    return;
-  }
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
-    window.dispatchEvent(new CustomEvent('refreshSubjects'));
-  }
-}
-
-async function resolveSubjectIdAfterCreate(res, fid, subject) {
-  let id = extractCreatedSubjectId(res);
-  if (id) return id;
-  const lookup = async () => {
-    const { data: rows, error } = await supabase
-      .from('subject')
-      .select('id, child_id, created_at')
-      .eq('family_id', fid)
-      .eq('name', subject.name)
-      .order('created_at', { ascending: false })
-      .limit(12);
-    if (error || !rows?.length) return null;
-    const want = String(subject.child_id);
-    const match = rows.find((r) => {
-      const ids = parseChildIds(r.child_id ?? '');
-      if (ids.length === 0) return true;
-      return ids.includes(want);
-    });
-    return match?.id ?? rows[0]?.id ?? null;
-  };
-  try {
-    id = await lookup();
-    if (id) return id;
-    await new Promise((r) => setTimeout(r, 350));
-    return await lookup();
-  } catch (_) {
-    return null;
-  }
-}
+const STEPS = ['welcome', 'planning_mode', 'learning_context', 'add_child', 'complete'];
 
 export default function OnboardingModal({
   visible,
@@ -132,8 +35,6 @@ export default function OnboardingModal({
   const [onboardingWho, setOnboardingWho] = useState('parent'); // 'parent' | 'student' from "I'm using Learnadoodle for..."
   const [planningMode, setPlanningMode] = useState(initialPlanningMode);
   const [createdChildren, setCreatedChildren] = useState([]); // [{ id, name }]
-  const [createdSubjectsByChild, setCreatedSubjectsByChild] = useState({}); // { [childId]: [{ id, name }, ...] }
-  const [subjectStepChildIndex, setSubjectStepChildIndex] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState(null);
   const [resuming, setResuming] = useState(true);
@@ -195,9 +96,8 @@ export default function OnboardingModal({
           setPlanningMode(data.default_planning_mode);
           setCreatedChildren([]);
         } else {
-          setStep('add_subject');
+          setStep('complete');
           setPlanningMode(data.default_planning_mode ?? null);
-          setSubjectStepChildIndex(0);
           try {
             const membersRes = await getFamilyMembers();
             const membersData = membersRes?.data ?? membersRes;
@@ -205,28 +105,7 @@ export default function OnboardingModal({
             if (kids.length > 0) {
               setCreatedChildren(kids.map((c) => ({ id: c.id, name: c.first_name || c.name || 'Child' })));
             }
-            if (data?.has_subjects && familyId) {
-              const { data: subjRows } = await supabase
-                .from('subject')
-                .select('id, name, child_id')
-                .eq('family_id', familyId);
-              if (subjRows && subjRows.length > 0) {
-                const byChild = {};
-                subjRows.forEach((s) => {
-                  const cid = s.child_id || null;
-                  if (!byChild[cid]) byChild[cid] = [];
-                  byChild[cid].push({ id: s.id, name: s.name || 'Subject' });
-                });
-                setCreatedSubjectsByChild(byChild);
-              } else {
-                setCreatedSubjectsByChild({});
-              }
-            } else {
-              setCreatedSubjectsByChild({});
-            }
-          } catch (_) {
-            setCreatedSubjectsByChild({});
-          }
+          } catch (_) {}
         }
       } catch (_) {
         // Don't reset step on fetch error (e.g. 429) — only set step from successful API data
@@ -242,14 +121,6 @@ export default function OnboardingModal({
 
   const goBack = () => {
     setError(null);
-    if (step === 'add_subject' && subjectStepChildIndex > 0) {
-      setSubjectStepChildIndex(subjectStepChildIndex - 1);
-      return;
-    }
-    if (step === 'add_subject') {
-      setStep('add_child');
-      return;
-    }
     const idx = STEPS.indexOf(step);
     if (idx > 0) transitionToStep(STEPS[idx - 1]);
   };
@@ -368,13 +239,11 @@ export default function OnboardingModal({
     }
   };
 
-  const goToSubjectStepWithChild = (childPayload) => {
+  const goToCompleteStepWithChild = (childPayload) => {
     setError(null);
     const pendingId = `pending-child-${Date.now()}`;
     setCreatedChildren((prev) => [...prev, { id: pendingId, name: childPayload.name }]);
-    setSubjectStepChildIndex(0);
-    setCreatedSubjectsByChild({});
-    transitionToStep('add_subject');
+    transitionToStep('complete');
     (async () => {
       try {
         await addOneChild(childPayload, pendingId);
@@ -404,177 +273,10 @@ export default function OnboardingModal({
         );
       }
       setCreatedChildren((prev) => {
-        const next = prev.filter((c) => c.id !== childId);
-        setSubjectStepChildIndex((idx) => Math.min(idx, Math.max(0, next.length - 1)));
-        return next;
-      });
-      setCreatedSubjectsByChild((prev) => {
-        const next = { ...prev };
-        delete next[childId];
-        return next;
+        return prev.filter((c) => c.id !== childId);
       });
     } catch (e) {
       setError(e?.message ?? 'Failed to delete child.');
-    }
-  };
-
-  const goToSubjectStep = () => {
-    setError(null);
-    setSubjectStepChildIndex(0);
-    setCreatedSubjectsByChild({});
-    transitionToStep('add_subject');
-  };
-
-  const addOneSubject = async (subject) => {
-    if (!subject.child_id) return;
-    const fid = familyId || (typeof onEnsureFamily === 'function' ? await onEnsureFamily() : null);
-    if (!fid) {
-      setError('We couldn’t set up your family yet. Please refresh the page or contact contact@learnadoodle.com.');
-      return;
-    }
-    const optimisticId = `pending-${subject.child_id}-${subject.name}-${Date.now()}`;
-    setError(null);
-    setCreatedSubjectsByChild((prev) => {
-      const list = prev[subject.child_id] || [];
-      return { ...prev, [subject.child_id]: [...list, { id: optimisticId, name: subject.name }] };
-    });
-    setIsSaving(true);
-    try {
-      const res = await createOnboardingSubject({
-        family_id: fid,
-        name: subject.name,
-        child_id: subject.child_id,
-        summary: null,
-        grade: subject.grade ?? null,
-        credits: subject.credits ?? null,
-        notes: subject.notes ?? null,
-      });
-      if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to create subject.');
-      let id = await resolveSubjectIdAfterCreate(res, fid, subject);
-      if (id) {
-        setCreatedSubjectsByChild((prev) => {
-          const list = prev[subject.child_id] || [];
-          return { ...prev, [subject.child_id]: list.map((s) => (s.id === optimisticId ? { id, name: subject.name } : s)) };
-        });
-        const subjectPatch = {};
-        if (subject.school_year != null && subject.school_year !== '') {
-          subjectPatch.school_year = subject.school_year;
-        }
-        if (subject.default_constraint_mode !== undefined) {
-          subjectPatch.default_constraint_mode = subject.default_constraint_mode;
-        }
-        if (subject.default_target_days !== undefined) {
-          const v = subject.default_target_days;
-          if (v != null && v !== '') {
-            const n = parseInt(v, 10);
-            subjectPatch.default_target_days = Number.isNaN(n) ? null : n;
-          } else {
-            subjectPatch.default_target_days = null;
-          }
-        }
-        if (subject.default_target_hours !== undefined) {
-          const v = subject.default_target_hours;
-          if (v != null && v !== '') {
-            const n = parseFloat(v);
-            subjectPatch.default_target_hours = Number.isNaN(n) ? null : n;
-          } else {
-            subjectPatch.default_target_hours = null;
-          }
-        }
-        if (Object.keys(subjectPatch).length > 0) {
-          try {
-            const { error: patchErr } = await supabase
-              .from('subject')
-              .update(subjectPatch)
-              .eq('id', id)
-              .eq('family_id', fid)
-              .select('id')
-              .maybeSingle();
-            if (patchErr) console.warn('[OnboardingModal] Subject planning fields update:', patchErr);
-          } catch (e) {
-            console.warn('[OnboardingModal] Subject planning fields update failed:', e);
-          }
-        }
-        await syncOnboardingSubjectPlanningToFamilyPlanner(fid, subject);
-        const pickIds = [
-          subject.syllabus_material_id,
-          subject.lesson_plan_material_id,
-          ...(Array.isArray(subject.material_ids) ? subject.material_ids : []),
-        ].filter(Boolean);
-        const uniquePickIds = [...new Set(pickIds)];
-        if (uniquePickIds.length > 0) {
-          try {
-            const { error: materialUpdateError } = await supabase
-              .from('materials')
-              .update({ subject_id: id })
-              .in('id', uniquePickIds);
-            if (materialUpdateError) {
-              console.warn('Failed to link materials to subject:', materialUpdateError);
-            }
-          } catch (materialError) {
-            console.warn('Error linking materials to subject:', materialError);
-          }
-        }
-      } else {
-        console.warn('[OnboardingModal] Could not resolve new subject id; planning patch skipped.');
-        await syncOnboardingSubjectPlanningToFamilyPlanner(fid, subject);
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('refreshSubjects'));
-        }
-      }
-    } catch (e) {
-      setCreatedSubjectsByChild((prev) => {
-        const list = (prev[subject.child_id] || []).filter((s) => s.id !== optimisticId);
-        return { ...prev, [subject.child_id]: list };
-      });
-      setError(e?.message ?? 'Failed to create subject.');
-      throw e;
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const removeOneSubject = async (childId, subjectId) => {
-    // Update local list immediately so the top chip list reflects the change
-    setCreatedSubjectsByChild((prev) => {
-      const list = prev[childId] || [];
-      return { ...prev, [childId]: list.filter((s) => s.id !== subjectId) };
-    });
-    // Skip DB delete for optimistic (pending) entries; only delete real subjects
-    if (!familyId || !subjectId || String(subjectId).startsWith('pending-')) return;
-    try {
-      const { error } = await supabase
-        .from('subject')
-        .delete()
-        .eq('id', subjectId)
-        .eq('family_id', familyId);
-      if (error) {
-        console.warn('[OnboardingModal] Failed to delete subject:', error);
-        return;
-      }
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-      }
-    } catch (err) {
-      console.warn('[OnboardingModal] Error deleting subject:', err);
-    }
-  };
-
-  const onSubjectStepContinue = (pendingSubjectPayload = null) => {
-    setError(null);
-    if (subjectStepChildIndex < createdChildren.length - 1) {
-      setSubjectStepChildIndex(subjectStepChildIndex + 1);
-    } else {
-      transitionToStep('complete');
-    }
-    if (pendingSubjectPayload && pendingSubjectPayload.child_id && pendingSubjectPayload.name) {
-      (async () => {
-        try {
-          await addOneSubject(pendingSubjectPayload);
-        } catch (e) {
-          setError(e?.message ?? 'Failed to add subject.');
-        }
-      })();
     }
   };
 
@@ -687,8 +389,6 @@ export default function OnboardingModal({
                           );
                         }
                         setCreatedChildren([]);
-                        setCreatedSubjectsByChild({});
-                        setSubjectStepChildIndex(0);
                       }
                       setOnboardingWho(newWho);
                       transitionToStep('learning_context');
@@ -708,23 +408,11 @@ export default function OnboardingModal({
                   <AddChildStep
                     createdChildren={createdChildren}
                     onAddChild={addOneChild}
-                    onContinueWithNewChild={goToSubjectStepWithChild}
+                    onContinueWithNewChild={goToCompleteStepWithChild}
                     onRemoveChild={removeOneChild}
-                    onContinue={goToSubjectStep}
+                    onContinue={goToCompleteStep}
                     isSaving={isSaving}
                     isStudentOnboarding={onboardingWho === 'student'}
-                  />
-                </View>
-                <View style={step === 'add_subject' ? undefined : styles.stepHidden}>
-                  <AddSubjectStep
-                    familyId={familyId}
-                    createdChildren={createdChildren}
-                    subjectStepChildIndex={subjectStepChildIndex}
-                    subjectsForCurrentChild={createdSubjectsByChild[createdChildren[subjectStepChildIndex]?.id] || []}
-                    onAddSubject={addOneSubject}
-                    onRemoveSubject={removeOneSubject}
-                    onContinue={onSubjectStepContinue}
-                    isSaving={isSaving}
                   />
                 </View>
                 <View style={step === 'complete' ? undefined : styles.stepHidden}>

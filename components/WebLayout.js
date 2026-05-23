@@ -56,7 +56,6 @@ import PlanWeekModal from './planner/modals/PlanWeekModal';
 import BuildCurriculumModal from './planner/modals/BuildCurriculumModal';
 import ProgressForecastModal from './planner/modals/ProgressForecastModal';
 import SchedulingAssistant from './planner/SchedulingAssistant';
-import PlanHealthIcon from './planner/PlanHealthIcon';
 import HelpPopover from './planner/HelpPopover';
 import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import OnboardingModal from './onboarding/OnboardingModal';
@@ -4154,14 +4153,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     </View>
                   </View>
                   
-                  {/* Plan health notification icon */}
-                  <View style={{ 
-                    flexShrink: 0,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                  }}>
-                    <PlanHealthIcon familyId={familyId} visible={!isTutorUser && (activeTab === 'planner' || activeTab === 'calendar')} initialHealth={preloadedPlanHealth} />
-                  </View>
                 </View>
 
                 {/* Search Bar and New Event Button */}

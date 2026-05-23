@@ -2412,7 +2412,7 @@ export default function SubjectsPage({
             <Text style={styles.emptyText}>
               {searchQuery
                 ? 'Please try something else'
-                : `Create subjects for the ${emptyStateYearTermLabel} to organize learning by topic, course, or area of study.`}
+                : 'Create subjects to organize learning.'}
             </Text>
             {!searchQuery && (
               <TouchableOpacity

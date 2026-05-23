@@ -25,6 +25,7 @@ import { useModalStackElevation, NESTED_MODAL_STACK_Z } from '../hooks/useModalS
 import AppModalShell from '../ui/AppModalShell';
 import { ModalFooter } from '../ui/ModalFooter';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
+import ConfirmDialog from '../ConfirmDialog';
 
 const ROLE_OPTIONS = DOCUMENT_ROLE_CHIPS.filter((c) => c.value !== 'all');
 
@@ -122,6 +123,7 @@ export default function AddMaterialModal({
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [validationError, setValidationError] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   
   // Form fields
   const [title, setTitle] = useState('');
@@ -852,6 +854,7 @@ export default function AddMaterialModal({
 
   const handleDismiss = useCallback(() => {
     setValidationError('');
+    setShowDeleteConfirm(false);
     onClose?.();
   }, [onClose]);
 
@@ -1168,6 +1171,7 @@ export default function AddMaterialModal({
   if (!visible) return null;
 
   return (
+    <>
     <Modal
       visible={visible}
       transparent={true}
@@ -1198,7 +1202,7 @@ export default function AddMaterialModal({
                 primaryLabel={loading ? 'Saving...' : (effectiveMaterial ? 'Save changes' : 'Add Material')}
                 destructiveLabel={effectiveMaterial && typeof onDelete === 'function' ? 'Delete Material' : undefined}
                 onCancel={handleDismiss}
-                onDelete={effectiveMaterial && typeof onDelete === 'function' ? () => onDelete(effectiveMaterial) : undefined}
+                onDelete={effectiveMaterial && typeof onDelete === 'function' ? () => setShowDeleteConfirm(true) : undefined}
                 onPrimary={handleSave}
                 onBlockedPrimary={showBlockedSaveFeedback}
                 accent="#9ECFFB"
@@ -1770,6 +1774,23 @@ export default function AddMaterialModal({
         </Modal>
       )}
     </Modal>
+    <ConfirmDialog
+      visible={showDeleteConfirm}
+      title="Delete material?"
+      message="This will permanently delete this material. This cannot be undone."
+      confirmLabel="Delete material"
+      cancelLabel="Cancel"
+      destructive
+      onCancel={() => {
+        if (!loading) setShowDeleteConfirm(false);
+      }}
+      onConfirm={async () => {
+        if (loading || !effectiveMaterial || typeof onDelete !== 'function') return;
+        setShowDeleteConfirm(false);
+        await onDelete(effectiveMaterial, { confirmed: true });
+      }}
+    />
+    </>
   );
 }
 

@@ -926,12 +926,16 @@ export default function SubjectDetailPage({
     );
   }, [subject?.id, subject?.name, assignedChildren]);
 
-  const handleDeleteMaterial = useCallback(async (material) => {
+  const handleDeleteMaterial = useCallback(async (material, options = {}) => {
     if (!material?.id) return;
     const itemName = material.title || material.provider_name || 'this attachment';
-    const confirmed = Platform.OS === 'web' && typeof window !== 'undefined'
-      ? window.confirm(`Delete "${itemName}"?`)
-      : true;
+    const confirmed = options?.confirmed === true
+      ? true
+      : (
+        Platform.OS === 'web' && typeof window !== 'undefined'
+          ? window.confirm(`Delete "${itemName}"?`)
+          : true
+      );
     if (!confirmed) return;
     try {
       await archiveMaterial(material.id, familyId);

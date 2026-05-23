@@ -35,6 +35,7 @@ import TutorEventHelpPanel from '../tutor/TutorEventHelpPanel';
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
+import ConfirmDialog from '../ConfirmDialog';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 import { findFirstConflictEvent } from '../../lib/utils/conflictDetection';
 import {
@@ -42,6 +43,7 @@ import {
   isPlanYearBlockSeries,
   isDeletableSeriesGroup,
   cleanPlannerEventId,
+  resolveSeriesMasterEventId,
   softDeleteEventSeries,
 } from '../../lib/utils/recurringEventUtils';
 
@@ -950,6 +952,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const toast = useToast();
   const [deleting, setDeleting] = useState(false);
   const [showRecurringDeleteModal, setShowRecurringDeleteModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [editing, setEditing] = useState(initialSchedulingMode); // Start in edit mode if scheduling
   const [saving, setSaving] = useState(false);
   const [schedulingBacklog, setSchedulingBacklog] = useState(initialSchedulingMode); // State for "Add to schedule" mode
@@ -999,6 +1002,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const lessonButtonRef = useRef(null);
   const lessonDropdownRef = useRef(null);
   const [showLessonDropdown, setShowLessonDropdown] = useState(false);
+  const [lessonDropdownPosition, setLessonDropdownPosition] = useState({ top: 0, left: 0, width: 200, maxHeight: 220 });
   const [lessonOptions, setLessonOptions] = useState([]);
   const [loadingLessonOptions, setLoadingLessonOptions] = useState(false);
   
@@ -1233,6 +1237,60 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       cancelled = true;
     };
   }, [familyId, subjectIds, subjects]);
+
+  useEffect(() => {
+    if (showLessonDropdown && Platform.OS === 'web' && lessonButtonRef.current) {
+      const updatePosition = () => {
+        if (lessonButtonRef.current) {
+          const node = lessonButtonRef.current._nativeNode || lessonButtonRef.current;
+          if (node && typeof node.getBoundingClientRect === 'function') {
+            const rect = node.getBoundingClientRect();
+            const dropdownMaxHeight = 300;
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+            let top;
+            let maxHeight;
+            if (spaceBelow < 200 && spaceAbove > spaceBelow) {
+              top = rect.top - Math.min(dropdownMaxHeight, Math.max(spaceAbove - 10, 140));
+              maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceAbove - 10, 140));
+            } else {
+              top = rect.bottom + 4;
+              maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceBelow - 10, 140));
+            }
+            const newPosition = {
+              top,
+              left: rect.left,
+              width: Math.max(rect.width, 200),
+              maxHeight,
+            };
+            setLessonDropdownPosition((prev) => {
+              if (
+                prev?.top === newPosition.top &&
+                prev?.left === newPosition.left &&
+                prev?.width === newPosition.width &&
+                prev?.maxHeight === newPosition.maxHeight
+              ) {
+                return prev;
+              }
+              return newPosition;
+            });
+          }
+        }
+      };
+
+      const timeoutId = setTimeout(updatePosition, 0);
+      if (typeof window !== 'undefined') {
+        window.addEventListener('scroll', updatePosition, true);
+        window.addEventListener('resize', updatePosition);
+        return () => {
+          clearTimeout(timeoutId);
+          window.removeEventListener('scroll', updatePosition, true);
+          window.removeEventListener('resize', updatePosition);
+        };
+      }
+      return () => clearTimeout(timeoutId);
+    }
+  }, [showLessonDropdown]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || !showLessonDropdown) return;
@@ -1996,6 +2054,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         }
       } else if (recurrenceEndType === 'on' && !recurrenceEndDate) {
         errors.recurrenceEnd = 'Select an end date for the series';
+      } else if (recurrenceEndType === 'term_end' && !recurrenceSavedTermEnd) {
+        errors.recurrenceEnd = 'No term end is set for this school year';
       }
     }
 
@@ -2022,6 +2082,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           Number.isFinite(fromNum) && fromNum >= 1 ? fromNum : fromText;
         if (!Number.isFinite(countValue) || countValue < 1) return false;
       } else if (recurrenceEndType === 'on' && !recurrenceEndDate) {
+        return false;
+      } else if (recurrenceEndType === 'term_end' && !recurrenceSavedTermEnd) {
         return false;
       }
     }
@@ -2057,6 +2119,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     recurrenceEndAfter,
     recurrenceEndAfterText,
     recurrenceEndDate,
+    recurrenceSavedTermEnd,
   ]);
 
   useEffect(() => {
@@ -3049,6 +3112,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return null;
   }, [academicYearId, academicYears, preloadedAcademicYears]);
 
+  const recurrenceSavedTermEnd = useMemo(() => {
+    const ymd = String(resolvedAcademicYearRow?.end_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+    const parsed = new Date(`${ymd}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [resolvedAcademicYearRow]);
+
   /** Chips for Add to plan?: merge fetched rows + shell preload without dropping merged ids. */
   const academicYearsForPlanChips = useMemo(() => {
     const byId = new Map();
@@ -3089,7 +3159,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const idForHooks = logEventId ?? cleanId;
       if (onEventDeleted) onEventDeleted(idForHooks);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: idForHooks } }));
+        const seriesDeleteDetail = isPlanYearBlockSeries(event) && event?.source_block_id && event?.academic_year_id
+          ? {
+              sourceBlockId: String(event.source_block_id),
+              seriesAcademicYearId: String(event.academic_year_id),
+            }
+          : {
+              seriesMasterEventId: resolveSeriesMasterEventId(event, cleanId),
+            };
+        window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: idForHooks, ...seriesDeleteDetail } }));
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
       }
       try {
@@ -3443,32 +3521,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       return;
     }
 
-    let confirmed = false;
-    if (Platform.OS === 'web') {
-      confirmed = window.confirm('Are you sure you want to delete this event?');
-    } else {
-      confirmed = await new Promise((resolve) => {
-        Alert.alert(
-          'Delete Event',
-          'Are you sure you want to delete this event?',
-          [
-            {
-              text: 'Cancel',
-              style: 'cancel',
-              onPress: () => resolve(false),
-            },
-            {
-              text: 'Delete',
-              style: 'destructive',
-              onPress: () => resolve(true),
-            },
-          ]
-        );
-      });
-    }
-
-    if (!confirmed) return;
-    await performDeleteSingleOccurrence();
+    setShowDeleteConfirm(true);
   };
 
   const toggleTag = (tag) => {
@@ -4007,6 +4060,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           }
         } else if (recurrenceEndType === 'on' && recurrenceEndDate) {
           rule.until = recurrenceEndDate.toISOString().split('T')[0];
+        } else if (recurrenceEndType === 'term_end' && recurrenceSavedTermEnd) {
+          rule.until = recurrenceSavedTermEnd.toISOString().split('T')[0];
         }
         recurrenceRule = rule;
       }
@@ -4891,7 +4946,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     <Text style={{ color: SUB, fontSize: 13 }}>
                       {recurrenceType.charAt(0).toUpperCase() + recurrenceType.slice(1)}
                       {recurrenceInterval ? ` every ${recurrenceInterval} ${recurrenceType === 'daily' ? 'day(s)' : recurrenceType === 'weekly' ? 'week(s)' : 'month(s)'}` : ''}
-                      {recurrenceEndType === 'never' ? ' (never ends)' : recurrenceEndType === 'after' ? ` (ends after ${recurrenceEndAfter} occurrence${recurrenceEndAfter !== 1 ? 's' : ''})` : recurrenceEndDate ? ` (ends on ${fmt(recurrenceEndDate)})` : ''}
+                      {recurrenceEndType === 'never'
+                        ? ' (never ends)'
+                        : recurrenceEndType === 'after'
+                          ? ` (ends after ${recurrenceEndAfter} occurrence${recurrenceEndAfter !== 1 ? 's' : ''})`
+                          : recurrenceEndType === 'term_end'
+                            ? (recurrenceSavedTermEnd ? ` (ends on ${fmt(recurrenceSavedTermEnd)})` : '')
+                            : recurrenceEndDate
+                              ? ` (ends on ${fmt(recurrenceEndDate)})`
+                              : ''}
                     </Text>
                   </View>
                 )}
@@ -5846,7 +5909,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <View style={[styles.repeatGroup, styles.repeatGroupEnds]}>
                     <Text style={styles.recurrenceGroupLabel}>Ends</Text>
                     <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
-                      {['never', 'after', 'on'].map((endType) => (
+                      {['never', 'after', 'on', 'term_end'].map((endType) => (
                         <TouchableOpacity
                           key={endType}
                           onPress={() => {
@@ -5866,7 +5929,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                               recurrenceEndType === endType && styles.dropdownOptionTextActive,
                             ]}
                           >
-                            {endType === 'never' ? 'Never' : endType === 'after' ? 'After' : 'On date'}
+                            {endType === 'never'
+                              ? 'Never'
+                              : endType === 'after'
+                                ? 'After'
+                                : endType === 'on'
+                                  ? 'On date'
+                                  : 'Term end'}
                           </Text>
                         </TouchableOpacity>
                       ))}
@@ -5920,6 +5989,27 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                           placeholder="e.g. 10"
                           placeholderTextColor={MUTED}
                         />
+                      ) : recurrenceEndType === 'term_end' ? (
+                        <View
+                          style={{
+                            borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'term_end' ? 1.5 : 1,
+                            borderColor:
+                              validationErrors.recurrenceEnd && recurrenceEndType === 'term_end' ? '#ef4444' : CHIP_BORDER,
+                            borderRadius: 999,
+                            marginBottom: 0,
+                            paddingVertical: 0,
+                            paddingHorizontal: 14,
+                            height: 36,
+                            justifyContent: 'center',
+                            backgroundColor: '#FFFFFF',
+                            width: '100%',
+                            maxWidth: 220,
+                          }}
+                        >
+                          <Text style={{ color: recurrenceSavedTermEnd ? FG : MUTED, fontSize: 12 }}>
+                            {recurrenceSavedTermEnd ? fmt(recurrenceSavedTermEnd) : 'No term end set'}
+                          </Text>
+                        </View>
                       ) : (
                         <TouchableOpacity
                           style={{
@@ -6173,7 +6263,99 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   </Text>
                   <ChevronDown size={16} color={SUB} />
                 </TouchableOpacity>
-                {showLessonDropdown ? (
+                {showLessonDropdown && Platform.OS === 'web' && (() => {
+                  let ReactDOM;
+                  try {
+                    ReactDOM = require('react-dom');
+                  } catch (e) {
+                    // ReactDOM not available, fall back to normal rendering
+                  }
+
+                  const dropdownContent = (
+                    <View
+                      ref={lessonDropdownRef}
+                      style={{
+                        position: 'fixed',
+                        top: lessonDropdownPosition.top,
+                        left: lessonDropdownPosition.left,
+                        width: lessonDropdownPosition.width || 200,
+                        backgroundColor: '#fff',
+                        borderWidth: 1,
+                        borderColor: BORDER,
+                        borderRadius: 10,
+                        marginTop: 0,
+                        maxHeight: lessonDropdownPosition.maxHeight || 220,
+                        zIndex: 99999,
+                        ...Platform.select({
+                          web: {
+                            boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            flexDirection: 'column',
+                          },
+                          default: {
+                            shadowColor: '#000',
+                            shadowOpacity: 0.1,
+                            shadowRadius: 8,
+                            shadowOffset: { width: 0, height: 4 },
+                          },
+                        }),
+                        elevation: 10000,
+                      }}
+                    >
+                      <ScrollView
+                        style={{
+                          maxHeight: Math.max(140, (lessonDropdownPosition.maxHeight || 220) - 4),
+                          ...(Platform.OS === 'web' && {
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
+                            WebkitOverflowScrolling: 'touch',
+                          }),
+                        }}
+                        nestedScrollEnabled
+                        showsVerticalScrollIndicator={Platform.OS !== 'web'}
+                      >
+                        <TouchableOpacity
+                          onPress={() => {
+                            setLesson('');
+                            setUnit('');
+                            setShowLessonDropdown(false);
+                          }}
+                          style={[styles.selectOption, !lesson && styles.selectOptionActive]}
+                        >
+                          <Text style={[styles.selectOptionText, !lesson && styles.selectOptionTextActive]}>None</Text>
+                        </TouchableOpacity>
+                        {lessonOptions.length > 0 ? lessonOptions.map((opt) => {
+                          const active = String(lesson || '').trim() === opt.lessonTitle;
+                          return (
+                            <TouchableOpacity
+                              key={opt.key}
+                              onPress={() => {
+                                setLesson(opt.lessonTitle);
+                                setUnit(opt.unitTitle || '');
+                                setShowLessonDropdown(false);
+                              }}
+                              style={[styles.selectOption, active && styles.selectOptionActive]}
+                            >
+                              <Text style={[styles.selectOptionText, active && styles.selectOptionTextActive]}>
+                                {opt.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        }) : (
+                          <View style={{ padding: 12 }}>
+                            <Text style={{ fontSize: 13, color: MUTED }}>No saved lessons for selected subject(s)</Text>
+                          </View>
+                        )}
+                      </ScrollView>
+                    </View>
+                  );
+
+                  return ReactDOM?.createPortal
+                    ? ReactDOM.createPortal(dropdownContent, document.body)
+                    : dropdownContent;
+                })()}
+                {showLessonDropdown && Platform.OS !== 'web' ? (
                   <View ref={lessonDropdownRef} style={styles.selectOptions}>
                     <TouchableOpacity
                       onPress={() => {
@@ -6995,7 +7177,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Trash2 size={15} color="#64748B" />
-                    <Text style={{ fontSize: 15, fontWeight: '600', color: '#334155' }}>Delete this day</Text>
+                    <Text
+                      style={{
+                        fontSize: 15,
+                        fontWeight: '600',
+                        color: '#334155',
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}
+                    >
+                      Delete this day
+                    </Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -7020,7 +7213,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <Trash2 size={15} color="#DC2626" />
-                    <Text style={{ fontSize: 15, fontWeight: '600', color: '#DC2626' }}>Delete all in series</Text>
+                    <Text
+                      style={{
+                        fontSize: 15,
+                        fontWeight: '600',
+                        color: '#DC2626',
+                        ...(Platform.OS === 'web' && {
+                          fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }),
+                      }}
+                    >
+                      Delete all in series
+                    </Text>
                   </View>
                 </TouchableOpacity>
               </View>
@@ -7030,13 +7234,40 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 disabled={deleting}
                 style={{ paddingVertical: 8, alignItems: 'center', ...(Platform.OS === 'web' && { cursor: 'pointer' }) }}
               >
-                <Text style={{ fontSize: 15, fontWeight: '500', color: '#64748B' }}>Cancel</Text>
+                <Text
+                  style={{
+                    fontSize: 15,
+                    fontWeight: '500',
+                    color: '#64748B',
+                    ...(Platform.OS === 'web' && {
+                      fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }),
+                  }}
+                >
+                  Cancel
+                </Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
       ) : null}
+      <ConfirmDialog
+        visible={showDeleteConfirm}
+        title="Delete event?"
+        message="Are you sure you want to delete this event?"
+        confirmLabel={deleting ? 'Deleting...' : 'Delete'}
+        cancelLabel="Cancel"
+        destructive
+        onCancel={() => {
+          if (!deleting) setShowDeleteConfirm(false);
+        }}
+        onConfirm={async () => {
+          if (deleting) return;
+          setShowDeleteConfirm(false);
+          await performDeleteSingleOccurrence();
+        }}
+      />
       <View style={{ flex: 1, backgroundColor: '#ffffff', minHeight: 400 }}>
         {editing ? renderEditForm() : renderViewMode()}
       </View>

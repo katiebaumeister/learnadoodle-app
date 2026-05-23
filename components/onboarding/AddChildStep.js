@@ -589,7 +589,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           >
             {isSaving || adding
               ? 'Saving…'
-              : `Next: ${(createdChildren.length >= 1 ? createdChildren[0].name : (name.trim() || 'Learner'))}'s subjects`}
+              : 'Enter app'}
           </Text>
         </TouchableOpacity>
       </View>

@@ -365,6 +365,7 @@ export default function TaskCreateModal({
   const lessonButtonRef = useRef(null);
   const lessonDropdownRef = useRef(null);
   const [showLessonDropdown, setShowLessonDropdown] = useState(false);
+  const [lessonDropdownPosition, setLessonDropdownPosition] = useState({ top: 0, left: 0, width: 200, maxHeight: 220 });
   const [lessonOptions, setLessonOptions] = useState([]);
   const [loadingLessonOptions, setLoadingLessonOptions] = useState(false);
   const [attachedMaterialIds, setAttachedMaterialIds] = useState([]);
@@ -1043,6 +1044,61 @@ export default function TaskCreateModal({
     }
   }, [showSubjectDropdown]);
 
+  // Calculate lesson dropdown position when it opens (web portal rendering)
+  useEffect(() => {
+    if (showLessonDropdown && Platform.OS === 'web' && lessonButtonRef.current) {
+      const updatePosition = () => {
+        if (lessonButtonRef.current) {
+          const node = lessonButtonRef.current._nativeNode || lessonButtonRef.current;
+          if (node && typeof node.getBoundingClientRect === 'function') {
+            const rect = node.getBoundingClientRect();
+            const dropdownMaxHeight = 300;
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+            let top;
+            let maxHeight;
+            if (spaceBelow < 200 && spaceAbove > spaceBelow) {
+              top = rect.top - Math.min(dropdownMaxHeight, Math.max(spaceAbove - 10, 140));
+              maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceAbove - 10, 140));
+            } else {
+              top = rect.bottom + 4;
+              maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceBelow - 10, 140));
+            }
+            const newPosition = {
+              top,
+              left: rect.left,
+              width: Math.max(rect.width, 200),
+              maxHeight,
+            };
+            setLessonDropdownPosition((prev) => {
+              if (
+                prev?.top === newPosition.top &&
+                prev?.left === newPosition.left &&
+                prev?.width === newPosition.width &&
+                prev?.maxHeight === newPosition.maxHeight
+              ) {
+                return prev;
+              }
+              return newPosition;
+            });
+          }
+        }
+      };
+
+      const timeoutId = setTimeout(updatePosition, 0);
+      if (typeof window !== 'undefined') {
+        window.addEventListener('scroll', updatePosition, true);
+        window.addEventListener('resize', updatePosition);
+        return () => {
+          clearTimeout(timeoutId);
+          window.removeEventListener('scroll', updatePosition, true);
+          window.removeEventListener('resize', updatePosition);
+        };
+      }
+      return () => clearTimeout(timeoutId);
+    }
+  }, [showLessonDropdown]);
+
   // Close subject dropdown when clicking outside (web only)
   useEffect(() => {
     if (Platform.OS === 'web' && showSubjectDropdown) {
@@ -1358,6 +1414,10 @@ export default function TaskCreateModal({
     if (isDateWithin(dueDate, springStart, springEnd)) return springEnd;
     return yearEnd;
   }, [plannerDefaults, dueDate]);
+
+  const recurrenceSavedYearEnd = useMemo(() => {
+    return parseYmdDate(plannerDefaults?.default_year_end_date);
+  }, [plannerDefaults]);
 
   const resolveSubjectTermEndDate = useCallback((subject) => {
     if (!subject) return null;
@@ -2080,6 +2140,8 @@ export default function TaskCreateModal({
         }
       } else if (recurrenceEndType === 'on' && !recurrenceEndDate) {
         errors.recurrenceEnd = 'Select an end date for the series';
+      } else if (recurrenceEndType === 'term_end' && !recurrenceSavedYearEnd) {
+        errors.recurrenceEnd = 'Set a school-year end date in Planning Preferences first';
       }
     }
 
@@ -2121,6 +2183,7 @@ export default function TaskCreateModal({
     recurrenceEndAfter,
     recurrenceEndAfterText,
     recurrenceEndDate,
+    recurrenceSavedYearEnd,
   ]);
 
   const handleDismiss = useCallback(() => {
@@ -2238,6 +2301,7 @@ export default function TaskCreateModal({
 
       let data;
       let error;
+      let createdRecurrenceRule = null;
 
       if (placement === 'backlog') {
         // For backlog items, use is_backlog flag instead of far future dates
@@ -2370,10 +2434,13 @@ export default function TaskCreateModal({
             }
           } else if (recurrenceEndType === 'on' && recurrenceEndDate) {
             rule.until = recurrenceEndDate.toISOString().split('T')[0]; // YYYY-MM-DD
+          } else if (recurrenceEndType === 'term_end' && recurrenceSavedYearEnd) {
+            rule.until = recurrenceSavedYearEnd.toISOString().split('T')[0];
           }
           // If 'never', no end condition
           
           recurrenceRule = rule;
+          createdRecurrenceRule = recurrenceRule;
         }
 
         // For multi-day events, create an event for each day in the range
@@ -2589,24 +2656,87 @@ export default function TaskCreateModal({
             recurrenceRule
             && recurrenceType === 'weekly'
             && selectedWeekdays.length > 1
-            && !(Number.isFinite(Number(recurrenceRule?.count)) && Number(recurrenceRule?.count) > 0)
           );
 
           if (shouldSplitWeeklySeries) {
             console.log('[TaskCreateModal] Weekly recurrence has multiple weekdays; creating one recurring series per selected weekday.');
             const durationMs = Math.max((endDate?.getTime?.() || 0) - startDate.getTime(), DEFAULT_DURATION_MINUTES * 60 * 1000);
             const createdSeriesIds = [];
+            const normalizedIntervalWeeks = Number.isFinite(Number(recurrenceRule?.interval))
+              ? Math.max(1, Number(recurrenceRule.interval))
+              : 1;
+            const totalCount = Number.isFinite(Number(recurrenceRule?.count))
+              ? Math.max(0, Number(recurrenceRule.count))
+              : null;
+            const countsByWeekday = (() => {
+              if (!totalCount || totalCount <= 0) return null;
+              const weekdaysSorted = [...selectedWeekdays].sort((a, b) => a - b);
+              const nextByWeekday = new Map();
+              const result = new Map();
+              weekdaysSorted.forEach((weekday) => {
+                const firstDate = new Date(startDate);
+                const daysUntilWeekday = (weekday - startDate.getDay() + 7) % 7;
+                firstDate.setDate(firstDate.getDate() + daysUntilWeekday);
+                nextByWeekday.set(weekday, firstDate);
+                result.set(weekday, 0);
+              });
+              let emitted = 0;
+              while (emitted < totalCount) {
+                let chosenWeekday = null;
+                let chosenDate = null;
+                weekdaysSorted.forEach((weekday) => {
+                  const candidate = nextByWeekday.get(weekday);
+                  if (!candidate) return;
+                  if (
+                    !chosenDate
+                    || candidate.getTime() < chosenDate.getTime()
+                    || (
+                      candidate.getTime() === chosenDate.getTime()
+                      && chosenWeekday != null
+                      && weekday < chosenWeekday
+                    )
+                  ) {
+                    chosenWeekday = weekday;
+                    chosenDate = candidate;
+                  }
+                });
+                if (chosenWeekday == null || !chosenDate) break;
+                result.set(chosenWeekday, (result.get(chosenWeekday) || 0) + 1);
+                emitted += 1;
+                const nextDate = new Date(chosenDate);
+                nextDate.setDate(nextDate.getDate() + (7 * normalizedIntervalWeeks));
+                nextByWeekday.set(chosenWeekday, nextDate);
+              }
+              return result;
+            })();
+            const recurrenceUntilDate = recurrenceRule?.until
+              ? new Date(`${String(recurrenceRule.until).slice(0, 10)}T23:59:59`)
+              : null;
 
             for (const weekday of selectedWeekdays) {
               const daysUntilWeekday = (weekday - startDate.getDay() + 7) % 7;
               const seriesStart = new Date(startDate);
               seriesStart.setDate(seriesStart.getDate() + daysUntilWeekday);
+              if (
+                recurrenceUntilDate instanceof Date
+                && !Number.isNaN(recurrenceUntilDate.getTime())
+                && seriesStart.getTime() > recurrenceUntilDate.getTime()
+              ) {
+                continue;
+              }
               const seriesEnd = new Date(seriesStart.getTime() + durationMs);
               const weekdayRrule = WEEKDAY_OPTIONS.find((opt) => opt.value === weekday)?.rrule || null;
+              const seriesCount = countsByWeekday ? (countsByWeekday.get(weekday) || 0) : null;
+              if (countsByWeekday && seriesCount <= 0) {
+                continue;
+              }
               const seriesRule = {
                 ...recurrenceRule,
                 byweekday: weekdayRrule ? [weekdayRrule] : undefined,
               };
+              if (countsByWeekday) {
+                seriesRule.count = seriesCount;
+              }
               if (!weekdayRrule) {
                 delete seriesRule.byweekday;
               }
@@ -2875,6 +3005,11 @@ export default function TaskCreateModal({
           window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: subjectIds[0] } }));
         }
         window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: refreshDetail }));
+        if (createdRecurrenceRule) {
+          // Recurring creation can span cached months; force broad cache refresh so future months
+          // (e.g. June while creating in May) show immediately without a page reload.
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        }
       }
       
       // If "Adjust automatically" was selected, open Quick Reschedule after closing modal
@@ -3787,7 +3922,7 @@ export default function TaskCreateModal({
                       <View style={[styles.repeatGroup, styles.repeatGroupEnds]}>
                         <Text style={styles.recurrenceGroupLabel}>Ends</Text>
                         <ChipRow style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, width: '100%' }}>
-                          {['never', 'after', 'on'].map((endType) => (
+                          {['never', 'after', 'on', 'term_end'].map((endType) => (
                             <TouchableOpacity
                               key={endType}
                               onPress={() => {
@@ -3807,7 +3942,13 @@ export default function TaskCreateModal({
                                   recurrenceEndType === endType && styles.dropdownOptionTextActive,
                                 ]}
                               >
-                                {endType === 'never' ? 'Never' : endType === 'after' ? 'After' : 'On date'}
+                                {endType === 'never'
+                                  ? 'Never'
+                                  : endType === 'after'
+                                    ? 'After'
+                                    : endType === 'on'
+                                      ? 'On date'
+                                      : 'Term end'}
                               </Text>
                             </TouchableOpacity>
                           ))}
@@ -3861,6 +4002,27 @@ export default function TaskCreateModal({
                               placeholder="e.g. 10"
                               placeholderTextColor={MUTED}
                             />
+                          ) : recurrenceEndType === 'term_end' ? (
+                            <View
+                              style={{
+                                borderWidth: validationErrors.recurrenceEnd && recurrenceEndType === 'term_end' ? 1.5 : 1,
+                                borderColor:
+                                  validationErrors.recurrenceEnd && recurrenceEndType === 'term_end' ? '#ef4444' : CHIP_BORDER,
+                                borderRadius: 999,
+                                marginBottom: 0,
+                                paddingVertical: 0,
+                                paddingHorizontal: 14,
+                                height: 36,
+                                justifyContent: 'center',
+                                backgroundColor: '#FFFFFF',
+                                width: '100%',
+                                maxWidth: 220,
+                              }}
+                            >
+                              <Text style={{ color: recurrenceSavedYearEnd ? FG : MUTED, fontSize: 12 }}>
+                                {recurrenceSavedYearEnd ? fmt(recurrenceSavedYearEnd) : 'No year end saved'}
+                              </Text>
+                            </View>
                           ) : (
                             <TouchableOpacity
                               style={{
@@ -4132,7 +4294,101 @@ export default function TaskCreateModal({
                       </Text>
                       <ChevronDown size={16} color={SUB} />
                     </TouchableOpacity>
-                    {showLessonDropdown ? (
+                    {showLessonDropdown && Platform.OS === 'web' && (() => {
+                      let ReactDOM;
+                      try {
+                        ReactDOM = require('react-dom');
+                      } catch (e) {
+                        // ReactDOM not available, fall back to normal rendering
+                      }
+
+                      const dropdownContent = (
+                        <View
+                          ref={lessonDropdownRef}
+                          style={{
+                            position: 'fixed',
+                            top: lessonDropdownPosition.top,
+                            left: lessonDropdownPosition.left,
+                            width: lessonDropdownPosition.width || 200,
+                            backgroundColor: '#fff',
+                            borderWidth: 1,
+                            borderColor: BORDER,
+                            borderRadius: 10,
+                            marginTop: 0,
+                            maxHeight: lessonDropdownPosition.maxHeight || 220,
+                            zIndex: 99999,
+                            ...Platform.select({
+                              web: {
+                                boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
+                                overflow: 'hidden',
+                                display: 'flex',
+                                flexDirection: 'column',
+                              },
+                              default: {
+                                shadowColor: '#000',
+                                shadowOpacity: 0.1,
+                                shadowRadius: 8,
+                                shadowOffset: { width: 0, height: 4 },
+                              },
+                            }),
+                            elevation: 10000,
+                          }}
+                        >
+                          <ScrollView
+                            style={{
+                              maxHeight: Math.max(140, (lessonDropdownPosition.maxHeight || 220) - 4),
+                              ...(Platform.OS === 'web' && {
+                                overflowY: 'auto',
+                                overflowX: 'hidden',
+                                WebkitOverflowScrolling: 'touch',
+                              }),
+                            }}
+                            nestedScrollEnabled
+                            showsVerticalScrollIndicator={Platform.OS !== 'web'}
+                          >
+                            <TouchableOpacity
+                              onPress={() => {
+                                setLesson('');
+                                setUnit('');
+                                setShowLessonDropdown(false);
+                              }}
+                              style={[styles.selectOption, !lesson && styles.selectOptionActive]}
+                            >
+                              <Text style={[styles.selectOptionText, !lesson && styles.selectOptionTextActive]}>
+                                None
+                              </Text>
+                            </TouchableOpacity>
+                            {lessonOptions.length > 0 ? lessonOptions.map((opt) => {
+                              const active = String(lesson || '').trim() === opt.lessonTitle;
+                              return (
+                                <TouchableOpacity
+                                  key={opt.key}
+                                  onPress={() => {
+                                    setLesson(opt.lessonTitle);
+                                    setUnit(opt.unitTitle || '');
+                                    setShowLessonDropdown(false);
+                                  }}
+                                  style={[styles.selectOption, active && styles.selectOptionActive]}
+                                >
+                                  <Text style={[styles.selectOptionText, active && styles.selectOptionTextActive]}>
+                                    {opt.label}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            }) : (
+                              <View style={{ padding: 12 }}>
+                                <Text style={{ fontSize: 13, color: MUTED }}>No saved lessons for selected subject(s)</Text>
+                              </View>
+                            )}
+                          </ScrollView>
+                        </View>
+                      );
+
+                      return ReactDOM?.createPortal
+                        ? ReactDOM.createPortal(dropdownContent, document.body)
+                        : dropdownContent;
+                    })()}
+                    {showLessonDropdown && Platform.OS !== 'web' ? (
                       <View ref={lessonDropdownRef} style={styles.selectOptions}>
                         <TouchableOpacity
                           onPress={() => {

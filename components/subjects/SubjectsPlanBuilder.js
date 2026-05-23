@@ -6143,7 +6143,19 @@ export default function SubjectsPlanBuilder({
                 </View>
               );
             })}
-            {(
+            {termSection.subjectPlans.length === 0 ? (
+              <View style={styles.yearTargetsSection}>
+                <View style={styles.yearTargetsSectionHeaderRow}>
+                  <Text style={styles.termHeaderCompactTitle}>Year Targets</Text>
+                </View>
+                <View style={styles.termHeaderDivider} />
+                <View style={styles.scheduleEmptyCard}>
+                  <Text style={styles.scheduleEmptyText}>
+                    No subjects for this school year yet. Add a subject, set a target, then review progress here.
+                  </Text>
+                </View>
+              </View>
+            ) : (
               <View style={styles.yearTargetsSection}>
                 <View style={styles.yearTargetsSectionHeaderRow}>
                   <Text style={styles.termHeaderCompactTitle}>Year Targets</Text>

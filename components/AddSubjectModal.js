@@ -11,6 +11,7 @@ import { useModalStackElevation } from './hooks/useModalStackElevation';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
+import ConfirmDialog from './ConfirmDialog';
 import {
   deleteSubjectCascade,
   dispatchSubjectDeletedSideEffects,
@@ -139,6 +140,7 @@ export default function AddSubjectModal({
   // Accordion state (all collapsed by default)
   const [showAdditionalNotesAccordion, setShowAdditionalNotesAccordion] = useState(false);
   const [deletingSubject, setDeletingSubject] = useState(false);
+  const [showDeleteSubjectConfirm, setShowDeleteSubjectConfirm] = useState(false);
   /** Add-mode draft subject persisted early so unit structure can be saved before final subject save. */
   const [draftSubjectId, setDraftSubjectId] = useState(null);
   const effectiveSubjectId = subject?.id ?? draftSubjectId ?? null;
@@ -650,6 +652,7 @@ export default function AddSubjectModal({
       // Reset flags when modal closes
       hasSetChildIdsRef.current = false;
       lastSubjectIdRef.current = null;
+      setShowDeleteSubjectConfirm(false);
     }
   }, [visible, subject?.id, children.length]);
 
@@ -907,7 +910,7 @@ export default function AddSubjectModal({
                 primaryLabel={isSubmitting ? 'Saving...' : (subject ? 'Save changes' : 'Save Subject')}
                 destructiveLabel={subject?.id ? (deletingSubject ? 'Deleting...' : 'Delete subject') : undefined}
                 onCancel={handleCloseWithDraftCleanup}
-                onDelete={subject?.id ? performDeleteSubject : undefined}
+                onDelete={subject?.id ? () => setShowDeleteSubjectConfirm(true) : undefined}
                 onPrimary={handleSubmit}
                 onBlockedPrimary={handleBlockedSubmit}
                 accent="#9ECFFB"
@@ -1238,6 +1241,23 @@ export default function AddSubjectModal({
       </View>
 
     </RNModal>
+
+    <ConfirmDialog
+      visible={showDeleteSubjectConfirm}
+      title="Delete subject?"
+      message="This will permanently delete this subject and related planning links. This cannot be undone."
+      confirmLabel={deletingSubject ? 'Deleting...' : 'Delete subject'}
+      cancelLabel="Cancel"
+      destructive
+      onCancel={() => {
+        if (!deletingSubject) setShowDeleteSubjectConfirm(false);
+      }}
+      onConfirm={async () => {
+        if (deletingSubject) return;
+        setShowDeleteSubjectConfirm(false);
+        await performDeleteSubject();
+      }}
+    />
 
     </>
   );

@@ -11,6 +11,7 @@ const muted = tok.muted;
 
 /** Align with Invite-a-child and other large modals: League Spartan title, soft card. */
 const FONT_MODAL_TITLE = '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const FONT_MODAL_BUTTON = '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const MODAL_RADIUS = 28;
 const MODAL_PAD = 32;
 /** designTokens.radius (12) — used for action pills; keep name `radius` for any HMR paths expecting it */
@@ -219,7 +220,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#374151',
-    fontFamily: fonts.sans,
+    fontFamily: Platform.OS === 'web' ? FONT_MODAL_BUTTON : fonts.sans,
   },
   confirmButton: {
     paddingHorizontal: 22,
@@ -239,7 +240,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#FFFFFF',
-    fontFamily: fonts.sans,
+    fontFamily: Platform.OS === 'web' ? FONT_MODAL_BUTTON : fonts.sans,
   },
   confirmButtonTextDestructive: {
     color: '#FFFFFF',
