@@ -5196,7 +5196,15 @@ async def get_fix_target_gap_history(
     except Exception as history_error:
         # Non-fatal: local/dev DB may not have this optional history table yet.
         error_text = str(history_error or "").lower()
-        if "academic_year_fix_gap_history" in error_text and ("does not exist" in error_text or "42p01" in error_text):
+        if (
+            "academic_year_fix_gap_history" in error_text
+            and (
+                "does not exist" in error_text
+                or "42p01" in error_text
+                or "permission denied" in error_text
+                or "42501" in error_text
+            )
+        ):
             rows = []
         else:
             raise
@@ -5279,8 +5287,16 @@ async def undo_fix_target_gap(
         except Exception as history_error:
             # Allow explicit-id undo even when optional history table is missing in local/dev.
             err_text = str(history_error or "").lower()
-            is_missing_table = "academic_year_fix_gap_history" in err_text and ("does not exist" in err_text or "42p01" in err_text)
-            if (not is_missing_table) or (not created_event_ids and not removed_event_ids):
+            is_nonfatal_history_access_issue = (
+                "academic_year_fix_gap_history" in err_text
+                and (
+                    "does not exist" in err_text
+                    or "42p01" in err_text
+                    or "permission denied" in err_text
+                    or "42501" in err_text
+                )
+            )
+            if (not is_nonfatal_history_access_issue) or (not created_event_ids and not removed_event_ids):
                 raise
 
     if not created_event_ids and not removed_event_ids:
