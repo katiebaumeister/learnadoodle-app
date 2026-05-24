@@ -1181,7 +1181,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [sendToStudentNote, setSendToStudentNote] = useState('');
   const [queueSendToStudentAfterSave, setQueueSendToStudentAfterSave] = useState(false);
   const [sendToStudentSubmitting, setSendToStudentSubmitting] = useState(false);
-  const [hasInvitedAssignee, setHasInvitedAssignee] = useState(false);
+  const [invitedAssigneeIds, setInvitedAssigneeIds] = useState([]);
+  const [showSendInviteClarification, setShowSendInviteClarification] = useState(false);
 
   const applySubjectSelection = useCallback((nextSubjectIds) => {
     const normalized = Array.from(
@@ -1341,22 +1342,33 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     [event?.child_id, assigneeIds, session?.child_id]
   );
 
-  const hasInvitedAssigneeFromMembers = useMemo(() => {
-    if (!assigneeIds?.length || !familyMembers?.length) return false;
-    const wanted = new Set(assigneeIds.map(String));
-    return (familyMembers || []).some((m) => {
+  const acceptedInvitedAssigneeIdsFromMembers = useMemo(() => {
+    if (!assigneeIds?.length || !familyMembers?.length) return [];
+    const wanted = new Set(assigneeIds.map((id) => String(id)));
+    const accepted = new Set();
+    (familyMembers || []).forEach((m) => {
+      const inviteStatus = String(m?.invite_status || '').trim().toLowerCase();
+      if (inviteStatus && inviteStatus !== 'accepted') return;
       const role = String(m?.member_role || m?.role || '').toLowerCase();
-      if (role !== 'child' && role !== 'student') return false;
-      if (m?.child_id != null && wanted.has(String(m.child_id))) return true;
+      if (role && role !== 'child' && role !== 'student') return;
+      if (m?.child_id != null && wanted.has(String(m.child_id))) {
+        accepted.add(String(m.child_id));
+      }
       let scope = m?.child_scope;
       if (typeof scope === 'string') {
         try { scope = JSON.parse(scope); } catch (_) { scope = []; }
       }
-      if (Array.isArray(scope) && scope.some((id) => wanted.has(String(id)))) return true;
-      // Some callsites pass child rows (id + name) instead of family_members rows.
-      if (m?.id != null && wanted.has(String(m.id)) && role) return true;
-      return false;
+      if (Array.isArray(scope)) {
+        scope.forEach((id) => {
+          const sid = String(id);
+          if (wanted.has(sid)) accepted.add(sid);
+        });
+      }
+      if (m?.id != null && wanted.has(String(m.id)) && inviteStatus === 'accepted') {
+        accepted.add(String(m.id));
+      }
     });
+    return [...accepted];
   }, [assigneeIds, familyMembers]);
 
   const sendToStudentTargetLabel = useMemo(() => {
@@ -1377,11 +1389,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   useEffect(() => {
     if (!isParentView || !familyId || assigneeIds.length === 0) {
-      setHasInvitedAssignee((prev) => (prev ? false : prev));
+      setInvitedAssigneeIds([]);
       return;
     }
-    if (hasInvitedAssigneeFromMembers) {
-      setHasInvitedAssignee((prev) => (prev ? prev : true));
+    if (acceptedInvitedAssigneeIdsFromMembers.length > 0) {
+      setInvitedAssigneeIds((prev) => {
+        const prevKey = [...new Set((prev || []).map(String))].sort().join('|');
+        const nextKey = [...new Set(acceptedInvitedAssigneeIdsFromMembers.map(String))].sort().join('|');
+        return prevKey === nextKey ? prev : acceptedInvitedAssigneeIdsFromMembers;
+      });
       return;
     }
     let cancelled = false;
@@ -1393,27 +1409,85 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           .eq('family_id', familyId)
           .in('member_role', ['child', 'student']);
         if (cancelled || error) {
-          if (!cancelled) setHasInvitedAssignee((prev) => (prev ? false : prev));
+          if (!cancelled) setInvitedAssigneeIds([]);
           return;
         }
         const wanted = new Set(assigneeIds.map(String));
-        const hasLinked = (data || []).some((m) => {
-          if (m?.child_id != null && wanted.has(String(m.child_id))) return true;
+        const invited = new Set();
+        (data || []).forEach((m) => {
+          if (m?.child_id != null && wanted.has(String(m.child_id))) invited.add(String(m.child_id));
           let scope = m?.child_scope;
           if (typeof scope === 'string') {
             try { scope = JSON.parse(scope); } catch (_) { scope = []; }
           }
-          return Array.isArray(scope) && scope.some((id) => wanted.has(String(id)));
+          if (Array.isArray(scope)) {
+            scope.forEach((id) => {
+              const sid = String(id);
+              if (wanted.has(sid)) invited.add(sid);
+            });
+          }
         });
-        if (!cancelled) setHasInvitedAssignee((prev) => (prev === hasLinked ? prev : hasLinked));
+        if (!cancelled) {
+          setInvitedAssigneeIds((prev) => {
+            const prevKey = [...new Set((prev || []).map(String))].sort().join('|');
+            const nextIds = [...invited];
+            const nextKey = [...new Set(nextIds.map(String))].sort().join('|');
+            return prevKey === nextKey ? prev : nextIds;
+          });
+        }
       } catch (_) {
-        if (!cancelled) setHasInvitedAssignee((prev) => (prev ? false : prev));
+        if (!cancelled) setInvitedAssigneeIds([]);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [isParentView, familyId, assigneeIds, hasInvitedAssigneeFromMembers]);
+  }, [isParentView, familyId, assigneeIds, acceptedInvitedAssigneeIdsFromMembers]);
+
+  const sendEligibleAssigneeIds = useMemo(() => {
+    const invitedSet = new Set((invitedAssigneeIds || []).map(String));
+    return (assigneeIds || []).map(String).filter((id) => invitedSet.has(id));
+  }, [assigneeIds, invitedAssigneeIds]);
+
+  const sendBlockedAssigneeIds = useMemo(() => {
+    const invitedSet = new Set((invitedAssigneeIds || []).map(String));
+    return (assigneeIds || []).map(String).filter((id) => !invitedSet.has(id));
+  }, [assigneeIds, invitedAssigneeIds]);
+
+  const hasInvitedAssignee = sendEligibleAssigneeIds.length > 0;
+
+  const formatAssigneeNameList = useCallback((ids = []) => {
+    const names = (Array.isArray(ids) ? ids : [])
+      .map((id) => {
+        const member = (familyMembers || []).find((m) => String(m?.id) === String(id));
+        return String(member?.name || member?.first_name || '').trim();
+      })
+      .filter(Boolean);
+    if (names.length === 0) return '';
+    if (names.length === 1) return names[0];
+    if (names.length === 2) return `${names[0]} and ${names[1]}`;
+    return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+  }, [familyMembers]);
+
+  const sendInviteClarificationText = useMemo(() => {
+    const invitedCount = sendEligibleAssigneeIds.length;
+    const blockedCount = sendBlockedAssigneeIds.length;
+    if (invitedCount <= 0 && blockedCount > 0) {
+      const blockedNames = formatAssigneeNameList(sendBlockedAssigneeIds);
+      return blockedNames
+        ? `Invite ${blockedNames} before sending this assignment`
+        : 'Invite the assigned students before sending this assignment';
+    }
+    if (invitedCount > 0 && blockedCount > 0) {
+      const invitedNames = formatAssigneeNameList(sendEligibleAssigneeIds);
+      const blockedNames = formatAssigneeNameList(sendBlockedAssigneeIds);
+      if (invitedNames && blockedNames) {
+        return `This will send to ${invitedNames}. Invite ${blockedNames} before sending to them`;
+      }
+      return 'Some assigned students still need an invite before they can receive this assignment';
+    }
+    return '';
+  }, [sendEligibleAssigneeIds, sendBlockedAssigneeIds, formatAssigneeNameList]);
 
   const loadEventLinkedHelpAssignment = useCallback(async () => {
     const et = event?.event_type || eventType;
@@ -1752,6 +1826,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   ]);
 
   useEffect(() => {
+    if (!showSendToStudentModal && !queueSendToStudentAfterSave) {
+      setShowSendInviteClarification(false);
+    }
+  }, [showSendToStudentModal, queueSendToStudentAfterSave]);
+
+  useEffect(() => {
     if (!parentLinkedReady || !parentEventFocus) return;
     const helpA = parentLinkedAssignments.find((a) => a.need_help);
     const subA = parentLinkedAssignments.find(
@@ -1894,8 +1974,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   const sendWorkToStudents = useCallback(
     async (note) => {
+      const targetAssigneeIds = (sendEligibleAssigneeIds || []).map(String).filter(Boolean);
       if (!familyId || !event?.id || assigneeIds.length === 0) {
         toast.push('Choose at least one student and save the event first.', 'error');
+        return;
+      }
+      if (targetAssigneeIds.length === 0) {
+        toast.push(
+          sendInviteClarificationText || 'Invite the assigned students before sending this assignment.',
+          'info'
+        );
         return;
       }
       const uid = authUser?.id;
@@ -1914,7 +2002,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         const dueStr = dueTs ? new Date(dueTs).toISOString().split('T')[0] : null;
         const titleBase = (draftTitle || event.title || 'Schoolwork').trim().slice(0, 200);
 
-        for (const childId of assigneeIds) {
+        for (const childId of targetAssigneeIds) {
           const { data: rows, error: findErr } = await supabase
             .from('assignments')
             .select('id, title, description, linked_event_ids, need_help')
@@ -1965,7 +2053,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           await appendAssignmentSendLogQuiet(linkedAssignmentId, noteTrim);
         }
 
-        toast.push('Sent to student', 'success');
+        const blockedCount = Math.max(0, Number(assigneeIds.length || 0) - Number(targetAssigneeIds.length || 0));
+        toast.push(
+          blockedCount > 0
+            ? `Sent to ${targetAssigneeIds.length} student${targetAssigneeIds.length === 1 ? '' : 's'}. ${blockedCount} need invite access first.`
+            : 'Sent to student',
+          'success'
+        );
         setShowSendToStudentModal(false);
         setSendToStudentNote('');
         if (sendOnlyMode) {
@@ -1983,7 +2077,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setSendToStudentSubmitting(false);
       }
     },
-    [familyId, event, assigneeIds, authUser?.id, draftTitle, eventType, subjectId, toast, sendOnlyMode, onClose, appendAssignmentSendLogQuiet, loadEventLinkedParentAssignments]
+    [familyId, event, assigneeIds, sendEligibleAssigneeIds, sendInviteClarificationText, authUser?.id, draftTitle, eventType, subjectId, toast, sendOnlyMode, onClose, appendAssignmentSendLogQuiet, loadEventLinkedParentAssignments]
   );
 
   const startPeriod = useMemo(() => {
@@ -6787,14 +6881,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               )}
               <View style={styles.workflowHeaderRow}>
                 <TouchableOpacity
-                  onPress={() => setQueueSendToStudentAfterSave((prev) => !prev)}
-                  disabled={!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee}
+                  onPress={() => {
+                    const hasBaseRequirements = Boolean(event?.id && familyId && assigneeIds.length > 0);
+                    setShowSendInviteClarification(true);
+                    if (!hasBaseRequirements) return;
+                    setQueueSendToStudentAfterSave((prev) => !prev);
+                  }}
                   style={[
                     styles.workflowActionButton,
                     queueSendToStudentAfterSave && styles.workflowActionButtonActive,
-                    (!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee) && styles.workflowActionButtonDisabled,
+                    (!event?.id || !familyId || assigneeIds.length === 0) && styles.workflowActionButtonDisabled,
                   ]}
-                  {...(Platform.OS === 'web' && { cursor: (!event?.id || !familyId || assigneeIds.length === 0 || !hasInvitedAssignee) ? 'default' : 'pointer' })}
+                  {...(Platform.OS === 'web' && { cursor: (!event?.id || !familyId || assigneeIds.length === 0) ? 'default' : 'pointer' })}
                 >
                   <View style={styles.workflowActionButtonRow}>
                     <View style={[styles.workflowActionIconWrap, queueSendToStudentAfterSave && styles.workflowActionIconWrapActive]}>
@@ -6808,6 +6906,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   </View>
                 </TouchableOpacity>
               </View>
+              {showSendInviteClarification && sendInviteClarificationText ? (
+                <Text style={[styles.fieldHelpText, { marginTop: 8 }]}>
+                  {sendInviteClarificationText}
+                </Text>
+              ) : null}
             </View>
           ) : null}
         </ModalSectionCard>
@@ -7701,9 +7804,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ...fontDisplay('400'),
                     }}
                   >
-                    {sendTrackingSummary.hasShared
-                      ? (sendTrackingSummary.latestStatusLine || 'Last sent recently.')
-                      : `This will notify ${sendToStudentTargetLabel} that the assignment needs their attention.`}
+                    {sendInviteClarificationText
+                      ? sendInviteClarificationText
+                      : (
+                        sendTrackingSummary.hasShared
+                          ? (sendTrackingSummary.latestStatusLine || 'Last sent recently.')
+                          : `This will notify ${sendToStudentTargetLabel} that the assignment needs their attention.`
+                      )}
                   </Text>
                   <Text
                     style={{
@@ -7749,13 +7856,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <View style={{ marginTop: 24 }}>
                     <TouchableOpacity
                       onPress={() => sendWorkToStudents(sendToStudentNote.trim())}
-                      disabled={sendToStudentSubmitting}
+                      disabled={sendToStudentSubmitting || !hasInvitedAssignee}
                       style={[
                         styles.workflowActionButton,
                         sendToStudentSubmitting && styles.workflowActionButtonDisabled,
+                        !hasInvitedAssignee && styles.workflowActionButtonDisabled,
                         { alignSelf: 'center' },
                       ]}
-                      {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'not-allowed' : 'pointer' })}
+                      {...(Platform.OS === 'web' && { cursor: (sendToStudentSubmitting || !hasInvitedAssignee) ? 'not-allowed' : 'pointer' })}
                     >
                       <View style={styles.workflowActionButtonRow}>
                         <View style={styles.workflowActionIconWrap}>

@@ -9418,6 +9418,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     const renderParentHomeCommon = (fid, options = {}) => (
       <ParentHomeScreen
         familyId={fid}
+        family={propFamily}
         hideRailOnboardingCards={options.hideRailOnboardingCards === true}
         onNavigate={onTabChange}
         onAddEvent={() => {

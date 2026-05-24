@@ -9,7 +9,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, Platform, ScrollView, TouchableOpacity } from 'react-native';
-import { Plus, Calendar } from 'lucide-react';
+import { Plus, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
@@ -103,6 +103,7 @@ async function hydrateLearningAssignees(learning = [], familyId) {
 
 export default function ParentHomeScreen({
   familyId: propFamilyId,
+  family = null,
   onNavigate,
   onAddEvent,
   onAddGrade,
@@ -521,6 +522,37 @@ export default function ParentHomeScreen({
     return d.getTime() === t.getTime();
   })();
 
+  const getDayDiffFromToday = (date) => {
+    const d = new Date(date);
+    if (Number.isNaN(d.getTime())) return 0;
+    const today = new Date();
+    const lhs = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+    const rhs = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    return Math.round((lhs - rhs) / (24 * 60 * 60 * 1000));
+  };
+
+  const getScheduleHeadingLabel = (date) => {
+    const diff = getDayDiffFromToday(date);
+    if (diff === 0) return "Today's schedule";
+    if (diff === -1) return "Yesterday's schedule";
+    if (diff === 1) return "Tomorrow's schedule";
+    const dateLabel = new Date(date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+    return `${dateLabel}'s Schedule`;
+  };
+
+  const shiftSelectedDay = (deltaDays) => {
+    setSelectedDate((prev) => {
+      const base = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev : new Date();
+      const next = new Date(base);
+      next.setDate(next.getDate() + deltaDays);
+      return next;
+    });
+  };
+
+  const jumpToTodaySchedule = () => {
+    setSelectedDate(new Date());
+  };
+
   const scheduleSummaryLine =
     blockCount === 0
       ? isViewingToday
@@ -571,10 +603,32 @@ export default function ParentHomeScreen({
 
       <View style={styles.divider} />
 
-      {/* Today's schedule — primary “Add event” lives in card empty state; header CTA when there are events */}
+      {/* Daily schedule — primary “Add event” lives in card empty state; header CTA when there are events */}
       <View style={styles.scheduleSection}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionLabel}>Today's schedule</Text>
+          <View style={styles.scheduleNavGroup}>
+            <TouchableOpacity
+              style={styles.dayNavButton}
+              onPress={() => shiftSelectedDay(-1)}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <ChevronLeft size={16} color="#64748b" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.scheduleTitleButton}
+              onPress={jumpToTodaySchedule}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.sectionLabel}>{getScheduleHeadingLabel(selectedDate)}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.dayNavButton}
+              onPress={() => shiftSelectedDay(1)}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <ChevronRight size={16} color="#64748b" />
+            </TouchableOpacity>
+          </View>
           {blockCount > 0 ? (
             <TouchableOpacity
               style={styles.addButton}
@@ -605,6 +659,7 @@ export default function ParentHomeScreen({
     <View style={styles.railContent}>
       <EmbeddedNotificationCenter
         familyId={familyId}
+        childInviteSummariesFromApi={family?.child_invite_summaries ?? null}
         limit={5}
         onViewAll={() => onNavigate?.('review-inbox')}
         onInviteChild={handleInviteChildFromRail}
@@ -806,6 +861,34 @@ const styles = StyleSheet.create({
     marginHorizontal: -12,
     paddingHorizontal: 12,
     paddingRight: 10,
+  },
+  scheduleNavGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  dayNavButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    backgroundColor: '#F8FAFC',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  scheduleTitleButton: {
+    flexShrink: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
   },
   /** Section title — slightly heavier than body, below page hero */
   sectionLabel: {

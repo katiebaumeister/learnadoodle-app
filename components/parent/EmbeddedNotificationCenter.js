@@ -5,12 +5,13 @@
  * Shows condensed review inbox with tabs and limited items.
  */
 
-import React, { useState, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { FileText, HelpCircle, Calendar, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
+import { getFamilyMembers } from '../../lib/apiClient';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
 import RespondToHelpRequestModal from './RespondToHelpRequestModal';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
@@ -29,7 +30,15 @@ function readRailCache(familyId) {
     const raw = sessionStorage.getItem(railCacheKey(familyId));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    const { ts, assignments, upcomingEvents, children, hasLinkedChildAccount } = parsed;
+    const {
+      ts,
+      assignments,
+      upcomingEvents,
+      children,
+      hasLinkedChildAccount,
+      hasPendingChildInvite,
+      pendingInviteChildNames,
+    } = parsed;
     if (typeof ts !== 'number' || Date.now() - ts > RAIL_CACHE_TTL_MS) return null;
     return {
       assignments: Array.isArray(assignments) ? assignments : [],
@@ -37,6 +46,9 @@ function readRailCache(familyId) {
       children: Array.isArray(children) ? children : [],
       hasLinkedChildAccount:
         typeof hasLinkedChildAccount === 'boolean' ? hasLinkedChildAccount : undefined,
+      hasPendingChildInvite:
+        typeof hasPendingChildInvite === 'boolean' ? hasPendingChildInvite : undefined,
+      pendingInviteChildNames: Array.isArray(pendingInviteChildNames) ? pendingInviteChildNames : [],
     };
   } catch {
     return null;
@@ -64,6 +76,8 @@ function readRailBootstrap(familyId) {
       upcomingEvents: [],
       children: [],
       hasLinkedChildAccount: false,
+      hasPendingChildInvite: false,
+      pendingInviteChildNames: [],
       fromCache: false,
     };
   }
@@ -72,8 +86,14 @@ function readRailBootstrap(familyId) {
     upcomingEvents: c.upcomingEvents,
     children: c.children,
     hasLinkedChildAccount: typeof c.hasLinkedChildAccount === 'boolean' ? c.hasLinkedChildAccount : false,
+    hasPendingChildInvite: typeof c.hasPendingChildInvite === 'boolean' ? c.hasPendingChildInvite : false,
+    pendingInviteChildNames: Array.isArray(c.pendingInviteChildNames) ? c.pendingInviteChildNames : [],
     fromCache: true,
   };
+}
+
+function hasPositiveOnboardingSignal(snapshot) {
+  return Boolean(snapshot?.hasLinkedChildAccount || snapshot?.hasPendingChildInvite);
 }
 
 const SECTIONS = [
@@ -84,6 +104,7 @@ const SECTIONS = [
 
 export default function EmbeddedNotificationCenter({
   familyId,
+  childInviteSummariesFromApi = null,
   limit = 5,
   onViewAll,
   onInviteChild,
@@ -93,27 +114,44 @@ export default function EmbeddedNotificationCenter({
   /** When set, scope assignments and upcoming events to this child (viewer is that learner). */
   viewerChildId = null,
 }) {
+  const initialBootstrap = readRailBootstrap(familyId);
   const session = useSession();
+  const loadCycleRef = useRef(0);
   const [loading, setLoading] = useState(false); // Start as false - no loading state
-  const [assignments, setAssignments] = useState(() => readRailBootstrap(familyId).assignments);
-  const [upcomingEvents, setUpcomingEvents] = useState(() => readRailBootstrap(familyId).upcomingEvents);
-  const [children, setChildren] = useState(() => readRailBootstrap(familyId).children);
+  const [assignments, setAssignments] = useState(() => initialBootstrap.assignments);
+  const [upcomingEvents, setUpcomingEvents] = useState(() => initialBootstrap.upcomingEvents);
+  const [children, setChildren] = useState(() => initialBootstrap.children);
   /** Child profile rows (can exist before any login invite is accepted). */
   const [hasLinkedChildAccount, setHasLinkedChildAccount] = useState(
-    () => readRailBootstrap(familyId).hasLinkedChildAccount
+    () => initialBootstrap.hasLinkedChildAccount
+  );
+  const [hasPendingChildInvite, setHasPendingChildInvite] = useState(
+    () => initialBootstrap.hasPendingChildInvite
+  );
+  const [pendingInviteChildNames, setPendingInviteChildNames] = useState(
+    () => initialBootstrap.pendingInviteChildNames
   );
   /** True when sessionStorage had a fresh rail snapshot (enables rail UI before network). */
-  const [railBootstrapped, setRailBootstrapped] = useState(() => readRailBootstrap(familyId).fromCache);
+  const [railBootstrapped, setRailBootstrapped] = useState(() => initialBootstrap.fromCache);
+  /** Prevent onboarding card flicker before invite/link status is known for this family. */
+  const [onboardingStatusReady, setOnboardingStatusReady] = useState(
+    () => hideOnboardingCards || (initialBootstrap.fromCache && hasPositiveOnboardingSignal(initialBootstrap))
+  );
   const [dataReady, setDataReady] = useState(false);
   const [selectedSection, setSelectedSection] = useState('submissions');
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   /** null | 'submission' (review submitted work) | 'help' (respond to help request) */
   const [openModal, setOpenModal] = useState(null);
+  const [activeLoadCycle, setActiveLoadCycle] = useState(0);
+  const [committedPrimaryCardMode, setCommittedPrimaryCardMode] = useState(null);
 
   /** Re-read cache when family changes (same mount). */
   useLayoutEffect(() => {
     if (!familyId) {
       setRailBootstrapped(false);
+      setHasPendingChildInvite(false);
+      setPendingInviteChildNames([]);
+      setOnboardingStatusReady(hideOnboardingCards);
       return;
     }
     const b = readRailBootstrap(familyId);
@@ -122,11 +160,16 @@ export default function EmbeddedNotificationCenter({
       setUpcomingEvents(b.upcomingEvents);
       setChildren(b.children);
       setHasLinkedChildAccount(b.hasLinkedChildAccount);
+      setHasPendingChildInvite(b.hasPendingChildInvite);
+      setPendingInviteChildNames(b.pendingInviteChildNames);
       setRailBootstrapped(true);
+      // Only trust positive cached onboarding status; negative cache can be stale.
+      setOnboardingStatusReady(hideOnboardingCards || hasPositiveOnboardingSignal(b));
     } else {
       setRailBootstrapped(false);
+      setOnboardingStatusReady(hideOnboardingCards);
     }
-  }, [familyId]);
+  }, [familyId, hideOnboardingCards]);
 
   useEffect(() => {
     if (dataReady && familyId) {
@@ -135,13 +178,30 @@ export default function EmbeddedNotificationCenter({
         upcomingEvents,
         children,
         hasLinkedChildAccount,
+        hasPendingChildInvite,
+        pendingInviteChildNames,
       });
     }
-  }, [dataReady, familyId, assignments, upcomingEvents, children, hasLinkedChildAccount]);
+  }, [dataReady, familyId, assignments, upcomingEvents, children, hasLinkedChildAccount, hasPendingChildInvite, pendingInviteChildNames]);
+
+  const pendingInviteLabel = useMemo(() => {
+    const names = Array.isArray(pendingInviteChildNames)
+      ? pendingInviteChildNames.map((n) => String(n || '').trim()).filter(Boolean)
+      : [];
+    if (names.length === 0) return 'a child';
+    return names.join(', ');
+  }, [pendingInviteChildNames]);
 
   // Primitives only — full `session` from context was a new object whenever SessionProvider re-rendered (before useMemo).
   const sessionLoading = session?.loading;
   const sessionFamilyId = session?.family_id;
+  const summaryKnown =
+    childInviteSummariesFromApi != null && typeof childInviteSummariesFromApi === 'object';
+  const logRail = (...args) => {
+    if (typeof console !== 'undefined') {
+      console.debug('[EmbeddedNotificationCenter]', ...args);
+    }
+  };
 
   useEffect(() => {
     if (session && !session.loading && familyId) {
@@ -162,6 +222,42 @@ export default function EmbeddedNotificationCenter({
   }, [sessionLoading, sessionFamilyId, familyId, hideOnboardingCards, viewerChildId]);
 
   useEffect(() => {
+    if (hideOnboardingCards) return;
+    if (!summaryKnown) return;
+    const entries = Object.entries(childInviteSummariesFromApi || {});
+    const pendingIds = entries
+      .filter(([, summary]) => {
+        const status = String(summary?.invite_status || '').trim().toLowerCase();
+        return status === 'pending';
+      })
+      .map(([childId]) => String(childId));
+    const connectedFromSummary = entries.some(([, summary]) => {
+      const status = String(summary?.invite_status || '').trim().toLowerCase();
+      return status === 'pending' || status === 'accepted';
+    });
+
+    const childNameById = new Map(
+      (children || [])
+        .filter((c) => c?.id != null)
+        .map((c) => [String(c.id), String(c.first_name || '').trim() || 'Child'])
+    );
+    const pendingNames = [...new Set(pendingIds)]
+      .map((childId) => childNameById.get(String(childId)))
+      .filter(Boolean);
+
+    // Promote-only from parent summaries: never downgrade on transient empty/stale payloads.
+    if (pendingIds.length > 0) {
+      setHasPendingChildInvite(true);
+    }
+    if (connectedFromSummary) {
+      setHasLinkedChildAccount(true);
+    }
+    if (pendingIds.length > 0) {
+      setPendingInviteChildNames(pendingNames);
+    }
+  }, [hideOnboardingCards, summaryKnown, childInviteSummariesFromApi, children]);
+
+  useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = (event) => {
       const section = event?.detail?.section;
@@ -176,6 +272,16 @@ export default function EmbeddedNotificationCenter({
   const loadData = async () => {
     if (!familyId) return;
 
+    const cycleId = loadCycleRef.current + 1;
+    loadCycleRef.current = cycleId;
+    setActiveLoadCycle(cycleId);
+    setCommittedPrimaryCardMode(null);
+    if (!hideOnboardingCards) {
+      setOnboardingStatusReady(false);
+    }
+    setDataReady(false);
+    logRail('load cycle start', { cycleId, familyId, summaryKnown });
+
     // Don't set loading state - load silently in background
     let childRows = [];
     try {
@@ -188,12 +294,20 @@ export default function EmbeddedNotificationCenter({
       ]);
       if (!hideOnboardingCards) {
         await loadLinkedChildAccounts(childRows);
+      } else {
+        setOnboardingStatusReady(true);
       }
     } catch (error) {
       if (!isAbortLikeError(error)) {
         console.error('[EmbeddedNotificationCenter] Error loading data:', error);
       }
     } finally {
+      logRail('load cycle complete', {
+        cycleId,
+        hasLinkedChildAccount,
+        hasPendingChildInvite,
+        onboardingStatusReady,
+      });
       setDataReady(true);
     }
   };
@@ -373,43 +487,136 @@ export default function EmbeddedNotificationCenter({
   };
 
   /**
-   * True only if a real child profile (this family’s `children` row) has a linked login:
-   * family_members.member_role = child, user_id set, and child_id matches that profile.
-   * Avoids treating query errors or orphan membership rows as “linked”.
+   * True when a real child profile has either:
+   * - a linked login (user_id set), or
+   * - an active invite (pending/accepted).
+   * child_id must match this family's actual children rows.
    */
   const loadLinkedChildAccounts = async (childRows) => {
+    const childNameById = new Map(
+      (childRows || [])
+        .filter((c) => c?.id != null)
+        .map((c) => [String(c.id), String(c.first_name || '').trim() || 'Child'])
+    );
     const validChildIds = new Set(
       (childRows || [])
         .map((c) => (c.id != null ? String(c.id) : null))
         .filter(Boolean)
     );
+    const summaryKnown =
+      childInviteSummariesFromApi != null && typeof childInviteSummariesFromApi === 'object';
+    const summaryEntries = summaryKnown ? Object.entries(childInviteSummariesFromApi) : [];
+    const pendingInviteIdsFromSummary = summaryEntries
+      .filter(([childId, summary]) => {
+        if (!validChildIds.has(String(childId))) return false;
+        const status = String(summary?.invite_status || '').trim().toLowerCase();
+        return status === 'pending';
+      })
+      .map(([childId]) => String(childId));
+    const hasPendingInviteFromSummary = pendingInviteIdsFromSummary.length > 0;
+    const hasConnectedInviteFromSummary = summaryEntries.some(([childId, summary]) => {
+      if (!validChildIds.has(String(childId))) return false;
+      const status = String(summary?.invite_status || '').trim().toLowerCase();
+      return status === 'pending' || status === 'accepted';
+    });
     if (validChildIds.size === 0) {
       setHasLinkedChildAccount(false);
+      setHasPendingChildInvite(false);
+      setPendingInviteChildNames([]);
+      setOnboardingStatusReady(true);
       return;
     }
     try {
-      const { data, error } = await supabase
+      const { data: memberRows, error } = await supabase
         .from('family_members')
         .select('child_id, user_id')
         .eq('family_id', familyId)
-        .in('member_role', ['child', 'student'])
-        .not('user_id', 'is', null);
-
+        .in('member_role', ['child', 'student']);
       if (error) throw error;
-      const linked = (data || []).some(
-        (row) =>
-          row.child_id != null &&
-          row.user_id != null &&
-          validChildIds.has(String(row.child_id))
-      );
-      setHasLinkedChildAccount(linked);
+      const rows = memberRows || [];
+      const linked = rows.some((row) => {
+        if (row.child_id == null || !validChildIds.has(String(row.child_id))) return false;
+        return row.user_id != null;
+      });
+      let pendingNames = [...new Set(pendingInviteIdsFromSummary)]
+        .map((childId) => childNameById.get(String(childId)))
+        .filter(Boolean);
+      const nextHasPending = hasPendingInviteFromSummary;
+      const nextHasLinked = linked || hasConnectedInviteFromSummary;
+
+      let resolvedHasPending = nextHasPending;
+      let resolvedHasLinked = nextHasLinked;
+      if (!resolvedHasPending && !resolvedHasLinked) {
+        const { data: familyData, error: familyErr } = await getFamilyMembers();
+        if (!familyErr && familyData?.child_invite_summaries && typeof familyData.child_invite_summaries === 'object') {
+          const serverEntries = Object.entries(familyData.child_invite_summaries);
+          const pendingIdsFromServer = serverEntries
+            .filter(([childId, summary]) => {
+              if (!validChildIds.has(String(childId))) return false;
+              const status = String(summary?.invite_status || '').trim().toLowerCase();
+              return status === 'pending';
+            })
+            .map(([childId]) => String(childId));
+          const connectedFromServer = serverEntries.some(([childId, summary]) => {
+            if (!validChildIds.has(String(childId))) return false;
+            const status = String(summary?.invite_status || '').trim().toLowerCase();
+            return status === 'pending' || status === 'accepted';
+          });
+          if (pendingIdsFromServer.length > 0) {
+            pendingNames = pendingIdsFromServer
+              .map((childId) => childNameById.get(String(childId)))
+              .filter(Boolean);
+            resolvedHasPending = true;
+          }
+          if (connectedFromServer) {
+            resolvedHasLinked = true;
+          }
+        }
+      }
+
+      setHasPendingChildInvite(resolvedHasPending);
+      setHasLinkedChildAccount(resolvedHasLinked);
+      setPendingInviteChildNames(pendingNames);
+      setOnboardingStatusReady(true);
     } catch (error) {
       if (!isAbortLikeError(error)) {
         console.error('[EmbeddedNotificationCenter] Error loading family_members:', error);
       }
-      // Do not fall back to “has child profiles” — that shows the wrong card when RLS fails
-      // or data is ambiguous; prefer invite until membership can be read reliably.
-      setHasLinkedChildAccount(false);
+      try {
+        const { data: familyData, error: familyErr } = await getFamilyMembers();
+        if (!familyErr && familyData?.child_invite_summaries && typeof familyData.child_invite_summaries === 'object') {
+          const serverEntries = Object.entries(familyData.child_invite_summaries);
+          const pendingIdsFromServer = serverEntries
+            .filter(([childId, summary]) => {
+              if (!validChildIds.has(String(childId))) return false;
+              const status = String(summary?.invite_status || '').trim().toLowerCase();
+              return status === 'pending';
+            })
+            .map(([childId]) => String(childId));
+          const connectedFromServer = serverEntries.some(([childId, summary]) => {
+            if (!validChildIds.has(String(childId))) return false;
+            const status = String(summary?.invite_status || '').trim().toLowerCase();
+            return status === 'pending' || status === 'accepted';
+          });
+          const pendingNames = [...new Set(pendingIdsFromServer)]
+            .map((childId) => childNameById.get(String(childId)))
+            .filter(Boolean);
+          setHasPendingChildInvite(pendingIdsFromServer.length > 0 || hasPendingInviteFromSummary);
+          setHasLinkedChildAccount(connectedFromServer || hasConnectedInviteFromSummary);
+          setPendingInviteChildNames(pendingNames);
+          setOnboardingStatusReady(true);
+          return;
+        }
+      } catch (_) {
+        // ignore and use summary fallback below
+      }
+      const pendingNames = [...new Set(pendingInviteIdsFromSummary)]
+        .map((childId) => childNameById.get(String(childId)))
+        .filter(Boolean);
+      setHasPendingChildInvite(hasPendingInviteFromSummary);
+      setHasLinkedChildAccount(hasConnectedInviteFromSummary);
+      setPendingInviteChildNames(pendingNames);
+      setOnboardingStatusReady(true);
     }
   };
 
@@ -441,16 +648,42 @@ export default function EmbeddedNotificationCenter({
         !a.need_help
     ) || assignments.some((a) => a.need_help === true);
 
-  /** Network finished OR we restored a fresh sessionStorage snapshot (no flash on repeat visits). */
-  const railReady = dataReady || railBootstrapped;
+  /** Ready once fresh content + onboarding status are both resolved (no cache-to-live mode flips). */
+  const railReady = dataReady && (hideOnboardingCards || onboardingStatusReady);
 
-  const primaryCardMode = hideOnboardingCards
+  const primaryCardCandidateMode = hideOnboardingCards
     ? 'none'
-    : railReady && !hasLinkedChildAccount
+    : !hasLinkedChildAccount
       ? 'invite'
-      : railReady && hasLinkedChildAccount && !hasInboxActivity
+      : !hasInboxActivity
         ? 'assign'
         : 'none';
+  const primaryCardMode = railReady
+    ? committedPrimaryCardMode || primaryCardCandidateMode
+    : 'none';
+
+  useEffect(() => {
+    if (!railReady) return;
+    if (committedPrimaryCardMode) return;
+    setCommittedPrimaryCardMode(primaryCardCandidateMode);
+    logRail('mode committed', {
+      cycleId: activeLoadCycle,
+      mode: primaryCardCandidateMode,
+      hasLinkedChildAccount,
+      hasPendingChildInvite,
+      hasInboxActivity,
+      summaryKnown,
+    });
+  }, [
+    railReady,
+    committedPrimaryCardMode,
+    primaryCardCandidateMode,
+    activeLoadCycle,
+    hasLinkedChildAccount,
+    hasPendingChildInvite,
+    hasInboxActivity,
+    summaryKnown,
+  ]);
   /** Inbox chrome when we’re past loading placeholder and not showing invite/assign primary card. */
   const showInboxTabs = hideOnboardingCards || (railReady && primaryCardMode === 'none');
 
@@ -606,9 +839,13 @@ export default function EmbeddedNotificationCenter({
 
         {primaryCardMode === 'assign' ? (
           <View style={styles.primaryCard}>
-            <Text style={styles.primaryCardTitle}>Start assigning events</Text>
+            <Text style={styles.primaryCardTitle}>
+              {hasPendingChildInvite ? `Invite sent to ${pendingInviteLabel}` : 'Start assigning events'}
+            </Text>
             <Text style={styles.primaryCardSubtitle}>
-              Assign lessons or activities to children to see updates here.
+              {hasPendingChildInvite
+                ? 'Use "Send to student" when creating events to assign work, start conversations, and track progress directly here.'
+                : 'Assign lessons or activities to children to see updates here.'}
             </Text>
             <TouchableOpacity
               style={styles.primaryCta}
