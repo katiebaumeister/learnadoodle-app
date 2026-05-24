@@ -9,6 +9,7 @@ import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 're
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { FileText, HelpCircle, Calendar, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
+import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
 import { getFamilyMembers } from '../../lib/apiClient';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
