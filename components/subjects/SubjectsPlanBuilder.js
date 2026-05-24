@@ -290,6 +290,53 @@ function formatWeekdaySummary(dayNums = []) {
   return unique.map((d) => WEEKDAY_LABELS[d] || '').filter(Boolean).join(', ');
 }
 
+function getDayPeriodLabelFromTime(hhmm = '') {
+  const safe = String(hhmm || '').slice(0, 5);
+  const [hRaw = '09'] = safe.split(':');
+  const hour = Number(hRaw);
+  if (!Number.isFinite(hour)) return 'mornings';
+  if (hour < 12) return 'mornings';
+  if (hour < 17) return 'afternoons';
+  return 'evenings';
+}
+
+function buildFixGapWindowHintLines({ dryRunPreview = null, cadenceDayNums = [] } = {}) {
+  const rawSlots = Array.isArray(dryRunPreview?.selectedAssignments)
+    ? dryRunPreview.selectedAssignments
+    : (Array.isArray(dryRunPreview?.debugSelectedSlots) ? dryRunPreview.debugSelectedSlots : []);
+  if (!rawSlots.length) return [];
+  const cadenceSet = new Set(
+    (Array.isArray(cadenceDayNums) ? cadenceDayNums : [])
+      .map((d) => Number(d))
+      .filter((d) => Number.isInteger(d))
+  );
+  const buckets = new Map();
+  rawSlots.forEach((slot) => {
+    const dayKey = String(slot?.date || '').slice(0, 10);
+    const d = dayKey ? new Date(`${dayKey}T12:00:00`) : null;
+    const weekday = d && !Number.isNaN(d.getTime()) ? d.getDay() : null;
+    const period = getDayPeriodLabelFromTime(String(slot?.start_time || ''));
+    const key = `${weekday}-${period}`;
+    if (!Number.isInteger(weekday)) return;
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        weekday,
+        period,
+        count: 0,
+      });
+    }
+    buckets.get(key).count += 1;
+  });
+  return [...buckets.values()]
+    .sort((a, b) => Number(b.count || 0) - Number(a.count || 0))
+    .slice(0, 3)
+    .map((entry) => {
+      const dayLabel = WEEKDAY_LABELS[entry.weekday] || 'Weekday';
+      const cadenceHint = cadenceSet.has(entry.weekday) ? ' (preferred cadence)' : '';
+      return `- ${dayLabel} ${entry.period}${cadenceHint}`;
+    });
+}
+
 function formatCadenceDayPhrase(dayNums = []) {
   const unique = [...new Set((dayNums || []).map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort((a, b) => a - b);
   if (unique.length === 0) return '';
@@ -4296,6 +4343,8 @@ export default function SubjectsPlanBuilder({
     projectedDays,
     gapDays,
     dryRunPreview = null,
+    cadenceDayNums = [],
+    savedLearningDayNums = [],
   }) => {
     const absGap = Math.abs(Number(gapDays || 0));
     const isShort = Number(gapDays || 0) > 0;
@@ -4358,6 +4407,14 @@ export default function SubjectsPlanBuilder({
           ? `Add ${toOneDecimal(assignedCount)} learning hours?`
           : `Add ${Math.round(suggestedAddCount)} learning day${Math.round(suggestedAddCount) === 1 ? '' : 's'}?`
       );
+    const scopeLabel = scope === 'per_subject'
+      ? String(rowName || 'subject').trim().toLowerCase()
+      : 'overall';
+    const windowHintLines = buildFixGapWindowHintLines({ dryRunPreview, cadenceDayNums });
+    const preferredRhythmDayNums = Array.isArray(savedLearningDayNums) && savedLearningDayNums.length > 0
+      ? savedLearningDayNums
+      : cadenceDayNums;
+    const cadenceRhythmLabel = formatWeekdaySummary(preferredRhythmDayNums);
     const bodyLines = confirmDisabled
       ? [
         `You are ${remainingUnfixableGap} day${remainingUnfixableGap === 1 ? '' : 's'} short. We could not add more learning days without changing your planning preferences.`,
@@ -4367,15 +4424,19 @@ export default function SubjectsPlanBuilder({
         ? (
           canFullyCloseGapNow
             ? [
-              `Your target is ${Math.round(Number(targetDays || 0))} days, but projected is only ${Math.round(Number(projectedDays || 0))}.`,
-              `Add ${Math.round(suggestedAddCount)} day${Math.round(suggestedAddCount) === 1 ? '' : 's'} to meet your target.`,
+              `You are projected to finish ${Math.round(Math.max(0, requestedGap))} ${scopeLabel} day${Math.round(Math.max(0, requestedGap)) === 1 ? '' : 's'} short.`,
+              `We found ${Math.round(suggestedAddCount)} open learning window${Math.round(suggestedAddCount) === 1 ? '' : 's'}:`,
+              ...(windowHintLines.length > 0 ? windowHintLines : ['- Across your current available weekdays and times']),
+              '- Avoiding breaks and holidays in your saved range',
+              `- This keeps your normal ${cadenceRhythmLabel !== 'No days set' ? cadenceRhythmLabel : 'Mon-Fri'} rhythm`,
             ]
             : [
-              `Your target is ${Math.round(Number(targetDays || 0))} days, but projected is only ${Math.round(Number(projectedDays || 0))}.`,
-              `You are ${Math.round(Math.max(0, requestedGap))} days short. With your current range and conflict rules, we can place non-overlapping class times on only ${Math.round(assignedCount)} days.`,
-              '(1) Extend planning window',
-              `(2) Adjust target to ${Math.round(Number(projectedDays || 0) + Number(suggestedAddCount || 0))} days.`,
-              `(3) Add just the ${Math.round(suggestedAddCount)} available day${Math.round(suggestedAddCount) === 1 ? '' : 's'}.`,
+              `You are projected to finish ${Math.round(Math.max(0, requestedGap))} ${scopeLabel} day${Math.round(Math.max(0, requestedGap)) === 1 ? '' : 's'} short.`,
+              `We found ${Math.round(suggestedAddCount)} open learning window${Math.round(suggestedAddCount) === 1 ? '' : 's'} right now:`,
+              ...(windowHintLines.length > 0 ? windowHintLines : ['- Across your current available weekdays and times']),
+              '- Avoiding breaks and holidays in your saved range',
+              `- This keeps your normal ${cadenceRhythmLabel !== 'No days set' ? cadenceRhythmLabel : 'Mon-Fri'} rhythm`,
+              `After adding these, you'll still be ${Math.round(remainingAfterSuggestedAdd)} day${Math.round(remainingAfterSuggestedAdd) === 1 ? '' : 's'} short.`,
             ]
         )
         : [
@@ -4968,6 +5029,10 @@ export default function SubjectsPlanBuilder({
       projectedDays,
       gapDays: daysNeeded,
       dryRunPreview,
+      cadenceDayNums: Array.isArray(row?.cadenceDayNums) ? row.cadenceDayNums : [],
+      savedLearningDayNums: Array.isArray(familyPlannerSettings?.allowed_weekdays)
+        ? familyPlannerSettings.allowed_weekdays.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+        : [],
     });
     if (!confirmed?.confirmed) {
       try {
