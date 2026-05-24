@@ -598,6 +598,34 @@ function mergeFixGapHistoryGrouped(primaryGrouped, secondaryGrouped) {
   return out;
 }
 
+function normalizeHistoryIds(values) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  )];
+}
+
+function historyEntryMatchesUndoSignature(entry, signature) {
+  if (!entry || typeof entry !== 'object' || !signature || typeof signature !== 'object') return false;
+  const sigId = String(signature?.historyId || '').trim();
+  const entryId = String(entry?.id || '').trim();
+  if (sigId && entryId && sigId === entryId) return true;
+  const sigCreated = normalizeHistoryIds(signature?.createdEventIds);
+  const sigRemoved = normalizeHistoryIds(signature?.removedEventIds);
+  const entryCreated = normalizeHistoryIds(entry?.created_event_ids);
+  const entryRemoved = normalizeHistoryIds(entry?.removed_event_ids);
+  const sameCreated = sigCreated.length > 0 && sigCreated.length === entryCreated.length && sigCreated.every((id) => entryCreated.includes(id));
+  const sameRemoved = sigRemoved.length > 0 && sigRemoved.length === entryRemoved.length && sigRemoved.every((id) => entryRemoved.includes(id));
+  if (sameCreated && (sigRemoved.length === 0 || sameRemoved)) return true;
+  if (sameRemoved && (sigCreated.length === 0 || sameCreated)) return true;
+  return false;
+}
+
+function isFixGapHistoryUndone(entry) {
+  return Boolean(String(entry?.undone_at || '').trim());
+}
+
 function buildAttendanceModeBootstrapKey(familyId, schoolYearLabel) {
   const familyKey = normalizeFamilyKey(familyId);
   const yearKey = String(schoolYearLabel || '').trim();
@@ -5177,9 +5205,15 @@ export default function SubjectsPlanBuilder({
     const rowId = String(row?.id || '').trim();
     if (!rowId) return;
     const historyKey = rowId === 'overall' || row?.isOverall ? 'overall' : rowId;
-    const latestEntry = Array.isArray(fixGapHistoryByRowId?.[historyKey]) ? fixGapHistoryByRowId[historyKey][0] : null;
+    const rowHistoryRuns = Array.isArray(fixGapHistoryByRowId?.[historyKey]) ? fixGapHistoryByRowId[historyKey] : [];
+    const undoableHistoryRuns = rowHistoryRuns.filter((entry) => !isFixGapHistoryUndone(entry));
+    const latestServerEntry = undoableHistoryRuns.find((entry) => {
+      const id = String(entry?.id || '').trim();
+      return Boolean(id) && !id.startsWith('local-');
+    }) || null;
+    const latestEntry = latestServerEntry || undoableHistoryRuns[0] || null;
     if (!latestEntry) {
-      toast?.push?.('No recent Fix gap action to undo.', 'info');
+      toast?.push?.('No active Fix gap action to undo.', 'info');
       return;
     }
     const academicYearId = String(
@@ -5217,6 +5251,16 @@ export default function SubjectsPlanBuilder({
       };
       const { data, error } = await undoFixTargetGap(payload);
       if (error) throw error;
+      const undoMarkedAt = String(
+        data?.history_undone_at
+        || latestEntry?.undone_at
+        || new Date().toISOString()
+      ).trim();
+      const undoSignature = {
+        historyId: String(latestEntry?.id || '').trim(),
+        createdEventIds,
+        removedEventIds,
+      };
 
       const schoolYearLabel = String(displaySchoolYear?.label || '').trim();
       const refreshRangeStartYmd = String(
@@ -5249,15 +5293,22 @@ export default function SubjectsPlanBuilder({
       setClassDayInstructionalEvents(Array.isArray(refreshed.classDayInstructionalEvents) ? refreshed.classDayInstructionalEvents : []);
       setAttendedDayKeysBySubject(refreshed.attendedDayKeysBySubject || {});
       setYearTargetProjectionBySubject(refreshed.yearTargetProjectionBySubject || {});
-      await loadFixGapHistory(academicYearId);
       setFixGapHistoryByRowId((prev) => {
-        const existing = Array.isArray(prev?.[historyKey]) ? prev[historyKey] : [];
-        if (existing.length === 0) return prev || {};
-        return {
-          ...(prev || {}),
-          [historyKey]: existing.slice(1),
-        };
+        const next = {};
+        Object.entries(prev || {}).forEach(([key, runs]) => {
+          const updated = (Array.isArray(runs) ? runs : []).map((entry) => {
+            if (!historyEntryMatchesUndoSignature(entry, undoSignature)) return entry;
+            return {
+              ...(entry || {}),
+              undone_at: String(entry?.undone_at || '').trim() || undoMarkedAt,
+            };
+          });
+          if (updated.length > 0) next[key] = updated;
+        });
+        writeFixGapHistoryStorage(familyId, academicYearId, next);
+        return next;
       });
+      await loadFixGapHistory(academicYearId);
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('refreshSubjects'));
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
@@ -7126,7 +7177,7 @@ export default function SubjectsPlanBuilder({
                           ? fixGapHistoryByRowId[rowId]
                           : [];
                         const isExpanded = expandedYearTargetSuggestionId === rowId || rowFixGapHistoryRuns.length > 0;
-                        const latestFixGapHistory = rowFixGapHistoryRuns[0] || null;
+                        const latestUndoableFixGapHistory = rowFixGapHistoryRuns.find((run) => !isFixGapHistoryUndone(run)) || null;
                         const historyRunsWithDetails = rowFixGapHistoryRuns
                           .map((run, idx) => {
                             const createdCount = Math.max(0, Number(run?.created_events ?? 0));
@@ -7142,16 +7193,18 @@ export default function SubjectsPlanBuilder({
                               createdCount,
                               removedCount,
                               slotLines,
+                              isUndone: isFixGapHistoryUndone(run),
                             };
                           })
                           .filter((run) => run.slotLines.length > 0 || run.createdCount > 0 || run.removedCount > 0);
-                        const latestFixGapCreatedIds = Array.isArray(latestFixGapHistory?.created_event_ids)
-                          ? latestFixGapHistory.created_event_ids
+                        const latestFixGapCreatedIds = Array.isArray(latestUndoableFixGapHistory?.created_event_ids)
+                          ? latestUndoableFixGapHistory.created_event_ids
                           : [];
-                        const latestFixGapRemovedIds = Array.isArray(latestFixGapHistory?.removed_event_ids)
-                          ? latestFixGapHistory.removed_event_ids
+                        const latestFixGapRemovedIds = Array.isArray(latestUndoableFixGapHistory?.removed_event_ids)
+                          ? latestUndoableFixGapHistory.removed_event_ids
                           : [];
-                        const canUndoLatestFixGap = latestFixGapCreatedIds.length > 0 || latestFixGapRemovedIds.length > 0;
+                        const canUndoLatestFixGap = Boolean(latestUndoableFixGapHistory)
+                          && (latestFixGapCreatedIds.length > 0 || latestFixGapRemovedIds.length > 0);
                         const chevronAnim = showSuggestion ? getYearTargetChevronAnim(rowId) : null;
                         const suggestionAnim = showSuggestion ? getYearTargetSuggestionAnim(rowId) : null;
                         const chevronRotate = chevronAnim
@@ -7329,7 +7382,7 @@ export default function SubjectsPlanBuilder({
                                     {historyRunsWithDetails.map((run) => (
                                       <View key={run.key} style={styles.yearTargetsFixGapHistoryRun}>
                                         <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                          {`${formatFixGapHistoryTimestamp(run.createdAt)}:`}
+                                          {`${formatFixGapHistoryTimestamp(run.createdAt)}${run.isUndone ? ' - undone' : ''}:`}
                                         </Text>
                                         {run.slotLines.length > 0 ? (
                                           run.slotLines.map((line, idx) => (
@@ -7340,8 +7393,8 @@ export default function SubjectsPlanBuilder({
                                         ) : (
                                           <Text style={styles.yearTargetsFixGapHistoryLine}>
                                             {run.removedCount > 0
-                                              ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}.`
-                                              : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}.`}
+                                              ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}${run.isUndone ? ' - undone' : ''}.`
+                                              : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}${run.isUndone ? ' - undone' : ''}.`}
                                           </Text>
                                         )}
                                       </View>

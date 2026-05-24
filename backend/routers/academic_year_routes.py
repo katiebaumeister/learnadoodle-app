@@ -310,6 +310,7 @@ class FixTargetGapOutput(BaseModel):
 class FixTargetGapHistoryItem(BaseModel):
     id: str
     created_at: Optional[str] = None
+    undone_at: Optional[str] = None
     scope: str
     subject_id: Optional[str] = None
     subject_ids: List[str] = []
@@ -358,6 +359,7 @@ class FixTargetGapUndoOutput(BaseModel):
     removed_count: int = 0
     restored_event_ids: List[str] = []
     removed_event_ids: List[str] = []
+    history_undone_at: Optional[str] = None
     message: Optional[str] = None
 
 
@@ -5186,9 +5188,8 @@ async def get_fix_target_gap_history(
         raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
 
     try:
-        base_query = (
-            supabase.table("academic_year_fix_gap_history")
-            .select(
+        def _fetch_rows(include_undone_at: bool) -> List[Dict[str, Any]]:
+            select_columns = (
                 "id, created_at, scope, subject_id, subject_ids, target_kind, target_value, "
                 "before_projected_days, after_projected_days, before_gap_days, after_gap_days, "
                 "before_projected_hours, after_projected_hours, before_gap_hours, after_gap_hours, "
@@ -5196,14 +5197,18 @@ async def get_fix_target_gap_history(
                 "created_events, removed_events, assignment_slots, created_event_ids, removed_event_ids, "
                 "message, created_by_user_id"
             )
-            .eq("academic_year_id", academic_year_id)
-            .order("created_at", desc=True)
-        )
-        if limit is not None:
-            history_resp = base_query.limit(int(limit)).execute()
-            rows = list(history_resp.data or [])
-        else:
-            rows = []
+            if include_undone_at:
+                select_columns = f"id, created_at, undone_at, {select_columns.replace('id, created_at, ', '', 1)}"
+            base_query = (
+                supabase.table("academic_year_fix_gap_history")
+                .select(select_columns)
+                .eq("academic_year_id", academic_year_id)
+                .order("created_at", desc=True)
+            )
+            if limit is not None:
+                history_resp = base_query.limit(int(limit)).execute()
+                return list(history_resp.data or [])
+            out_rows: List[Dict[str, Any]] = []
             offset = 0
             page_size = 1000
             while True:
@@ -5211,10 +5216,23 @@ async def get_fix_target_gap_history(
                 page_rows = list(page_resp.data or [])
                 if not page_rows:
                     break
-                rows.extend(page_rows)
+                out_rows.extend(page_rows)
                 if len(page_rows) < page_size:
                     break
                 offset += page_size
+            return out_rows
+
+        try:
+            rows = _fetch_rows(include_undone_at=True)
+        except Exception as history_query_error:
+            err_text = str(history_query_error or "").lower()
+            missing_undone_column = (
+                "undone_at" in err_text
+                and ("does not exist" in err_text or "42703" in err_text)
+            )
+            if not missing_undone_column:
+                raise
+            rows = _fetch_rows(include_undone_at=False)
     except Exception as history_error:
         # Non-fatal: local/dev DB may not have this optional history table yet.
         error_text = str(history_error or "").lower()
@@ -5276,8 +5294,28 @@ async def undo_fix_target_gap(
     removed_event_ids = _normalize_id_list(body.removed_event_ids)
 
     history_id = str(body.history_id or "").strip() or None
+    history_undone_at: Optional[str] = None
     if history_id:
         try:
+            history_resp = (
+                supabase.table("academic_year_fix_gap_history")
+                .select("id, family_id, academic_year_id, scope, subject_id, created_event_ids, removed_event_ids, undone_at")
+                .eq("id", history_id)
+                .limit(1)
+                .execute()
+            )
+            history_row = None
+            history_data = list(history_resp.data or [])
+            if history_data:
+                history_row = history_data[0]
+        except Exception as history_lookup_error:
+            lookup_err_text = str(history_lookup_error or "").lower()
+            missing_undone_column = (
+                "undone_at" in lookup_err_text
+                and ("does not exist" in lookup_err_text or "42703" in lookup_err_text)
+            )
+            if not missing_undone_column:
+                raise
             history_resp = (
                 supabase.table("academic_year_fix_gap_history")
                 .select("id, family_id, academic_year_id, scope, subject_id, created_event_ids, removed_event_ids")
@@ -5285,7 +5323,9 @@ async def undo_fix_target_gap(
                 .limit(1)
                 .execute()
             )
-            history_row = (history_resp.data or [None])[0]
+            history_data = list(history_resp.data or [])
+            history_row = history_data[0] if history_data else None
+        try:
             if not history_row:
                 raise HTTPException(status_code=404, detail="Fix gap history entry not found.")
             if str(history_row.get("family_id") or "") != str(family_id):
@@ -5297,6 +5337,9 @@ async def undo_fix_target_gap(
             history_subject_id = str(history_row.get("subject_id") or "").strip() or None
             if scope == "per_subject" and subject_id and history_subject_id and history_subject_id != subject_id:
                 raise HTTPException(status_code=400, detail="Fix gap history subject mismatch.")
+            existing_undone_at = history_row.get("undone_at")
+            if existing_undone_at:
+                history_undone_at = str(existing_undone_at)
 
             if not created_event_ids:
                 raw_created = history_row.get("created_event_ids")
@@ -5365,6 +5408,29 @@ async def undo_fix_target_gap(
             supabase.table("events").update(payload).in_("id", ids_to_restore).eq("family_id", family_id).execute()
             restored_now_ids = ids_to_restore
 
+    if history_id and not history_undone_at:
+        try:
+            undo_history_payload: Dict[str, Any] = {"undone_at": now_iso}
+            supabase.table("academic_year_fix_gap_history").update(undo_history_payload).eq("id", history_id).eq("family_id", family_id).execute()
+            history_undone_at = now_iso
+        except Exception as history_cleanup_error:
+            err_text = str(history_cleanup_error or "").lower()
+            is_nonfatal_history_access_issue = (
+                "academic_year_fix_gap_history" in err_text
+                and (
+                    "does not exist" in err_text
+                    or "42p01" in err_text
+                    or "permission denied" in err_text
+                    or "42501" in err_text
+                )
+            )
+            is_nonfatal_missing_undone_column = (
+                "undone_at" in err_text
+                and ("does not exist" in err_text or "42703" in err_text)
+            )
+            if not is_nonfatal_history_access_issue and not is_nonfatal_missing_undone_column:
+                raise
+
     return FixTargetGapUndoOutput(
         success=True,
         academic_year_id=body.academic_year_id,
@@ -5374,6 +5440,7 @@ async def undo_fix_target_gap(
         removed_count=len(removed_now_ids),
         restored_event_ids=restored_now_ids,
         removed_event_ids=removed_now_ids,
+        history_undone_at=history_undone_at,
         message=(
             f"Undo applied. Restored {len(restored_now_ids)} and removed {len(removed_now_ids)} event(s)."
             if (restored_now_ids or removed_now_ids)
