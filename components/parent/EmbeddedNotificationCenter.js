@@ -9,7 +9,6 @@ import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 're
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { FileText, HelpCircle, Calendar, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
-import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
 import { getFamilyMembers } from '../../lib/apiClient';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
@@ -527,13 +526,11 @@ export default function EmbeddedNotificationCenter({
       return;
     }
     try {
-      const { data: memberRows, error } = await supabase
-        .from('family_members')
-        .select('child_id, user_id')
-        .eq('family_id', familyId)
-        .in('member_role', ['child', 'student']);
+      const { data: familyData, error } = await getFamilyMembers();
       if (error) throw error;
-      const rows = memberRows || [];
+      const rows = Array.isArray(familyData?.members)
+        ? familyData.members.filter((m) => ['child', 'student'].includes(String(m?.member_role || m?.role || '').toLowerCase()))
+        : [];
       const linked = rows.some((row) => {
         if (row.child_id == null || !validChildIds.has(String(row.child_id))) return false;
         return row.user_id != null;
@@ -547,8 +544,7 @@ export default function EmbeddedNotificationCenter({
       let resolvedHasPending = nextHasPending;
       let resolvedHasLinked = nextHasLinked;
       if (!resolvedHasPending && !resolvedHasLinked) {
-        const { data: familyData, error: familyErr } = await getFamilyMembers();
-        if (!familyErr && familyData?.child_invite_summaries && typeof familyData.child_invite_summaries === 'object') {
+        if (familyData?.child_invite_summaries && typeof familyData.child_invite_summaries === 'object') {
           const serverEntries = Object.entries(familyData.child_invite_summaries);
           const pendingIdsFromServer = serverEntries
             .filter(([childId, summary]) => {

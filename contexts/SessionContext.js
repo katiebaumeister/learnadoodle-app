@@ -17,7 +17,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Platform } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { getMe, getIntegrationStatus } from '../lib/apiClient';
+import { getMe, getIntegrationStatus, getFamilyMembers } from '../lib/apiClient';
 import { useAuth } from './AuthContext';
 
 const SessionContext = createContext(null);
@@ -113,17 +113,46 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
       // Step 3: If we didn't get role from backend, try family_members then profiles (may 500 if table missing or RLS)
       if (memberRole == null) {
         try {
-          const { data: familyMember, error: fmError } = await supabase
-            .from('family_members')
-            .select('member_role, child_scope, child_id')
-            .eq('user_id', authUserId)
-            .eq('family_id', activeFamilyId)
-            .maybeSingle();
+          const { data, error } = await getFamilyMembers();
+          if (!error && data) {
+            const members = Array.isArray(data?.members) ? data.members : [];
+            const myMember = members.find((m) => {
+              const uid = m?.user_id ?? m?.id ?? null;
+              return uid != null && String(uid) === String(authUserId);
+            });
+            if (myMember) {
+              memberRole = myMember.member_role || myMember.role || null;
+              childScope = Array.isArray(myMember.child_scope) ? myMember.child_scope : [];
+              childId = myMember.child_id || null;
+            }
+            if (accessibleChildren.length === 0) {
+              const childRows = Array.isArray(data?.children) ? data.children : [];
+              if (memberRole === 'parent' || memberRole === 'tutor') {
+                accessibleChildren = childRows.map((c) => c?.id).filter(Boolean);
+              } else if (childId) {
+                accessibleChildren = [childId];
+              } else if (childScope.length > 0) {
+                accessibleChildren = childScope;
+              }
+            }
+          }
+        } catch (_) {
+          // Ignore and continue fallback chain.
+        }
+        try {
+          if (memberRole == null) {
+            const { data: familyMember, error: fmError } = await supabase
+              .from('family_members')
+              .select('member_role, child_scope, child_id')
+              .eq('user_id', authUserId)
+              .eq('family_id', activeFamilyId)
+              .maybeSingle();
 
-          if (familyMember && !fmError) {
-            memberRole = familyMember.member_role;
-            childScope = familyMember.child_scope || [];
-            childId = familyMember.child_id || null;
+            if (familyMember && !fmError) {
+              memberRole = familyMember.member_role;
+              childScope = familyMember.child_scope || [];
+              childId = familyMember.child_id || null;
+            }
           }
         } catch (_) {
           // Supabase 500 or missing table - ignore, use profiles fallback (no log to avoid console noise)
@@ -141,16 +170,19 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
       // Step 4: If we don't have accessible_children yet, call get_accessible_children() RPC
       if (accessibleChildren.length === 0) {
         try {
-          const { data: accessibleData, error: rpcError } = await supabase
-            .rpc('get_accessible_children', { _user_id: authUserId });
-          if (!rpcError && accessibleData) {
-            accessibleChildren = accessibleData
-              .filter(item => item.family_id === activeFamilyId)
-              .map(item => item.child_id)
-              .filter(Boolean);
+          // Avoid noisy browser CORS failures on direct Supabase RPC in production web.
+          const allowSupabaseRpcFallback = Platform.OS !== 'web';
+          if (allowSupabaseRpcFallback) {
+            const { data: accessibleData, error: rpcError } = await supabase
+              .rpc('get_accessible_children', { _user_id: authUserId });
+            if (!rpcError && accessibleData) {
+              accessibleChildren = accessibleData
+                .filter(item => item.family_id === activeFamilyId)
+                .map(item => item.child_id)
+                .filter(Boolean);
+            }
           }
         } catch (rpcError) {
-          console.warn('[SessionContext] get_accessible_children RPC failed:', rpcError);
           if (memberRole === 'child' || memberRole === 'student') {
             if (childId) accessibleChildren = [childId];
             else if (childScope.length > 0) accessibleChildren = childScope;

@@ -412,6 +412,7 @@ export default function AddSubjectModal({
               skipPlanSummary: true,
               openDirectlyToScope: true,
               initialUnitStructureMethod: safeMethod,
+              subjectHasCurriculumContent: hasUnitsOrLessonsContent,
             },
           })
         );

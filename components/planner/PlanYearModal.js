@@ -1687,6 +1687,7 @@ export default function PlanYearModal({
   initialSubjectSchoolTerm = null,
   initialMaterialId = null,
   initialUnitStructureMethod = null,
+  initialSubjectHasCurriculumContent = null,
 }) {
   const overlayRef = useRef(null);
   useModalStackElevation(overlayRef, visible, NESTED_MODAL_STACK_Z);
@@ -1702,6 +1703,10 @@ export default function PlanYearModal({
             ? 'generate'
             : 'placeholders';
   const returnToSubjectModalAfterUnitSave = Boolean(fromSubjectDetail && initialUnitStructureMethod);
+  const canFastSeedManualDraft =
+    returnToSubjectModalAfterUnitSave &&
+    initialUnitStructureMethod === 'manual' &&
+    initialSubjectHasCurriculumContent === false;
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -6377,6 +6382,19 @@ export default function PlanYearModal({
   // Load unit structure when opening unit builder, or on logistics (preview) so slot↔lesson mapping includes units
   useEffect(() => {
     const loadOnLogistics = PLAN_MY_YEAR_LOGISTICS_FIRST && planStep === 'logistics';
+    const shouldBypassInitialFetchForEmptySubject =
+      canFastSeedManualDraft &&
+      planStep === 'unit_structure' &&
+      !loadOnLogistics &&
+      !unitStructureData &&
+      !loadingUnitStructure &&
+      !draftData &&
+      !manualDraft;
+    if (shouldBypassInitialFetchForEmptySubject) {
+      setSavedContentSource(null);
+      setUnitStructureData({ units: [] });
+      return;
+    }
     if (
       (planStep === 'unit_structure' || loadOnLogistics) &&
       curriculumFetchSubjectId &&
@@ -6419,7 +6437,18 @@ export default function PlanYearModal({
       };
       loadUnitStructure();
     }
-  }, [planStep, curriculumFetchSubjectId, familyId, unitStructureData, loadingUnitStructure, draftData, manualDraft, academicYearId, initialAcademicYearId]);
+  }, [
+    planStep,
+    curriculumFetchSubjectId,
+    familyId,
+    unitStructureData,
+    loadingUnitStructure,
+    draftData,
+    manualDraft,
+    academicYearId,
+    initialAcademicYearId,
+    canFastSeedManualDraft,
+  ]);
 
   // Keep saved curriculum source in sync on logistics (even when unitStructureData was already loaded)
   useEffect(() => {
@@ -8978,7 +9007,7 @@ export default function PlanYearModal({
     if (!unitPipelineSubjectId || !familyId) return;
     // In subject-detail "Edit current units", wait for backend structure before
     // seeding a new blank draft to avoid a brief "Unit 1" flash.
-    if (returnToSubjectModalAfterUnitSave && !unitStructureData) return;
+    if (returnToSubjectModalAfterUnitSave && !unitStructureData && !canFastSeedManualDraft) return;
     if (suppressManualCurriculumHydrateRef.current) return;
     if (manualDraft) return;
     const persisted = (unitStructureData?.units || []).some((u) => (u.lessons || []).length > 0);
@@ -9004,6 +9033,7 @@ export default function PlanYearModal({
     unitPipelineSubjectId,
     familyId,
     returnToSubjectModalAfterUnitSave,
+    canFastSeedManualDraft,
     unitStructureData,
   ]);
 

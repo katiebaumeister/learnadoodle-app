@@ -470,6 +470,8 @@ export default function SubjectDetailPage({
   const learningGoalsUnitsRef = useRef(
     Array.isArray(preloadedProgressCache?.curriculumUnits) ? preloadedProgressCache.curriculumUnits : []
   );
+  const learningGoalsFetchInFlightRef = useRef(false);
+  const learningGoalsFetchCooldownUntilRef = useRef(0);
   const loadingRef = useRef(false);
   const autoOpenedMaterialKeyRef = useRef(null);
   const autoOpenedProgressActionRef = useRef(null);
@@ -485,6 +487,10 @@ export default function SubjectDetailPage({
       setLearningGoalsSource(null);
       return;
     }
+    const now = Date.now();
+    if (learningGoalsFetchInFlightRef.current) return;
+    if (learningGoalsFetchCooldownUntilRef.current > now) return;
+    learningGoalsFetchInFlightRef.current = true;
     try {
       // Use year-agnostic structure for Subject Detail section so saved edits are always visible.
       const { data, error } = await fetchSubjectCurriculumEventsStructure(familyId, sid, null);
@@ -501,11 +507,15 @@ export default function SubjectDetailPage({
         curriculumUnits: nextUnits,
         curriculumSavedContentSource: nextSource,
       });
+      learningGoalsFetchCooldownUntilRef.current = 0;
     } catch (err) {
       console.warn('[SubjectDetailPage] Failed loading learning goals structure:', err);
+      learningGoalsFetchCooldownUntilRef.current = Date.now() + 15000;
       // Keep current UI/cache values on transient load failures to avoid wiping visible units.
+    } finally {
+      learningGoalsFetchInFlightRef.current = false;
     }
-  }, [familyId, subjectData?.subject?.id, subjectData?.events]);
+  }, [familyId, subjectData?.subject?.id]);
   /** Parent often passes inline callbacks; keep loadSubjectDetail stable so mount effect does not loop. */
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -821,6 +831,7 @@ export default function SubjectDetailPage({
               skipPlanSummary: true,
               openDirectlyToScope: true,
               initialUnitStructureMethod: safeMethod,
+              subjectHasCurriculumContent: hasLearningGoalsContent,
             },
           })
         );
@@ -828,7 +839,7 @@ export default function SubjectDetailPage({
       }
       if (onEditSubject && subjectData?.subject) onEditSubject(subjectData.subject);
     },
-    [subjectData, subject?.id, subject?.name, subjectEvents, assignedChildren, onEditSubject]
+    [subjectData, subject?.id, subject?.name, subjectEvents, assignedChildren, onEditSubject, hasLearningGoalsContent]
   );
   const openSubjectUnitsEditor = useCallback(() => {
     const sourceToMethod = {

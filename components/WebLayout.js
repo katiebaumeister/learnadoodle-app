@@ -379,6 +379,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [planYearInitialSubjectSchoolTerm, setPlanYearInitialSubjectSchoolTerm] = useState(null);
   const [planYearInitialMaterialId, setPlanYearInitialMaterialId] = useState(null);
   const [planYearInitialUnitStructureMethod, setPlanYearInitialUnitStructureMethod] = useState(null);
+  const [planYearInitialSubjectHasCurriculumContent, setPlanYearInitialSubjectHasCurriculumContent] = useState(null);
   /** When PlanYearModal opens as overlay from subject detail, refresh that subject on close. */
   const planYearModalReturnSubjectIdRef = useRef(null);
   const showPlanningModalRef = useRef(false);
@@ -407,6 +408,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     setPlanYearInitialSubjectSchoolTerm(null);
     setPlanYearInitialMaterialId(null);
     setPlanYearInitialUnitStructureMethod(null);
+    setPlanYearInitialSubjectHasCurriculumContent(null);
   }, []);
   useEffect(() => {
     showPlanningModalRef.current = showPlanningModal;
@@ -2584,6 +2586,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const subjectSchoolTerm = detail.schoolTerm ?? detail.subjectSchoolTerm ?? null;
       const materialId = detail.materialId ?? null;
       const initialUnitStructureMethod = detail.initialUnitStructureMethod ?? null;
+      const subjectHasCurriculumContent =
+        typeof detail.subjectHasCurriculumContent === 'boolean'
+          ? detail.subjectHasCurriculumContent
+          : null;
       const openToEditListBase = detail.openToEditList === true;
       const openAsModal = detail.openAsModal === true;
       const skipPlanSummary = detail.skipPlanSummary === true;
@@ -2649,6 +2655,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setPlanYearInitialSubjectSchoolTerm(subjectSchoolTerm);
       setPlanYearInitialMaterialId(materialId);
       setPlanYearInitialUnitStructureMethod(initialUnitStructureMethod);
+      setPlanYearInitialSubjectHasCurriculumContent(subjectHasCurriculumContent);
 
       if (effectiveOpenAsModal) {
         planYearModalReturnSubjectIdRef.current = subjectId || null;
@@ -4561,6 +4568,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     initialSubjectSchoolTerm={planYearInitialSubjectSchoolTerm}
         initialMaterialId={planYearInitialMaterialId}
                     initialUnitStructureMethod={planYearInitialUnitStructureMethod}
+        initialSubjectHasCurriculumContent={planYearInitialSubjectHasCurriculumContent}
         onOpenBuildCurriculum={(params) => {
           setBuildCurriculumInitialSubjectId(params.initialSubjectId ?? null);
                       setBuildCurriculumInitialSubjectName(params.initialSubjectName ?? null);
@@ -4856,6 +4864,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         initialSubjectSchoolTerm={planYearInitialSubjectSchoolTerm}
         initialMaterialId={planYearInitialMaterialId}
         initialUnitStructureMethod={planYearInitialUnitStructureMethod}
+        initialSubjectHasCurriculumContent={planYearInitialSubjectHasCurriculumContent}
         onOpenBuildCurriculum={(params) => {
           setBuildCurriculumInitialSubjectId(params.subjectId || null);
           setBuildCurriculumInitialSubjectName(params.subjectName || null);
