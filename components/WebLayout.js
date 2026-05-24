@@ -1742,12 +1742,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         // Handle 401 errors gracefully (backend might not be running or auth not ready)
         const isAuthError = meError?.status === 401 || meError?.response?.status === 401;
         
-        // Always fetch profile table for freshest name/phone
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('role, email, name, first_name, phone, avatar_url, app_preferences, family_id')
-          .eq('id', authUserId)
-          .maybeSingle();
+        // Web production can block direct Supabase REST via browser policy/CORS checks; keep backend as source of truth there.
+        let profileData = null;
+        if (Platform.OS !== 'web') {
+          const profileRes = await supabase
+            .from('profiles')
+            .select('role, email, name, first_name, phone, avatar_url, app_preferences, family_id')
+            .eq('id', authUserId)
+            .maybeSingle();
+          profileData = profileRes?.data || null;
+        }
 
         if (!meError && meData) {
           const mergedProfile = {
@@ -1765,7 +1769,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setProfile(mergedProfile);
         } else if (!isAuthError) {
           // Only log non-auth errors
-          console.warn('[WebLayout] getMe error (non-critical):', meError);
+          const isConnectivityNoise = /Cannot connect to backend server|Request timed out|Load failed|Failed to fetch/i.test(String(meError?.message || ''));
+          if (!isConnectivityNoise) {
+            console.warn('[WebLayout] getMe error (non-critical):', meError);
+          }
         }
         
         // Always fallback to profile table (works even if backend is down)
@@ -1817,11 +1824,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const { getMe } = await import('../lib/apiClient');
         const { data: meData, error: meError } = await getMe();
 
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('role, email, name, first_name, phone, avatar_url, app_preferences, family_id')
-          .eq('id', authUserId)
-          .maybeSingle();
+        let profileData = null;
+        if (Platform.OS !== 'web') {
+          const profileRes = await supabase
+            .from('profiles')
+            .select('role, email, name, first_name, phone, avatar_url, app_preferences, family_id')
+            .eq('id', authUserId)
+            .maybeSingle();
+          profileData = profileRes?.data || null;
+        }
 
         if (!meError && meData) {
           const mergedProfile = {
@@ -1872,18 +1883,22 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const fetchFamilyMembers = useCallback(async () => {
     if (!authUserId || !session) return;
     try {
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('family_id')
-        .eq('id', authUserId)
-        .maybeSingle();
-      if (profileData?.family_id) {
-        setFamilyId(profileData.family_id);
+      let resolvedFamilyId = session?.family_id || familyId || null;
+      if (!resolvedFamilyId && Platform.OS !== 'web') {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('family_id')
+          .eq('id', authUserId)
+          .maybeSingle();
+        resolvedFamilyId = profileData?.family_id || null;
+      }
+      if (resolvedFamilyId) {
+        setFamilyId(resolvedFamilyId);
         try {
           const { data: childrenData, error: childrenError } = await supabase
             .from('children')
             .select('*')
-            .eq('family_id', profileData.family_id)
+            .eq('family_id', resolvedFamilyId)
             .eq('archived', false);
           
           if (childrenError) {
@@ -1892,7 +1907,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               const { data: allData } = await supabase
                 .from('children')
                 .select('*')
-                .eq('family_id', profileData.family_id);
+                .eq('family_id', resolvedFamilyId);
               // Validate and clean avatar URLs
               const cleaned = (allData || []).map(child => ({
                 ...child,
@@ -1921,7 +1936,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               const { data: subjectsData } = await supabase
                 .from('subject')
                 .select('id, name')
-                .eq('family_id', profileData.family_id)
+                .eq('family_id', resolvedFamilyId)
                 .order('name');
               setSubjects(subjectsData || []);
               setSubjectsLoaded(true); // Mark as loaded so we don't reload
@@ -1939,7 +1954,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               const { data: fullSubjectsData } = await supabase
                 .from('subject')
                 .select('id, name, child_id, grade, notes, created_at, updated_at, default_constraint_mode, default_target_days, default_target_hours')
-                .eq('family_id', profileData.family_id)
+                .eq('family_id', resolvedFamilyId)
                 .order('name');
               setFullSubjects(fullSubjectsData || []);
               setFullSubjectsLoaded(true); // Mark as loaded so we don't reload
@@ -1960,7 +1975,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       console.error('[WebLayout] Unable to load family children', error);
       setChildren([]);
     }
-  }, [authUserId, session, subjectsLoaded, fullSubjectsLoaded]);
+  }, [authUserId, session, familyId, subjectsLoaded, fullSubjectsLoaded]);
 
   const fetchFamilyData = useCallback(async () => {
     if (!authUserId || !session) return;

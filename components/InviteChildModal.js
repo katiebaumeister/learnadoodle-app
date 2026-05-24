@@ -362,7 +362,7 @@ export default function InviteChildModal({
                   </View>
                 ) : (
                   <View style={styles.emailSection}>
-                    <Text style={styles.emailLabel}>Permission level for this child</Text>
+                    <Text style={styles.emailLabel}>Permission level</Text>
                     <View style={styles.permissionPills}>
                       {CHILD_PERMISSION_OPTIONS.map((option) => {
                         const selected = option.id === childPermissionProfile;
@@ -711,9 +711,9 @@ const styles = StyleSheet.create({
   permissionPillText: {
     fontSize: 12,
     color: '#374151',
-    fontWeight: '600',
+    fontWeight: '700',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   permissionPillTextSelected: {
@@ -797,9 +797,9 @@ const styles = StyleSheet.create({
   btnSecondaryText: {
     color: '#374151',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   btnPrimaryStrong: {
@@ -827,9 +827,9 @@ const styles = StyleSheet.create({
   btnPrimaryStrongText: {
     color: '#FFFFFF',
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
 });

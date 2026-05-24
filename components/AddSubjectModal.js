@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput } from 'react-native';
 import { ChevronDown, CheckCircle, BookOpen, FileText, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { isAbortLikeError } from '../lib/apiClient';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 import { parseChildIds } from '../lib/services/subjectsClient';
@@ -449,7 +450,9 @@ export default function AddSubjectModal({
       
       setSubjectEvents(data || []);
     } catch (error) {
-      console.error('Error loading subject events:', error);
+      if (!isAbortLikeError(error)) {
+        console.error('Error loading subject events:', error);
+      }
       setSubjectEvents([]);
     }
   };
@@ -544,7 +547,9 @@ export default function AddSubjectModal({
       setCurriculumUnits(mergedUnits);
       mergeSubjectProgressCache(familyId, subjectId, { curriculumUnits: mergedUnits });
     } catch (error) {
-      console.error('Error loading subject curriculum:', error);
+      if (!isAbortLikeError(error)) {
+        console.error('Error loading subject curriculum:', error);
+      }
       setCurriculumUnits([]);
       mergeSubjectProgressCache(familyId, subjectId, { curriculumUnits: [] });
     } finally {

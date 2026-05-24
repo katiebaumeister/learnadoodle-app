@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
+import { isAbortLikeError } from '../../lib/apiClient';
 import { getAttendanceLogs } from '../../lib/services/recordsClient';
 import { generateAttendanceReport } from '../../lib/services/attendanceClient';
 import { exportCurriculumPlan, exportReportCard } from '../../lib/services/exportClient';
@@ -503,7 +504,9 @@ export default function SubjectsPage({
       )));
       return detailData;
     } catch (err) {
-      console.warn(`[SubjectsPage] Failed refreshing detail for subject ${sid}:`, err);
+      if (!isAbortLikeError(err)) {
+        console.warn(`[SubjectsPage] Failed refreshing detail for subject ${sid}:`, err);
+      }
       return null;
     }
   }, [familyId, session, onSubjectDetailUpdate]);
