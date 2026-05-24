@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, Alert, TextInput, ActivityIndicator } from 'react-native';
-import { AlertTriangle, ChevronDown, ChevronUp, Smile } from 'lucide-react';
+import { Smile } from 'lucide-react';
 import AddChildForm from './AddChildForm';
 import { supabase } from '../lib/supabase';
 import { permanentDeleteChild, unlinkChildLogin } from '../lib/apiClient';
@@ -66,8 +66,6 @@ export default function EditChildModal({
   const formRef = useRef(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
-  const [showDangerZone, setShowDangerZone] = useState(false);
-  const [confirmName, setConfirmName] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [fullChildData, setFullChildData] = useState(null);
   const [supportProfile, setSupportProfile] = useState(null);
@@ -118,8 +116,6 @@ export default function EditChildModal({
     } else if (!visible) {
       setError(null);
       setIsSubmitting(false);
-      setShowDangerZone(false);
-      setConfirmName('');
       setFullChildData(null);
       setSupportProfile(null);
       setFormCanSubmit(false);
@@ -500,11 +496,14 @@ export default function EditChildModal({
       }
       return;
     }
+    const confirmedName = String(
+      fullChildData?.first_name || fullChildData?.name || child?.first_name || child?.name || ''
+    ).trim();
     setDeleting(true);
     try {
       const { data, error } = await permanentDeleteChild({
         childId: child.id,
-        confirmName: confirmName.trim(),
+        confirmName: confirmedName,
       });
 
       if (error) {
@@ -548,43 +547,6 @@ export default function EditChildModal({
     } finally {
       setDeleting(false);
     }
-  };
-
-  const handleDelete = () => {
-    const nm = child?.first_name || child?.name || 'Child';
-    if (confirmName.trim().toLowerCase() !== nm.trim().toLowerCase()) {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.alert('Name does not match');
-      } else {
-        Alert.alert('Error', 'Name does not match');
-      }
-      return;
-    }
-
-    const loginBullets =
-      displayLinkedEmail != null && displayLinkedEmail !== ''
-        ? `\n• Delete linked account (${displayLinkedEmail})\n• Remove them from this family`
-        : '';
-
-    if (Platform.OS === 'web') {
-      setDeleteConfirmOpen(true);
-      return;
-    }
-
-    Alert.alert(
-      `Delete ${nm} permanently?`,
-      `This will:\n• Delete all learning data\n• Remove planner history, goals, and records${loginBullets}\n\nThis cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: `Delete ${nm}`,
-          style: 'destructive',
-          onPress: () => {
-            void performPermanentDelete();
-          },
-        },
-      ]
-    );
   };
 
   if (!child) return null;
@@ -660,7 +622,7 @@ export default function EditChildModal({
                 primaryLabel={isSubmitting ? 'Saving...' : 'Save changes'}
                 destructiveLabel="Delete Student"
                 onCancel={onClose}
-                onDelete={() => setShowDangerZone(true)}
+                onDelete={() => setDeleteConfirmOpen(true)}
                 onPrimary={() => {
                   if (formCanSubmit && formRef.current?.submit) {
                     formRef.current.submit();
@@ -794,107 +756,6 @@ export default function EditChildModal({
                       </View>
                     </View>
                   ) : null}
-                </View>
-
-                {/* Accordion — Danger zone */}
-                <View style={styles.dangerZoneAccordion}>
-                  <TouchableOpacity
-                    onPress={() => setShowDangerZone(!showDangerZone)}
-                    style={styles.dangerZoneHeader}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.dangerZoneHeaderLeft}>
-                      <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-                      <Text style={styles.dangerZoneTitle}>Danger zone</Text>
-                    </View>
-                    {showDangerZone ? <ChevronUp size={20} color={colors.redBold || '#dc2626'} /> : <ChevronDown size={20} color={colors.redBold || '#dc2626'} />}
-                  </TouchableOpacity>
-                  {showDangerZone && (
-                <View style={styles.dangerZoneContent}>
-                  {displayLinkedEmail != null && displayLinkedEmail !== '' && !accountDisconnectedThisSession ? (
-                    <View style={styles.dangerDisconnectSection}>
-                      <Text style={styles.dangerDisconnectTitle}>{"Disconnect child's login"}</Text>
-                      <View style={styles.dangerBulletList}>
-                        <Text style={styles.dangerBulletLine}>
-                          • Remove <Text style={styles.bold}>{displayLinkedEmail}</Text>
-                          {" from the child's account."}
-                        </Text>
-                        <Text style={styles.dangerBulletLine}>
-                          • The child profile and all learning data will stay in your family.
-                        </Text>
-                        <Text style={styles.dangerBulletLine}>
-                          • The user will no longer be able to log in or access this child.
-                        </Text>
-                        <Text style={styles.dangerBulletLine}>
-                          • If you want to delete the child and all data instead, use the option below.
-                        </Text>
-                      </View>
-                      <TouchableOpacity
-                        style={[
-                          styles.disconnectOutlineButton,
-                          styles.disconnectOutlineButtonInDanger,
-                          unlinkingLogin && styles.disconnectOutlineButtonDisabled,
-                        ]}
-                        onPress={handleDisconnectAccount}
-                        disabled={unlinkingLogin}
-                        activeOpacity={0.75}
-                        {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
-                      >
-                        <Text style={styles.disconnectOutlineButtonText}>
-                          {unlinkingLogin ? 'Disconnecting…' : 'Disconnect account'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                  <View style={styles.dangerSection}>
-                    <Text style={styles.dangerSectionTitle}>Delete child and all data</Text>
-                    <Text style={styles.dangerSectionLead}>
-                      This will permanently delete{' '}
-                      <Text style={styles.bold}>{`${childName}'s:`}</Text>
-                    </Text>
-                    <View style={styles.dangerBulletList}>
-                      <Text style={styles.dangerBulletLine}>• Learning history</Text>
-                      <Text style={styles.dangerBulletLine}>• Planner events</Text>
-                      <Text style={styles.dangerBulletLine}>• Goals and records</Text>
-                    </View>
-                    {displayLinkedEmail != null && displayLinkedEmail !== '' ? (
-                      <Text style={styles.dangerSectionDescription}>
-                        It will also remove access for:{' '}
-                        <Text style={styles.bold}>{displayLinkedEmail}</Text>
-                      </Text>
-                    ) : null}
-                    <Text style={[styles.dangerSectionDescription, styles.dangerSectionDescriptionLast]}>
-                      This action cannot be undone.
-                    </Text>
-
-                    <Text style={styles.inputLabel}>
-                      Type {childName} to confirm
-                    </Text>
-                    <TextInput
-                      style={styles.dangerInput}
-                      value={confirmName}
-                      onChangeText={setConfirmName}
-                      placeholder={childName}
-                      autoCapitalize="words"
-                    />
-
-                    <TouchableOpacity
-                      style={[
-                        styles.deleteButton,
-                        confirmName.trim().toLowerCase() !== childName.trim().toLowerCase() && styles.deleteButtonDisabled
-                      ]}
-                      onPress={handleDelete}
-                      disabled={
-                        confirmName.trim().toLowerCase() !== childName.trim().toLowerCase() || deleting
-                      }
-                    >
-                      <Text style={styles.deleteButtonText}>
-                        {deleting ? 'Deleting...' : `Delete ${childName}`}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
                 </View>
                 </>
               ) : null}

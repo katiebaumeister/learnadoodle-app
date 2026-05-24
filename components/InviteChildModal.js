@@ -726,15 +726,18 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#9ca3af',
     fontStyle: 'italic',
+    marginBottom: 14,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       fontStyle: 'italic',
     }),
   },
   emailLabel: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
-    color: '#111827',
+    color: '#9ca3af',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
     marginBottom: 8,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
