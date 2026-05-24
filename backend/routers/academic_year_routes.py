@@ -139,6 +139,7 @@ class ApplyToCalendarInput(BaseModel):
     subjects: List[str] = []  # subject UUIDs (used when blocks empty — legacy)
     child_id: Optional[str] = None
     replace_placeholders: bool = True
+    create_calendar_events: bool = True
     blocks: List[BlockEntry] = []  # when non-empty, generate from blocks (Phase 2)
     # Phase 3: constraint mode + target for academic_year_plan
     constraint_mode: Optional[str] = None  # 'days' | 'hours'
@@ -5165,7 +5166,7 @@ async def fix_target_gap(
 @router.get("/fix_target_gap/history", response_model=FixTargetGapHistoryOutput)
 async def get_fix_target_gap_history(
     academic_year_id: str = Query(..., description="Academic year id"),
-    limit: int = Query(25, ge=1, le=200),
+    limit: Optional[int] = Query(None, ge=1, le=1000),
     user: dict = Depends(get_current_user),
     __: None = Depends(rate_limiter_relaxed),
 ):
@@ -5188,7 +5189,7 @@ async def get_fix_target_gap_history(
         raise HTTPException(status_code=403, detail="Forbidden: Family ID mismatch")
 
     try:
-        history_resp = (
+        base_query = (
             supabase.table("academic_year_fix_gap_history")
             .select(
                 "id, created_at, scope, subject_id, subject_ids, target_kind, target_value, "
@@ -5200,10 +5201,23 @@ async def get_fix_target_gap_history(
             )
             .eq("academic_year_id", academic_year_id)
             .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
         )
-        rows = list(history_resp.data or [])
+        if limit is not None:
+            history_resp = base_query.limit(int(limit)).execute()
+            rows = list(history_resp.data or [])
+        else:
+            rows = []
+            offset = 0
+            page_size = 1000
+            while True:
+                page_resp = base_query.range(offset, offset + page_size - 1).execute()
+                page_rows = list(page_resp.data or [])
+                if not page_rows:
+                    break
+                rows.extend(page_rows)
+                if len(page_rows) < page_size:
+                    break
+                offset += page_size
     except Exception as history_error:
         # Non-fatal: local/dev DB may not have this optional history table yet.
         error_text = str(history_error or "").lower()
@@ -6473,7 +6487,8 @@ async def apply_to_calendar(
     log_event("academic_year.apply_to_calendar.start", user_id=user["id"], family_id=body.family_id)
     print(
         f"[BACKEND] apply_to_calendar start: family_id={body.family_id} academic_year_id={body.academic_year_id or 'new'} "
-        f"start_date={body.start_date} end_date={body.end_date} replace_placeholders={getattr(body, 'replace_placeholders', None)} apply_from_date={getattr(body, 'apply_from_date', None)}",
+        f"start_date={body.start_date} end_date={body.end_date} replace_placeholders={getattr(body, 'replace_placeholders', None)} "
+        f"create_calendar_events={getattr(body, 'create_calendar_events', True)} apply_from_date={getattr(body, 'apply_from_date', None)}",
         flush=True,
     )
     try:
@@ -6924,6 +6939,7 @@ async def apply_to_calendar(
             b0 = blocks_to_use[0]
             print(f"[BACKEND] apply_to_calendar first block: start_time={b0.get('start_time')} end_time={b0.get('end_time')}", flush=True)
 
+        create_calendar_events = bool(getattr(body, "create_calendar_events", True))
         if use_blocks and attendance_tracking_mode == "class_day":
             allowed_weekdays_set = set(int(w) for w in (allowed_weekdays_for_persist or [1, 2, 3, 4, 5]))
             full_class_day_dates: List[date] = []
@@ -6935,118 +6951,33 @@ async def apply_to_calendar(
                     if cur >= regen_start_date:
                         regen_class_day_dates.append(cur)
                 cur += timedelta(days=1)
-
-            delete_from_iso = regen_start_date.isoformat()
-            _delete_existing_plan_generated_class_day_rows(delete_from_iso)
-
-            start_time = "09:00"
-            end_time = "10:00"
-            if blocks_to_use:
-                start_time = blocks_to_use[0].get("start_time") or start_time
-                end_time = blocks_to_use[0].get("end_time") or end_time
-
             for d in full_class_day_dates:
                 planned_dates_set.add(d)
-
-            for d in regen_class_day_dates:
-                date_str = d.isoformat()
-                block_assignees = blocks_to_use[0].get("child_ids") if blocks_to_use else []
-                resolved_child_id, resolved_child_ids = _resolve_event_assignees(block_assignees)
-                class_day_subject_ids = [
-                    str(block.get("subject_id") or "").strip()
-                    for block in (blocks_to_use or [])
-                    if str(block.get("subject_id") or "").strip()
-                ]
-                class_day_title = _class_day_title_for_subject_ids(class_day_subject_ids)
-                events_to_insert.append({
-                    "family_id": body.family_id,
-                    "child_id": resolved_child_id,
-                    "child_ids": resolved_child_ids,
-                    "title": class_day_title,
-                    "start_ts": _parse_time_to_iso(d, start_time),
-                    "end_ts": _parse_time_to_iso(d, end_time),
-                    "status": "scheduled",
-                    "source": "system",
-                    "event_type": "ClassDay",
-                    "subject_id": None,
-                    "is_placeholder": False,
-                    "generated_by": "plan_year",
-                    "academic_year_id": academic_year_id,
-                    "generation_batch_id": generation_batch_id,
-                    "counts_toward_plan": True,
-                    "instructional_status": "PLAN_PLACEHOLDER",
-                    "curriculum_metadata": {"subject_ids": class_day_subject_ids},
-                })
-            if events_to_insert:
-                supabase.table("events").insert(events_to_insert).execute()
-            created_count = len(events_to_insert)
-            totals_inserted = created_count
-            totals_deleted = 0
-        elif use_blocks:
-            # Block-aware regeneration: only touch placeholders for each block (no global delete)
-            for block in blocks_to_use:
-                subject_id = block.get("subject_id")
-                subject_name = (
-                    subject_rows.get(str(subject_id), "Learning block")
-                    if subject_id
-                    else (block.get("placeholder_label") or "Learning block")
-                )
-                result = regen_block(
-                    supabase,
-                    body.family_id,
-                    academic_year_id,
-                    block,
-                    regen_start_date,
-                    end_date_obj,
-                    exclusion_ranges,
-                    generation_batch_id,
-                    subject_name,
-                    family_child_ids,
-                    body.child_id,
-                    family_timezone=family_tz,
-                    log_event_fn=log_event,
-                    user_id=user["id"],
-                )
-                block_regen_results.append(BlockRegenResult(
-                    block_id=str(block["block_id"]),
-                    updated=result["updated"],
-                    inserted=result["inserted"],
-                    deleted=result["deleted"],
-                ))
-                totals_updated += result["updated"]
-                totals_inserted += result["inserted"]
-                totals_deleted += result["deleted"]
-                for d in get_block_occurrence_dates(block, start_date_obj, end_date_obj, exclusion_ranges):
-                    planned_dates_set.add(d)
-            created_count = totals_inserted
-            # No-requirement mode: store baseline so we can show "You deleted a lesson on [date]..." if user removes placeholders
-            if constraint_mode == "none" and planned_dates_set:
-                baseline_dates = sorted([d.isoformat() for d in planned_dates_set])
-                try:
-                    supabase.table("academic_year_plan").update({
-                        "baseline_scheduled_days": len(planned_dates_set),
-                        "baseline_scheduled_dates": baseline_dates,
-                        "updated_at": datetime.now().isoformat(),
-                    }).eq("academic_year_id", academic_year_id).execute()
-                except Exception:
-                    pass  # columns may not exist before migration
-        else:
-            # Legacy path: no blocks — use target days + subjects
-            if attendance_tracking_mode == "class_day":
+            if create_calendar_events:
                 delete_from_iso = regen_start_date.isoformat()
                 _delete_existing_plan_generated_class_day_rows(delete_from_iso)
-                for d in planned_dates_legacy:
+                start_time = "09:00"
+                end_time = "10:00"
+                if blocks_to_use:
+                    start_time = blocks_to_use[0].get("start_time") or start_time
+                    end_time = blocks_to_use[0].get("end_time") or end_time
+                for d in regen_class_day_dates:
                     date_str = d.isoformat()
-                    planned_dates_set.add(d)
-                    resolved_child_id, resolved_child_ids = _resolve_event_assignees()
-                    class_day_title = _class_day_title_for_subject_ids(subject_ids_ordered)
+                    block_assignees = blocks_to_use[0].get("child_ids") if blocks_to_use else []
+                    resolved_child_id, resolved_child_ids = _resolve_event_assignees(block_assignees)
+                    class_day_subject_ids = [
+                        str(block.get("subject_id") or "").strip()
+                        for block in (blocks_to_use or [])
+                        if str(block.get("subject_id") or "").strip()
+                    ]
+                    class_day_title = _class_day_title_for_subject_ids(class_day_subject_ids)
                     events_to_insert.append({
                         "family_id": body.family_id,
                         "child_id": resolved_child_id,
                         "child_ids": resolved_child_ids,
                         "title": class_day_title,
-                        "start_ts": f"{date_str}T09:00:00+00:00",
-                        "end_ts": f"{date_str}T09:45:00+00:00",
+                        "start_ts": _parse_time_to_iso(d, start_time),
+                        "end_ts": _parse_time_to_iso(d, end_time),
                         "status": "scheduled",
                         "source": "system",
                         "event_type": "ClassDay",
@@ -7057,44 +6988,133 @@ async def apply_to_calendar(
                         "generation_batch_id": generation_batch_id,
                         "counts_toward_plan": True,
                         "instructional_status": "PLAN_PLACEHOLDER",
-                        "curriculum_metadata": {"subject_ids": subject_ids_ordered},
+                        "curriculum_metadata": {"subject_ids": class_day_subject_ids},
                     })
+                if events_to_insert:
+                    supabase.table("events").insert(events_to_insert).execute()
+                created_count = len(events_to_insert)
+                totals_inserted = created_count
             else:
-                subject_index = 0
-                for day_idx, d in enumerate(planned_dates_legacy):
-                    date_str = d.isoformat()
+                created_count = 0
+                totals_inserted = 0
+                totals_deleted = 0
+        elif use_blocks:
+            for block in blocks_to_use:
+                for d in get_block_occurrence_dates(block, start_date_obj, end_date_obj, exclusion_ranges):
                     planned_dates_set.add(d)
-                    for slot in range(LESSONS_PER_DAY):
-                        subject_id = subject_ids_ordered[subject_index % len(subject_ids_ordered)]
-                        subject_name = subject_rows.get(str(subject_id), "Lesson")
-                        subject_index += 1
-                        start_ts = f"{date_str}T09:00:00+00:00" if slot == 0 else f"{date_str}T10:00:00+00:00"
-                        end_ts = f"{date_str}T09:45:00+00:00" if slot == 0 else f"{date_str}T10:45:00+00:00"
+            if create_calendar_events:
+                # Block-aware regeneration: only touch placeholders for each block (no global delete)
+                for block in blocks_to_use:
+                    subject_id = block.get("subject_id")
+                    subject_name = (
+                        subject_rows.get(str(subject_id), "Learning block")
+                        if subject_id
+                        else (block.get("placeholder_label") or "Learning block")
+                    )
+                    result = regen_block(
+                        supabase,
+                        body.family_id,
+                        academic_year_id,
+                        block,
+                        regen_start_date,
+                        end_date_obj,
+                        exclusion_ranges,
+                        generation_batch_id,
+                        subject_name,
+                        family_child_ids,
+                        body.child_id,
+                        family_timezone=family_tz,
+                        log_event_fn=log_event,
+                        user_id=user["id"],
+                    )
+                    block_regen_results.append(BlockRegenResult(
+                        block_id=str(block["block_id"]),
+                        updated=result["updated"],
+                        inserted=result["inserted"],
+                        deleted=result["deleted"],
+                    ))
+                    totals_updated += result["updated"]
+                    totals_inserted += result["inserted"]
+                    totals_deleted += result["deleted"]
+                created_count = totals_inserted
+                # No-requirement mode: store baseline so we can show "You deleted a lesson on [date]..." if user removes placeholders
+                if constraint_mode == "none" and planned_dates_set:
+                    baseline_dates = sorted([d.isoformat() for d in planned_dates_set])
+                    try:
+                        supabase.table("academic_year_plan").update({
+                            "baseline_scheduled_days": len(planned_dates_set),
+                            "baseline_scheduled_dates": baseline_dates,
+                            "updated_at": datetime.now().isoformat(),
+                        }).eq("academic_year_id", academic_year_id).execute()
+                    except Exception:
+                        pass  # columns may not exist before migration
+            else:
+                created_count = 0
+        else:
+            # Legacy path: no blocks — use target days + subjects
+            for d in planned_dates_legacy:
+                planned_dates_set.add(d)
+            if create_calendar_events:
+                if attendance_tracking_mode == "class_day":
+                    delete_from_iso = regen_start_date.isoformat()
+                    _delete_existing_plan_generated_class_day_rows(delete_from_iso)
+                    for d in planned_dates_legacy:
+                        date_str = d.isoformat()
                         resolved_child_id, resolved_child_ids = _resolve_event_assignees()
-                        ev = {
+                        class_day_title = _class_day_title_for_subject_ids(subject_ids_ordered)
+                        events_to_insert.append({
                             "family_id": body.family_id,
                             "child_id": resolved_child_id,
                             "child_ids": resolved_child_ids,
-                            "title": subject_name,
-                            "start_ts": start_ts,
-                            "end_ts": end_ts,
+                            "title": class_day_title,
+                            "start_ts": f"{date_str}T09:00:00+00:00",
+                            "end_ts": f"{date_str}T09:45:00+00:00",
                             "status": "scheduled",
                             "source": "system",
-                            "event_type": "Lesson",
-                            "subject_id": subject_id,
+                            "event_type": "ClassDay",
+                            "subject_id": None,
                             "is_placeholder": False,
                             "generated_by": "plan_year",
                             "academic_year_id": academic_year_id,
                             "generation_batch_id": generation_batch_id,
                             "counts_toward_plan": True,
-                        }
-                        events_to_insert.append(ev)
-
-        if not use_blocks:
-            created_count = 0
-        if events_to_insert and not use_blocks:
-            supabase.table("events").insert(events_to_insert).execute()
-            created_count = len(events_to_insert)
+                            "instructional_status": "PLAN_PLACEHOLDER",
+                            "curriculum_metadata": {"subject_ids": subject_ids_ordered},
+                        })
+                else:
+                    subject_index = 0
+                    for day_idx, d in enumerate(planned_dates_legacy):
+                        date_str = d.isoformat()
+                        for slot in range(LESSONS_PER_DAY):
+                            subject_id = subject_ids_ordered[subject_index % len(subject_ids_ordered)]
+                            subject_name = subject_rows.get(str(subject_id), "Lesson")
+                            subject_index += 1
+                            start_ts = f"{date_str}T09:00:00+00:00" if slot == 0 else f"{date_str}T10:00:00+00:00"
+                            end_ts = f"{date_str}T09:45:00+00:00" if slot == 0 else f"{date_str}T10:45:00+00:00"
+                            resolved_child_id, resolved_child_ids = _resolve_event_assignees()
+                            ev = {
+                                "family_id": body.family_id,
+                                "child_id": resolved_child_id,
+                                "child_ids": resolved_child_ids,
+                                "title": subject_name,
+                                "start_ts": start_ts,
+                                "end_ts": end_ts,
+                                "status": "scheduled",
+                                "source": "system",
+                                "event_type": "Lesson",
+                                "subject_id": subject_id,
+                                "is_placeholder": False,
+                                "generated_by": "plan_year",
+                                "academic_year_id": academic_year_id,
+                                "generation_batch_id": generation_batch_id,
+                                "counts_toward_plan": True,
+                            }
+                            events_to_insert.append(ev)
+                if events_to_insert:
+                    supabase.table("events").insert(events_to_insert).execute()
+                created_count = len(events_to_insert)
+            else:
+                created_count = 0
 
         planned_days = len(planned_dates_set)
         log_event("academic_year.apply_to_calendar.success", user_id=user["id"], created=created_count, planned_days=planned_days)

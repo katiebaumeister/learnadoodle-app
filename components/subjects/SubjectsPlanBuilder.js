@@ -539,6 +539,65 @@ function clearScheduleSupplementSession(familyId, schoolYearLabel) {
   }
 }
 
+const FIX_GAP_HISTORY_STORAGE_PREFIX = 'ld_fix_gap_history_v1:';
+
+function buildFixGapHistoryStorageKey(familyId, academicYearId) {
+  const familyKey = normalizeFamilyKey(familyId);
+  const yearKey = String(academicYearId || '').trim();
+  if (!familyKey || !yearKey) return '';
+  return `${FIX_GAP_HISTORY_STORAGE_PREFIX}${familyKey}|${yearKey}`;
+}
+
+function readFixGapHistoryStorage(familyId, academicYearId) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return {};
+  const key = buildFixGapHistoryStorageKey(familyId, academicYearId);
+  if (!key) return {};
+  try {
+    const raw = window.localStorage?.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeFixGapHistoryStorage(familyId, academicYearId, groupedHistory) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  const key = buildFixGapHistoryStorageKey(familyId, academicYearId);
+  if (!key) return;
+  try {
+    window.localStorage?.setItem(key, JSON.stringify(groupedHistory && typeof groupedHistory === 'object' ? groupedHistory : {}));
+  } catch (_) {
+    // ignore local history persistence failures
+  }
+}
+
+function mergeFixGapHistoryGrouped(primaryGrouped, secondaryGrouped) {
+  const out = {};
+  const allKeys = new Set([
+    ...Object.keys(primaryGrouped || {}),
+    ...Object.keys(secondaryGrouped || {}),
+  ]);
+  allKeys.forEach((key) => {
+    const merged = [];
+    const seen = new Set();
+    const pushEntry = (entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      const dedupeKey = String(entry?.id || '').trim()
+        || `${String(entry?.created_at || '').trim()}|${String(entry?.scope || '').trim()}|${String(entry?.subject_id || '').trim()}|${String(entry?.created_events || 0)}|${String(entry?.removed_events || 0)}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      merged.push(entry);
+    };
+    (Array.isArray(primaryGrouped?.[key]) ? primaryGrouped[key] : []).forEach(pushEntry);
+    (Array.isArray(secondaryGrouped?.[key]) ? secondaryGrouped[key] : []).forEach(pushEntry);
+    merged.sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')));
+    if (merged.length > 0) out[key] = merged;
+  });
+  return out;
+}
+
 function buildAttendanceModeBootstrapKey(familyId, schoolYearLabel) {
   const familyKey = normalizeFamilyKey(familyId);
   const yearKey = String(schoolYearLabel || '').trim();
@@ -2203,32 +2262,49 @@ export default function SubjectsPlanBuilder({
   const loadFixGapHistory = useCallback(async (academicYearIdInput) => {
     const academicYearId = String(academicYearIdInput || '').trim();
     if (!academicYearId) {
-      setFixGapHistoryByRowId({});
       return;
     }
+    const localGrouped = readFixGapHistoryStorage(familyId, academicYearId);
+    // Hydrate immediately so history stays visually stable while network fetch resolves.
+    setFixGapHistoryByRowId(localGrouped);
     try {
-      const { data, error } = await getFixTargetGapHistory({ academicYearId, limit: 40 });
+      const { data, error } = await getFixTargetGapHistory({ academicYearId });
       if (error) throw error;
       const rows = Array.isArray(data?.rows) ? data.rows : [];
       const grouped = {};
       rows.forEach((entry) => {
         const scope = String(entry?.scope || '').trim().toLowerCase();
-        const key = scope === 'overall'
-          ? 'overall'
-          : String(entry?.subject_id || '').trim();
-        if (!key) return;
-        if (!grouped[key]) grouped[key] = [];
-        grouped[key].push(entry);
+        if (scope === 'overall') {
+          if (!grouped.overall) grouped.overall = [];
+          grouped.overall.push(entry);
+          return;
+        }
+        const subjectKey = String(entry?.subject_id || '').trim();
+        if (subjectKey) {
+          if (!grouped[subjectKey]) grouped[subjectKey] = [];
+          grouped[subjectKey].push(entry);
+          return;
+        }
+        // Backward compatibility: older rows might not have subject_id set.
+        const subjectIds = Array.isArray(entry?.subject_ids) ? entry.subject_ids : [];
+        subjectIds
+          .map((id) => String(id || '').trim())
+          .filter(Boolean)
+          .forEach((sid) => {
+            if (!grouped[sid]) grouped[sid] = [];
+            grouped[sid].push(entry);
+          });
       });
-      setFixGapHistoryByRowId(grouped);
+      const merged = mergeFixGapHistoryGrouped(grouped, localGrouped);
+      setFixGapHistoryByRowId(merged);
+      writeFixGapHistoryStorage(familyId, academicYearId, merged);
     } catch (_) {
       // Keep this silent; history is supplemental and should not block fix gap actions.
-      setFixGapHistoryByRowId({});
+      setFixGapHistoryByRowId(localGrouped);
     }
-  }, []);
+  }, [familyId]);
   useEffect(() => {
     if (!fixGapHistoryAcademicYearId) {
-      setFixGapHistoryByRowId({});
       return;
     }
     loadFixGapHistory(fixGapHistoryAcademicYearId);
@@ -2239,12 +2315,17 @@ export default function SubjectsPlanBuilder({
     if (!key || !entry || typeof entry !== 'object') return;
     setFixGapHistoryByRowId((prev) => {
       const existing = Array.isArray(prev?.[key]) ? prev[key] : [];
-      return {
+      const next = {
         ...(prev || {}),
-        [key]: [entry, ...existing].slice(0, 40),
+        [key]: [entry, ...existing],
       };
+      const activeHistoryYearId = String(fixGapHistoryAcademicYearId || '').trim();
+      if (activeHistoryYearId) {
+        writeFixGapHistoryStorage(familyId, activeHistoryYearId, next);
+      }
+      return next;
     });
-  }, []);
+  }, [familyId, fixGapHistoryAcademicYearId]);
 
   const buildDayRowsFromBlocks = useCallback((blocksLite = []) => (
     WEEKDAY_NUMBERS.map((dayNum) => {
@@ -2826,7 +2907,8 @@ export default function SubjectsPlanBuilder({
       : {};
     const perSubjectRows = (termSections || [])
       .flatMap((section) => section?.subjectPlans || [])
-      .filter((row) => row?.targetUnit === 'days' && Number.isFinite(Number(row?.targetValue)) && Number(row?.targetValue) > 0)
+      // Keep zero-target rows visible so newly added subjects appear in Year Targets.
+      .filter((row) => row?.targetUnit === 'days' && Number.isFinite(Number(row?.targetValue)) && Number(row?.targetValue) >= 0)
       .map((row) => {
         const subjectId = String(row?.id || '').trim();
         const strictProjection = strictProjectionBySubject[subjectId] || {};
@@ -2858,7 +2940,9 @@ export default function SubjectsPlanBuilder({
           shortDays: Math.max(0, targetDays - projectedDays),
           requiredPace,
           currentPace,
-          progressPct: Math.max(0, Math.min(100, Math.round((completedDays / targetDays) * 100))),
+          progressPct: targetDays > 0
+            ? Math.max(0, Math.min(100, Math.round((completedDays / targetDays) * 100)))
+            : 0,
         };
       });
 
@@ -4256,7 +4340,7 @@ export default function SubjectsPlanBuilder({
           canFullyCloseGapNow
             ? [
               `Your target is ${Math.round(Number(targetDays || 0))} days, but projected is only ${Math.round(Number(projectedDays || 0))}.`,
-              `You are ${Math.round(Math.max(0, requestedGap))} days short, and we can schedule all ${Math.round(suggestedAddCount)} day${Math.round(suggestedAddCount) === 1 ? '' : 's'} now.`,
+              `Add ${Math.round(suggestedAddCount)} day${Math.round(suggestedAddCount) === 1 ? '' : 's'} to meet your target.`,
             ]
             : [
               `Your target is ${Math.round(Number(targetDays || 0))} days, but projected is only ${Math.round(Number(projectedDays || 0))}.`,
@@ -4678,7 +4762,8 @@ export default function SubjectsPlanBuilder({
         holiday_region: 'US',
         subjects: requestedSubjectIds,
         replace_placeholders: true,
-        create_calendar_events: true,
+        // Fix Gap bootstrap should save plan blocks only; the gap run inserts needed days.
+        create_calendar_events: false,
         blocks: fallbackBlocks,
         // Preserve the current attendance mode; do not force-switch on Fix gap bootstrap.
         attendance_tracking_mode: resolvedAttendanceTrackingMode,
@@ -4767,7 +4852,8 @@ export default function SubjectsPlanBuilder({
         holiday_region: 'US',
         subjects: requestedSubjectIds,
         replace_placeholders: true,
-        create_calendar_events: true,
+        // Fix Gap bootstrap should save plan blocks only; the gap run inserts needed days.
+        create_calendar_events: false,
         blocks: fallbackBlocks,
         // Preserve the current attendance mode; do not force-switch on Fix gap bootstrap.
         attendance_tracking_mode: resolvedAttendanceTrackingMode,
@@ -7036,22 +7122,29 @@ export default function SubjectsPlanBuilder({
                         })();
                         const fixGapActionRecommendation = fixGapActionRecommendationsByRowId?.[rowId] || null;
                         const canFixGap = Math.abs(Number(actionableRowGapValue || 0)) > 0;
-                        const isExpanded = expandedYearTargetSuggestionId === rowId;
                         const rowFixGapHistoryRuns = Array.isArray(fixGapHistoryByRowId?.[rowId])
                           ? fixGapHistoryByRowId[rowId]
                           : [];
+                        const isExpanded = expandedYearTargetSuggestionId === rowId || rowFixGapHistoryRuns.length > 0;
                         const latestFixGapHistory = rowFixGapHistoryRuns[0] || null;
-                        const latestFixGapCreatedCount = Math.max(0, Number(latestFixGapHistory?.created_events ?? 0));
-                        const latestFixGapRemovedCount = Math.max(0, Number(latestFixGapHistory?.removed_events ?? 0));
-                        const latestFixGapActionVerb = latestFixGapRemovedCount > 0 ? 'Removed' : 'Added';
-                        const latestFixGapHistorySlots = Array.isArray(latestFixGapHistory?.assignment_slots)
-                          ? latestFixGapHistory.assignment_slots
-                          : [];
-                        const latestFixGapHistorySlotLines = latestFixGapHistorySlots
-                          .slice(0, 6)
-                          .map((slot) => formatFixGapHistorySlotLabel(slot))
-                          .filter(Boolean);
-                        const latestFixGapHistoryOverflow = Math.max(0, latestFixGapHistorySlots.length - latestFixGapHistorySlotLines.length);
+                        const historyRunsWithDetails = rowFixGapHistoryRuns
+                          .map((run, idx) => {
+                            const createdCount = Math.max(0, Number(run?.created_events ?? 0));
+                            const removedCount = Math.max(0, Number(run?.removed_events ?? 0));
+                            const actionVerb = removedCount > 0 ? 'Removed' : 'Added';
+                            const slotLines = (Array.isArray(run?.assignment_slots) ? run.assignment_slots : [])
+                              .map((slot) => formatFixGapHistorySlotLabel(slot))
+                              .filter(Boolean);
+                            return {
+                              key: String(run?.id || '').trim() || `run-${rowId}-${idx}`,
+                              createdAt: run?.created_at,
+                              actionVerb,
+                              createdCount,
+                              removedCount,
+                              slotLines,
+                            };
+                          })
+                          .filter((run) => run.slotLines.length > 0 || run.createdCount > 0 || run.removedCount > 0);
                         const latestFixGapCreatedIds = Array.isArray(latestFixGapHistory?.created_event_ids)
                           ? latestFixGapHistory.created_event_ids
                           : [];
@@ -7174,32 +7267,37 @@ export default function SubjectsPlanBuilder({
                                   <Text style={styles.yearTargetsSavedTargetButtonText}>Change saved target</Text>
                                 </TouchableOpacity>
                               </View>
-                              {latestFixGapHistory && (
-                                latestFixGapHistorySlotLines.length > 0
-                                || latestFixGapCreatedCount > 0
-                                || latestFixGapRemovedCount > 0
-                              ) ? (
+                              {historyRunsWithDetails.length > 0 ? (
                                 <View style={styles.yearTargetsFixGapHistoryContainer}>
                                   <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                    {`Fix gap history (${formatFixGapHistoryTimestamp(latestFixGapHistory?.created_at)}):`}
+                                    {`Fix gap history (${historyRunsWithDetails.length} action${historyRunsWithDetails.length === 1 ? '' : 's'}):`}
                                   </Text>
-                                  {latestFixGapHistorySlotLines.map((line, idx) => (
-                                    <Text key={`fix-gap-history-line-${rowId}-${idx}`} style={styles.yearTargetsFixGapHistoryLine}>
-                                      {`${latestFixGapActionVerb} ${line}`}
-                                    </Text>
-                                  ))}
-                                  {(latestFixGapHistorySlots.length === 0 && (latestFixGapCreatedCount > 0 || latestFixGapRemovedCount > 0)) ? (
-                                    <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                      {latestFixGapRemovedCount > 0
-                                        ? `Removed ${latestFixGapRemovedCount} event${latestFixGapRemovedCount === 1 ? '' : 's'}.`
-                                        : `Added ${latestFixGapCreatedCount} event${latestFixGapCreatedCount === 1 ? '' : 's'}.`}
-                                    </Text>
-                                  ) : null}
-                                  {latestFixGapHistoryOverflow > 0 ? (
-                                    <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                      {`...and ${latestFixGapHistoryOverflow} more ${latestFixGapActionVerb.toLowerCase()} slot${latestFixGapHistoryOverflow === 1 ? '' : 's'}.`}
-                                    </Text>
-                                  ) : null}
+                                  <ScrollView
+                                    style={styles.yearTargetsFixGapHistoryScroll}
+                                    contentContainerStyle={styles.yearTargetsFixGapHistoryScrollContent}
+                                    nestedScrollEnabled
+                                  >
+                                    {historyRunsWithDetails.map((run) => (
+                                      <View key={run.key} style={styles.yearTargetsFixGapHistoryRun}>
+                                        <Text style={styles.yearTargetsFixGapHistoryLine}>
+                                          {`${formatFixGapHistoryTimestamp(run.createdAt)}:`}
+                                        </Text>
+                                        {run.slotLines.length > 0 ? (
+                                          run.slotLines.map((line, idx) => (
+                                            <Text key={`${run.key}-line-${idx}`} style={styles.yearTargetsFixGapHistoryLine}>
+                                              {`${run.actionVerb} ${line}`}
+                                            </Text>
+                                          ))
+                                        ) : (
+                                          <Text style={styles.yearTargetsFixGapHistoryLine}>
+                                            {run.removedCount > 0
+                                              ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}.`
+                                              : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}.`}
+                                          </Text>
+                                        )}
+                                      </View>
+                                    ))}
+                                  </ScrollView>
                                   {canUndoLatestFixGap ? (
                                     <TouchableOpacity
                                       style={[
@@ -8899,6 +8997,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 3,
+  },
+  yearTargetsFixGapHistoryScroll: {
+    maxHeight: 220,
+  },
+  yearTargetsFixGapHistoryScrollContent: {
+    gap: 6,
+  },
+  yearTargetsFixGapHistoryRun: {
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
   yearTargetsFixGapHistoryLine: {
     fontSize: 12,
