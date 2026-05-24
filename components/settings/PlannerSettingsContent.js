@@ -96,12 +96,12 @@ const clearPlannerSettingsSessionSnapshot = (snapshotCacheKey) => {
 
 const parsePositiveIntOrNull = (value) => {
   const n = parseInt(String(value ?? '').trim(), 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  return Number.isFinite(n) && n >= 0 ? n : null;
 };
 
 const parsePositiveFloatOrNull = (value) => {
   const n = parseFloat(String(value ?? '').trim());
-  return Number.isFinite(n) && n > 0 ? n : null;
+  return Number.isFinite(n) && n >= 0 ? n : null;
 };
 
 const DEFAULT_LEARNING_START_TIME = '08:00:00';
@@ -374,8 +374,8 @@ export default function PlannerSettingsContent({
 
   // Goal defaults (scope is now derived from attendance mode)
   const [goalMode, setGoalMode] = useState(initialSnapshot?.goalMode || 'days');
-  const [targetDays, setTargetDays] = useState(initialSnapshot?.targetDays ?? '180');
-  const [targetHours, setTargetHours] = useState(initialSnapshot?.targetHours ?? '1000');
+  const [targetDays, setTargetDays] = useState(initialSnapshot?.targetDays ?? '0');
+  const [targetHours, setTargetHours] = useState(initialSnapshot?.targetHours ?? '0');
   const [learningStartTime, setLearningStartTime] = useState(
     normalizeLearningTimeDisplay(initialSnapshot?.learningStartTime, DEFAULT_LEARNING_START_TIME)
   );
@@ -471,8 +471,8 @@ export default function PlannerSettingsContent({
     setAttendanceTrackingMode(cachedMode);
     setTargetScope(resolveTargetScopeForAttendanceMode(cachedMode));
     setGoalMode(cached.goalMode || 'days');
-    setTargetDays(cached.targetDays ?? '180');
-    setTargetHours(cached.targetHours ?? '1000');
+    setTargetDays(cached.targetDays ?? '0');
+    setTargetHours(cached.targetHours ?? '0');
     setLearningStartTime(normalizeLearningTimeDisplay(cached.learningStartTime, DEFAULT_LEARNING_START_TIME));
     setLearningEndTime(normalizeLearningTimeDisplay(cached.learningEndTime, DEFAULT_LEARNING_END_TIME));
     setPreferredLearningDayNums(normalizeAllowedWeekdays(cached.preferredLearningDayNums));
@@ -611,7 +611,7 @@ export default function PlannerSettingsContent({
       setAttendanceTrackingMode(ATTENDANCE_MODES.CLASS_DAY);
       setTargetScope('overall');
       setGoalMode('days');
-      setTargetDays('180');
+      setTargetDays('0');
       const schoolYearStart = `${selectedYearMeta.start}-01-01`;
       const schoolYearEnd = `${selectedYearMeta.end}-12-31`;
       await supabase
@@ -626,8 +626,8 @@ export default function PlannerSettingsContent({
           attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
           target_scope: 'overall',
           default_constraint_mode: 'days',
-          default_target_days: 180,
-          default_target_hours: null,
+          default_target_days: 0,
+          default_target_hours: 0,
         },
         selectedSchoolYearLabel
       );
@@ -726,13 +726,13 @@ export default function PlannerSettingsContent({
     setGoalMode(matchesInitialDataYear ? (s.default_constraint_mode || 'days') : 'days');
     setTargetDays(
       matchesInitialDataYear
-        ? (s.default_target_days != null ? String(s.default_target_days) : '180')
-        : '180'
+        ? (s.default_target_days != null ? String(s.default_target_days) : '0')
+        : '0'
     );
     setTargetHours(
       matchesInitialDataYear
-        ? (s.default_target_hours != null ? String(s.default_target_hours) : '1000')
-        : '1000'
+        ? (s.default_target_hours != null ? String(s.default_target_hours) : '0')
+        : '0'
     );
     setLearningStartTime(
       matchesInitialDataYear
@@ -810,8 +810,8 @@ export default function PlannerSettingsContent({
     const initialScope = resolveTargetScopeForAttendanceMode(resolvedMode);
     if (matchesInitialDataYear && firstActiveTarget && initialScope === 'per_subject') {
       setGoalMode(firstActiveTarget.mode);
-      if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '180');
-      if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
+      if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '0');
+      if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '0');
     }
     setLoading(false);
   }, [initialData, isSchoolYearLocked, normalizedLockedSchoolYearLabel, selectedSchoolYearLabel]);
@@ -929,8 +929,8 @@ export default function PlannerSettingsContent({
         setAttendanceTrackingMode(resolvedMode);
         setTargetScope(resolveTargetScopeForAttendanceMode(resolvedMode));
         setGoalMode(s.default_constraint_mode || 'days');
-        setTargetDays(s.default_target_days != null ? String(s.default_target_days) : '180');
-        setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '1000');
+        setTargetDays(s.default_target_days != null ? String(s.default_target_days) : '0');
+        setTargetHours(s.default_target_hours != null ? String(s.default_target_hours) : '0');
         setLearningStartTime(normalizeLearningTimeDisplay(s.default_day_start_time, DEFAULT_LEARNING_START_TIME));
         setLearningEndTime(normalizeLearningTimeDisplay(s.default_day_end_time, DEFAULT_LEARNING_END_TIME));
         setPreferredLearningDayNums(normalizeAllowedWeekdays(s.allowed_weekdays));
@@ -979,8 +979,8 @@ export default function PlannerSettingsContent({
       );
       if (firstActiveTarget && initialScope === 'per_subject') {
         setGoalMode(firstActiveTarget.mode);
-        if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '180');
-        if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
+        if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '0');
+        if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '0');
       }
       if ((subjectsData || []).length === 0) {
         await resetDefaultsWhenNoSubjects();
@@ -1010,8 +1010,8 @@ export default function PlannerSettingsContent({
       setSubjectTargets(subjectTargetsMap);
       if (firstActiveTarget && stateRef.current?.targetScope === 'per_subject') {
         setGoalMode(firstActiveTarget.mode);
-        if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '180');
-        if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '1000');
+        if (firstActiveTarget.mode === 'days') setTargetDays(firstActiveTarget.days || '0');
+        if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '0');
       }
       if (list.length === 0) {
         await resetDefaultsWhenNoSubjects();
@@ -1070,8 +1070,8 @@ export default function PlannerSettingsContent({
       try {
         const parsedTargetDays = parsePositiveIntOrNull(s.targetDays);
         const parsedTargetHours = parsePositiveFloatOrNull(s.targetHours);
-        const normalizedTargetDays = parsedTargetDays ?? 180;
-        const normalizedTargetHours = parsedTargetHours ?? 1000;
+        const normalizedTargetDays = parsedTargetDays ?? 0;
+        const normalizedTargetHours = parsedTargetHours ?? 0;
         const learningStartSql = normalizeLearningTimeSql(s.learningStartTime, DEFAULT_LEARNING_START_TIME);
         const learningEndSql = normalizeLearningTimeSql(s.learningEndTime, DEFAULT_LEARNING_END_TIME);
         const learningStartMinutes = parseTimeToMinutesOrNull(learningStartSql);
@@ -1408,11 +1408,11 @@ export default function PlannerSettingsContent({
   }, [attendanceTrackingMode, confirmAttendanceModeSwitch, familyId, getSelectedYearModeAndRisk, readOnly, selectedSchoolYearLabel, selectedYearMeta.end, selectedYearMeta.start, toast]);
 
   const handleGoalChange = (mode) => {
-    if (mode === 'days' && !parsePositiveIntOrNull(stateRef.current?.targetDays)) {
-      setTargetDays('180');
+    if (mode === 'days' && parsePositiveIntOrNull(stateRef.current?.targetDays) == null) {
+      setTargetDays('0');
     }
     if (mode === 'hours') {
-      if (!parsePositiveFloatOrNull(stateRef.current?.targetHours)) setTargetHours('1000');
+      if (parsePositiveFloatOrNull(stateRef.current?.targetHours) == null) setTargetHours('0');
     }
     stateRef.current = { ...(stateRef.current || {}), goalMode: mode };
     setGoalMode(mode);
@@ -1671,8 +1671,8 @@ export default function PlannerSettingsContent({
           .eq('id', subjectId);
         if (error) throw error;
         if (mode === 'days' || mode === 'hours') {
-          const normalizedDays = mode === 'days' ? (parsePositiveIntOrNull(days) ?? 180) : null;
-          const normalizedHours = mode === 'hours' ? (parsePositiveFloatOrNull(hours) ?? 1000) : null;
+          const normalizedDays = mode === 'days' ? (parsePositiveIntOrNull(days) ?? 0) : null;
+          const normalizedHours = mode === 'hours' ? (parsePositiveFloatOrNull(hours) ?? 0) : null;
           await saveFamilyPlannerSettings(familyId, {
             target_scope: 'per_subject',
             default_constraint_mode: mode,
@@ -2457,7 +2457,7 @@ export default function PlannerSettingsContent({
                               handleSubjectTargetChange(subj.id, {
                                 ...current,
                                 mode: 'days',
-                                days: String(current.days ?? targetDays ?? '180'),
+                                days: String(current.days ?? targetDays ?? '0'),
                               })
                             }
                           >
@@ -2469,7 +2469,7 @@ export default function PlannerSettingsContent({
                               handleSubjectTargetChange(subj.id, {
                                 ...current,
                                 mode: 'hours',
-                                hours: String(current.hours ?? targetHours ?? '1000'),
+                                hours: String(current.hours ?? targetHours ?? '0'),
                               })
                             }
                           >

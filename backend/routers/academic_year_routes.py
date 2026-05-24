@@ -135,7 +135,7 @@ class ApplyToCalendarInput(BaseModel):
     excluded_holiday_dates: Optional[List[str]] = None  # YYYY-MM-DD to exclude from global holidays
     custom_holidays: List[HolidayEntry] = []
     custom_breaks: List[CustomBreakEntry] = []
-    target_instructional_days: int = 180
+    target_instructional_days: int = 0
     subjects: List[str] = []  # subject UUIDs (used when blocks empty — legacy)
     child_id: Optional[str] = None
     replace_placeholders: bool = True
@@ -380,7 +380,7 @@ class AcademicYearResponse(BaseModel):
     start_date: str
     end_date: str
     mode: Optional[str] = None
-    attendance_tracking_mode: Optional[str] = "subject"
+    attendance_tracking_mode: Optional[str] = "class_day"
     target_instructional_days: Optional[int] = None
     target_instructional_hours: Optional[int] = None
     planned_hours_per_day: Optional[float] = None
@@ -6407,7 +6407,7 @@ async def _get_academic_year_impl(academic_year_id: str, user: dict):
             "start_date": _str_date(year_start),
             "end_date": _str_date(year_end),
             "mode": year_data.get("mode"),
-            "attendance_tracking_mode": year_data.get("attendance_tracking_mode") or "subject",
+            "attendance_tracking_mode": year_data.get("attendance_tracking_mode") or "class_day",
             "target_instructional_days": year_data.get("target_instructional_days"),
             "target_instructional_hours": year_data.get("target_instructional_hours"),
             "planned_hours_per_day": None if not year_data.get("planned_hours_per_day") else (float(year_data["planned_hours_per_day"]) if math.isfinite(float(year_data["planned_hours_per_day"])) else None),

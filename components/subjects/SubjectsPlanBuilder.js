@@ -3824,7 +3824,8 @@ export default function SubjectsPlanBuilder({
               attendance_tracking_mode: ATTENDANCE_MODES.CLASS_DAY,
               target_scope: 'overall',
               default_constraint_mode: 'days',
-              default_target_days: 180,
+              default_target_days: 0,
+              default_target_hours: 0,
             },
             suggestedSchoolYearLabel
           ).catch(() => {});

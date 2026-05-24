@@ -121,6 +121,27 @@ const parseYmdDate = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const buildFallbackPlannerDefaultsForDate = (date = new Date()) => {
+  const label = resolveSchoolYearLabelForDate(date);
+  const parsed = parseSchoolYearLabel(label);
+  const startYear = parsed?.startYear;
+  const endYear = parsed?.endYear;
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return null;
+  return {
+    school_year_label: label,
+    default_school_year: label,
+    default_year_start_date: `${startYear}-08-01`,
+    default_year_end_date: `${endYear}-05-31`,
+    default_fall_term_start_date: `${startYear}-08-01`,
+    default_fall_term_end_date: `${startYear}-12-31`,
+    default_spring_term_start_date: `${endYear}-01-01`,
+    default_spring_term_end_date: `${endYear}-05-01`,
+    allowed_weekdays: [1, 2, 3, 4, 5],
+    default_day_start_time: '08:00:00',
+    default_day_end_time: '15:00:00',
+  };
+};
+
 const isDateWithin = (candidate, start, end) => {
   if (!candidate || !start || !end) return false;
   const c = candidate.getTime();
@@ -849,7 +870,9 @@ export default function TaskCreateModal({
   const [recurrenceIntervalText, setRecurrenceIntervalText] = useState('1');
   const [respectSavedDaysOff, setRespectSavedDaysOff] = useState(true);
   const [isRecurrenceWeekdayAutofilled, setIsRecurrenceWeekdayAutofilled] = useState(true);
-  const [plannerDefaults, setPlannerDefaults] = useState(null);
+  const [plannerDefaults, setPlannerDefaults] = useState(() =>
+    buildFallbackPlannerDefaultsForDate(defaultDate ?? new Date())
+  );
   const [plannerDaysOffSet, setPlannerDaysOffSet] = useState(new Set());
   const [classDayDefaultsApplied, setClassDayDefaultsApplied] = useState(false);
   const [plannerDefaultsRefreshKey, setPlannerDefaultsRefreshKey] = useState(0);
@@ -1311,6 +1334,7 @@ export default function TaskCreateModal({
     if (visible && !wasVisibleRef.current) {
       lastOpenLoadKeyRef.current = '';
       lastMaterialsLoadKeyRef.current = '';
+      setPlannerDefaults(buildFallbackPlannerDefaultsForDate(defaultDate ?? new Date()));
       setTitle(defaultTitle && String(defaultTitle).trim() ? defaultTitle : '');
       setDueDate(defaultDate ?? new Date());
       setEventEndDate(null);
@@ -2143,9 +2167,12 @@ export default function TaskCreateModal({
 
   useEffect(() => {
     if (!validationBanner) return;
-    if (isFormValid()) {
+    const currentErrors = computeFieldErrors();
+    if (Object.keys(currentErrors).length === 0) {
       setValidationBanner('');
+      return;
     }
+    setValidationBanner(buildValidationBannerMessage(currentErrors));
   }, [
     validationBanner,
     title,
@@ -2166,6 +2193,7 @@ export default function TaskCreateModal({
     recurrenceEndAfterText,
     recurrenceEndDate,
     recurrenceSavedYearEnd,
+    buildValidationBannerMessage,
   ]);
 
   const handleDismiss = useCallback(() => {
