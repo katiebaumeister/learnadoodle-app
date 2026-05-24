@@ -335,6 +335,7 @@ export default function PlannerSettingsContent({
   const [loading, setLoading] = useState(!initialData && !embeddedInModal);
   const [saving, setSaving] = useState(false);
   const [savedIndicator, setSavedIndicator] = useState(false);
+  const [hasPendingModalSave, setHasPendingModalSave] = useState(false);
   const [error, setError] = useState(null);
   const saveTimeoutRef = useRef(null);
   const subjectTargetSaveTimeoutRef = useRef(null);
@@ -1127,7 +1128,32 @@ export default function PlannerSettingsContent({
           selectedSchoolYearLabel
         );
         if (exErr) throw exErr;
+        // Persist per-subject pacing targets from current modal state.
+        const subjectTargetEntries = Array.isArray(visibleSubjects)
+          ? visibleSubjects.map((subj) => {
+            const sid = String(subj?.id || '').trim();
+            const target = (s.subjectTargets && typeof s.subjectTargets === 'object') ? s.subjectTargets[sid] : null;
+            const mode = String(target?.mode || 'none').trim().toLowerCase();
+            const days = mode === 'days' ? parsePositiveIntOrNull(target?.days) : null;
+            const hours = mode === 'hours' ? parsePositiveFloatOrNull(target?.hours) : null;
+            return { sid, mode, days, hours };
+          }).filter((entry) => Boolean(entry?.sid))
+          : [];
+        if (subjectTargetEntries.length > 0) {
+          await Promise.all(subjectTargetEntries.map(async (entry) => {
+            const { error: subjectErr } = await supabase
+              .from('subject')
+              .update({
+                default_constraint_mode: entry.mode,
+                default_target_days: entry.days,
+                default_target_hours: entry.hours,
+              })
+              .eq('id', entry.sid);
+            if (subjectErr) throw subjectErr;
+          }));
+        }
         showSaved();
+        if (embeddedInModal) setHasPendingModalSave(false);
         loadDefaults(); // refresh to get new exclusion ids
         onSave?.();
         if (typeof window !== 'undefined') {
@@ -1144,12 +1170,18 @@ export default function PlannerSettingsContent({
         setSaving(false);
       }
     },
-    [familyId, onSave, toast, loadDefaults, readOnly, selectedSchoolYearLabel]
+    [familyId, onSave, toast, loadDefaults, readOnly, selectedSchoolYearLabel, visibleSubjects, embeddedInModal]
   );
 
-  const debouncedPersist = useCallback(() => {
-    persist({});
-  }, [persist]);
+  const queuePersist = useCallback((delayMs = 300) => {
+    if (embeddedInModal) {
+      setHasPendingModalSave(true);
+      return;
+    }
+    setTimeout(() => {
+      persist({});
+    }, delayMs);
+  }, [embeddedInModal, persist]);
 
   const respondAttendanceModeConfirm = useCallback((confirmed) => {
     const resolver = attendanceModeConfirmResolverRef.current;
@@ -1368,16 +1400,19 @@ export default function PlannerSettingsContent({
     if (mode === 'hours') {
       if (!parsePositiveFloatOrNull(stateRef.current?.targetHours)) setTargetHours('1000');
     }
+    stateRef.current = { ...(stateRef.current || {}), goalMode: mode };
     setGoalMode(mode);
-    setTimeout(debouncedPersist, 300);
+    queuePersist(300);
   };
   const handleTargetDaysChange = (v) => {
+    stateRef.current = { ...(stateRef.current || {}), targetDays: v };
     setTargetDays(v);
-    setTimeout(debouncedPersist, 400);
+    queuePersist(400);
   };
   const handleTargetHoursChange = (v) => {
+    stateRef.current = { ...(stateRef.current || {}), targetHours: v };
     setTargetHours(v);
-    setTimeout(debouncedPersist, 400);
+    queuePersist(400);
   };
   const persistLearningTimes = useCallback((startDisplayInput, endDisplayInput) => {
     const startDisplay = normalizeLearningTimeDisplay(startDisplayInput, DEFAULT_LEARNING_START_TIME);
@@ -1396,14 +1431,23 @@ export default function PlannerSettingsContent({
     }
     setLearningStartTime(startDisplay);
     setLearningEndTime(endDisplay);
+    stateRef.current = {
+      ...(stateRef.current || {}),
+      learningStartTime: startDisplay,
+      learningEndTime: endDisplay,
+    };
     const hoursPerDay = Number(((endMinutes - startMinutes) / 60).toFixed(2));
-    persist({
-      default_day_start_time: startSql,
-      default_day_end_time: endSql,
-      default_planned_hours_per_day: hoursPerDay,
-    });
+    if (embeddedInModal) {
+      setHasPendingModalSave(true);
+    } else {
+      persist({
+        default_day_start_time: startSql,
+        default_day_end_time: endSql,
+        default_planned_hours_per_day: hoursPerDay,
+      });
+    }
     return true;
-  }, [persist, toast]);
+  }, [persist, toast, embeddedInModal]);
   const handleLearningStartTimeWebChange = useCallback((value) => {
     const parts = String(value || '').split(':').map((n) => Number(n));
     if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return;
@@ -1423,12 +1467,28 @@ export default function PlannerSettingsContent({
   const learningStartTimeWebValue = normalizeLearningTimeSql(learningStartTime, DEFAULT_LEARNING_START_TIME).slice(0, 5);
   const learningEndTimeWebValue = normalizeLearningTimeSql(learningEndTime, DEFAULT_LEARNING_END_TIME).slice(0, 5);
   const handleFollowChange = (v) => {
+    stateRef.current = { ...(stateRef.current || {}), followGlobalHolidays: v };
     setFollowGlobalHolidays(v);
-    setTimeout(debouncedPersist, 300);
+    queuePersist(300);
   };
   const handleRangeDefaultChange = (setter) => (value) => {
-    setter(normalizeYmd(value));
-    setTimeout(debouncedPersist, 300);
+    const normalizedValue = normalizeYmd(value);
+    setter(normalizedValue);
+    // Keep close-save reads aligned with latest date edits.
+    if (setter === setDefaultYearStartDate) {
+      stateRef.current = { ...(stateRef.current || {}), defaultYearStartDate: normalizedValue };
+    } else if (setter === setDefaultYearEndDate) {
+      stateRef.current = { ...(stateRef.current || {}), defaultYearEndDate: normalizedValue };
+    } else if (setter === setDefaultFallStartDate) {
+      stateRef.current = { ...(stateRef.current || {}), defaultFallStartDate: normalizedValue };
+    } else if (setter === setDefaultFallEndDate) {
+      stateRef.current = { ...(stateRef.current || {}), defaultFallEndDate: normalizedValue };
+    } else if (setter === setDefaultSpringStartDate) {
+      stateRef.current = { ...(stateRef.current || {}), defaultSpringStartDate: normalizedValue };
+    } else if (setter === setDefaultSpringEndDate) {
+      stateRef.current = { ...(stateRef.current || {}), defaultSpringEndDate: normalizedValue };
+    }
+    queuePersist(300);
   };
   const handlePreferredLearningDayToggle = useCallback((dayNum) => {
     if (readOnly) {
@@ -1443,10 +1503,11 @@ export default function PlannerSettingsContent({
         ? current.filter((day) => day !== normalizedDay)
         : [...current, normalizedDay];
       const normalizedNext = normalizeAllowedWeekdays(next);
-      setTimeout(debouncedPersist, 300);
+      stateRef.current = { ...(stateRef.current || {}), preferredLearningDayNums: normalizedNext };
+      queuePersist(300);
       return normalizedNext;
     });
-  }, [debouncedPersist, readOnly, toast]);
+  }, [queuePersist, readOnly, toast]);
   const openAddSubjectModal = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(
@@ -1476,7 +1537,7 @@ export default function PlannerSettingsContent({
     setNewHolidayDate('');
     setNewHolidayName('');
     setAddingHoliday(false);
-    setTimeout(debouncedPersist, 300);
+    queuePersist(300);
   };
 
   const removeHoliday = (index) => {
@@ -1485,7 +1546,7 @@ export default function PlannerSettingsContent({
     if (h?.id) {
       deleteExclusion(h.id).catch(() => {});
     }
-    setTimeout(debouncedPersist, 300);
+    queuePersist(300);
   };
 
   const startEditHoliday = (index) => {
@@ -1507,7 +1568,7 @@ export default function PlannerSettingsContent({
     setCustomHolidays(next);
     setEditingHolidayIndex(null);
     setEditingHolidayDraft({ date: '', name: '' });
-    setTimeout(debouncedPersist, 300);
+    queuePersist(300);
   };
 
   const addBreak = () => {
@@ -1531,7 +1592,7 @@ export default function PlannerSettingsContent({
     setNewBreakEnd('');
     setNewBreakName('');
     setAddingBreak(false);
-    setTimeout(debouncedPersist, 300);
+    queuePersist(300);
   };
 
   const removeBreak = (index) => {
@@ -1540,7 +1601,7 @@ export default function PlannerSettingsContent({
     if (b?.id) {
       deleteExclusion(b.id).catch(() => {});
     }
-    setTimeout(debouncedPersist, 300);
+    queuePersist(300);
   };
 
   const startEditBreak = (index) => {
@@ -1562,11 +1623,19 @@ export default function PlannerSettingsContent({
     setCustomBreaks(next);
     setEditingBreakIndex(null);
     setEditingBreakDraft({ start: '', end: '', name: '' });
-    setTimeout(debouncedPersist, 300);
+    queuePersist(300);
   };
 
   const handleSubjectTargetChange = useCallback((subjectId, merged) => {
-    setSubjectTargets((prev) => ({ ...prev, [subjectId]: merged }));
+    setSubjectTargets((prev) => {
+      const next = { ...prev, [subjectId]: merged };
+      stateRef.current = { ...(stateRef.current || {}), subjectTargets: next };
+      return next;
+    });
+    if (embeddedInModal) {
+      setHasPendingModalSave(true);
+      return;
+    }
     if (subjectTargetSaveTimeoutRef.current) clearTimeout(subjectTargetSaveTimeoutRef.current);
     subjectTargetSaveTimeoutRef.current = setTimeout(async () => {
       if (readOnly) {
@@ -1613,7 +1682,28 @@ export default function PlannerSettingsContent({
         setSaving(false);
       }
     }, 400);
-  }, [toast, readOnly, familyId, selectedSchoolYearLabel, onSave]);
+  }, [toast, readOnly, familyId, selectedSchoolYearLabel, onSave, embeddedInModal]);
+
+  const handleRequestClose = useCallback(async () => {
+    if (embeddedInModal && !readOnly) {
+      // Let the latest TextInput change commit before persisting on close.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const ok = await persist({});
+      if (!ok) return;
+    }
+    onRequestClose?.();
+  }, [embeddedInModal, readOnly, persist, onRequestClose]);
+
+  useEffect(() => {
+    if (!(embeddedInModal && Platform.OS === 'web' && typeof window !== 'undefined')) return undefined;
+    const handleExternalCloseRequest = () => {
+      handleRequestClose();
+    };
+    window.addEventListener('plannerSettingsRequestClose', handleExternalCloseRequest);
+    return () => {
+      window.removeEventListener('plannerSettingsRequestClose', handleExternalCloseRequest);
+    };
+  }, [embeddedInModal, handleRequestClose]);
 
   const sectionStyle = {
     paddingTop: 0,
@@ -1917,7 +2007,7 @@ export default function PlannerSettingsContent({
           <View style={embeddedTitleRowStyle}>
             <Text style={embeddedTitleStyle}>Planning Preferences</Text>
             <TouchableOpacity
-              onPress={() => onRequestClose?.()}
+              onPress={handleRequestClose}
               style={embeddedCloseButtonStyle}
               hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}

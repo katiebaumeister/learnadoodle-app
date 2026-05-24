@@ -303,6 +303,14 @@ export default function SubjectsPage({
     }
   }, [planningPreferencesSavedSinceOpen, planningPreferencesSchoolYearLabel, toast]);
 
+  const requestPlanningPreferencesClose = useCallback(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('plannerSettingsRequestClose'));
+      return;
+    }
+    closePlanningPreferencesModal();
+  }, [closePlanningPreferencesModal]);
+
   useEffect(() => {
     if (!familyId) return;
     const preloadYear = String(selectedYearFilter || getCurrentSchoolYear()).trim();
@@ -2047,12 +2055,12 @@ export default function SubjectsPage({
       visible={showPlanningPreferencesModal}
       transparent
       animationType="fade"
-      onRequestClose={closePlanningPreferencesModal}
+      onRequestClose={requestPlanningPreferencesClose}
     >
       <TouchableOpacity
         style={styles.exportModalBackdrop}
         activeOpacity={1}
-        onPress={closePlanningPreferencesModal}
+        onPress={requestPlanningPreferencesClose}
       >
         <TouchableOpacity style={styles.planningPreferencesModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
           <View style={styles.planningPreferencesBody}>
