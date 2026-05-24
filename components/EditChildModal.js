@@ -1312,11 +1312,16 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
+    backgroundColor: '#f3f4f6',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   disconnectConfirmCancelText: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#6b7280',
+    fontWeight: '700',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   disconnectConfirmDestructiveBtn: {
     backgroundColor: colors.redBold || '#dc2626',
@@ -1333,8 +1338,11 @@ const styles = StyleSheet.create({
   },
   disconnectConfirmDestructiveText: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#ffffff',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });
 
