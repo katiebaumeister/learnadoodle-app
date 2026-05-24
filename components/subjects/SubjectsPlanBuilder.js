@@ -7267,54 +7267,6 @@ export default function SubjectsPlanBuilder({
                                   <Text style={styles.yearTargetsSavedTargetButtonText}>Change saved target</Text>
                                 </TouchableOpacity>
                               </View>
-                              {historyRunsWithDetails.length > 0 ? (
-                                <View style={styles.yearTargetsFixGapHistoryContainer}>
-                                  <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                    {`Fix gap history (${historyRunsWithDetails.length} action${historyRunsWithDetails.length === 1 ? '' : 's'}):`}
-                                  </Text>
-                                  <ScrollView
-                                    style={styles.yearTargetsFixGapHistoryScroll}
-                                    contentContainerStyle={styles.yearTargetsFixGapHistoryScrollContent}
-                                    nestedScrollEnabled
-                                  >
-                                    {historyRunsWithDetails.map((run) => (
-                                      <View key={run.key} style={styles.yearTargetsFixGapHistoryRun}>
-                                        <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                          {`${formatFixGapHistoryTimestamp(run.createdAt)}:`}
-                                        </Text>
-                                        {run.slotLines.length > 0 ? (
-                                          run.slotLines.map((line, idx) => (
-                                            <Text key={`${run.key}-line-${idx}`} style={styles.yearTargetsFixGapHistoryLine}>
-                                              {`${run.actionVerb} ${line}`}
-                                            </Text>
-                                          ))
-                                        ) : (
-                                          <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                            {run.removedCount > 0
-                                              ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}.`
-                                              : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}.`}
-                                          </Text>
-                                        )}
-                                      </View>
-                                    ))}
-                                  </ScrollView>
-                                  {canUndoLatestFixGap ? (
-                                    <TouchableOpacity
-                                      style={[
-                                        styles.yearTargetsUndoFixGapButton,
-                                        undoingFixGapRowId === rowId && styles.yearTargetsUndoFixGapButtonDisabled,
-                                      ]}
-                                      onPress={() => undoLatestFixGapAction(row)}
-                                      disabled={undoingFixGapRowId === rowId}
-                                      activeOpacity={0.85}
-                                    >
-                                      <Text style={styles.yearTargetsUndoFixGapButtonText}>
-                                        {undoingFixGapRowId === rowId ? 'Undoing...' : 'Undo last action'}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  ) : null}
-                                </View>
-                              ) : null}
                               {fixGapActionRecommendation ? (
                                 <View style={styles.yearTargetsRecommendationActionsRow}>
                                   {isOverallRow ? (
@@ -7362,6 +7314,54 @@ export default function SubjectsPlanBuilder({
                                       {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
                                     </Text>
                                   </TouchableOpacity>
+                                </View>
+                              ) : null}
+                              {historyRunsWithDetails.length > 0 ? (
+                                <View style={styles.yearTargetsFixGapHistoryContainer}>
+                                  <Text style={styles.yearTargetsFixGapHistoryLine}>
+                                    {`Fix gap history (${historyRunsWithDetails.length} action${historyRunsWithDetails.length === 1 ? '' : 's'}):`}
+                                  </Text>
+                                  <ScrollView
+                                    style={styles.yearTargetsFixGapHistoryScroll}
+                                    contentContainerStyle={styles.yearTargetsFixGapHistoryScrollContent}
+                                    nestedScrollEnabled
+                                  >
+                                    {historyRunsWithDetails.map((run) => (
+                                      <View key={run.key} style={styles.yearTargetsFixGapHistoryRun}>
+                                        <Text style={styles.yearTargetsFixGapHistoryLine}>
+                                          {`${formatFixGapHistoryTimestamp(run.createdAt)}:`}
+                                        </Text>
+                                        {run.slotLines.length > 0 ? (
+                                          run.slotLines.map((line, idx) => (
+                                            <Text key={`${run.key}-line-${idx}`} style={styles.yearTargetsFixGapHistoryLine}>
+                                              {`${run.actionVerb} ${line}`}
+                                            </Text>
+                                          ))
+                                        ) : (
+                                          <Text style={styles.yearTargetsFixGapHistoryLine}>
+                                            {run.removedCount > 0
+                                              ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}.`
+                                              : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}.`}
+                                          </Text>
+                                        )}
+                                      </View>
+                                    ))}
+                                  </ScrollView>
+                                  {canUndoLatestFixGap ? (
+                                    <TouchableOpacity
+                                      style={[
+                                        styles.yearTargetsUndoFixGapButton,
+                                        undoingFixGapRowId === rowId && styles.yearTargetsUndoFixGapButtonDisabled,
+                                      ]}
+                                      onPress={() => undoLatestFixGapAction(row)}
+                                      disabled={undoingFixGapRowId === rowId}
+                                      activeOpacity={0.85}
+                                    >
+                                      <Text style={styles.yearTargetsUndoFixGapButtonText}>
+                                        {undoingFixGapRowId === rowId ? 'Undoing...' : 'Undo last action'}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ) : null}
                                 </View>
                               ) : null}
                             </View>

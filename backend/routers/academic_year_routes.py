@@ -2016,6 +2016,22 @@ async def fix_target_gap(
             if scope == "overall" and requested_subject_set and sid not in requested_subject_set:
                 continue
             filtered_blocks.append(block)
+        block_allowed_weekdays = sorted({
+            int(day)
+            for block in filtered_blocks
+            for day in (block.get("weekdays") or [])
+            if isinstance(day, (int, float, str))
+            and str(day).strip() != ""
+            and str(day).strip().lstrip("-").isdigit()
+            and 0 <= int(day) <= 6
+        })
+        # Fix gap should honor the saved subject cadence days from plan blocks.
+        # Relying only on family defaults can incorrectly narrow candidates
+        # (e.g. default weekdays stale to Mondays while blocks are Mon-Fri).
+        effective_allowed_weekdays = sorted({
+            *preferred_allowed_weekdays,
+            *block_allowed_weekdays,
+        }) or [1, 2, 3, 4, 5]
 
         def _to_minutes_or_none(hm: str) -> Optional[int]:
             try:
@@ -2722,7 +2738,7 @@ async def fix_target_gap(
 
             learning_dates: List[str] = []
             cursor = start_obj
-            preferred_weekday_set = set(preferred_allowed_weekdays or [1, 2, 3, 4, 5])
+            preferred_weekday_set = set(effective_allowed_weekdays or [1, 2, 3, 4, 5])
             while cursor <= end_obj:
                 weekday_num = int((cursor.weekday() + 1) % 7)
                 day_key = cursor.isoformat()
@@ -2970,14 +2986,11 @@ async def fix_target_gap(
                                 continue
                             if weekday_num in sid_weekdays:
                                 cadence_days_sid.append(day_key)
-                        # Prefer subject cadence days first, but if cadence days in the current
-                        # range cannot satisfy the gap, allow remaining usual learning days so
-                        # Fix Gap can still use open capacity in-range.
-                        if len(cadence_days_sid) >= gap_sid:
-                            eligible_days_sid = cadence_days_sid
-                        else:
-                            extra_days_sid = [d for d in learning_dates if d not in set(cadence_days_sid)]
-                            eligible_days_sid = cadence_days_sid + extra_days_sid
+                        # Prefer subject cadence days first, then allow remaining learning days
+                        # as fallback candidates. This prevents false "no available days" when
+                        # cadence days are occupied but other in-range weekdays are free.
+                        extra_days_sid = [d for d in learning_dates if d not in set(cadence_days_sid)]
+                        eligible_days_sid = cadence_days_sid + extra_days_sid
                     else:
                         eligible_days_sid = list(learning_dates)
                     # Keep all preferred/excluded-filtered learning dates; per-slot conflict checks
@@ -3017,22 +3030,6 @@ async def fix_target_gap(
                     }
                 except Exception:
                     affected_child_ids = set()
-            # Build conflict scope from all family children so pre-check never underfetches
-            # compared to DB overlap guards.
-            try:
-                family_children_resp = (
-                    supabase.table("child")
-                    .select("id")
-                    .eq("family_id", family_id)
-                    .execute()
-                )
-                for row in (family_children_resp.data or []):
-                    cid = str(row.get("id") or "").strip()
-                    if cid:
-                        affected_child_ids.add(cid)
-            except Exception:
-                pass
-
             selected_child_ids_for_conflict = sorted({
                 str(cid).strip()
                 for cid in affected_child_ids
