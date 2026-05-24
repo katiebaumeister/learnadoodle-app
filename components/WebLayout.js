@@ -64,7 +64,7 @@ import LearnerQuickStartModal from './onboarding/LearnerQuickStartModal';
 import { preloadSubjectsPlanOverview, preloadSubjectsScheduleData } from './subjects/SubjectsPlanBuilder';
 import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressPlan';
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
-import AppLoader from './AppLoader';
+import AppLoader, { ensureWebShellImagesLoaded } from './AppLoader';
 import RebalanceModal from './year/RebalanceModal';
 import { applySetupProgressFromNavigation, isSetupGuideComplete } from '../lib/doodleSetupGuide';
 import { preloadProviderConnectionLogos } from '../lib/preloadConnectedAccountAssets';
@@ -351,6 +351,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [onboardingModalReady, setOnboardingModalReady] = useState(false);
   const [initialOnboardingBlocked, setInitialOnboardingBlocked] = useState(false);
   const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
+  const [shellImagesReady, setShellImagesReady] = useState(Platform.OS !== 'web');
 
   /** Post-onboarding explorer tour (parents: 3-step; child/tutor: one modal). Persisted in profiles.app_preferences. */
   const [explorerParentTourOpen, setExplorerParentTourOpen] = useState(false);
@@ -481,23 +482,46 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
+  const onboardingStatusPending = !!(user && session && !onboardingCheckDone);
   // Fullscreen loader should be brief and fail-open quickly.
   const showLoader = !!(
     user &&
     session &&
     ((session.loading === true) ||
-      (onboardingBlocked && !onboardingUiReady))
+      onboardingStatusPending ||
+      !shellImagesReady ||
+      (onboardingBlocked && (!onboardingUiReady || !onboardingModalReady)))
   );
   const showLoaderEffective = showLoader && !forceHideLoader;
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      setShellImagesReady(true);
+      return;
+    }
+    let cancelled = false;
+    ensureWebShellImagesLoaded()
+      .then(() => {
+        if (!cancelled) setShellImagesReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setShellImagesReady(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!showLoader) {
       setForceHideLoader(false);
       return;
     }
+    if (onboardingStatusPending || !shellImagesReady || (onboardingBlocked && !onboardingModalReady)) {
+      setForceHideLoader(false);
+      return;
+    }
     const timeoutId = setTimeout(() => setForceHideLoader(true), 1200);
     return () => clearTimeout(timeoutId);
-  }, [showLoader]);
+  }, [showLoader, onboardingStatusPending, shellImagesReady, onboardingBlocked, onboardingModalReady]);
 
   useEffect(() => {
     if (!onboardingBlocked) setOnboardingModalReady(false);
