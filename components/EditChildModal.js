@@ -604,13 +604,10 @@ export default function EditChildModal({
     (childInviteStatus === 'pending' && pendingInviteEmail && String(pendingInviteEmail).trim() !== '');
   const permissionDirty =
     normalizeChildProfile(childPermissionProfile) !== normalizeChildProfile(initialChildPermissionProfile);
-  const hasRequiredEditFields = useMemo(() => {
-    const nameOk = Boolean(String(initialData?.name || '').trim());
-    const ageOk = Boolean(String(initialData?.age || '').trim());
-    const gradeOk = Boolean(String(initialData?.grade || '').trim());
-    const avatarOk = Boolean(String(initialData?.avatar || '').trim());
-    return nameOk && ageOk && gradeOk && avatarOk;
-  }, [initialData?.name, initialData?.age, initialData?.grade, initialData?.avatar]);
+  const hasRequiredEditFields = Boolean(String(initialData?.name || '').trim())
+    && Boolean(String(initialData?.age || '').trim())
+    && Boolean(String(initialData?.grade || '').trim())
+    && Boolean(String(initialData?.avatar || '').trim());
 
   const savePermissionOnly = async () => {
     const effectiveFamilyId = familyId || fullChildData?.family_id || child?.family_id;

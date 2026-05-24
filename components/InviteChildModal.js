@@ -30,17 +30,17 @@ const CHILD_PERMISSION_OPTIONS = [
   {
     id: 'guided',
     label: 'Guided',
-    summary: 'Best for close support, with parent-approved actions and extra prompts.',
+    summary: 'Best for high parent control and simple "follow assigned work" use. Child can view Home and Subjects, but cannot access Planner, Materials, or Progress and Schedule views.',
   },
   {
     id: 'standard',
     label: 'Standard',
-    summary: 'Balanced access so your child can work independently with sensible guardrails.',
+    summary: 'Best for most learners: broad visibility + engagement, without planning/content editing power. Child can view all but add/edit is constrained.',
   },
   {
     id: 'independent',
     label: 'Independent',
-    summary: 'Most autonomy, allowing your child to manage work with minimal restrictions.',
+    summary: 'Best for older/self-directed students who should manage day-to-day learning structure. Child can view and edit all, except family settings.',
   },
 ];
 
@@ -367,29 +367,30 @@ export default function InviteChildModal({
                       {CHILD_PERMISSION_OPTIONS.map((option) => {
                         const selected = option.id === childPermissionProfile;
                         return (
-                          <View key={option.id} style={styles.permissionOptionWrap}>
-                            <TouchableOpacity
-                              style={[
-                                styles.permissionPill,
-                                selected && styles.permissionPillSelected,
-                                inviting && styles.permissionPillDisabled,
-                              ]}
-                              onPress={() => setChildPermissionProfile(option.id)}
-                              disabled={inviting}
-                              activeOpacity={0.85}
-                              {...(Platform.OS === 'web' && { cursor: inviting ? 'not-allowed' : 'pointer' })}
-                            >
-                              <Text style={[styles.permissionPillText, selected && styles.permissionPillTextSelected]}>
-                                {option.label}
-                              </Text>
-                            </TouchableOpacity>
-                            <Text style={styles.permissionPillSummary}>
-                              {option.summary}
+                          <TouchableOpacity
+                            key={option.id}
+                            style={[
+                              styles.permissionPill,
+                              selected && styles.permissionPillSelected,
+                              inviting && styles.permissionPillDisabled,
+                            ]}
+                            onPress={() => setChildPermissionProfile(option.id)}
+                            disabled={inviting}
+                            activeOpacity={0.85}
+                            {...(Platform.OS === 'web' && { cursor: inviting ? 'not-allowed' : 'pointer' })}
+                          >
+                            <Text style={[styles.permissionPillText, selected && styles.permissionPillTextSelected]}>
+                              {option.label}
                             </Text>
-                          </View>
+                          </TouchableOpacity>
                         );
                       })}
                     </View>
+                    <Text style={styles.permissionPillSummary}>
+                      {CHILD_PERMISSION_OPTIONS.find((option) => option.id === childPermissionProfile)?.summary
+                        || CHILD_PERMISSION_OPTIONS[0]?.summary
+                        || ''}
+                    </Text>
                     <Text style={styles.emailLabel}>Child email</Text>
                     <TextInput
                       ref={emailInputRef}
@@ -690,13 +691,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   permissionPills: {
-    flexDirection: 'column',
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
     gap: 8,
-    marginBottom: 10,
-  },
-  permissionOptionWrap: {
-    gap: 4,
-    alignItems: 'flex-start',
+    marginBottom: 6,
   },
   permissionPill: {
     borderRadius: 999,

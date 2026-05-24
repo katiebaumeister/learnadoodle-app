@@ -942,7 +942,7 @@ const styles = StyleSheet.create({
   footerPrimaryBtnText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", sans-serif',
     }),
