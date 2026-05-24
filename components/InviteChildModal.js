@@ -27,9 +27,21 @@ import { LEARNADOODLE_LIGHT_BLUE } from '../theme/comingSoonModalTheme';
 import { DEFAULT_CHILD_PROFILE, normalizeChildProfile } from '../lib/permissions/userPermissionProfiles';
 
 const CHILD_PERMISSION_OPTIONS = [
-  { id: 'guided', label: 'Guided' },
-  { id: 'standard', label: 'Standard' },
-  { id: 'independent', label: 'Independent' },
+  {
+    id: 'guided',
+    label: 'Guided',
+    summary: 'Best for close support, with parent-approved actions and extra prompts.',
+  },
+  {
+    id: 'standard',
+    label: 'Standard',
+    summary: 'Balanced access so your child can work independently with sensible guardrails.',
+  },
+  {
+    id: 'independent',
+    label: 'Independent',
+    summary: 'Most autonomy, allowing your child to manage work with minimal restrictions.',
+  },
 ];
 
 function isValidEmail(value) {
@@ -355,22 +367,26 @@ export default function InviteChildModal({
                       {CHILD_PERMISSION_OPTIONS.map((option) => {
                         const selected = option.id === childPermissionProfile;
                         return (
-                          <TouchableOpacity
-                            key={option.id}
-                            style={[
-                              styles.permissionPill,
-                              selected && styles.permissionPillSelected,
-                              inviting && styles.permissionPillDisabled,
-                            ]}
-                            onPress={() => setChildPermissionProfile(option.id)}
-                            disabled={inviting}
-                            activeOpacity={0.85}
-                            {...(Platform.OS === 'web' && { cursor: inviting ? 'not-allowed' : 'pointer' })}
-                          >
-                            <Text style={[styles.permissionPillText, selected && styles.permissionPillTextSelected]}>
-                              {option.label}
+                          <View key={option.id} style={styles.permissionOptionWrap}>
+                            <TouchableOpacity
+                              style={[
+                                styles.permissionPill,
+                                selected && styles.permissionPillSelected,
+                                inviting && styles.permissionPillDisabled,
+                              ]}
+                              onPress={() => setChildPermissionProfile(option.id)}
+                              disabled={inviting}
+                              activeOpacity={0.85}
+                              {...(Platform.OS === 'web' && { cursor: inviting ? 'not-allowed' : 'pointer' })}
+                            >
+                              <Text style={[styles.permissionPillText, selected && styles.permissionPillTextSelected]}>
+                                {option.label}
+                              </Text>
+                            </TouchableOpacity>
+                            <Text style={styles.permissionPillSummary}>
+                              {option.summary}
                             </Text>
-                          </TouchableOpacity>
+                          </View>
                         );
                       })}
                     </View>
@@ -674,10 +690,13 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   permissionPills: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: 'column',
     gap: 8,
     marginBottom: 10,
+  },
+  permissionOptionWrap: {
+    gap: 4,
+    alignItems: 'flex-start',
   },
   permissionPill: {
     borderRadius: 999,
@@ -704,6 +723,15 @@ const styles = StyleSheet.create({
   },
   permissionPillDisabled: {
     opacity: 0.55,
+  },
+  permissionPillSummary: {
+    fontSize: 11,
+    color: '#9ca3af',
+    fontStyle: 'italic',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontStyle: 'italic',
+    }),
   },
   emailLabel: {
     fontSize: 13,

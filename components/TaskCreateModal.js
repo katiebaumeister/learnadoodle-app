@@ -1194,8 +1194,6 @@ export default function TaskCreateModal({
     try {
       // Load all materials (includes both purchased materials and uploaded files)
       const materialsData = await getMaterials(familyId, {}, session);
-      console.log('[TaskCreateModal] Loaded materials:', materialsData?.length || 0);
-
       const nextMaterials = Array.isArray(materialsData) ? materialsData : [];
       setMaterials((prev) => {
         const prevSig = (prev || []).map((m) => String(m?.id || '')).join('|');
@@ -1529,9 +1527,6 @@ export default function TaskCreateModal({
         throw allError;
       }
       
-      console.log('All subjects for family:', allSubjects);
-      console.log('Filtering for assignees:', assigneeIds);
-      
       // Filter in JavaScript: Show both family-wide subjects AND child-specific subjects
       // Family-wide subjects (child_id: null) show for all children
       // Child-specific subjects only show for the assigned child
@@ -1557,12 +1552,10 @@ export default function TaskCreateModal({
           // If no existing entry, add this one
           if (!existing) {
             subjectMap.set(subject.name, subject);
-            console.log(`Including subject "${subject.name}" - child_id: ${subject.child_id === null ? 'null (family-wide)' : subject.child_id}`);
           } 
           // If existing is family-wide and this is child-specific, replace it (prefer child-specific)
           else if (existingIsFamilyWide && !subjectIsFamilyWide) {
             subjectMap.set(subject.name, subject);
-            console.log(`Replacing family-wide "${subject.name}" with child-specific version for child ${subject.child_id}`);
           }
           // If existing is child-specific and this is also child-specific, keep existing (already preferred)
           else if (!existingIsFamilyWide && !subjectIsFamilyWide) {
@@ -1583,25 +1576,14 @@ export default function TaskCreateModal({
               subjectMap.set(subject.name, subject);
             } else if (!existingIsDefault && currentMatchesFirst && !existingMatchesFirst) {
               subjectMap.set(subject.name, subject);
-            } else {
-              console.log(`Skipping duplicate child-specific "${subject.name}" for child ${subject.child_id}`);
             }
           }
-          // If both are family-wide, keep the first one (already added)
-          else if (existingIsFamilyWide && subjectIsFamilyWide) {
-            console.log(`Skipping duplicate family-wide "${subject.name}"`);
-          }
-        } else {
-          console.log(`Excluding subject "${subject.name}" - child_id: ${subject.child_id}, not for selected children`);
         }
       });
       
       const fetchedSubjects = Array.from(subjectMap.values())
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       
-      console.log('Filtered and deduplicated subjects:', fetchedSubjects.map(s => `${s.name} (child_id: ${s.child_id === null ? 'null (family-wide)' : s.child_id})`));
-      
-      console.log('Filtered subjects:', fetchedSubjects, 'for assignees:', assigneeIds);
       setSubjects((prev) => {
         const prevSig = (prev || []).map((s) => String(s?.id || '')).join('|');
         const nextSig = (fetchedSubjects || []).map((s) => String(s?.id || '')).join('|');
@@ -2621,9 +2603,7 @@ export default function TaskCreateModal({
             // Only include _allow_overlaps if we need to allow overlaps (backward compatibility)
             if (shouldAllowOverlaps && createTaskEventAllowOverlapsSupported) {
               rpcParams._allow_overlaps = true;
-              console.log('[TaskCreateModal] Allowing overlaps - _allow_overlaps=true, shouldAllowOverlaps=', shouldAllowOverlaps);
             }
-            console.log('[TaskCreateModal] Calling create_task_event with params:', { ...rpcParams, _tags: rpcParams._tags?.length || 0 });
             let { data: rpcData, error: rpcError } = await supabase.rpc('create_task_event', rpcParams);
 
             // If function not found error and we're trying to allow overlaps, retry without the parameter

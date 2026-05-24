@@ -57,6 +57,14 @@ function eventDedupKey(e) {
   return `event:${String(e?.id || '').trim()}`;
 }
 
+function eventDateKey(e) {
+  const raw = String(e?.start_ts || e?.due_ts || e?.end_ts || '').trim();
+  if (!raw) return '';
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+}
+
 function summarizeAttendanceForEvent(eventId, logs, eventStatus = null) {
   const rows = logs.filter((l) => String(l.event_id) === String(eventId));
   if (rows.length === 0) {
@@ -127,11 +135,31 @@ function notifyAttendanceAndSubjectRefresh(subjectId, patchedAttendances = []) {
         })
       );
     });
-    window.dispatchEvent(
-      new CustomEvent('refreshCalendar', {
-        detail: { skipCacheClear: true, forceInvalidate: true },
-      })
-    );
+    const monthTargets = new Set();
+    (Array.isArray(patchedAttendances) ? patchedAttendances : []).forEach((item) => {
+      const key = String(item?.dateKey || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return;
+      const parsed = new Date(`${key}T12:00:00`);
+      if (Number.isNaN(parsed.getTime())) return;
+      monthTargets.add(`${parsed.getFullYear()}-${parsed.getMonth()}`);
+      window.dispatchEvent(
+        new CustomEvent('refreshCalendar', {
+          detail: {
+            skipCacheClear: true,
+            forceInvalidate: true,
+            targetYear: parsed.getFullYear(),
+            targetMonth: parsed.getMonth(),
+          },
+        })
+      );
+    });
+    if (monthTargets.size === 0) {
+      window.dispatchEvent(
+        new CustomEvent('refreshCalendar', {
+          detail: { skipCacheClear: true, forceInvalidate: true },
+        })
+      );
+    }
     window.dispatchEvent(new CustomEvent('refreshPlannerWeek'));
     window.dispatchEvent(new CustomEvent('refreshSubjects'));
     if (subjectId) {
@@ -298,7 +326,11 @@ export default function SubjectPastEventsAttendanceModal({
             groupFailed = true;
             if (!firstError) firstError = error;
           } else {
-            patchedAttendances.push({ eventId: ev.id, status: 'done' });
+            patchedAttendances.push({
+              eventId: ev.id,
+              status: 'done',
+              dateKey: eventDateKey(ev),
+            });
           }
         }
         if (groupFailed) failed += 1;
@@ -348,7 +380,11 @@ export default function SubjectPastEventsAttendanceModal({
               groupFailed = true;
               if (!firstError) firstError = error;
             } else {
-              patchedAttendances.push({ eventId: ev.id, status: 'done' });
+              patchedAttendances.push({
+                eventId: ev.id,
+                status: 'done',
+                dateKey: eventDateKey(ev),
+              });
             }
           }
           if (groupFailed) failed += 1;

@@ -1072,7 +1072,7 @@ export default function AddSubjectModal({
                     <ChevronDown size={18} color="#6b7280" />
                   </TouchableOpacity>
                   {showSchoolYearDropdown && (
-                    <View style={styles.dropdownList}>
+                    <View style={[styles.dropdownList, styles.schoolScopeDropdownList]}>
                       <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
                         {SCHOOL_YEAR_OPTIONS.map((opt) => (
                           <TouchableOpacity
@@ -1108,7 +1108,7 @@ export default function AddSubjectModal({
                     <ChevronDown size={18} color="#6b7280" />
                   </TouchableOpacity>
                   {showSchoolTermDropdown && (
-                    <View style={styles.dropdownList}>
+                    <View style={[styles.dropdownList, styles.schoolScopeDropdownList]}>
                       {TERM_OPTIONS.map((opt) => (
                         <TouchableOpacity
                           key={opt.id}
@@ -1658,6 +1658,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     maxHeight: 200,
     zIndex: 150,
+  },
+  schoolScopeDropdownList: {
+    top: undefined,
+    bottom: '100%',
+    marginTop: 0,
+    marginBottom: 4,
   },
   dropdownScroll: {
     maxHeight: 200,

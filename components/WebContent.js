@@ -1055,7 +1055,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         data: cleanedData,
         timestamp: Date.now()
       }));
-      console.log('[Home] Data cached');
     } catch (err) {
       console.error('[Home] Error saving cache:', err);
     }
@@ -1069,7 +1068,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         // Invalidate specific date
         const cacheKey = getHomeDataCacheKey(familyId, date);
         localStorage.removeItem(cacheKey);
-        console.log(`[Home] Cache invalidated for ${date}`);
       } else {
         // Invalidate all dates for this family
         const prefix = `home_data_${familyId}_`;
@@ -1078,7 +1076,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             localStorage.removeItem(key);
           }
         });
-        console.log('[Home] All cache invalidated for family');
       }
     } catch (err) {
       console.error('[Home] Error invalidating cache:', err);
@@ -1157,8 +1154,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         console.warn('[WebContent] openEventModal event received but no eventId provided');
         return;
       }
-      
-      console.log('[WebContent] openEventModal event received (non-family screen):', { eventId, hasInitialEvent: !!initialEvent, activeTab });
       
       // Close any other modals
       setShowNewEventForm(false);
@@ -3144,7 +3139,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       let refreshDate = null;
       if (targetYear !== undefined && targetMonth !== undefined) {
         refreshDate = new Date(targetYear, targetMonth, 1);
-        console.log('[WebContent] Refreshing specific month:', { year: targetYear, month: targetMonth, date: refreshDate });
       } else {
         const visible = plannerDateRef.current;
         const visibleDate = visible && !isNaN(visible.getTime()) ? visible : new Date();
@@ -3183,9 +3177,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         });
       }
       const doRefetch = () => {
-        const tRefresh = typeof performance !== 'undefined' && dropStartTime != null ? (performance.now() - dropStartTime).toFixed(0) : '?';
-        console.log('[WebContent] [drag-timing] t+' + tRefresh + 'ms refreshCalendar handler calling refreshCalendarData');
-        console.log('[WebContent] Calling refreshCalendarData with date:', refreshDate);
         const opts = isTargetedRefresh && eventIdFromDetail ? { preserveEventId: eventIdFromDetail } : {};
         if (dropStartTime != null) opts.dropStartTime = dropStartTime;
         if (isTargetedRefresh && eventIdFromDetail) opts.background = true; // post-drag: refetch in background, no loading state

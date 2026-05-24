@@ -3376,16 +3376,16 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <View style={styles.coursesEmptyState}>
                 <Text style={styles.coursesEmptyTitle}>No subjects yet</Text>
                 <Text style={styles.coursesEmptyDescription}>
-                  {isChildMode ? 'No courses are assigned to you yet.' : 'Create subjects to organize learning, assignments, and progress.'}
+                  {isChildMode ? 'No courses are assigned to you yet.' : 'Create subjects to organize learning.'}
                 </Text>
                 {!isChildMode && (
                   <TouchableOpacity
-                    style={styles.coursesAddButton}
+                    style={styles.coursesEmptyButton}
                     onPress={() => setShowAddSubjectModal(true)}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Plus size={16} color="#374151" />
-                    <Text style={styles.coursesAddButtonText}>Add Subject</Text>
+                    <Plus size={16} color="#5AAEF2" />
+                    <Text style={styles.coursesEmptyButtonText}>Add</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -8039,7 +8039,9 @@ function createStyles(tokens) {
       }),
     },
     coursesEmptyState: {
-      paddingVertical: 48,
+      flex: 1,
+      justifyContent: 'center',
+      paddingVertical: 60,
       paddingHorizontal: 24,
       alignItems: 'center',
       textAlign: 'center',
@@ -8047,7 +8049,7 @@ function createStyles(tokens) {
     coursesEmptyTitle: {
       fontSize: 18,
       fontWeight: '600',
-      color: '#111827',
+      color: '#374151',
       marginBottom: 8,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -8055,12 +8057,36 @@ function createStyles(tokens) {
     },
     coursesEmptyDescription: {
       fontSize: 14,
-      color: '#6b7280',
+      color: '#6B7280',
       lineHeight: 20,
-      marginBottom: 24,
       textAlign: 'center',
+      maxWidth: 900,
       ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    coursesEmptyButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginTop: 20,
+      minHeight: 42,
+      paddingHorizontal: 18,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderStyle: 'dashed',
+      borderColor: '#9ED3FF',
+      backgroundColor: '#F8FCFF',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+      }),
+    },
+    coursesEmptyButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#5AAEF2',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     subjectsList: {

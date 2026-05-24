@@ -83,6 +83,17 @@ const writePlannerSettingsSessionSnapshot = (snapshotCacheKey, payload) => {
   }
 };
 
+const clearPlannerSettingsSessionSnapshot = (snapshotCacheKey) => {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  const key = buildPlannerSettingsSessionCacheKey(snapshotCacheKey);
+  if (!key) return;
+  try {
+    window.sessionStorage?.removeItem(key);
+  } catch (_) {
+    // ignore session cache clear failures
+  }
+};
+
 const parsePositiveIntOrNull = (value) => {
   const n = parseInt(String(value ?? '').trim(), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -484,11 +495,14 @@ export default function PlannerSettingsContent({
 
   useEffect(() => {
     if (!embeddedInModal) return;
+    // When caller provides fresh initialData for this open, prefer it over
+    // any cached in-session snapshot so fields reflect stored/saved values.
+    if (initialData) return;
     const inMemory = plannerSettingsSnapshotCache.get(snapshotCacheKey);
     if (applySnapshot(inMemory)) return;
     const persisted = readPlannerSettingsSessionSnapshot(snapshotCacheKey);
     applySnapshot(persisted);
-  }, [embeddedInModal, snapshotCacheKey, applySnapshot]);
+  }, [embeddedInModal, snapshotCacheKey, applySnapshot, initialData]);
 
   useEffect(() => {
     const resolvedScope = resolveTargetScopeForAttendanceMode(attendanceTrackingMode);
@@ -1690,9 +1704,12 @@ export default function PlannerSettingsContent({
       await new Promise((resolve) => setTimeout(resolve, 50));
       const ok = await persist({});
       if (!ok) return;
+      // Close should reopen from persisted source-of-truth, not stale draft cache.
+      plannerSettingsSnapshotCache.delete(snapshotCacheKey);
+      clearPlannerSettingsSessionSnapshot(snapshotCacheKey);
     }
     onRequestClose?.();
-  }, [embeddedInModal, readOnly, persist, onRequestClose]);
+  }, [embeddedInModal, readOnly, persist, onRequestClose, snapshotCacheKey]);
 
   useEffect(() => {
     if (!(embeddedInModal && Platform.OS === 'web' && typeof window !== 'undefined')) return undefined;
@@ -2374,13 +2391,6 @@ export default function PlannerSettingsContent({
                 <Text style={{ fontSize: 13, color: MUTED }}>
                   Add a subject first to set per-subject targets.
                 </Text>
-                <TouchableOpacity
-                  style={addOutlineButtonStyle}
-                  onPress={openAddSubjectModal}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={addOutlineButtonTextStyle}>Add first subject</Text>
-                </TouchableOpacity>
               </View>
             ) : (
               <View style={{ gap: 8 }}>

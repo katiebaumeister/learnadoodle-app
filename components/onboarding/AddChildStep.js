@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
-import { ChevronDown, ChevronUp, Check, X } from 'lucide-react';
+import { BookOpen, Brain, FileText, Check, X } from 'lucide-react';
 import { getChildColorFromAvatar, hexToRgba } from '../../utils/avatarColors';
+import { ModalSectionCard } from '../ui/ModalSectionCard';
 
 const AVATAR_SIZE = 64;
 const AVATAR_PREVIEW_SIZE = 72;
@@ -298,18 +299,15 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
         </View>
       </View>
 
-      {/* Accordions — match in-app AddChildForm (no school year) */}
-      <View style={styles.accordionSection}>
-        <TouchableOpacity
-          onPress={() => setShowLearningSetup((v) => !v)}
-          style={styles.accordionHeader}
-          activeOpacity={0.8}
-          disabled={isSaving || adding}
-        >
-          <Text style={styles.accordionTitle}>Learning setup</Text>
-          {showLearningSetup ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
-        </TouchableOpacity>
-        {showLearningSetup && (
+      {/* Section cards — mirror in-app Add Child modal */}
+      <ModalSectionCard
+        Icon={BookOpen}
+        title="Learning setup"
+        subtitle="Standards, interests, and goals"
+        expanded={showLearningSetup}
+        onPress={() => setShowLearningSetup((v) => !v)}
+        accent="#9ECFFB"
+      >
           <View style={styles.accordionContent}>
             <View style={styles.accordionField}>
               <Text style={styles.accordionLabel}>Follow State Standards?</Text>
@@ -385,20 +383,16 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
               )}
             </View>
           </View>
-        )}
-      </View>
+      </ModalSectionCard>
 
-      <View style={styles.accordionSection}>
-        <TouchableOpacity
-          onPress={() => setShowLearningProfile((v) => !v)}
-          style={styles.accordionHeader}
-          activeOpacity={0.8}
-          disabled={isSaving || adding}
-        >
-          <Text style={styles.accordionTitle}>Learning profile & supports</Text>
-          {showLearningProfile ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
-        </TouchableOpacity>
-        {showLearningProfile && (
+      <ModalSectionCard
+        Icon={Brain}
+        title="Learning profile & supports"
+        subtitle="Support needs and learning preferences"
+        expanded={showLearningProfile}
+        onPress={() => setShowLearningProfile((v) => !v)}
+        accent="#9ECFFB"
+      >
           <View style={styles.accordionContent}>
             <View style={styles.accordionField}>
               <Text style={styles.accordionLabel}>Learning & processing needs</Text>
@@ -502,20 +496,16 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
               </View>
             </View>
           </View>
-        )}
-      </View>
+      </ModalSectionCard>
 
-      <View style={styles.accordionSection}>
-        <TouchableOpacity
-          onPress={() => setShowAdditionalNotes((v) => !v)}
-          style={styles.accordionHeader}
-          activeOpacity={0.8}
-          disabled={isSaving || adding}
-        >
-          <Text style={styles.accordionTitle}>Additional notes</Text>
-          {showAdditionalNotes ? <ChevronUp size={20} color={MUTED} /> : <ChevronDown size={20} color={MUTED} />}
-        </TouchableOpacity>
-        {showAdditionalNotes && (
+      <ModalSectionCard
+        Icon={FileText}
+        title="Additional notes"
+        subtitle="Anything else to remember"
+        expanded={showAdditionalNotes}
+        onPress={() => setShowAdditionalNotes((v) => !v)}
+        accent="#9ECFFB"
+      >
           <View style={styles.accordionContent}>
             <View style={styles.accordionField}>
               <TextInput
@@ -531,8 +521,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
               />
             </View>
           </View>
-        )}
-      </View>
+      </ModalSectionCard>
       {showMissingHint && (
         <View style={styles.missingHint}>
           <Text style={styles.missingHintText}>To continue:</Text>
@@ -589,7 +578,7 @@ export default function AddChildStep({ createdChildren = [], onAddChild, onConti
           >
             {isSaving || adding
               ? 'Saving…'
-              : 'Enter app'}
+              : 'FINISH SETUP'}
           </Text>
         </TouchableOpacity>
       </View>

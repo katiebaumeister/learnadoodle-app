@@ -241,13 +241,17 @@ function formatDateDisplayYmd(ymd) {
 function formatFixGapHistoryTimestamp(tsRaw) {
   const d = new Date(tsRaw || '');
   if (Number.isNaN(d.getTime())) return 'recently';
-  return d.toLocaleString('en-US', {
+  const dateLabel = d.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
+  });
+  const timeLabel = d.toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
-  });
+    hour12: true,
+  }).toLowerCase();
+  return `${dateLabel} at ${timeLabel}`;
 }
 
 function formatFixGapHistorySlotLabel(slot = {}) {
@@ -628,13 +632,25 @@ function mergeFixGapHistoryGrouped(primaryGrouped, secondaryGrouped) {
   ]);
   allKeys.forEach((key) => {
     const merged = [];
-    const seen = new Set();
+    const seenIndexByKey = new Map();
     const pushEntry = (entry) => {
       if (!entry || typeof entry !== 'object') return;
       const dedupeKey = String(entry?.id || '').trim()
         || `${String(entry?.created_at || '').trim()}|${String(entry?.scope || '').trim()}|${String(entry?.subject_id || '').trim()}|${String(entry?.created_events || 0)}|${String(entry?.removed_events || 0)}`;
-      if (seen.has(dedupeKey)) return;
-      seen.add(dedupeKey);
+      const existingIdx = seenIndexByKey.get(dedupeKey);
+      if (Number.isInteger(existingIdx) && existingIdx >= 0 && existingIdx < merged.length) {
+        const existing = merged[existingIdx] || {};
+        const existingUndoneAt = String(existing?.undone_at || '').trim();
+        const incomingUndoneAt = String(entry?.undone_at || '').trim();
+        if (!existingUndoneAt && incomingUndoneAt) {
+          merged[existingIdx] = {
+            ...existing,
+            undone_at: incomingUndoneAt,
+          };
+        }
+        return;
+      }
+      seenIndexByKey.set(dedupeKey, merged.length);
       merged.push(entry);
     };
     (Array.isArray(primaryGrouped?.[key]) ? primaryGrouped[key] : []).forEach(pushEntry);
@@ -5361,13 +5377,35 @@ export default function SubjectsPlanBuilder({
       setFixGapHistoryByRowId((prev) => {
         const next = {};
         Object.entries(prev || {}).forEach(([key, runs]) => {
+          let didMarkUndo = false;
           const updated = (Array.isArray(runs) ? runs : []).map((entry) => {
-            if (!historyEntryMatchesUndoSignature(entry, undoSignature)) return entry;
+            const entryId = String(entry?.id || '').trim();
+            const latestEntryId = String(latestEntry?.id || '').trim();
+            const sameExplicitId = Boolean(entryId && latestEntryId && entryId === latestEntryId);
+            if (!sameExplicitId && !historyEntryMatchesUndoSignature(entry, undoSignature)) return entry;
+            didMarkUndo = true;
             return {
               ...(entry || {}),
               undone_at: String(entry?.undone_at || '').trim() || undoMarkedAt,
             };
           });
+          if (!didMarkUndo) {
+            const fallbackIdx = updated.findIndex((entry) => {
+              const entryId = String(entry?.id || '').trim();
+              const latestEntryId = String(latestEntry?.id || '').trim();
+              if (entryId && latestEntryId && entryId === latestEntryId) return true;
+              return String(entry?.created_at || '').trim() === String(latestEntry?.created_at || '').trim()
+                && String(entry?.scope || '').trim() === String(latestEntry?.scope || '').trim()
+                && String(entry?.subject_id || '').trim() === String(latestEntry?.subject_id || '').trim();
+            });
+            if (fallbackIdx >= 0) {
+              const current = updated[fallbackIdx] || {};
+              updated[fallbackIdx] = {
+                ...current,
+                undone_at: String(current?.undone_at || '').trim() || undoMarkedAt,
+              };
+            }
+          }
           if (updated.length > 0) next[key] = updated;
         });
         writeFixGapHistoryStorage(familyId, academicYearId, next);
@@ -7449,7 +7487,7 @@ export default function SubjectsPlanBuilder({
                                     {historyRunsWithDetails.map((run) => (
                                       <View key={run.key} style={styles.yearTargetsFixGapHistoryRun}>
                                         <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                          {`${formatFixGapHistoryTimestamp(run.createdAt)}${run.isUndone ? ' - undone' : ''}:`}
+                                          {`${formatFixGapHistoryTimestamp(run.createdAt)}${run.isUndone ? ' (undone)' : ''}:`}
                                         </Text>
                                         {run.slotLines.length > 0 ? (
                                           run.slotLines.map((line, idx) => (
@@ -7460,8 +7498,8 @@ export default function SubjectsPlanBuilder({
                                         ) : (
                                           <Text style={styles.yearTargetsFixGapHistoryLine}>
                                             {run.removedCount > 0
-                                              ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}${run.isUndone ? ' - undone' : ''}.`
-                                              : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}${run.isUndone ? ' - undone' : ''}.`}
+                                              ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}.`
+                                              : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}.`}
                                           </Text>
                                         )}
                                       </View>

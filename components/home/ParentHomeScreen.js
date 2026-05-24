@@ -870,14 +870,10 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   dayNavButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.24)',
-    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 2,
+    paddingVertical: 2,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'all 0.2s ease',

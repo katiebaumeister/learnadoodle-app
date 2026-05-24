@@ -384,7 +384,7 @@ const styles = StyleSheet.create({
     color: '#16a34a',
   },
   primaryButton: {
-    backgroundColor: '#38B6FF',
+    backgroundColor: '#60a5fa',
     paddingVertical: 14,
     borderRadius: 8,
     alignItems: 'center',
@@ -396,7 +396,10 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   linkButton: {
     padding: 12,

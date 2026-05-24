@@ -127,8 +127,6 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
       }
     }
     
-    console.log('[MonthGrid] handleMouseDragStart called for event:', eventId, 'target:', e.currentTarget);
-    
     // Don't prevent default immediately - let the drag start naturally
     // Only prevent if we're actually dragging (not just clicking)
     const isDraggingRef = { current: false };
@@ -148,11 +146,9 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
       if (deltaX > 5 || deltaY > 5) {
         // This is a drag, not a click
         if (!isDraggingRef.current) {
-          console.log('[MonthGrid] Drag detected! deltaX:', deltaX, 'deltaY:', deltaY);
           isDraggingRef.current = true;
           moveEvent.preventDefault();
           moveEvent.stopPropagation();
-          console.log('[MonthGrid] Setting draggedEventId to:', eventId);
           setDraggedEventId(eventId);
           dragRef.current = originalTarget;
           
@@ -196,14 +192,10 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
             // Append to body
             document.body.appendChild(clonedNode);
             
-            console.log('[MonthGrid] Created drag ghost element and appended to body');
-            
             // Store references
             originalTarget._dragDomNode = domNode;
             originalTarget._dragGhost = clonedNode;
           }
-          
-          console.log('[MonthGrid] draggedEventId set, current state will update on next render');
           
           // Mark that we dragged to prevent click
           const state = dragStateRef.current.get(eventId);
@@ -211,7 +203,6 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
             state.wasDragged = true;
           }
           
-          console.log('[MonthGrid] Drag started for event:', eventId, 'draggedEventId state:', draggedEventId);
         }
       }
       
@@ -261,7 +252,6 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
       
       // If it was just a click (not a drag), trigger click manually
       if (!isDraggingRef.current) {
-        console.log('[MonthGrid] MouseUp - was just a click, not a drag');
         dragSourceDayIsoRef.current = null;
         setDragOverDay(null);
         // Clear the drag flag immediately
@@ -830,11 +820,8 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
     };
     
     // Add event listeners
-    console.log('[MonthGrid] Adding event listeners for drag');
     document.addEventListener('mousemove', mouseMoveHandler, { passive: false });
     document.addEventListener('mouseup', handleMouseUp, { once: false });
-    
-    console.log('[MonthGrid] Event listeners added. mousemove handler:', typeof mouseMoveHandler, 'mouseup handler:', typeof handleMouseUp);
   }, [events, familyId, onEventPress, readOnly]);
   
   // Convert blackout dates to Set for fast lookup
@@ -1345,9 +1332,6 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                         .filter(ev => ev && typeof ev === 'object' && ev !== null)
                         .map((ev, index) => {
                         const isDragging = draggedEventId === ev.id;
-                        if (isDragging) {
-                          console.log('[MonthGrid] Rendering event as dragging:', ev.id, 'draggedEventId:', draggedEventId);
-                        }
                         const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
                         const canDrag = !readOnly && ev.status !== 'done' && !isBlackout && !isHoliday;
                         
@@ -1360,7 +1344,6 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                                 onMouseDown: (e) => {
                                   // Only start drag on left mouse button
                                   if (e.button === 0) {
-                                    console.log('[MonthGrid] MouseDown on event:', ev.id);
                                     handleMouseDragStart(e, ev.id, dayDateIso);
                                   }
                                 },
@@ -1371,7 +1354,6 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                                     // This was a click, not a drag
                                     e.stopPropagation();
                                     if (onEventPress) {
-                                      console.log('[MonthGrid] onClick handler triggered for event:', ev.id);
                                       onEventPress(ev);
                                     }
                                   } else {

@@ -66,7 +66,6 @@ import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressP
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
 import AppLoader, { ensureWebShellImagesLoaded } from './AppLoader';
 import RebalanceModal from './year/RebalanceModal';
-import { applySetupProgressFromNavigation, isSetupGuideComplete } from '../lib/doodleSetupGuide';
 import { preloadProviderConnectionLogos } from '../lib/preloadConnectedAccountAssets';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 import { cleanPlannerEventId } from '../lib/utils/recurringEventUtils';
@@ -188,7 +187,6 @@ function isFamilyShellTab(tab) {
 export default function WebLayout({ navigation, routeParams, session: propSession = null, userRole: propUserRole = null }) {
   const { user, signOut } = useAuth();
   const authUserId = user?.id ?? null;
-  const [doodleSetupGuideTick, setDoodleSetupGuideTick] = useState(0);
   // Try to get session from context if not provided as prop
   let session = propSession;
   try {
@@ -2430,8 +2428,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         return;
       }
 
-      console.log('[WebLayout] openEventModal event received:', { eventId, hasInitialEvent: !!initialEvent, activeTab, schedulingMode: true, openConflictResolution });
-
       // Open the event modal
       setEventModalEventId(eventId);
       setEventModalInitialEvent(initialEvent);
@@ -2874,28 +2870,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       };
     }
   }, [handleSearchNavigate]);
-
-  // Doodle setup guide: mark checklist steps when user visits each area (parents only)
-  useEffect(() => {
-    if (!authUserId || session?.role_flags?.isParent !== true) return;
-    applySetupProgressFromNavigation(authUserId, { activeTab, currentView, activeSubtab });
-  }, [authUserId, activeTab, activeSubtab, currentView, session?.role_flags?.isParent]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const onProgress = () => setDoodleSetupGuideTick((t) => t + 1);
-    window.addEventListener('doodleSetupProgressChanged', onProgress);
-    return () => window.removeEventListener('doodleSetupProgressChanged', onProgress);
-  }, []);
-
-  const showDoodleSetupBadge = useMemo(
-    () =>
-      Platform.OS === 'web' &&
-      !!authUserId &&
-      session?.role_flags?.isParent === true &&
-      !isSetupGuideComplete(authUserId),
-    [authUserId, session?.role_flags?.isParent, doodleSetupGuideTick]
-  );
 
   const avatarUrlsToPreload = useMemo(
     () => collectAvatarUrlsFromFamilyState(profile, children, family),
@@ -4787,7 +4761,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           >
             <Image source={require('../assets/icon.png')} style={styles.fabAskAIIcon} resizeMode="contain" />
           </TouchableOpacity>
-          {showDoodleSetupBadge ? <View style={styles.fabSetupBadge} pointerEvents="none" /> : null}
         </View>
       )}
 

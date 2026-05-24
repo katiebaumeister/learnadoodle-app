@@ -762,6 +762,7 @@ const RECURRENCE_WEEKDAY_OPTIONS = [
 ];
 const WEEKDAY_FROM_DATE = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 const CLASS_DAY_DEFAULT_WEEKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR'];
+const RECURRENCE_SERIES_UI_CACHE = new Map();
 
 // Helper functions
 function addDays(d, n) {
@@ -825,6 +826,36 @@ function resolveWeekdayCodeFromEventOrDueDate(event, dueDate) {
     }
   }
   return 'MO';
+}
+
+function recurrenceSeriesCacheKeyCandidates(event) {
+  const keys = [
+    event?.recurrence_id,
+    event?.parent_event_id,
+    event?.source_block_id,
+    event?.id,
+  ]
+    .map((value) => cleanPlannerEventId(String(value || '')))
+    .filter(Boolean);
+  return Array.from(new Set(keys));
+}
+
+function readRecurrenceSeriesUiCache(event) {
+  const keys = recurrenceSeriesCacheKeyCandidates(event);
+  for (const key of keys) {
+    const cached = RECURRENCE_SERIES_UI_CACHE.get(key);
+    if (cached) return cached;
+  }
+  return null;
+}
+
+function writeRecurrenceSeriesUiCache(event, payload) {
+  if (!payload || typeof payload !== 'object') return;
+  const keys = recurrenceSeriesCacheKeyCandidates(event);
+  if (keys.length === 0) return;
+  keys.forEach((key) => {
+    RECURRENCE_SERIES_UI_CACHE.set(key, payload);
+  });
 }
 
 function hhmmUtcFromTs(value) {
@@ -1348,7 +1379,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     const accepted = new Set();
     (familyMembers || []).forEach((m) => {
       const inviteStatus = String(m?.invite_status || '').trim().toLowerCase();
-      if (inviteStatus && inviteStatus !== 'accepted') return;
+      // Sending requires a real accepted invite; empty/unknown status is not accepted.
+      if (inviteStatus !== 'accepted') return;
       const role = String(m?.member_role || m?.role || '').toLowerCase();
       if (role && role !== 'child' && role !== 'student') return;
       if (m?.child_id != null && wanted.has(String(m.child_id))) {
@@ -1405,9 +1437,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       try {
         const { data, error } = await supabase
           .from('family_members')
-          .select('child_id, child_scope, member_role')
+          .select('child_id, child_scope, member_role, invite_status')
           .eq('family_id', familyId)
-          .in('member_role', ['child', 'student']);
+          .in('member_role', ['child', 'student'])
+          .eq('invite_status', 'accepted');
         if (cancelled || error) {
           if (!cancelled) setInvitedAssigneeIds([]);
           return;
@@ -1488,6 +1521,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
     return '';
   }, [sendEligibleAssigneeIds, sendBlockedAssigneeIds, formatAssigneeNameList]);
+
+  const openInviteChildModalForSend = useCallback(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const preferredChildId = sendBlockedAssigneeIds[0] || assigneeIds[0] || null;
+    window.dispatchEvent(
+      new CustomEvent('openInviteChildModal', {
+        detail: { childId: preferredChildId || null },
+      })
+    );
+  }, [sendBlockedAssigneeIds, assigneeIds]);
 
   const loadEventLinkedHelpAssignment = useCallback(async () => {
     const et = event?.event_type || eventType;
@@ -2286,7 +2329,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (readOnly) return;
     const shouldOpenInEditMode = initialSchedulingMode || event?._openInEditMode;
     if (shouldOpenInEditMode) {
-      console.log('[EventDetails] Opening in edit mode - initialSchedulingMode:', initialSchedulingMode, '_openInEditMode:', event?._openInEditMode);
       setEditing(true);
       if (initialSchedulingMode || event?._openInEditMode) {
         setSchedulingBacklog(true);
@@ -2472,9 +2514,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   // Notify parent when editing state changes
   useEffect(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      console.log('[EventDetails] Notifying parent of editing state:', editing);
-    }
     onEditingChangeRef.current?.(editing);
   }, [editing]);
 
@@ -2659,10 +2698,26 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         try {
           const startDate = new Date(startTs);
           const endDate = endTs ? new Date(endTs) : null;
-          const startIsMidnight = startDate.getHours() === 0 && startDate.getMinutes() === 0;
-          const endIsMidnight = endDate ? endDate.getHours() === 0 && endDate.getMinutes() === 0 : true;
+          const startIsMidnight =
+            startDate.getHours() === 0 &&
+            startDate.getMinutes() === 0;
+          const endIsMidnight =
+            endDate
+              ? endDate.getHours() === 0 && endDate.getMinutes() === 0
+              : true;
+          const endIsEndOfDay =
+            endDate
+              ? endDate.getHours() === 23 && endDate.getMinutes() === 59
+              : false;
+          const sameCalendarDay =
+            endDate
+              ? startDate.getFullYear() === endDate.getFullYear() &&
+                startDate.getMonth() === endDate.getMonth() &&
+                startDate.getDate() === endDate.getDate()
+              : true;
 
-          if (startIsMidnight && endIsMidnight) {
+          // Treat both midnight->midnight and midnight->23:59 as timeless/all-day.
+          if (startIsMidnight && (endIsMidnight || (sameCalendarDay && endIsEndOfDay))) {
             return true;
           }
         } catch {
@@ -2762,34 +2817,57 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (event.recurrence_rule) {
       try {
         const rule = typeof event.recurrence_rule === 'string' ? JSON.parse(event.recurrence_rule) : event.recurrence_rule;
+        const parsedWeekdays = normalizeByWeekday(rule.byweekday);
+        const normalizedWeekdays =
+          parsedWeekdays.length > 0
+            ? parsedWeekdays
+            : (normalizeEventTypeForDisplay(event?.event_type || eventType) === 'Class Day' ? CLASS_DAY_DEFAULT_WEEKDAYS : []);
         setIsRecurring(true);
         setRecurrenceType(rule.frequency?.toLowerCase() || 'daily');
         setRecurrenceInterval(rule.interval || null);
-        const parsedWeekdays = normalizeByWeekday(rule.byweekday);
-        setRecurrenceWeekdays(parsedWeekdays.length > 0 ? parsedWeekdays : (normalizeEventTypeForDisplay(event?.event_type || eventType) === 'Class Day' ? CLASS_DAY_DEFAULT_WEEKDAYS : []));
+        setRecurrenceWeekdays(normalizedWeekdays);
         if (rule.count) {
           setRecurrenceEndType('after');
           setRecurrenceEndAfter(rule.count);
           setRecurrenceEndAfterText(rule.count.toString());
+          writeRecurrenceSeriesUiCache(event, {
+            weekdays: normalizedWeekdays,
+            endType: 'after',
+            endAfter: rule.count,
+            endDate: null,
+          });
         } else if (rule.until) {
           setRecurrenceEndType('on');
           setRecurrenceEndDate(new Date(rule.until));
+          writeRecurrenceSeriesUiCache(event, {
+            weekdays: normalizedWeekdays,
+            endType: 'on',
+            endAfter: null,
+            endDate: new Date(rule.until),
+          });
         } else {
           setRecurrenceEndType('never');
+          writeRecurrenceSeriesUiCache(event, {
+            weekdays: normalizedWeekdays,
+            endType: 'never',
+            endAfter: null,
+            endDate: null,
+          });
         }
       } catch (e) {
         // Invalid recurrence rule, ignore
       }
     } else if (isPartOfRecurringSeries(event) || isPlanYearBlockSeries(event)) {
       // Instance rows may omit recurrence_rule; master fetch fills RRULE details. Plan-year slots share a block id.
+      const cachedSeriesUi = readRecurrenceSeriesUiCache(event);
       setIsRecurring(true);
       setRecurrenceType('weekly');
       setRecurrenceInterval(null);
-      setRecurrenceWeekdays([resolveWeekdayCodeFromEventOrDueDate(event, dueDate)]);
-      setRecurrenceEndType('never');
-      setRecurrenceEndAfter(null);
-      setRecurrenceEndAfterText('');
-      setRecurrenceEndDate(null);
+      setRecurrenceWeekdays(Array.isArray(cachedSeriesUi?.weekdays) ? cachedSeriesUi.weekdays : []);
+      setRecurrenceEndType(cachedSeriesUi?.endType || 'never');
+      setRecurrenceEndAfter(cachedSeriesUi?.endAfter ?? null);
+      setRecurrenceEndAfterText(cachedSeriesUi?.endAfter ? String(cachedSeriesUi.endAfter) : '');
+      setRecurrenceEndDate(cachedSeriesUi?.endDate ? new Date(cachedSeriesUi.endDate) : null);
     } else {
       setIsRecurring(false);
       setRecurrenceType('daily');
@@ -2851,16 +2929,35 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setRecurrenceType(rule.frequency?.toLowerCase() || 'daily');
         setRecurrenceInterval(rule.interval || null);
         const parsedWeekdays = normalizeByWeekday(rule.byweekday);
-        setRecurrenceWeekdays(parsedWeekdays.length > 0 ? parsedWeekdays : (isClassDayEventType ? CLASS_DAY_DEFAULT_WEEKDAYS : []));
+        const normalizedWeekdays = parsedWeekdays.length > 0 ? parsedWeekdays : (isClassDayEventType ? CLASS_DAY_DEFAULT_WEEKDAYS : []);
+        setRecurrenceWeekdays(normalizedWeekdays);
         if (rule.count) {
           setRecurrenceEndType('after');
           setRecurrenceEndAfter(rule.count);
           setRecurrenceEndAfterText(rule.count.toString());
+          writeRecurrenceSeriesUiCache(event, {
+            weekdays: normalizedWeekdays,
+            endType: 'after',
+            endAfter: rule.count,
+            endDate: null,
+          });
         } else if (rule.until) {
           setRecurrenceEndType('on');
           setRecurrenceEndDate(new Date(rule.until));
+          writeRecurrenceSeriesUiCache(event, {
+            weekdays: normalizedWeekdays,
+            endType: 'on',
+            endAfter: null,
+            endDate: new Date(rule.until),
+          });
         } else {
           setRecurrenceEndType('never');
+          writeRecurrenceSeriesUiCache(event, {
+            weekdays: normalizedWeekdays,
+            endType: 'never',
+            endAfter: null,
+            endDate: null,
+          });
         }
       } catch (_) {
         /* ignore */
@@ -2912,12 +3009,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const mergedWeekdays = normalizeByWeekday(collected);
       if (mergedWeekdays.length > 1) {
         setRecurrenceWeekdays(mergedWeekdays);
+        writeRecurrenceSeriesUiCache(event, {
+          weekdays: mergedWeekdays,
+          endType: recurrenceEndType,
+          endAfter: recurrenceEndAfter,
+          endDate: recurrenceEndDate,
+        });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [event?.id, event?.recurrence_id, isRecurring, recurrenceType]);
+  }, [event?.id, event?.recurrence_id, isRecurring, recurrenceType, recurrenceEndType, recurrenceEndAfter, recurrenceEndDate]);
 
   // Backward compatibility: older split-weekday series may not share recurrence_id.
   // Infer sibling weekday masters by near-identical metadata and merge weekdays for edit UI.
@@ -3011,11 +3114,23 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const mergedWeekdays = normalizeByWeekday(weekdayBuckets);
       if (!cancelled && mergedWeekdays.length > 1) {
         setRecurrenceWeekdays(mergedWeekdays);
+        writeRecurrenceSeriesUiCache(event, {
+          weekdays: mergedWeekdays,
+          endType: recurrenceEndType,
+          endAfter: recurrenceEndAfter,
+          endDate: recurrenceEndDate,
+        });
       }
       if (!cancelled && everyRuleHasCount && totalCount > 0) {
         setRecurrenceEndType('after');
         setRecurrenceEndAfter(totalCount);
         setRecurrenceEndAfterText(String(totalCount));
+        writeRecurrenceSeriesUiCache(event, {
+          weekdays: mergedWeekdays.length > 0 ? mergedWeekdays : recurrenceWeekdays,
+          endType: 'after',
+          endAfter: totalCount,
+          endDate: null,
+        });
       }
     })();
     return () => {
@@ -3029,11 +3144,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     isRecurring,
     recurrenceType,
     recurrenceWeekdays,
+    recurrenceEndType,
+    recurrenceEndAfter,
+    recurrenceEndDate,
   ]);
 
   useEffect(() => {
     if (!isRecurring || placement !== 'calendar' || recurrenceType !== 'weekly') return;
     if (Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 0) return;
+    if (isPartOfRecurringSeries(event) && !event?.recurrence_rule) return;
     if (isPlanYearBlockSeries(event) && event?.academic_year_id) return;
     const fallback = resolveWeekdayCodeFromEventOrDueDate(event, dueDate);
     setRecurrenceWeekdays([fallback]);
@@ -3044,6 +3163,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     (async () => {
       if (!isRecurring || placement !== 'calendar' || recurrenceType !== 'weekly') return;
       if (Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 0) return;
+      if (isPartOfRecurringSeries(event) && !event?.recurrence_rule) return;
       if (!isPlanYearBlockSeries(event) || !event?.academic_year_id) return;
       try {
         const { data, error } = await supabase
@@ -3055,6 +3175,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         const normalized = normalizeByWeekday(data?.allowed_weekdays);
         if (normalized.length > 0) {
           setRecurrenceWeekdays(normalized);
+          writeRecurrenceSeriesUiCache(event, {
+            weekdays: normalized,
+            endType: recurrenceEndType,
+            endAfter: recurrenceEndAfter,
+            endDate: recurrenceEndDate,
+          });
           return;
         }
       } catch (_) {
@@ -3063,16 +3189,28 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       if (!cancelled) {
         if (isClassDayEventType) {
           setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
+          writeRecurrenceSeriesUiCache(event, {
+            weekdays: CLASS_DAY_DEFAULT_WEEKDAYS,
+            endType: recurrenceEndType,
+            endAfter: recurrenceEndAfter,
+            endDate: recurrenceEndDate,
+          });
         } else {
           const fallback = resolveWeekdayCodeFromEventOrDueDate(event, dueDate);
           setRecurrenceWeekdays([fallback]);
+          writeRecurrenceSeriesUiCache(event, {
+            weekdays: [fallback],
+            endType: recurrenceEndType,
+            endAfter: recurrenceEndAfter,
+            endDate: recurrenceEndDate,
+          });
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [isRecurring, placement, recurrenceType, recurrenceWeekdays, event, dueDate, isClassDayEventType]);
+  }, [isRecurring, placement, recurrenceType, recurrenceWeekdays, event, dueDate, isClassDayEventType, recurrenceEndType, recurrenceEndAfter, recurrenceEndDate]);
 
   // Load materials when event opens (guarded against repeated same-key execution).
   useEffect(() => {
@@ -3299,8 +3437,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     try {
       // Load all materials (now includes both purchased materials and uploaded files)
       const materialsData = await getMaterials(familyId, {}, session);
-      console.log('[EventDetails] Loaded materials:', materialsData?.length || 0);
-      
       setMaterials((prev) => (sameIdList(prev, materialsData || []) ? prev : (materialsData || [])));
       if (materialsData.length === 0) {
         console.warn('[EventDetails] No materials found for familyId:', familyId);
@@ -4965,6 +5101,23 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       if (!isBacklog || !startDateObj) {
         if (isSeriesEditScope) {
           toast.push('Series updated', 'success');
+          if (recurrenceRule) {
+            const recurrenceRuleObject =
+              typeof recurrenceRule === 'string'
+                ? (() => {
+                    try { return JSON.parse(recurrenceRule); } catch (_) { return null; }
+                  })()
+                : recurrenceRule;
+            if (recurrenceRuleObject && typeof recurrenceRuleObject === 'object') {
+              const cachedWeekdays = normalizeByWeekday(recurrenceRuleObject.byweekday);
+              writeRecurrenceSeriesUiCache(event, {
+                weekdays: cachedWeekdays,
+                endType: recurrenceEndType,
+                endAfter: recurrenceEndAfter,
+                endDate: recurrenceEndDate,
+              });
+            }
+          }
         } else {
           toast.push('Event updated', 'success');
         }
@@ -5722,9 +5875,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   };
 
   const renderEditForm = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      console.log('[EventDetails] renderEditForm called');
-    }
     return (
     <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
       {/* Scrollable Content */}
@@ -6202,13 +6352,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 </View>
               </View>
             </View>
-            {isSingleSeriesOccurrenceEdit ? (
-              <View style={[styles.recurringSectionContent, { paddingTop: 8 }]}>
-                <Text style={styles.fieldHelpText}>
-                  Edit in series to make changes to repeating series.
-                </Text>
-              </View>
-            ) : isRecurring && (
+            {isRecurring && (
               <View style={styles.recurringSectionContent}>
                 <View style={[styles.repeatGrid, useCompactRepeatGrid && styles.repeatGridCompact]}>
                   <View style={[styles.repeatGroup, styles.repeatGroupPattern]}>
@@ -6885,6 +7029,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     const hasBaseRequirements = Boolean(event?.id && familyId && assigneeIds.length > 0);
                     setShowSendInviteClarification(true);
                     if (!hasBaseRequirements) return;
+                    if (!hasInvitedAssignee && sendBlockedAssigneeIds.length > 0) {
+                      openInviteChildModalForSend();
+                      return;
+                    }
                     setQueueSendToStudentAfterSave((prev) => !prev);
                   }}
                   style={[
@@ -6902,11 +7050,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         <Send size={12} color="#5B6880" />
                       )}
                     </View>
-                    <Text style={styles.workflowActionButtonText}>{sendTrackingSummary.ctaLabel || 'Send to student'}</Text>
+                    <Text style={styles.workflowActionButtonText}>
+                      {!hasInvitedAssignee && sendBlockedAssigneeIds.length > 0
+                        ? 'Invite child to send'
+                        : (sendTrackingSummary.ctaLabel || 'Send to student')}
+                    </Text>
                   </View>
                 </TouchableOpacity>
               </View>
-              {showSendInviteClarification && sendInviteClarificationText ? (
+              {((!hasInvitedAssignee && sendBlockedAssigneeIds.length > 0) || showSendInviteClarification) && sendInviteClarificationText ? (
                 <Text style={[styles.fieldHelpText, { marginTop: 8 }]}>
                   {sendInviteClarificationText}
                 </Text>
