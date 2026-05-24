@@ -2377,7 +2377,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const eventId = detail.eventId;
       const initialEvent = detail.initialEvent || null;
       const parentEventFocus = detail.parentEventFocus ?? null;
-      const schedulingMode = !!detail.schedulingMode;
+      // Force direct edit mode for all event opens.
+      const schedulingMode = true;
       const editScope = detail.editScope === 'series' ? 'series' : 'single';
       const sendOnlyMode = !!detail.sendOnlyMode;
       const openConflictResolution = !!detail.openConflictResolution;
@@ -2405,7 +2406,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         return;
       }
 
-      console.log('[WebLayout] openEventModal event received:', { eventId, hasInitialEvent: !!initialEvent, activeTab, schedulingMode, openConflictResolution });
+      console.log('[WebLayout] openEventModal event received:', { eventId, hasInitialEvent: !!initialEvent, activeTab, schedulingMode: true, openConflictResolution });
 
       // Open the event modal
       setEventModalEventId(eventId);

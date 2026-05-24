@@ -318,7 +318,7 @@ export default function SubjectPastEventsGradesModal({
             <>
               <Text style={styles.headline}>Quick-add grades for past events</Text>
               <Text style={styles.subhead}>
-                Includes all subject-attached events (including plan events). Use Details to open the event editor.
+                Includes all subject-attached events. Use Edit to open the event editor.
               </Text>
 
               <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
@@ -376,10 +376,10 @@ export default function SubjectPastEventsGradesModal({
                               onPress={() => onOpenEvent(ev.id, ev)}
                               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                               accessibilityRole="button"
-                              accessibilityLabel="Open event details"
+                              accessibilityLabel="Edit event"
                               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                             >
-                              <Text style={styles.rowOpenLinkText}>Details</Text>
+                              <Text style={styles.rowOpenLinkText}>Edit</Text>
                             </TouchableOpacity>
                           ) : null}
                         </View>

@@ -1167,6 +1167,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       // Open the event modal
       setEventModalEventId(eventId);
       setEventModalInitialEvent(initialEvent);
+      setEventModalSchedulingMode(true);
       setEventModalVisible(true);
     };
     

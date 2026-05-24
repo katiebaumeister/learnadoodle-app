@@ -3609,9 +3609,9 @@ export default function SubjectsPlanBuilder({
         window.dispatchEvent(new CustomEvent('planAppliedToCalendar'));
       }
       setOverviewReloadKey((k) => k + 1);
-      toast?.push?.(`Saved plan (${data?.created ?? 0} events).`, 'success');
+      toast?.push?.(`Saved schedule (${data?.created ?? 0} events).`, 'success');
     } catch (err) {
-      toast?.push?.(err?.message || 'Failed to save plan.', 'error');
+      toast?.push?.(err?.message || 'Failed to save schedule.', 'error');
     } finally {
       setSaving(false);
     }
@@ -3698,12 +3698,12 @@ export default function SubjectsPlanBuilder({
           setSelectedTerm(preferredScope);
         }
         toast?.push?.(
-          `No saved plan found. Opened planner builder for ${builderSeedSubjectIds.length} subject${builderSeedSubjectIds.length === 1 ? '' : 's'} - save plan, then try Fix gap again.`,
+          `No saved schedule found. Opened schedule builder for ${builderSeedSubjectIds.length} subject${builderSeedSubjectIds.length === 1 ? '' : 's'} - save schedule, then try Fix gap again.`,
           'info'
         );
         return;
       }
-      toast?.push?.('No saved plan found. Create a plan first.', 'info');
+      toast?.push?.('No saved schedule found. Create a schedule first.', 'info');
       return;
     }
 
@@ -3868,7 +3868,7 @@ export default function SubjectsPlanBuilder({
         setSelectedSubjectIds(builderSeedSubjectIds);
         setSurfaceMode('builder');
       }
-      toast?.push?.('No saved plan found. Opened builder with selected subjects to create a plan first.', 'info');
+      toast?.push?.('No saved schedule found. Opened builder with selected subjects to create a schedule first.', 'info');
       return;
     }
     setApplyingSuggestionSubjectId(String(suggestionRow?.id || 'overall'));
@@ -4879,7 +4879,7 @@ export default function SubjectsPlanBuilder({
           fixGapInFlightByRowRef.current.delete(rowId);
         } catch (_) {}
         setFixingGapRowId(null);
-        toast?.push?.('No saved plan found. Auto-create did not return a plan id.', 'error');
+        toast?.push?.('No saved schedule found. Auto-create did not return a schedule id.', 'error');
         return;
       }
       // Keep pre-confirmation flow quiet: show the Fix Gap confirmation modal first.
@@ -5458,13 +5458,13 @@ export default function SubjectsPlanBuilder({
     if (action === 'delete') {
       const nextIds = (activeSchedule?.subjectIds || []).map(String).filter((id) => id !== safeId);
       if (nextIds.length === 0) {
-        toast?.push?.('Open the schedule builder to remove the last subject plan.', 'info');
+        toast?.push?.('Open the schedule builder to remove the last subject schedule.', 'info');
         setSelectedSubjectIds([safeId]);
         setSurfaceMode('builder');
         return;
       }
       setSelectedSubjectIds(nextIds);
-      toast?.push?.('Review and save to apply plan removal.', 'info');
+      toast?.push?.('Review and save to apply schedule removal.', 'info');
       setSurfaceMode('builder');
       return;
     }
@@ -5499,18 +5499,18 @@ export default function SubjectsPlanBuilder({
   const subjectPickerEmptyMessage = useMemo(() => {
     if (subjectPickerAction === 'edit') {
       if ((subjectPickerPool || []).length === 0) {
-        return "You don't have any subjects for this year and term, please add a new subject to create a plan";
+        return "You don't have any subjects for this year and term, please add a new subject to create a schedule";
       }
       if (!subjectPickerHasAnyPlan) {
-        return "You don't have any plans for this year and term yet, please create a new plan first.";
+        return "You don't have any schedules for this year and term yet, please create a new schedule first.";
       }
       return '';
     }
     if ((subjectPickerPool || []).length === 0) {
-      return "You don't have any subjects for this year and term, please add a new subject to create a plan";
+      return "You don't have any subjects for this year and term, please add a new subject to create a schedule";
     }
     if (!subjectPickerHasAnyWithoutPlan && subjectPickerHasAnyPlan) {
-      return "All of your family's subjects for this year and term have plans created, please create a new subject if you want to create a new plan.";
+      return "All of your family's subjects for this year and term already have schedules, please create a new subject if you want to add another schedule.";
     }
     return '';
   }, [subjectPickerAction, subjectPickerPool, subjectPickerHasAnyWithoutPlan, subjectPickerHasAnyPlan]);
@@ -5696,6 +5696,8 @@ export default function SubjectsPlanBuilder({
       new CustomEvent('openEventModal', {
         detail: {
           eventId: safeEventId,
+          schedulingMode: true,
+          editScope: 'single',
           ...(initialEvent ? { initialEvent } : {}),
         },
       })
@@ -6431,7 +6433,7 @@ export default function SubjectsPlanBuilder({
                                 : `${completedDays} attended / ${upcomingDays} upcoming / ${projectedDaysForStatus} planned`;
                               const deltaDays = targetDays != null ? (projectedDaysForStatus - targetDays) : null;
                               const statusLabel = !hasCadence
-                                ? 'No plan'
+                                ? 'No schedule'
                                 : (deltaDays == null
                                   ? 'On track'
                                   : (deltaDays < 0 ? 'Behind target' : (deltaDays > 0 ? 'Ahead target' : 'On target')));
@@ -7031,8 +7033,8 @@ export default function SubjectsPlanBuilder({
                           ? overallOverloadSubjectNames
                           : overallRowSubjectNames;
                         const endDateTargetLabel = endDateTargetSubjectNames.length
-                          ? `${endDateTargetSubjectNames.join(', ')} ${endDateTargetSubjectNames.length === 1 ? 'plan' : 'plans'}`
-                          : 'the subject plans';
+                          ? `${endDateTargetSubjectNames.join(', ')} ${endDateTargetSubjectNames.length === 1 ? 'schedule' : 'schedules'}`
+                          : 'the subject schedules';
                         const shortfallSuggestionImpactDays = Number(overallSuggestedChanges?.totalImpactDays || 0);
                         const shortfallResidualOverageDays = Math.max(0, shortfallSuggestionImpactDays - overallShortfallDays);
                         const shortfallBalanceEndYmd = (overallRowBaseEndYmd && shortfallResidualOverageDays > 0)
@@ -7920,7 +7922,6 @@ export default function SubjectsPlanBuilder({
           onCompleted={() => setEventsRefreshKey((prev) => prev + 1)}
           getChildName={(childId) => childNameById[String(childId)] || 'Student'}
           onOpenEvent={(eventId, initialEvent) => {
-            setShowPastEventsAttendanceModal(false);
             openEventDetails(eventId, initialEvent);
           }}
         />
@@ -8209,7 +8210,7 @@ export default function SubjectsPlanBuilder({
           <Text style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.saveBtn, saving && styles.saveBtnDisabled]} onPress={handleSave} disabled={saving}>
-          <Text style={styles.saveText}>{saving ? 'Saving...' : 'Save plan'}</Text>
+          <Text style={styles.saveText}>{saving ? 'Saving...' : 'Save schedule'}</Text>
         </TouchableOpacity>
       </View>
     </View>

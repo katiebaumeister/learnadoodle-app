@@ -186,7 +186,7 @@ export default function SubjectEventsModal({
                             activeOpacity={0.8}
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                           >
-                            <Text style={styles.subjectEventRowLinkText}>Open event details</Text>
+                            <Text style={styles.subjectEventRowLinkText}>Edit event</Text>
                           </TouchableOpacity>
                         ) : null}
                       </View>
