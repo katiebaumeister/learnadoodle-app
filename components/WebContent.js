@@ -8943,12 +8943,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         displayText += `\n\n📅 I'm generating your 2-week plan. This may take a moment...`;
       }
 
-      // Navigate: switch tab and (for planner attendance) set view
+      // Navigate: switch tab and (legacy attendance target) set view
       if (response.fetch === 'navigate_planner_attendance' && onTabChange) {
-        onTabChange('planner');
+        onTabChange('subjects');
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.history.replaceState({}, '', '/planner?view=attendance');
-          window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
+          window.history.replaceState({}, '', '/subjects?mode=progress');
+        }
+      } else if (response.fetch === 'navigate_subjects_progress' && onTabChange) {
+        onTabChange('subjects');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.history.replaceState({}, '', '/subjects?mode=progress');
         }
       } else if (response.fetch === 'navigate_planner' && onTabChange) {
         onTabChange('planner');

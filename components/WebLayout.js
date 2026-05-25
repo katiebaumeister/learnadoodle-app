@@ -2834,10 +2834,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const handleDoodleNavigate = useCallback((target) => {
     setShowDoodleSearchModal(false);
     if (target === 'navigate_planner_attendance') {
-      handleTabChange('planner');
+      handleTabChange('subjects');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.replaceState({}, '', '/planner?view=attendance');
-        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
+        window.history.replaceState({}, '', '/subjects?mode=progress');
+      }
+    } else if (target === 'navigate_subjects_progress') {
+      handleTabChange('subjects');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.replaceState({}, '', '/subjects?mode=progress');
       }
     } else if (target === 'navigate_planner') {
       handleTabChange('planner');
