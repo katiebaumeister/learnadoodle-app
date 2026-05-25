@@ -1837,6 +1837,10 @@ export default function TaskCreateModal({
         const status = String(event?.status || '').toLowerCase();
         if (status === 'canceled' || status === 'done') return false;
         if (event?.is_backlog === true) return false;
+        // Flexible events are intentionally movable and should not block fixed-time scheduling.
+        if (event?.is_flexible === true) return false;
+        // Recurring "master" rows are hidden templates; only concrete instances should conflict.
+        if (event?.recurrence_rule && String(event?.id || '') === String(event?.parent_event_id || '')) return false;
         if (event?.canceled_at || event?.deleted_at) return false;
         return true;
       };
@@ -2368,6 +2372,8 @@ export default function TaskCreateModal({
         const baseDate = new Date(dueDate);
         baseDate.setHours(0, 0, 0, 0);
         const eventEndDateToUse = dueDate;
+        const hasExplicitStartTime = Boolean(startTime.trim());
+        const isFlexibleForSave = allDay || !hasExplicitStartTime;
 
         let startDate;
         let endDate;
@@ -2377,8 +2383,7 @@ export default function TaskCreateModal({
           endDate = new Date(baseDate);
           endDate.setHours(23, 59, 0, 0);
         } else {
-          const hasStartTime = Boolean(startTime.trim());
-          if (!hasStartTime) {
+          if (!hasExplicitStartTime) {
             // Keep start/end optional by defaulting blank-time events to all-day bounds.
             startDate = new Date(baseDate);
             endDate = new Date(baseDate);
@@ -2505,7 +2510,7 @@ export default function TaskCreateModal({
               _status: 'scheduled',
               _source: 'manual',
               _tags: null,
-              _is_flexible: allDay,
+              _is_flexible: isFlexibleForSave,
               _event_type: normalizeEventTypeForPersistence(eventType),
               _subject_id: subjectIds[0] || null,
               _unit: unit.trim() || null,
@@ -2608,7 +2613,7 @@ export default function TaskCreateModal({
             _status: 'scheduled',
             _source: 'manual',
             _tags: null,
-            _is_flexible: allDay,
+            _is_flexible: isFlexibleForSave,
             _event_type: normalizeEventTypeForPersistence(eventType),
             _subject_id: subjectIds[0] || null,
             _unit: unit.trim() || null,

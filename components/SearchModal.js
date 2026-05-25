@@ -104,8 +104,6 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
   // Initialize when modal opens
   useEffect(() => {
     if (visible) {
-      setSkippedGuideThisOpen(false)
-      setSetupGuideReplay(false)
       initializeModal()
       // Animate in
       Animated.parallel([
