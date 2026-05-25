@@ -11,7 +11,7 @@ import {
 import { Clock, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2, Send } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
-import { formatDate, apiRequest, pushEventToGoogleCalendar } from '../../lib/apiClient';
+import { formatDate, apiRequest, pushEventToGoogleCalendar, getFamilyMembers } from '../../lib/apiClient';
 import { getMaterials } from '../../lib/services/materialsClient';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import { logDeleteEvent } from '../../app/services/plannerInstrumentation';
@@ -1435,19 +1435,31 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     let cancelled = false;
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from('family_members')
-          .select('child_id, child_scope, member_role, invite_status')
-          .eq('family_id', familyId)
-          .in('member_role', ['child', 'student'])
-          .eq('invite_status', 'accepted');
-        if (cancelled || error) {
-          if (!cancelled) setInvitedAssigneeIds([]);
-          return;
+        let rows = [];
+        if (Platform.OS === 'web') {
+          const { data, error } = await getFamilyMembers();
+          if (!cancelled && !error) {
+            rows = Array.isArray(data?.members)
+              ? data.members.filter((m) => {
+                  const role = String(m?.member_role || m?.role || '').toLowerCase();
+                  const status = String(m?.invite_status || '').toLowerCase();
+                  return (role === 'child' || role === 'student') && status === 'accepted';
+                })
+              : [];
+          }
+        } else {
+          const { data, error } = await supabase
+            .from('family_members')
+            .select('child_id, child_scope, member_role, invite_status')
+            .eq('family_id', familyId)
+            .in('member_role', ['child', 'student'])
+            .eq('invite_status', 'accepted');
+          if (!cancelled && !error) rows = Array.isArray(data) ? data : [];
         }
+        if (cancelled) return;
         const wanted = new Set(assigneeIds.map(String));
         const invited = new Set();
-        (data || []).forEach((m) => {
+        (rows || []).forEach((m) => {
           if (m?.child_id != null && wanted.has(String(m.child_id))) invited.add(String(m.child_id));
           let scope = m?.child_scope;
           if (typeof scope === 'string') {

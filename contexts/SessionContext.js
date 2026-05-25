@@ -140,7 +140,8 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
           // Ignore and continue fallback chain.
         }
         try {
-          if (memberRole == null) {
+          const allowSupabaseFamilyMembersFallback = Platform.OS !== 'web';
+          if (memberRole == null && allowSupabaseFamilyMembersFallback) {
             const { data: familyMember, error: fmError } = await supabase
               .from('family_members')
               .select('member_role, child_scope, child_id')
