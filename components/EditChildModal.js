@@ -57,9 +57,21 @@ export default function EditChildModal({
 }) {
   const CHILD_PROFILE_OPTIONS = useMemo(
     () => [
-      { id: 'guided', label: 'Guided' },
-      { id: 'standard', label: 'Standard' },
-      { id: 'independent', label: 'Independent' },
+      {
+        id: 'guided',
+        label: 'Guided',
+        summary: 'Best for high parent control and simple "follow assigned work" use. Child can view Home and Subjects, but cannot access Planner, Materials, or Progress and Schedule views.',
+      },
+      {
+        id: 'standard',
+        label: 'Standard',
+        summary: 'Best for most learners: broad visibility + engagement, without planning/content editing power. Child can view all but add/edit is constrained.',
+      },
+      {
+        id: 'independent',
+        label: 'Independent',
+        summary: 'Best for older/self-directed students who should manage day-to-day learning structure. Child can view and edit all, except family settings.',
+      },
     ],
     []
   );
@@ -754,6 +766,11 @@ export default function EditChildModal({
                           );
                         })}
                       </View>
+                      <Text style={styles.permissionPillSummary}>
+                        {CHILD_PROFILE_OPTIONS.find((option) => option.id === childPermissionProfile)?.summary
+                          || CHILD_PROFILE_OPTIONS[0]?.summary
+                          || ''}
+                      </Text>
                     </View>
                   ) : null}
                 </View>
@@ -1095,6 +1112,12 @@ const styles = StyleSheet.create({
   },
   permissionPillTextSelected: {
     color: '#1e5f8a',
+  },
+  permissionPillSummary: {
+    marginTop: 8,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#6b7280',
   },
   dangerZoneAccordion: {
     marginTop: 0,

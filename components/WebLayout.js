@@ -469,6 +469,30 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const childDoodleBotDisabled =
     session?.role_flags?.isChild === true &&
     familyUserControls.effectivePermissions?.canUseDoodleBot === false;
+  const learnerQuickStartSections = useMemo(() => {
+    const isChild = session?.role_flags?.isChild === true;
+    const isTutor = session?.role_flags?.isTutor === true;
+    if (isTutor) {
+      return ['Home', 'My students', 'Planner', 'Materials'];
+    }
+    if (!isChild) {
+      return ['Home', 'Planner', 'Subjects', 'Materials'];
+    }
+    const permissions = familyUserControls.effectivePermissions || {};
+    const sections = [];
+    if (permissions.canViewHome !== false) sections.push('Home');
+    if (permissions.canViewPlanner !== false) sections.push('Planner');
+    if (permissions.canViewSubjects !== false) sections.push('Subjects');
+    if (permissions.canViewLibrary !== false) sections.push('Materials');
+    return sections.length > 0 ? sections : ['Home'];
+  }, [
+    session?.role_flags?.isChild,
+    session?.role_flags?.isTutor,
+    familyUserControls.effectivePermissions?.canViewHome,
+    familyUserControls.effectivePermissions?.canViewPlanner,
+    familyUserControls.effectivePermissions?.canViewSubjects,
+    familyUserControls.effectivePermissions?.canViewLibrary,
+  ]);
 
   /** Home / planner data hydrate in WebContent in the background — shell never blocks on tab data. */
   /** null until first fetch — matches EventDetails query (deduped, limit 24) for Add to plan? chips */
@@ -4739,6 +4763,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         visible={Platform.OS === 'web' && learnerQuickStartOpen && !onboardingBlocked}
         onGotIt={handleLearnerGotIt}
         onSkip={handleLearnerDontShow}
+        visibleSections={learnerQuickStartSections}
       />
 
       <OnboardingModal

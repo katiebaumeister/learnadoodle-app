@@ -5,14 +5,34 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Modal } from 'react-native';
 
-export default function LearnerQuickStartModal({ visible, onGotIt, onSkip }) {
+const formatSectionList = (sections) => {
+  if (!Array.isArray(sections) || sections.length === 0) return 'Home';
+  if (sections.length === 1) return sections[0];
+  if (sections.length === 2) return `${sections[0]} and ${sections[1]}`;
+  return `${sections.slice(0, -1).join(', ')}, and ${sections[sections.length - 1]}`;
+};
+
+const buildBodyText = (sectionsInput) => {
+  const sections = (Array.isArray(sectionsInput) ? sectionsInput : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  const uniqueSections = [...new Set(sections)];
+  if (uniqueSections.length === 0) {
+    return 'Use Home to stay on track with your learning.';
+  }
+  const listLabel = formatSectionList(uniqueSections);
+  return `Use ${listLabel} to stay on track with your learning.`;
+};
+
+export default function LearnerQuickStartModal({ visible, onGotIt, onSkip, visibleSections = [] }) {
+  const bodyText = buildBodyText(visibleSections);
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.backdrop}>
         <View style={styles.card}>
           <Text style={styles.title}>Welcome to Learnadoodle</Text>
           <Text style={styles.body}>
-            Check upcoming events in Planner, course details in Subjects, and a sorted list of school materials in Library.
+            {bodyText}
           </Text>
           <View style={styles.row}>
             <TouchableOpacity onPress={onSkip} style={styles.skip} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>

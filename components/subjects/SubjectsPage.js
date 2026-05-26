@@ -33,6 +33,7 @@ import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsC
 import { supabase } from '../../lib/supabase';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { useSession } from '../../contexts/SessionContext';
+import { useOptionalFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
 import SubjectDetailPage from './SubjectDetailPage';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
@@ -196,11 +197,25 @@ export default function SubjectsPage({
   const toast = useToast();
   // Get session context for role-based filtering
   const session = useSession();
+  const familyUserControls = useOptionalFamilyUserControls();
   const safeChildren = Array.isArray(children) ? children : [];
   const safeAccessibleChildren = Array.isArray(accessibleChildren) ? accessibleChildren : [];
   
   // Determine if this is a child/student view
   const isChildView = userRole === 'child' || userRole === 'student';
+  const effectivePermissions = familyUserControls.effectivePermissions;
+  const childPermissionsResolved = !isChildView || !familyUserControls.isRestrictedViewer || !!effectivePermissions;
+  const canShowChildProgressTab = !isChildView
+    ? true
+    : childPermissionsResolved
+      ? effectivePermissions?.canViewProgress !== false
+      : false;
+  const canShowChildScheduleTab = !isChildView
+    ? true
+    : childPermissionsResolved
+      ? effectivePermissions?.canViewPlanner !== false
+      : false;
+  const showChildModeToggle = isChildView && (canShowChildProgressTab || canShowChildScheduleTab);
   const childId = isChildView && safeAccessibleChildren.length > 0 ? (safeAccessibleChildren[0]?.id ?? safeAccessibleChildren[0]) : null;
   const modeStorageKey = useMemo(
     () => `${SUBJECTS_MODE_STORAGE_PREFIX}:${familyId || 'unknown'}:${isChildView ? 'child' : 'family'}`,
@@ -1485,7 +1500,14 @@ export default function SubjectsPage({
       ) : null}
 
       {showTermRow && registeredTerms.length > 0 ? (
-        <View style={[styles.filterRow, !showInlineChildrenFilters && styles.coursesFilterRowTop, styles.filterRowBelowChildren]}>
+        <View
+          style={[
+            styles.filterRow,
+            !showInlineChildrenFilters && styles.coursesFilterRowTop,
+            styles.filterRowBelowChildren,
+            isChildView && styles.childTermFilterRowSpacing,
+          ]}
+        >
           <Text style={styles.filterLabel}>Term</Text>
           <View style={styles.filterChipsWrap}>
             <View style={styles.filterChecklist}>
@@ -1537,6 +1559,7 @@ export default function SubjectsPage({
   );
   }, [
     showInlineChildrenFilters,
+    isChildView,
     selectedModeFilter,
     effectiveCoursesChildIds,
     toggleCourseChildFilter,
@@ -1910,9 +1933,21 @@ export default function SubjectsPage({
   };
 
   const handleModeFilterChange = useCallback((nextMode) => {
-    const safeMode = nextMode === 'plan' || nextMode === 'progress' ? nextMode : 'view';
+    let safeMode = nextMode === 'plan' || nextMode === 'progress' ? nextMode : 'view';
+    if (safeMode === 'plan' && !canShowChildScheduleTab) safeMode = 'view';
+    if (safeMode === 'progress' && !canShowChildProgressTab) safeMode = 'view';
     setSelectedModeFilter(safeMode);
-  }, []);
+  }, [canShowChildScheduleTab, canShowChildProgressTab]);
+
+  useEffect(() => {
+    if (selectedModeFilter === 'plan' && !canShowChildScheduleTab) {
+      setSelectedModeFilter(canShowChildProgressTab ? 'progress' : 'view');
+      return;
+    }
+    if (selectedModeFilter === 'progress' && !canShowChildProgressTab) {
+      setSelectedModeFilter(canShowChildScheduleTab ? 'plan' : 'view');
+    }
+  }, [selectedModeFilter, canShowChildScheduleTab, canShowChildProgressTab]);
 
   const renderSubjectsExportModal = () => (
     <Modal
@@ -2154,9 +2189,8 @@ export default function SubjectsPage({
     );
   }
 
-  const childDisplayName = safeAccessibleChildren[0]?.first_name || safeAccessibleChildren[0]?.name || 'Your';
-  const subjectsHeaderTitle = isChildView && childId
-    ? (childDisplayName === 'Your' ? 'Your Subjects' : `${childDisplayName}'s Subjects`)
+  const subjectsHeaderTitle = isChildView
+    ? 'YOUR SUBJECTS'
     : "YOUR FAMILY'S COURSES";
   const showHeaderYearNavigator = !isChildView;
   return (
@@ -2292,6 +2326,69 @@ export default function SubjectsPage({
               >
                 <Download size={20} color="rgba(15,23,42,0.7)" />
               </TouchableOpacity>
+            </View>
+          </View>
+        )}
+        {showChildModeToggle && (
+          <View style={styles.headerModeWrap}>
+            <View style={styles.headerModeControls}>
+              <View style={styles.modeSegmentedControl}>
+                <TouchableOpacity
+                  style={[
+                    styles.modeSegment,
+                    selectedModeFilter === 'view' && styles.modeSegmentActive,
+                  ]}
+                  onPress={() => handleModeFilterChange('view')}
+                >
+                  <Text
+                    style={[
+                      styles.modeSegmentText,
+                      selectedModeFilter === 'view' && styles.modeSegmentTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Subjects
+                  </Text>
+                </TouchableOpacity>
+                {canShowChildProgressTab && (
+                  <TouchableOpacity
+                    style={[
+                      styles.modeSegment,
+                      selectedModeFilter === 'progress' && styles.modeSegmentActive,
+                    ]}
+                    onPress={() => handleModeFilterChange('progress')}
+                  >
+                    <Text
+                      style={[
+                        styles.modeSegmentText,
+                        selectedModeFilter === 'progress' && styles.modeSegmentTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Progress
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                {canShowChildScheduleTab && (
+                  <TouchableOpacity
+                    style={[
+                      styles.modeSegment,
+                      selectedModeFilter === 'plan' && styles.modeSegmentActive,
+                    ]}
+                    onPress={() => handleModeFilterChange('plan')}
+                  >
+                    <Text
+                      style={[
+                        styles.modeSegmentText,
+                        selectedModeFilter === 'plan' && styles.modeSegmentTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Schedule
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           </View>
         )}
@@ -3274,6 +3371,10 @@ const styles = StyleSheet.create({
   filterRowBelowChildren: {
     marginTop: 0,
     marginBottom: 8,
+  },
+  childTermFilterRowSpacing: {
+    marginTop: 30,
+    paddingTop: 6,
   },
   coursesFilterRowTop: {
     marginTop: 24,
