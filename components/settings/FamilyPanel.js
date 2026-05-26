@@ -75,6 +75,37 @@ function getFamilyRowEditValue(storedFamilyName) {
   return stripYouLabelForEdit(storedFamilyName);
 }
 
+const formatSchoolYearLabel = (startYear) => `${startYear}/${String(startYear + 1).slice(-2)}`;
+
+function parseSchoolYearLabel(label) {
+  const text = String(label || '').trim();
+  const match = text.match(/^(\d{4})\s*\/\s*(\d{2,4})$/);
+  if (!match) return null;
+  const start = Number(match[1]);
+  let end = Number(match[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (end < 100) end = Math.floor(start / 100) * 100 + end;
+  if (end !== start + 1) return null;
+  return { start, end };
+}
+
+function normalizeSchoolYearLabel(label) {
+  const parsed = parseSchoolYearLabel(label);
+  return parsed ? formatSchoolYearLabel(parsed.start) : '';
+}
+
+function getCurrentSchoolYearLabel() {
+  const now = new Date();
+  const startYear = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return formatSchoolYearLabel(startYear);
+}
+
+function getFallbackSchoolYearOptions(count = 8) {
+  const now = new Date();
+  const currentStart = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return Array.from({ length: count }, (_, idx) => formatSchoolYearLabel(currentStart + idx));
+}
+
 /** Sidebar + subscription screen product label (matches plan tier). */
 function subscriptionSidebarProductLabel(planKey) {
   switch (planKey) {
@@ -156,6 +187,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [showGoalChangeConfirmModal, setShowGoalChangeConfirmModal] = useState(false);
   const [savingOnboardingGoal, setSavingOnboardingGoal] = useState(false);
   const goalDropdownRef = useRef(null);
+  const coursesSchoolYearDropdownRef = useRef(null);
   const lastProfileSaveRef = useRef(0);
   const lastNotificationToastAtRef = useRef(0);
   const notificationTogglePendingRef = useRef(false);
@@ -274,7 +306,25 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [editSubjectNotes, setEditSubjectNotes] = useState('');
   const [savingSubject, setSavingSubject] = useState(false);
   const [openingPlanForSubjectId, setOpeningPlanForSubjectId] = useState(null);
+  const [selectedCoursesSchoolYear, setSelectedCoursesSchoolYear] = useState(getCurrentSchoolYearLabel());
+  const [showCoursesSchoolYearDropdown, setShowCoursesSchoolYearDropdown] = useState(false);
   const [childrenWithAvatars, setChildrenWithAvatars] = useState([]);
+
+  useEffect(() => {
+    if (!showCoursesSchoolYearDropdown || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const handleOutsidePointer = (event) => {
+      const rawNode = coursesSchoolYearDropdownRef.current;
+      const container = rawNode?._nativeNode || rawNode;
+      if (!container || (typeof container.contains === 'function' && container.contains(event.target))) return;
+      setShowCoursesSchoolYearDropdown(false);
+    };
+    document.addEventListener('mousedown', handleOutsidePointer);
+    document.addEventListener('touchstart', handleOutsidePointer);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsidePointer);
+      document.removeEventListener('touchstart', handleOutsidePointer);
+    };
+  }, [showCoursesSchoolYearDropdown]);
   // Account deletion (Profile Danger Zone)
   const [showDangerZoneAccount, setShowDangerZoneAccount] = useState(false);
   const [confirmDeleteAccountPhrase, setConfirmDeleteAccountPhrase] = useState('');
@@ -860,7 +910,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     try {
       const { data, error } = await supabase
         .from('subject')
-        .select('id, name, child_id, grade, notes, created_at, updated_at')
+        .select('id, name, child_id, grade, notes, school_year, created_at, updated_at')
         .eq('family_id', familyId)
         .order('name');
       
@@ -924,6 +974,63 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       window.removeEventListener('refreshSubjects', handler);
     };
   }, []);
+
+  const preferredCoursesSchoolYearLabel = useMemo(() => (
+    normalizeSchoolYearLabel(
+      preloadedPlannerData?.settings?.school_year_label
+      || preloadedPlannerData?.settings?.default_school_year
+      || getCurrentSchoolYearLabel()
+    ) || getCurrentSchoolYearLabel()
+  ), [
+    preloadedPlannerData?.settings?.school_year_label,
+    preloadedPlannerData?.settings?.default_school_year,
+  ]);
+
+  const coursesSchoolYearOptions = useMemo(() => {
+    const fromSubjects = (subjects || [])
+      .map((subject) => normalizeSchoolYearLabel(subject?.school_year))
+      .filter(Boolean);
+    const merged = Array.from(new Set([
+      ...fromSubjects,
+      preferredCoursesSchoolYearLabel,
+      ...getFallbackSchoolYearOptions(8),
+    ]));
+    return merged.sort((a, b) => {
+      const aStart = parseSchoolYearLabel(a)?.start ?? 0;
+      const bStart = parseSchoolYearLabel(b)?.start ?? 0;
+      return aStart - bStart;
+    });
+  }, [subjects, preferredCoursesSchoolYearLabel]);
+
+  useEffect(() => {
+    const normalizedSelected = normalizeSchoolYearLabel(selectedCoursesSchoolYear);
+    if (normalizedSelected && coursesSchoolYearOptions.includes(normalizedSelected)) return;
+    if (coursesSchoolYearOptions.length > 0) {
+      const fallback = coursesSchoolYearOptions.includes(preferredCoursesSchoolYearLabel)
+        ? preferredCoursesSchoolYearLabel
+        : coursesSchoolYearOptions[0];
+      if (fallback !== selectedCoursesSchoolYear) {
+        setSelectedCoursesSchoolYear(fallback);
+      }
+      return;
+    }
+    const fallback = preferredCoursesSchoolYearLabel || getCurrentSchoolYearLabel();
+    if (fallback !== selectedCoursesSchoolYear) {
+      setSelectedCoursesSchoolYear(fallback);
+    }
+  }, [coursesSchoolYearOptions, preferredCoursesSchoolYearLabel, selectedCoursesSchoolYear]);
+
+  useEffect(() => {
+    if (activeSection !== 'courses' && showCoursesSchoolYearDropdown) {
+      setShowCoursesSchoolYearDropdown(false);
+    }
+  }, [activeSection, showCoursesSchoolYearDropdown]);
+
+  useEffect(() => {
+    if (showAddSubjectModal && showCoursesSchoolYearDropdown) {
+      setShowCoursesSchoolYearDropdown(false);
+    }
+  }, [showAddSubjectModal, showCoursesSchoolYearDropdown]);
 
   // Handle browser back button for About page
   useEffect(() => {
@@ -2888,21 +2995,25 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 onValueChange={markNotificationToggle(setNotifMotivation)}
                 label="Motivation & engagement"
               />
-              <NotificationCheckbox
-                value={notifParentGuidance}
-                onValueChange={markNotificationToggle(setNotifParentGuidance)}
-                label="Parent guidance"
-              />
-              <NotificationCheckbox
-                value={notifProductUpdates}
-                onValueChange={markNotificationToggle(setNotifProductUpdates)}
-                label="Product updates"
-              />
-              <NotificationCheckbox
-                value={notifAnnouncements}
-                onValueChange={markNotificationToggle(setNotifAnnouncements)}
-                label="Announcements & offers"
-              />
+              {!isChildMode ? (
+                <>
+                  <NotificationCheckbox
+                    value={notifParentGuidance}
+                    onValueChange={markNotificationToggle(setNotifParentGuidance)}
+                    label="Parent guidance"
+                  />
+                  <NotificationCheckbox
+                    value={notifProductUpdates}
+                    onValueChange={markNotificationToggle(setNotifProductUpdates)}
+                    label="Product updates"
+                  />
+                  <NotificationCheckbox
+                    value={notifAnnouncements}
+                    onValueChange={markNotificationToggle(setNotifAnnouncements)}
+                    label="Announcements & offers"
+                  />
+                </>
+              ) : null}
             </View>
           </View>
         );
@@ -3077,6 +3188,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <Text style={styles.membersEmptyText}>No children added yet</Text>
             ) : children.map((child) => {
               const childName = child.name || child.first_name || 'Child';
+              const childIsCurrentViewer = isChildMode && (
+                (currentChildId != null && String(currentChildId) === String(child.id))
+                || (viewingAsChildId != null && String(viewingAsChildId) === String(child.id))
+              );
               const isHovered = hoveredChildId === child.id;
               const gradeLabel =
                 child.grade ?? child.grade_level ?? child.grade_label ?? null;
@@ -3125,6 +3240,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       <View style={styles.memberRowChildNameRow}>
                         <Text style={styles.memberRowName} numberOfLines={1}>
                           {childName}
+                          {childIsCurrentViewer ? ' (you)' : ''}
                           {child.archived ? ' (Archived)' : ''}
                         </Text>
                         {!isChildMode ? (
@@ -3341,7 +3457,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       
       case 'courses': {
         // In child mode, only show subjects assigned to the logged-in child (child_id empty = all, or child_id contains currentChildId)
-        const coursesList = isChildMode && currentChildId
+        const baseCoursesList = isChildMode && currentChildId
           ? subjects.filter((s) => {
               const cid = s.child_id == null ? '' : String(s.child_id).trim();
               if (cid === '') return true;
@@ -3349,16 +3465,87 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               return ids.some((id) => String(id) === String(currentChildId));
             })
           : subjects;
+        const normalizedSelectedCoursesYear = normalizeSchoolYearLabel(selectedCoursesSchoolYear);
+        const coursesList = baseCoursesList.filter((subject) => {
+          const subjectYear = normalizeSchoolYearLabel(subject?.school_year);
+          const effectiveSubjectYear = subjectYear || preferredCoursesSchoolYearLabel;
+          return !normalizedSelectedCoursesYear || effectiveSubjectYear === normalizedSelectedCoursesYear;
+        });
         return (
           <View style={styles.mainContentInner}>
-            <View style={styles.coursesHeader}>
+            <View
+              style={[
+                styles.coursesHeader,
+                showCoursesSchoolYearDropdown && styles.coursesHeaderOpen,
+              ]}
+            >
               <View style={styles.coursesTitleContainer}>
                 <Text style={[styles.mainContentTitle, styles.coursesTitle]}>Subjects</Text>
+                <View
+                  ref={coursesSchoolYearDropdownRef}
+                  style={[
+                    styles.coursesSchoolYearSelectorWrap,
+                    showCoursesSchoolYearDropdown && styles.coursesSchoolYearSelectorWrapOpen,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.coursesSchoolYearDropdownAnchor,
+                      showCoursesSchoolYearDropdown && styles.coursesSchoolYearDropdownAnchorOpen,
+                    ]}
+                  >
+                    <TouchableOpacity
+                      style={styles.coursesSchoolYearTrigger}
+                      onPress={() => setShowCoursesSchoolYearDropdown((prev) => !prev)}
+                      activeOpacity={0.82}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={styles.coursesSchoolYearTriggerText}>{`${selectedCoursesSchoolYear} School Year`}</Text>
+                      <ChevronDown size={14} color="#6B7280" />
+                    </TouchableOpacity>
+                    {showCoursesSchoolYearDropdown ? (
+                      <View style={styles.coursesSchoolYearDropdownMenu}>
+                        {coursesSchoolYearOptions.map((label, index) => {
+                          const selected = label === selectedCoursesSchoolYear;
+                          const isLast = index === coursesSchoolYearOptions.length - 1;
+                          return (
+                            <TouchableOpacity
+                              key={label}
+                              style={[
+                                styles.coursesSchoolYearDropdownOption,
+                                !isLast && styles.coursesSchoolYearDropdownOptionWithDivider,
+                              ]}
+                              onPress={() => {
+                                setSelectedCoursesSchoolYear(label);
+                                setShowCoursesSchoolYearDropdown(false);
+                              }}
+                              activeOpacity={0.82}
+                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                            >
+                              <Text
+                                style={[
+                                  styles.coursesSchoolYearDropdownOptionText,
+                                  selected && styles.coursesSchoolYearDropdownOptionTextActive,
+                                ]}
+                              >
+                                {label}
+                              </Text>
+                              {selected ? <Check size={14} color="#111827" /> : null}
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
               </View>
               {!isChildMode && (
                 <TouchableOpacity
                   style={styles.coursesAddButton}
-                  onPress={() => setShowAddSubjectModal(true)}
+                  onPress={() => {
+                    setShowCoursesSchoolYearDropdown(false);
+                    setShowAddSubjectModal(true);
+                  }}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <Plus size={16} color="#374151" />
@@ -3366,6 +3553,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 </TouchableOpacity>
               )}
             </View>
+            <View style={styles.coursesHeaderDivider} />
             
             {loadingSubjects ? (
               <View style={styles.loadingContainer}>
@@ -3376,12 +3564,17 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <View style={styles.coursesEmptyState}>
                 <Text style={styles.coursesEmptyTitle}>No subjects yet</Text>
                 <Text style={styles.coursesEmptyDescription}>
-                  {isChildMode ? 'No courses are assigned to you yet.' : 'Create subjects to organize learning.'}
+                  {isChildMode
+                    ? `No courses are assigned to you for ${selectedCoursesSchoolYear} yet.`
+                    : `No subjects found for ${selectedCoursesSchoolYear}. Add a subject to organize learning.`}
                 </Text>
                 {!isChildMode && (
                   <TouchableOpacity
                     style={styles.coursesEmptyButton}
-                    onPress={() => setShowAddSubjectModal(true)}
+                    onPress={() => {
+                      setShowCoursesSchoolYearDropdown(false);
+                      setShowAddSubjectModal(true);
+                    }}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <Plus size={16} color="#5AAEF2" />
@@ -5111,6 +5304,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         }} 
         familyId={family?.id || familyId}
         subject={editingSubjectInModal}
+        initialSchoolYear={selectedCoursesSchoolYear}
         children={family?.children || []}
         onSubjectAdded={() => {
           loadSubjects();
@@ -5588,14 +5782,101 @@ function createStyles(tokens) {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'flex-start',
-      marginBottom: 24,
+      marginBottom: 0,
       marginTop: 0,
+      position: 'relative',
+      zIndex: 1,
+    },
+    coursesHeaderOpen: {
+      zIndex: 200,
+      ...(Platform.OS === 'web' && { isolation: 'isolate' }),
     },
     coursesTitleContainer: {
       marginBottom: 0,
+      gap: 0,
     },
     coursesTitle: {
-      marginBottom: 0,
+      marginBottom: SettingsLayout.dividerSpacing,
+    },
+    coursesSchoolYearSelectorWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginBottom: SettingsLayout.labelSpacing,
+      position: 'relative',
+      zIndex: 2,
+    },
+    coursesSchoolYearSelectorWrapOpen: {
+      zIndex: 120,
+      ...(Platform.OS === 'web' && { isolation: 'isolate' }),
+    },
+    coursesSchoolYearDropdownAnchor: {
+      position: 'relative',
+      zIndex: 3,
+    },
+    coursesSchoolYearDropdownAnchorOpen: {
+      zIndex: 130,
+      ...(Platform.OS === 'web' && { isolation: 'isolate' }),
+    },
+    coursesSchoolYearTrigger: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      minHeight: 24,
+    },
+    coursesSchoolYearTriggerText: {
+      ...SettingsTypography.cardTitle,
+      color: '#374151',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    coursesHeaderDivider: {
+      height: 1,
+      backgroundColor: '#e5e7eb',
+      marginTop: 0,
+      marginBottom: SettingsLayout.dividerSpacing,
+    },
+    coursesSchoolYearDropdownMenu: {
+      position: 'absolute',
+      top: 28,
+      left: 0,
+      minWidth: 176,
+      maxHeight: 260,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: '#e5e7eb',
+      backgroundColor: '#FFFFFF',
+      overflow: 'hidden',
+      ...(Platform.OS === 'web' && {
+        boxShadow: '0 4px 8px rgba(0,0,0,0.14)',
+      }),
+    },
+    coursesSchoolYearDropdownOption: {
+      minHeight: 40,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      backgroundColor: '#FFFFFF',
+    },
+    coursesSchoolYearDropdownOptionWithDivider: {
+      borderBottomWidth: 1,
+      borderBottomColor: '#F3F4F6',
+    },
+    coursesSchoolYearDropdownOptionText: {
+      fontSize: 14,
+      color: '#374151',
+      fontWeight: '400',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    coursesSchoolYearDropdownOptionTextActive: {
+      color: '#111827',
+      fontWeight: '700',
     },
     membersInviteButton: {
       flexDirection: 'row',
@@ -8018,6 +8299,8 @@ function createStyles(tokens) {
     coursesAddButton: {
       flexDirection: 'row',
       alignItems: 'center',
+      alignSelf: 'flex-end',
+      marginBottom: SettingsLayout.labelSpacing,
       gap: 6,
       paddingVertical: 6,
       paddingHorizontal: 12,
@@ -8091,6 +8374,8 @@ function createStyles(tokens) {
     },
     subjectsList: {
       // No gap needed - dividers handle spacing
+      position: 'relative',
+      zIndex: 1,
     },
     // Danger Zone (courses) - same pattern as Edit Child
     dangerZone: {

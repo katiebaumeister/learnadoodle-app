@@ -911,8 +911,7 @@ export default function EmbeddedNotificationCenter({
                   <View style={styles.emptyCaughtUp}>
                     <Text style={styles.emptyCaughtUpTitle}>Nothing coming up</Text>
                     <Text style={styles.emptyCaughtUpHint}>
-                      This list shows assignments, exams, projects, and activities—or any class event you sent to a
-                      student. Dates use the scheduled time on the calendar.
+                      Any class event or assignment you sent to a student will appear here.
                     </Text>
                   </View>
                 ) : null}
@@ -1191,7 +1190,7 @@ const styles = StyleSheet.create({
   },
   tabs: {
     flexDirection: 'row',
-    gap: 5,
+    gap: 6,
     marginBottom: 10,
   },
   tab: {
@@ -1199,9 +1198,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 5,
-    paddingHorizontal: 6,
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
     borderRadius: 999,
     backgroundColor: 'rgba(248, 250, 252, 0.65)',
     borderWidth: 1,
@@ -1225,7 +1224,7 @@ const styles = StyleSheet.create({
     }),
   },
   tabText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: '#94a3b8',
     textAlign: 'center',
@@ -1239,13 +1238,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   countBadge: {
-    minWidth: 16,
-    height: 16,
-    borderRadius: 8,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: 'rgba(226, 232, 240, 0.95)',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 3,
+    paddingHorizontal: 4,
   },
   countBadgeActive: {
     backgroundColor: 'rgba(99, 102, 241, 0.78)',

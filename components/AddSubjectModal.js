@@ -143,6 +143,8 @@ export default function AddSubjectModal({
   const [openingAddUnits, setOpeningAddUnits] = useState(false);
   const finalizedSubjectSaveRef = useRef(false);
   const materialDropdownRef = useRef(null);
+  const schoolYearDropdownRef = useRef(null);
+  const schoolTermDropdownRef = useRef(null);
 
   useEffect(() => {
     draftSubjectIdRef.current = draftSubjectId || null;
@@ -693,6 +695,38 @@ export default function AddSubjectModal({
     }
   }, [children, visible, defaultChildId, defaultChildIds, selectedChildIds.length, subject]);
 
+  useEffect(() => {
+    if (!showSchoolYearDropdown || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const handleOutsidePointer = (event) => {
+      const rawNode = schoolYearDropdownRef.current;
+      const container = rawNode?._nativeNode || rawNode;
+      if (!container || (typeof container.contains === 'function' && container.contains(event.target))) return;
+      setShowSchoolYearDropdown(false);
+    };
+    document.addEventListener('mousedown', handleOutsidePointer);
+    document.addEventListener('touchstart', handleOutsidePointer);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsidePointer);
+      document.removeEventListener('touchstart', handleOutsidePointer);
+    };
+  }, [showSchoolYearDropdown]);
+
+  useEffect(() => {
+    if (!showSchoolTermDropdown || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const handleOutsidePointer = (event) => {
+      const rawNode = schoolTermDropdownRef.current;
+      const container = rawNode?._nativeNode || rawNode;
+      if (!container || (typeof container.contains === 'function' && container.contains(event.target))) return;
+      setShowSchoolTermDropdown(false);
+    };
+    document.addEventListener('mousedown', handleOutsidePointer);
+    document.addEventListener('touchstart', handleOutsidePointer);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsidePointer);
+      document.removeEventListener('touchstart', handleOutsidePointer);
+    };
+  }, [showSchoolTermDropdown]);
+
   const fetchChildren = async () => {
     try {
       setLoadingChildren(true);
@@ -1017,7 +1051,7 @@ export default function AddSubjectModal({
             <View style={styles.formGroup}>
               <View style={{ flexDirection: 'row', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                 <View style={{ flex: 1, minWidth: 200 }}>
-                  <Text style={styles.label}>Grade Level (Optional)</Text>
+                  <Text style={styles.label}>Grade Level</Text>
                   <ScrollView 
                     horizontal 
                     showsHorizontalScrollIndicator={false}
@@ -1046,7 +1080,7 @@ export default function AddSubjectModal({
                   </ScrollView>
                 </View>
                 <View style={{ width: 160, minWidth: 120 }}>
-                  <Text style={styles.label}>Credits (Optional)</Text>
+                  <Text style={styles.label}>Credits</Text>
                   <TextInput
                     style={styles.input}
                     value={credits}
@@ -1080,7 +1114,10 @@ export default function AddSubjectModal({
                   (showSchoolYearDropdown || showSchoolTermDropdown) && styles.schoolScopeRowOpen,
                 ]}
               >
-                <View style={[styles.schoolScopeField, showSchoolYearDropdown && styles.schoolScopeFieldOpen]}>
+                <View
+                  ref={schoolYearDropdownRef}
+                  style={[styles.schoolScopeField, showSchoolYearDropdown && styles.schoolScopeFieldOpen]}
+                >
                   <Text style={styles.label}>School year</Text>
                   <TouchableOpacity
                     style={styles.dropdownButton}
@@ -1114,7 +1151,10 @@ export default function AddSubjectModal({
                     </View>
                   )}
                 </View>
-                <View style={[styles.schoolScopeField, showSchoolTermDropdown && styles.schoolScopeFieldOpen]}>
+                <View
+                  ref={schoolTermDropdownRef}
+                  style={[styles.schoolScopeField, showSchoolTermDropdown && styles.schoolScopeFieldOpen]}
+                >
                   <Text style={styles.label}>Term</Text>
                   <TouchableOpacity
                     style={styles.dropdownButton}

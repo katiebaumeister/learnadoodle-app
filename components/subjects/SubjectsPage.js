@@ -2515,6 +2515,7 @@ export default function SubjectsPage({
             selectedChildFilter={selectedChildFilter}
             selectedYearFilter={selectedYearFilter}
             hideYearHeader
+            isChildView={isChildView}
             onRefreshSubjectDetail={refreshSubjectDetailById}
             onEditChild={onEditChild}
             onOpenScheduleTab={() => handleModeFilterChange('plan')}

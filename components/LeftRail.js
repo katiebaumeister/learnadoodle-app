@@ -158,8 +158,8 @@ export default function LeftRail({
         // { key: 'subjects', label: 'Learning', icon: null }, // Hidden from sidebar
       ];
 
-      // Same sidebar structure for parent and child (exact same UI); content is child-scoped in WebContent
-      if (userRole === 'child') {
+      // Same sidebar structure for learner roles; content is child-scoped in WebContent
+      if (userRole === 'child' || userRole === 'student') {
         return allItems.filter((item) => {
           if (item.key === 'records' || item.key === 'explore' || item.key === 'profile') return false;
           if (item.key === 'planner' && effectivePermissions.canViewPlanner === false) return false;
