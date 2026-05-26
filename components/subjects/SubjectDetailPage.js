@@ -2097,6 +2097,18 @@ export default function SubjectDetailPage({
       onEditSubject?.(initialEvent.subject_id || initialEvent.subjectId);
     }
   }, [onEditSubject]);
+  const handleEventContextMenu = useCallback((event, nativeEvent) => {
+    if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    nativeEvent?.preventDefault?.();
+    nativeEvent?.stopPropagation?.();
+    const x = nativeEvent?.clientX ?? nativeEvent?.nativeEvent?.clientX ?? 0;
+    const y = nativeEvent?.clientY ?? nativeEvent?.nativeEvent?.clientY ?? 0;
+    window.dispatchEvent(
+      new CustomEvent('plannerEventContextMenu', {
+        detail: { event, position: { x, y } },
+      })
+    );
+  }, []);
   const handleOpenAddEventForDate = useCallback((dateKey) => {
     const normKey = String(dateKey || '').slice(0, 10);
     if (!normKey || Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -3145,12 +3157,33 @@ export default function SubjectDetailPage({
                           const isAttended = statusTone === 'attended';
                           const canToggleAttendance = !!record?.event_id && !!record?.day_date;
                           return (
-                            <TouchableOpacity
+                            <View
                               key={record.id}
+                              {...(Platform.OS === 'web' && {
+                                'data-event-id': String(event?.id || ''),
+                                onMouseDown: (e) => {
+                                  if (!event) return;
+                                  const button = e?.button ?? e?.nativeEvent?.button;
+                                  if (button !== 2) return;
+                                  e.preventDefault?.();
+                                  e.stopPropagation?.();
+                                  handleEventContextMenu(event, e?.nativeEvent || e);
+                                },
+                                onContextMenu: (e) => {
+                                  if (!event) return;
+                                  e.preventDefault?.();
+                                  e.stopPropagation?.();
+                                  handleEventContextMenu(event, e?.nativeEvent || e);
+                                },
+                              })}
+                            >
+                            <TouchableOpacity
                               style={styles.attendanceItem}
                               onPress={() => event && handleOpenEventDetails(event.id, event)}
                               activeOpacity={0.7}
-                              {...(Platform.OS === 'web' && { cursor: event ? 'pointer' : 'default' })}
+                              {...(Platform.OS === 'web' && {
+                                cursor: event ? 'pointer' : 'default',
+                              })}
                             >
                               <TouchableOpacity
                                 style={[
@@ -3197,6 +3230,7 @@ export default function SubjectDetailPage({
                               </View>
                               <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
                             </TouchableOpacity>
+                            </View>
                           );
                         })}
                       </View>
@@ -3295,7 +3329,27 @@ export default function SubjectDetailPage({
                     gAtt &&
                     (gAtt.needHelp || gAtt.needsSubmissionReview);
                   return (
-                    <Wrapper key={item.id} style={styles.gradeItem} {...wrapperProps}>
+                    <View
+                      key={item.id}
+                      {...(Platform.OS === 'web' && {
+                        'data-event-id': String(item?.event?.id || item?.eventId || ''),
+                        onMouseDown: (e) => {
+                          if (!item.event) return;
+                          const button = e?.button ?? e?.nativeEvent?.button;
+                          if (button !== 2) return;
+                          e.preventDefault?.();
+                          e.stopPropagation?.();
+                          handleEventContextMenu(item.event, e?.nativeEvent || e);
+                        },
+                        onContextMenu: (e) => {
+                          if (!item.event) return;
+                          e.preventDefault?.();
+                          e.stopPropagation?.();
+                          handleEventContextMenu(item.event, e?.nativeEvent || e);
+                        },
+                      })}
+                    >
+                    <Wrapper style={styles.gradeItem} {...wrapperProps}>
                       <View style={styles.gradeItemContent}>
                         <Text style={styles.gradeItemName}>
                           {needsGradeMark ? '* ' : ''}
@@ -3331,6 +3385,7 @@ export default function SubjectDetailPage({
                         ) : null}
                       </View>
                     </Wrapper>
+                    </View>
                   );
                 })}
               </View>

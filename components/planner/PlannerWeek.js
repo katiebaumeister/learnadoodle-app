@@ -77,7 +77,7 @@ function useWeekData(weekStart, childIds, familyId) {
 }
 
 // Day Column Component
-function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChanged, onEventClick, dayStatus, children = [], focusedChildId = null, draggedEventId = null, onMouseDragStart = null, familyId = null }) {
+function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChanged, onEventClick, onEventRightClick, dayStatus, children = [], focusedChildId = null, draggedEventId = null, onMouseDragStart = null, familyId = null }) {
   const total = hours.endMin - hours.startMin;
   const step = hours.step;
   const isBlackout = dayStatus === 'off' || (windows.length === 0 && dayStatus === 'off');
@@ -200,6 +200,13 @@ function DayColumn({ date, dateIso, hours, windows, events, onAdd, onEventChange
                         if (onEventClick) {
                           onEventClick(ev);
                         }
+                      }
+                    },
+                    onContextMenu: (e) => {
+                      if (onEventRightClick) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onEventRightClick(ev, e.nativeEvent || e);
                       }
                     },
                   })}
@@ -2481,6 +2488,7 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
                     }}
                     onEventChanged={handleEventChanged}
                     onEventClick={handleEventClick}
+                    onEventRightClick={handleEventRightClick}
                     onMouseDragStart={readOnly ? undefined : handleMouseDragStart}
                   />
                 );

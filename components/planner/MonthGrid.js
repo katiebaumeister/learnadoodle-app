@@ -1335,15 +1335,16 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                         const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
                         const canDrag = !readOnly && ev.status !== 'done' && !isBlackout && !isHoliday;
                         
-                        if (Platform.OS === 'web' && canDrag) {
-                          // Web: Use View with web-specific drag handlers
+                        if (Platform.OS === 'web') {
+                          // Web: always use web handlers so context menu works on done events too.
+                          // Drag start itself still respects canDrag.
                           return (
                             <View
                               key={ev.id || `event-${index}`}
                               {...(Platform.OS === 'web' && {
                                 onMouseDown: (e) => {
                                   // Only start drag on left mouse button
-                                  if (e.button === 0) {
+                                  if (e.button === 0 && canDrag) {
                                     handleMouseDragStart(e, ev.id, dayDateIso);
                                   }
                                 },

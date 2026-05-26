@@ -12,6 +12,7 @@ export default function TodayScheduleCard({
   children = [],
   subjects = [],
   onOpenPlanner,
+  onOpenEvent,
   onAddBlock,
   suggestedRhythms = [],
   onAddSuggestedRhythm,
@@ -105,6 +106,18 @@ export default function TodayScheduleCard({
     },
     [showAttendanceToggle, isEventDone]
   );
+  const handleEventContextMenu = useCallback((event, nativeEvent) => {
+    if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    nativeEvent?.preventDefault?.();
+    nativeEvent?.stopPropagation?.();
+    const x = nativeEvent?.clientX ?? nativeEvent?.nativeEvent?.clientX ?? 0;
+    const y = nativeEvent?.clientY ?? nativeEvent?.nativeEvent?.clientY ?? 0;
+    window.dispatchEvent(
+      new CustomEvent('plannerEventContextMenu', {
+        detail: { event, position: { x, y } },
+      })
+    );
+  }, []);
 
   const formatTime = (timeString) => {
     if (!timeString) return '';
@@ -231,10 +244,32 @@ export default function TodayScheduleCard({
             const showSubjectPill = Boolean(event.subject_id && !subjectName);
 
             return (
-              <View key={event.id} style={styles.eventRow}>
+              <View
+                key={event.id}
+                style={styles.eventRow}
+                {...(Platform.OS === 'web' && {
+                  'data-event-id': String(event?.id || ''),
+                  onMouseDown: (e) => {
+                    const button = e?.button ?? e?.nativeEvent?.button;
+                    if (button !== 2) return;
+                    e.preventDefault?.();
+                    e.stopPropagation?.();
+                    handleEventContextMenu(event, e?.nativeEvent || e);
+                  },
+                  onContextMenu: (e) => {
+                    e.preventDefault?.();
+                    e.stopPropagation?.();
+                    handleEventContextMenu(event, e?.nativeEvent || e);
+                  },
+                })}
+              >
                 <TouchableOpacity
                   style={styles.eventRowMain}
                   onPress={() => {
+                    if (typeof onOpenEvent === 'function') {
+                      onOpenEvent(event);
+                      return;
+                    }
                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
                       window.dispatchEvent(new CustomEvent('openEventModal', {
                         detail: {

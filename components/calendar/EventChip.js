@@ -417,6 +417,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   };
 
   const renderWrapper = (baseStyle, children, webProps = {}) => {
+    const webDataAttrs =
+      Platform.OS === 'web' && ev?.id != null
+        ? { 'data-event-id': String(ev.id) }
+        : {};
     const style = {
       ...baseStyle,
       ...(Platform.OS === 'web' && {
@@ -432,6 +436,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     if ((effectiveOnPress || onRightClick) && !effectiveDisableTouchable) {
       return (
         <TouchableOpacity 
+          {...(Platform.OS === 'web' && webDataAttrs)}
           {...(Platform.OS === 'web' && webProps)}
           style={style} 
           activeOpacity={0.85} 
@@ -484,6 +489,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     }
     return (
       <View 
+        {...(Platform.OS === 'web' && webDataAttrs)}
         {...(Platform.OS === 'web' && webProps)}
         style={style}
         {...(Platform.OS === 'web' && {

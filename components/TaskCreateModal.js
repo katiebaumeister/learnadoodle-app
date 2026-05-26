@@ -878,6 +878,7 @@ export default function TaskCreateModal({
   const [plannerDefaultsRefreshKey, setPlannerDefaultsRefreshKey] = useState(0);
   const toast = useToast();
   const session = useSession();
+  const effectiveFamilyId = familyId || session?.profile?.family_id || null;
 
   // Sync calendar view month when due date changes externally
   useEffect(() => {
@@ -1798,6 +1799,94 @@ export default function TaskCreateModal({
     if (!startDate || !endDate) return null;
     return Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
   };
+
+  const normalizeRecurringSeriesTimes = useCallback(
+    async ({ eventId, desiredStart, desiredEnd }) => {
+      if (!eventId || !desiredStart || !desiredEnd || !effectiveFamilyId) return;
+      const desiredDurationMs = Math.max(
+        desiredEnd.getTime() - desiredStart.getTime(),
+        DEFAULT_DURATION_MINUTES * 60 * 1000
+      );
+      if (!Number.isFinite(desiredDurationMs) || desiredDurationMs <= 0) return;
+
+      const { data: anchor, error: anchorError } = await supabase
+        .from('events')
+        .select('id, parent_event_id, recurrence_id')
+        .eq('id', eventId)
+        .eq('family_id', effectiveFamilyId)
+        .maybeSingle();
+      if (anchorError || !anchor?.id) {
+        if (anchorError) {
+          console.warn('[TaskCreateModal] Could not load recurring anchor for time normalization:', anchorError);
+        }
+        return;
+      }
+
+      const seriesKey = String(anchor.recurrence_id || anchor.parent_event_id || anchor.id || '').trim();
+      if (!seriesKey) return;
+
+      const { data: seriesRows, error: seriesError } = await supabase
+        .from('events')
+        .select('id, start_ts, end_ts')
+        .eq('family_id', effectiveFamilyId)
+        .or(`id.eq.${seriesKey},parent_event_id.eq.${seriesKey},recurrence_id.eq.${seriesKey}`)
+        .is('deleted_at', null);
+      if (seriesError || !Array.isArray(seriesRows) || seriesRows.length === 0) {
+        if (seriesError) {
+          console.warn('[TaskCreateModal] Could not load recurring series rows for time normalization:', seriesError);
+        }
+        return;
+      }
+
+      const targetHours = desiredStart.getHours();
+      const targetMinutes = desiredStart.getMinutes();
+      const targetSeconds = desiredStart.getSeconds();
+      const updates = [];
+      for (const row of seriesRows) {
+        const rowStart = row?.start_ts ? new Date(row.start_ts) : null;
+        if (!(rowStart instanceof Date) || Number.isNaN(rowStart.getTime())) continue;
+        const normalizedStart = new Date(rowStart);
+        normalizedStart.setHours(targetHours, targetMinutes, targetSeconds, 0);
+        const normalizedEnd = new Date(normalizedStart.getTime() + desiredDurationMs);
+
+        const previousStartMs = rowStart.getTime();
+        const previousEndMs = row?.end_ts ? new Date(row.end_ts).getTime() : NaN;
+        const startDiffMs = Math.abs(normalizedStart.getTime() - previousStartMs);
+        const endDiffMs = Number.isFinite(previousEndMs)
+          ? Math.abs(normalizedEnd.getTime() - previousEndMs)
+          : Number.POSITIVE_INFINITY;
+        // Ignore tiny second/millisecond drift and only patch real time shifts.
+        if (startDiffMs < 30 * 1000 && endDiffMs < 30 * 1000) continue;
+
+        updates.push({
+          id: row.id,
+          start_ts: normalizedStart.toISOString(),
+          end_ts: normalizedEnd.toISOString(),
+        });
+      }
+
+      if (updates.length === 0) return;
+      await Promise.all(
+        updates.map((u) =>
+          supabase
+            .from('events')
+            .update({
+              start_ts: u.start_ts,
+              end_ts: u.end_ts,
+              is_flexible: false,
+            })
+            .eq('family_id', effectiveFamilyId)
+            .eq('id', u.id)
+        )
+      );
+      console.log('[TaskCreateModal] Normalized recurring series times after create:', {
+        seriesKey,
+        count: updates.length,
+        time: `${targetHours}:${targetMinutes.toString().padStart(2, '0')}`,
+      });
+    },
+    [effectiveFamilyId]
+  );
 
   const fetchPotentialConflictingEvents = useCallback(
     async (rangeStart, rangeEnd, targetChildIds) => {
@@ -2899,6 +2988,26 @@ export default function TaskCreateModal({
         }
         setSubmitting(false);
         return;
+      }
+
+      if (data?.id && createdRecurrenceRule && placement === 'calendar' && !allDay && startTime.trim()) {
+        const baseDateForNormalization = new Date(dueDate);
+        baseDateForNormalization.setHours(0, 0, 0, 0);
+        const desiredStart = applyTimeToDate(baseDateForNormalization, startTime.trim());
+        const desiredEnd = endTime.trim()
+          ? (applyTimeToDate(baseDateForNormalization, endTime.trim()) || null)
+          : null;
+        if (desiredStart) {
+          const normalizedDesiredEnd =
+            desiredEnd && desiredEnd > desiredStart
+              ? desiredEnd
+              : new Date(desiredStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+          await normalizeRecurringSeriesTimes({
+            eventId: data.id,
+            desiredStart,
+            desiredEnd: normalizedDesiredEnd,
+          });
+        }
       }
 
       // Persist fields after create (RPC may omit some columns)

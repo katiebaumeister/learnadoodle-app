@@ -1499,6 +1499,41 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return (assigneeIds || []).map(String).filter((id) => !invitedSet.has(id));
   }, [assigneeIds, invitedAssigneeIds]);
 
+  const assigneeInviteStatusMap = useMemo(() => {
+    const statusById = new Map();
+    (familyMembers || []).forEach((m) => {
+      const statusRaw = String(m?.invite_status || '').trim().toLowerCase();
+      const status = statusRaw === 'accepted' || statusRaw === 'pending' ? statusRaw : 'none';
+      const applyStatus = (id) => {
+        if (id == null) return;
+        const key = String(id);
+        const prev = statusById.get(key);
+        // Keep strongest state if duplicates exist.
+        if (prev === 'accepted') return;
+        if (status === 'accepted' || !prev || (prev === 'none' && status === 'pending')) {
+          statusById.set(key, status);
+        }
+      };
+      applyStatus(m?.id);
+      applyStatus(m?.child_id);
+      let scope = m?.child_scope;
+      if (typeof scope === 'string') {
+        try { scope = JSON.parse(scope); } catch (_) { scope = []; }
+      }
+      if (Array.isArray(scope)) scope.forEach((id) => applyStatus(id));
+    });
+    return statusById;
+  }, [familyMembers]);
+
+  const sendPendingAssigneeIds = useMemo(
+    () => sendBlockedAssigneeIds.filter((id) => assigneeInviteStatusMap.get(String(id)) === 'pending'),
+    [sendBlockedAssigneeIds, assigneeInviteStatusMap]
+  );
+  const sendNeedsInviteAssigneeIds = useMemo(
+    () => sendBlockedAssigneeIds.filter((id) => assigneeInviteStatusMap.get(String(id)) !== 'pending'),
+    [sendBlockedAssigneeIds, assigneeInviteStatusMap]
+  );
+
   const hasInvitedAssignee = sendEligibleAssigneeIds.length > 0;
 
   const formatAssigneeNameList = useCallback((ids = []) => {
@@ -1518,21 +1553,50 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     const invitedCount = sendEligibleAssigneeIds.length;
     const blockedCount = sendBlockedAssigneeIds.length;
     if (invitedCount <= 0 && blockedCount > 0) {
-      const blockedNames = formatAssigneeNameList(sendBlockedAssigneeIds);
-      return blockedNames
-        ? `Invite ${blockedNames} before sending this assignment`
+      const pendingNames = formatAssigneeNameList(sendPendingAssigneeIds);
+      const needsInviteNames = formatAssigneeNameList(sendNeedsInviteAssigneeIds);
+      if (sendPendingAssigneeIds.length > 0 && sendNeedsInviteAssigneeIds.length === 0) {
+        const pendingVerb = sendPendingAssigneeIds.length === 1 ? 'has' : 'have';
+        return pendingNames
+          ? `${pendingNames} ${pendingVerb} not accepted the invite yet. Sending will unlock after acceptance.`
+          : 'Invite not yet accepted. Sending will unlock after acceptance.';
+      }
+      if (sendPendingAssigneeIds.length > 0 && sendNeedsInviteAssigneeIds.length > 0) {
+        const pendingVerb = sendPendingAssigneeIds.length === 1 ? 'has' : 'have';
+        const pendingPart = pendingNames
+          ? `${pendingNames} ${pendingVerb} not accepted yet`
+          : 'Some students have not accepted yet';
+        const invitePart = needsInviteNames
+          ? `invite ${needsInviteNames}`
+          : 'invite the remaining students';
+        return `${pendingPart}, and ${invitePart} before sending this assignment.`;
+      }
+      return needsInviteNames
+        ? `Invite ${needsInviteNames} before sending this assignment`
         : 'Invite the assigned students before sending this assignment';
     }
     if (invitedCount > 0 && blockedCount > 0) {
       const invitedNames = formatAssigneeNameList(sendEligibleAssigneeIds);
+      const pendingNames = formatAssigneeNameList(sendPendingAssigneeIds);
+      const needsInviteNames = formatAssigneeNameList(sendNeedsInviteAssigneeIds);
+      if (invitedNames && pendingNames && needsInviteNames) {
+        return `This will send to ${invitedNames}. ${pendingNames} still need to accept, and invite ${needsInviteNames} before sending to them.`;
+      }
+      if (invitedNames && pendingNames) {
+        const pendingVerb = sendPendingAssigneeIds.length === 1 ? 'needs' : 'need';
+        return `This will send to ${invitedNames}. ${pendingNames} still ${pendingVerb} to accept ${sendPendingAssigneeIds.length === 1 ? 'the' : 'their'} invite.`;
+      }
+      if (invitedNames && needsInviteNames) {
+        return `This will send to ${invitedNames}. Invite ${needsInviteNames} before sending to them.`;
+      }
       const blockedNames = formatAssigneeNameList(sendBlockedAssigneeIds);
       if (invitedNames && blockedNames) {
-        return `This will send to ${invitedNames}. Invite ${blockedNames} before sending to them`;
+        return `This will send to ${invitedNames}. Invite not yet accepted for ${blockedNames}.`;
       }
       return 'Some assigned students still need an invite before they can receive this assignment';
     }
     return '';
-  }, [sendEligibleAssigneeIds, sendBlockedAssigneeIds, formatAssigneeNameList]);
+  }, [sendEligibleAssigneeIds, sendBlockedAssigneeIds, sendPendingAssigneeIds, sendNeedsInviteAssigneeIds, formatAssigneeNameList]);
 
   const openInviteChildModalForSend = useCallback(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -1856,6 +1920,25 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     };
   }, [parentLinkedAssignments, familyMembers, assigneeIds]);
 
+  const sendEntryCtaLabel = useMemo(() => {
+    if (hasInvitedAssignee || sendBlockedAssigneeIds.length === 0) {
+      return sendTrackingSummary.ctaLabel || 'Send to student';
+    }
+    if (sendPendingAssigneeIds.length > 0 && sendNeedsInviteAssigneeIds.length === 0) {
+      return sendPendingAssigneeIds.length > 1 ? 'Invites not yet accepted' : 'Invite not yet accepted';
+    }
+    if (sendPendingAssigneeIds.length > 0 && sendNeedsInviteAssigneeIds.length > 0) {
+      return 'Invites pending/needed';
+    }
+    return 'Invite child to send';
+  }, [
+    hasInvitedAssignee,
+    sendBlockedAssigneeIds.length,
+    sendPendingAssigneeIds.length,
+    sendNeedsInviteAssigneeIds.length,
+    sendTrackingSummary.ctaLabel,
+  ]);
+
   useEffect(() => {
     const canQueueSendAfterSave = Boolean(
       event?.id
@@ -2155,6 +2238,31 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     const current = normalizeStatus(event?.status);
     return Array.from(new Set([...STATUS_BASE, current].filter(Boolean)));
   }, [event?.status]);
+  const headerAttendanceChip = useMemo(() => {
+    const normalizedStatus = normalizeStatus(draftStatus || event?.status);
+
+    if (normalizedStatus === 'done') {
+      return { label: 'ATTENDED', dotStyle: styles.headerStatusDotAttended };
+    }
+
+    let startDate = null;
+    const draftStart = combineDateTime(draftDate, draftStartTime);
+    if (draftStart && !Number.isNaN(draftStart.getTime())) {
+      startDate = draftStart;
+    } else {
+      const fallbackStart = event?.start_ts || event?.start || event?.start_local || null;
+      const parsedFallback = fallbackStart ? new Date(fallbackStart) : null;
+      if (parsedFallback && !Number.isNaN(parsedFallback.getTime())) {
+        startDate = parsedFallback;
+      }
+    }
+
+    if (startDate && startDate.getTime() > Date.now()) {
+      return { label: 'UPCOMING', dotStyle: styles.headerStatusDotUpcoming };
+    }
+
+    return { label: 'UNATTENDED', dotStyle: styles.headerStatusDotUnattended };
+  }, [draftStatus, event?.status, draftDate, draftStartTime, event?.start_ts, event?.start, event?.start_local]);
   const isClassDayEventType = useMemo(
     () => normalizeEventTypeForDisplay(eventType) === 'Class Day',
     [eventType]
@@ -2704,6 +2812,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setPlacement(initialSchedulingMode ? 'calendar' : (isBacklog ? 'backlog' : 'calendar'));
 
     // All day inference
+    // IMPORTANT: keep "no explicit time" events editable by treating flexible rows as timeless,
+    // not as locked all-day rows.
+    const isFlexibleTimeless = event?.is_flexible === true;
     const inferredAllDay =
       !!startTs &&
       (() => {
@@ -2738,11 +2849,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         return false;
       })();
 
-    setDraftAllDay(inferredAllDay || (!startTs && !endTs));
-    setAllDay(inferredAllDay || (!startTs && !endTs));
+    setDraftAllDay(inferredAllDay);
+    setAllDay(inferredAllDay);
 
     // Time handling: prefer start_local/end_local from RPC (family timezone) so plan times display correctly
-    if (inferredAllDay) {
+    if (inferredAllDay || isFlexibleTimeless || (!startTs && !endTs)) {
       setDraftStartTime('');
       setDraftEndTime('');
       setStartTime('');
@@ -4428,6 +4539,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
     let startDateObj = null;
     let endDateObj = null;
+    let hasExplicitStartTime = false;
 
     // If scheduling a backlog item, date is required
     if (schedulingBacklog && !draftDate) {
@@ -4459,6 +4571,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           endDateObj = new Date(baseDate);
           endDateObj.setHours(23, 59, 0, 0);
         } else {
+          hasExplicitStartTime = true;
           const resolvedStart = applyTimeToDate(dueDate || new Date(dateToUse), timeToUse);
           if (!resolvedStart) {
             Alert.alert('Validation', 'Enter a valid start time, e.g. 9:00 AM');
@@ -4552,6 +4665,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         goal_link: goalLink || null,
         recurrence_rule: recurrenceRule ? JSON.stringify(recurrenceRule) : null,
       };
+      // Preserve optional-time semantics:
+      // - Blank start time => flexible/timeless row (editable when reopened)
+      // - Explicit start time => fixed-time row
+      if (!(allDay || draftAllDay)) {
+        updates.is_flexible = !hasExplicitStartTime;
+      } else {
+        updates.is_flexible = false;
+      }
 
       const cmSave = parseCurriculumMetadata(event);
       const hadMetaKeys = Object.keys(cmSave).length > 0;
@@ -5908,8 +6029,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       <View style={styles.headerEditEvent}>
         <View style={styles.headerContent}>
           <View style={styles.headerTextWrap}>
-            <View style={styles.headerBadge}>
-              <Text style={styles.headerBadgeText}>{isSeriesEditScope ? 'EDIT SERIES' : 'EDIT EVENT'}</Text>
+            <View style={styles.headerBadgeRow}>
+              <View style={[styles.headerBadge, styles.headerBadgeTight]}>
+                <Text style={styles.headerBadgeText}>{isSeriesEditScope ? 'EDIT SERIES' : 'EDIT EVENT'}</Text>
+              </View>
+              <View style={styles.headerStatusChip}>
+                <View style={[styles.headerStatusDot, headerAttendanceChip.dotStyle]} />
+                <Text style={styles.headerStatusChipText}>{headerAttendanceChip.label}</Text>
+              </View>
             </View>
             <Text style={styles.headerTitleLarge}>
               {draftTitle?.trim() || event?.title || 'Edit Event'}
@@ -7042,6 +7169,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     setShowSendInviteClarification(true);
                     if (!hasBaseRequirements) return;
                     if (!hasInvitedAssignee && sendBlockedAssigneeIds.length > 0) {
+                      if (sendPendingAssigneeIds.length > 0 && sendNeedsInviteAssigneeIds.length === 0) {
+                        // Invite already sent; waiting on acceptance before send can be enabled.
+                        return;
+                      }
                       openInviteChildModalForSend();
                       return;
                     }
@@ -7063,9 +7194,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       )}
                     </View>
                     <Text style={styles.workflowActionButtonText}>
-                      {!hasInvitedAssignee && sendBlockedAssigneeIds.length > 0
-                        ? 'Invite child to send'
-                        : (sendTrackingSummary.ctaLabel || 'Send to student')}
+                      {sendEntryCtaLabel}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -9464,6 +9593,45 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFFC9',
   },
   headerBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    color: '#85C4F2',
+  },
+  headerBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  headerBadgeTight: {
+    marginBottom: 0,
+  },
+  headerStatusChip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#FFFFFFC9',
+  },
+  headerStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  headerStatusDotAttended: {
+    backgroundColor: '#6BB3E8',
+  },
+  headerStatusDotUnattended: {
+    backgroundColor: '#F2A0A0',
+  },
+  headerStatusDotUpcoming: {
+    backgroundColor: '#C7DDF6',
+  },
+  headerStatusChipText: {
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.4,

@@ -108,6 +108,29 @@ export default function SubjectOverviewCard({
   const handleNavigateToPlanner = (item, e) => {
     if (e) {
       e.stopPropagation();
+      e.preventDefault?.();
+    }
+    const rawEventId = item?.eventId ?? item?.event_id ?? item?.id ?? null;
+    const eventId = rawEventId
+      ? String(rawEventId).trim().replace(/^event-/, '')
+      : null;
+    const shouldOpenEventModal = item?.type === 'event' || Boolean(eventId);
+    if (shouldOpenEventModal && eventId && Platform.OS === 'web' && typeof window !== 'undefined') {
+      const initialEvent = item?.event || item?.initialEvent || {
+        id: eventId,
+        title: item?.title || 'Lesson',
+        start_ts: item?.startTs || item?.dueDate || null,
+        end_ts: item?.endTs || null,
+        child_id: item?.childId || null,
+        subject_id: item?.subjectId || subject?.id || null,
+        event_type: item?.eventType || 'Lesson',
+      };
+      window.dispatchEvent(
+        new CustomEvent('openEventModal', {
+          detail: { eventId, initialEvent },
+        })
+      );
+      return;
     }
     if (onNavigateToPlanner) {
       onNavigateToPlanner({

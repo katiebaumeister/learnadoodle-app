@@ -105,6 +105,7 @@ export default function ParentHomeScreen({
   familyId: propFamilyId,
   family = null,
   onNavigate,
+  onOpenEvent = null,
   onAddEvent,
   onAddGrade,
   onAddMaterial,
@@ -645,6 +646,7 @@ export default function ParentHomeScreen({
           children={effectiveHomeData.children || []}
           subjects={effectiveHomeData.subjects || []}
           onOpenPlanner={() => onNavigate?.('planner')}
+          onOpenEvent={onOpenEvent}
           onTabChange={onNavigate}
           onAddBlock={onAddEvent}
           suggestedRhythms={[]}

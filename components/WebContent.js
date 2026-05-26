@@ -4696,9 +4696,28 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
     window.dispatchEvent(new CustomEvent('openEventModal', { detail }));
   }, []);
-  const openEventEditorWithScopePrompt = useCallback((ev, options = {}) => {
+  const openEventEditorWithScopePrompt = useCallback(async (ev, options = {}) => {
     if (!ev?.id) return;
-    if (!isDeletableSeriesGroup(ev)) {
+    let shouldShowSeriesPrompt = isDeletableSeriesGroup(ev);
+    if (!shouldShowSeriesPrompt) {
+      try {
+        const cleanId = cleanPlannerEventId(String(ev.id || ''));
+        if (cleanId) {
+          let query = supabase
+            .from('events')
+            .select('id, recurrence_rule, parent_event_id, recurrence_id, generated_by, source_block_id, academic_year_id')
+            .eq('id', cleanId);
+          if (familyId) query = query.eq('family_id', familyId);
+          const { data: fetched, error } = await query.maybeSingle();
+          if (!error && fetched) {
+            shouldShowSeriesPrompt = isDeletableSeriesGroup(fetched);
+          }
+        }
+      } catch (e) {
+        // Best effort only; fall back to opening single-event editor.
+      }
+    }
+    if (!shouldShowSeriesPrompt) {
       dispatchOpenEventModal(ev, { ...options, editScope: 'single' });
       return;
     }
@@ -4707,7 +4726,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       event: ev,
       options: options || {},
     });
-  }, [dispatchOpenEventModal]);
+  }, [dispatchOpenEventModal, familyId]);
   const [showNoteEditor, setShowNoteEditor] = useState(false)
   const [noteEditorProps, setNoteEditorProps] = useState({
     linkedEventId: null,
@@ -5339,9 +5358,28 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Right-click context menu for planner events (Month and other views that dispatch plannerEventContextMenu)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handlePlannerEventContextMenu = (e) => {
-      const { event: ev, position } = e.detail || {};
-      if (!ev || !position || !familyId) return;
+    const handlePlannerEventContextMenu = async (e) => {
+      const { event: rawEvent, position } = e.detail || {};
+      if (!rawEvent || !position || !familyId) return;
+      let ev = rawEvent;
+      // Hydrate with canonical DB row so non-planner surfaces (Home/Subjects)
+      // get the same series-aware context menu options as Planner.
+      try {
+        const cleanId = cleanPlannerEventId(String(rawEvent?.id || rawEvent?._originalId || rawEvent?.originalId || ''));
+        if (cleanId && rawEvent?._activeSection !== 'trash') {
+          let query = supabase
+            .from('events')
+            .select('*')
+            .eq('id', cleanId);
+          if (familyId) query = query.eq('family_id', familyId);
+          const { data: fetched, error } = await query.maybeSingle();
+          if (!error && fetched) {
+            ev = { ...rawEvent, ...fetched, id: cleanId };
+          }
+        }
+      } catch (_) {
+        // Best-effort hydration only; continue with original payload.
+      }
       const clientX = position.x ?? 0;
       const clientY = position.y ?? 0;
       const existingMenu = document.getElementById('planner-event-context-menu');
@@ -9416,6 +9454,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         family={propFamily}
         hideRailOnboardingCards={options.hideRailOnboardingCards === true}
         onNavigate={onTabChange}
+        onOpenEvent={(event) => {
+          openEventEditorWithScopePrompt(event, {});
+        }}
         onAddEvent={() => {
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }));
