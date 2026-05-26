@@ -3473,70 +3473,70 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         });
         return (
           <View style={styles.mainContentInner}>
+            <View style={styles.coursesHeader}>
+              <Text style={[styles.mainContentTitle, styles.coursesTitle]}>Subjects</Text>
+            </View>
             <View
               style={[
-                styles.coursesHeader,
+                styles.coursesSectionRow,
                 showCoursesSchoolYearDropdown && styles.coursesHeaderOpen,
               ]}
             >
-              <View style={styles.coursesTitleContainer}>
-                <Text style={[styles.mainContentTitle, styles.coursesTitle]}>Subjects</Text>
+              <View
+                ref={coursesSchoolYearDropdownRef}
+                style={[
+                  styles.coursesSchoolYearSelectorWrap,
+                  showCoursesSchoolYearDropdown && styles.coursesSchoolYearSelectorWrapOpen,
+                ]}
+              >
                 <View
-                  ref={coursesSchoolYearDropdownRef}
                   style={[
-                    styles.coursesSchoolYearSelectorWrap,
-                    showCoursesSchoolYearDropdown && styles.coursesSchoolYearSelectorWrapOpen,
+                    styles.coursesSchoolYearDropdownAnchor,
+                    showCoursesSchoolYearDropdown && styles.coursesSchoolYearDropdownAnchorOpen,
                   ]}
                 >
-                  <View
-                    style={[
-                      styles.coursesSchoolYearDropdownAnchor,
-                      showCoursesSchoolYearDropdown && styles.coursesSchoolYearDropdownAnchorOpen,
-                    ]}
+                  <TouchableOpacity
+                    style={styles.coursesSchoolYearTrigger}
+                    onPress={() => setShowCoursesSchoolYearDropdown((prev) => !prev)}
+                    activeOpacity={0.82}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <TouchableOpacity
-                      style={styles.coursesSchoolYearTrigger}
-                      onPress={() => setShowCoursesSchoolYearDropdown((prev) => !prev)}
-                      activeOpacity={0.82}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Text style={styles.coursesSchoolYearTriggerText}>{`${selectedCoursesSchoolYear} School Year`}</Text>
-                      <ChevronDown size={14} color="#6B7280" />
-                    </TouchableOpacity>
-                    {showCoursesSchoolYearDropdown ? (
-                      <View style={styles.coursesSchoolYearDropdownMenu}>
-                        {coursesSchoolYearOptions.map((label, index) => {
-                          const selected = label === selectedCoursesSchoolYear;
-                          const isLast = index === coursesSchoolYearOptions.length - 1;
-                          return (
-                            <TouchableOpacity
-                              key={label}
+                    <Text style={styles.coursesSchoolYearTriggerText}>{`${selectedCoursesSchoolYear} School Year`}</Text>
+                    <ChevronDown size={14} color="#6B7280" />
+                  </TouchableOpacity>
+                  {showCoursesSchoolYearDropdown ? (
+                    <View style={styles.coursesSchoolYearDropdownMenu}>
+                      {coursesSchoolYearOptions.map((label, index) => {
+                        const selected = label === selectedCoursesSchoolYear;
+                        const isLast = index === coursesSchoolYearOptions.length - 1;
+                        return (
+                          <TouchableOpacity
+                            key={label}
+                            style={[
+                              styles.coursesSchoolYearDropdownOption,
+                              !isLast && styles.coursesSchoolYearDropdownOptionWithDivider,
+                            ]}
+                            onPress={() => {
+                              setSelectedCoursesSchoolYear(label);
+                              setShowCoursesSchoolYearDropdown(false);
+                            }}
+                            activeOpacity={0.82}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text
                               style={[
-                                styles.coursesSchoolYearDropdownOption,
-                                !isLast && styles.coursesSchoolYearDropdownOptionWithDivider,
+                                styles.coursesSchoolYearDropdownOptionText,
+                                selected && styles.coursesSchoolYearDropdownOptionTextActive,
                               ]}
-                              onPress={() => {
-                                setSelectedCoursesSchoolYear(label);
-                                setShowCoursesSchoolYearDropdown(false);
-                              }}
-                              activeOpacity={0.82}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                             >
-                              <Text
-                                style={[
-                                  styles.coursesSchoolYearDropdownOptionText,
-                                  selected && styles.coursesSchoolYearDropdownOptionTextActive,
-                                ]}
-                              >
-                                {label}
-                              </Text>
-                              {selected ? <Check size={14} color="#111827" /> : null}
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                    ) : null}
-                  </View>
+                              {label}
+                            </Text>
+                            {selected ? <Check size={14} color="#111827" /> : null}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  ) : null}
                 </View>
               </View>
               {!isChildMode && (
@@ -5779,9 +5779,9 @@ function createStyles(tokens) {
       marginTop: 0,
     },
     coursesHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start',
+      flexDirection: 'column',
+      justifyContent: 'flex-start',
+      alignItems: 'stretch',
       marginBottom: 0,
       marginTop: 0,
       position: 'relative',
@@ -5791,18 +5791,21 @@ function createStyles(tokens) {
       zIndex: 200,
       ...(Platform.OS === 'web' && { isolation: 'isolate' }),
     },
-    coursesTitleContainer: {
-      marginBottom: 0,
-      gap: 0,
-    },
     coursesTitle: {
-      marginBottom: SettingsLayout.dividerSpacing,
+      marginBottom: 0,
+    },
+    coursesSectionRow: {
+      marginTop: 26,
+      paddingBottom: 18,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
     },
     coursesSchoolYearSelectorWrap: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      marginBottom: 20,
+      marginBottom: 0,
       position: 'relative',
       zIndex: 2,
     },
@@ -5835,7 +5838,7 @@ function createStyles(tokens) {
       height: 1,
       backgroundColor: '#e5e7eb',
       marginTop: 0,
-      marginBottom: 12,
+      marginBottom: 0,
     },
     coursesSchoolYearDropdownMenu: {
       position: 'absolute',
@@ -8299,8 +8302,8 @@ function createStyles(tokens) {
     coursesAddButton: {
       flexDirection: 'row',
       alignItems: 'center',
-      alignSelf: 'flex-end',
-      marginBottom: SettingsLayout.labelSpacing,
+      alignSelf: 'auto',
+      marginBottom: 0,
       gap: 6,
       paddingVertical: 6,
       paddingHorizontal: 12,
@@ -8373,7 +8376,7 @@ function createStyles(tokens) {
       }),
     },
     subjectsList: {
-      // No gap needed - dividers handle spacing
+      paddingTop: 24,
       position: 'relative',
       zIndex: 1,
     },
@@ -8595,6 +8598,8 @@ function createStyles(tokens) {
     subjectItem: {
       paddingVertical: 14,
       paddingHorizontal: 4,
+      minHeight: 64,
+      justifyContent: 'center',
       borderRadius: 8,
       ...(Platform.OS === 'web' && {
         transition: 'background-color 0.2s ease',
@@ -8607,7 +8612,7 @@ function createStyles(tokens) {
     subjectCardHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      alignItems: 'flex-start',
+      alignItems: 'center',
     },
     subjectCardInfo: {
       flex: 1,
@@ -8680,9 +8685,10 @@ function createStyles(tokens) {
     },
     subjectCardActions: {
       flexDirection: 'row',
-      gap: 8,
+      gap: 14,
+      paddingRight: 8,
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'flex-end',
     },
     subjectActionButton: {
       width: 36,

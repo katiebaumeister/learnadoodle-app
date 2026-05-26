@@ -80,11 +80,11 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
     gap: 12,
   },
   primary: {
-    backgroundColor: '#4F46E5',
+    backgroundColor: '#85C4F2',
     paddingVertical: 10,
     paddingHorizontal: 18,
     borderRadius: 10,

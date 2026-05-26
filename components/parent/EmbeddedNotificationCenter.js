@@ -1217,8 +1217,8 @@ const styles = StyleSheet.create({
   },
   /** Active tab: readable but slightly desaturated vs primary actions */
   tabActive: {
-    borderColor: 'rgba(99, 102, 241, 0.28)',
-    backgroundColor: 'rgba(99, 102, 241, 0.065)',
+    borderColor: 'rgba(139, 92, 246, 0.5)',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
     ...(Platform.OS === 'web' && {
       boxShadow: '0 1px 3px rgba(71, 81, 115, 0.1)',
     }),
@@ -1226,7 +1226,7 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#94a3b8',
+    color: '#374151',
     textAlign: 'center',
     flexShrink: 1,
     ...(Platform.OS === 'web' && {
@@ -1234,7 +1234,7 @@ const styles = StyleSheet.create({
     }),
   },
   tabTextActive: {
-    color: '#5a5f8a',
+    color: 'rgba(99, 102, 241, 1)',
     fontWeight: '700',
   },
   countBadge: {
