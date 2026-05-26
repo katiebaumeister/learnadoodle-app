@@ -458,6 +458,19 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   /** Tutor: read-first planner; no global "new event" ownership. */
   const isTutorUser = userRole === 'tutor' || session?.role_flags?.isTutor === true;
+  const roleFlags = session?.role_flags || {};
+  const resolvedShellUserRole = useMemo(() => {
+    if (roleFlags.isTutor === true) return 'tutor';
+    if (roleFlags.isChild === true) return session?.effective_role || 'child';
+    if (roleFlags.isParent === true) return 'parent';
+    return session?.effective_role || userRole || 'parent';
+  }, [
+    roleFlags.isTutor,
+    roleFlags.isChild,
+    roleFlags.isParent,
+    session?.effective_role,
+    userRole,
+  ]);
 
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -3372,9 +3385,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             onSelectChildSection: handleChildSectionSelect,
             onOpenNew: handleOpenNewMenu,
             onOpenSearch: openSearch,
-            onAvatarPress: () => handleTabChange('settings', 'profile'),
+            onAvatarPress: () => {
+              if (resolvedShellUserRole === 'child' || resolvedShellUserRole === 'student') {
+                handleTabChange('home');
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.history.pushState({}, '', '/');
+                }
+                return;
+              }
+              handleTabChange('settings', 'profile');
+            },
             user: user,
-            userRole: userRole || 'parent',
+            userRole: resolvedShellUserRole,
           }}
           onOpenSettings={(section = 'profile') => {
             handleTabChange('settings', section);

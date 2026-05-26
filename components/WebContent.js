@@ -3804,12 +3804,34 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [userRole, setUserRole] = useState(null);
   const [accessibleChildren, setAccessibleChildren] = useState([]);
   // Use session role/children first so we show correct home (child vs parent) on first paint
-  const roleForHome = propSession?.effective_role ?? userRole;
+  const roleForHome = useMemo(() => {
+    const roleFlags = propSession?.role_flags || {};
+    if (roleFlags.isTutor === true) return propSession?.effective_role || 'tutor';
+    if (roleFlags.isChild === true) return propSession?.effective_role || 'child';
+    if (roleFlags.isParent === true) return 'parent';
+    return propSession?.effective_role ?? userRole;
+  }, [
+    propSession?.role_flags?.isTutor,
+    propSession?.role_flags?.isChild,
+    propSession?.role_flags?.isParent,
+    propSession?.effective_role,
+    userRole,
+  ]);
+  const isLearnerRole = roleForHome === 'child' || roleForHome === 'student';
   /** Tutors observe and support; they do not own the calendar. */
   const plannerReadOnly = roleForHome === 'tutor' || propSession?.role_flags?.isTutor === true;
   const accessibleForHome = Array.isArray(propSession?.accessible_children) && propSession.accessible_children.length > 0
     ? propSession.accessible_children
     : accessibleChildren;
+
+  useEffect(() => {
+    if (!isLearnerRole) return;
+    if (activeTab !== 'profile' && activeTab !== 'settings' && activeTab !== 'children-list') return;
+    if (onTabChange) onTabChange('home');
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.history.replaceState({}, '', '/');
+    }
+  }, [activeTab, isLearnerRole, onTabChange]);
 
   useEffect(() => {
     const fetchUserInfo = async () => {

@@ -5802,7 +5802,7 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      marginBottom: SettingsLayout.labelSpacing,
+      marginBottom: 14,
       position: 'relative',
       zIndex: 2,
     },
@@ -5825,8 +5825,10 @@ function createStyles(tokens) {
       minHeight: 24,
     },
     coursesSchoolYearTriggerText: {
-      ...SettingsTypography.cardTitle,
-      color: '#374151',
+      ...SettingsTypography.sectionTitle,
+      fontSize: 17,
+      fontWeight: '700',
+      color: '#111827',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -5835,7 +5837,7 @@ function createStyles(tokens) {
       height: 1,
       backgroundColor: '#e5e7eb',
       marginTop: 0,
-      marginBottom: SettingsLayout.dividerSpacing,
+      marginBottom: 12,
     },
     coursesSchoolYearDropdownMenu: {
       position: 'absolute',
@@ -8593,7 +8595,7 @@ function createStyles(tokens) {
       marginVertical: 0,
     },
     subjectItem: {
-      paddingVertical: 18,
+      paddingVertical: 14,
       paddingHorizontal: 4,
       borderRadius: 8,
       ...(Platform.OS === 'web' && {
