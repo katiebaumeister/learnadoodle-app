@@ -648,13 +648,13 @@ export default function EmbeddedNotificationCenter({
   /** Ready once fresh content + onboarding status are both resolved (no cache-to-live mode flips). */
   const railReady = dataReady && (hideOnboardingCards || onboardingStatusReady);
 
+  // Once at least one child is linked/accepted, keep the right rail in inbox-tabs mode
+  // (show Submissions/Help/Coming up chips even when the lists are empty).
   const primaryCardCandidateMode = hideOnboardingCards
     ? 'none'
     : !hasLinkedChildAccount
       ? 'invite'
-      : !hasInboxActivity
-        ? 'assign'
-        : 'none';
+      : 'none';
   const primaryCardMode = railReady
     ? committedPrimaryCardMode || primaryCardCandidateMode
     : 'none';
@@ -1226,17 +1226,17 @@ const styles = StyleSheet.create({
   },
   tabText: {
     fontSize: 11,
-    fontWeight: '400',
+    fontWeight: '700',
     color: '#94a3b8',
     textAlign: 'center',
     flexShrink: 1,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   tabTextActive: {
     color: '#5a5f8a',
-    fontWeight: '600',
+    fontWeight: '700',
   },
   countBadge: {
     minWidth: 16,

@@ -502,12 +502,15 @@ const styles = StyleSheet.create({
   },
   tabText: {
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '700',
     color: '#64748b',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   tabTextOn: {
     color: 'rgba(79, 70, 229, 1)',
-    fontWeight: '600',
+    fontWeight: '700',
   },
   body: {
     flex: 1,

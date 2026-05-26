@@ -800,15 +800,15 @@ const styles = StyleSheet.create({
   },
   tabText: {
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '700',
     color: '#64748b',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   tabTextActive: {
     color: 'rgba(99, 102, 241, 1)',
-    fontWeight: '600',
+    fontWeight: '700',
   },
   search: {
     borderWidth: 1,

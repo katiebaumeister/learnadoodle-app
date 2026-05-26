@@ -213,7 +213,7 @@ export default function SubjectsPage({
   const canShowChildScheduleTab = !isChildView
     ? true
     : childPermissionsResolved
-      ? effectivePermissions?.canViewPlanner !== false
+      ? effectivePermissions?.canManageEvents === true
       : false;
   const showChildModeToggle = isChildView && (canShowChildProgressTab || canShowChildScheduleTab);
   const childId = isChildView && safeAccessibleChildren.length > 0 ? (safeAccessibleChildren[0]?.id ?? safeAccessibleChildren[0]) : null;
@@ -3373,8 +3373,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   childTermFilterRowSpacing: {
-    marginTop: 30,
-    paddingTop: 6,
+    marginTop: 24,
+    paddingTop: 4,
   },
   coursesFilterRowTop: {
     marginTop: 24,
