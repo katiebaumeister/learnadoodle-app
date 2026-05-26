@@ -218,8 +218,13 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
         legacyMode: isLegacy,
       });
 
-      // Preload home data in background (non-blocking)
-      if (activeFamilyId && Platform.OS === 'web') {
+      // Preload parent-only web caches in background (non-blocking).
+      // Learner sessions can legitimately receive 403 for these endpoints.
+      const shouldRunBackgroundPreloads =
+        activeFamilyId &&
+        Platform.OS === 'web' &&
+        roleFlags.isParent === true;
+      if (shouldRunBackgroundPreloads) {
         preloadHomeData(activeFamilyId).catch(err => {
           console.warn('[SessionContext] Error preloading home data:', err);
         });

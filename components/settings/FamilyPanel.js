@@ -5802,7 +5802,7 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      marginBottom: 14,
+      marginBottom: 20,
       position: 'relative',
       zIndex: 2,
     },
@@ -5826,9 +5826,7 @@ function createStyles(tokens) {
     },
     coursesSchoolYearTriggerText: {
       ...SettingsTypography.sectionTitle,
-      fontSize: 17,
-      fontWeight: '700',
-      color: '#111827',
+      color: '#374151',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),

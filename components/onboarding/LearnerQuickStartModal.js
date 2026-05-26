@@ -4,6 +4,7 @@
 
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Modal } from 'react-native';
+import { Check } from 'lucide-react';
 
 const formatSectionList = (sections) => {
   if (!Array.isArray(sections) || sections.length === 0) return 'Home';
@@ -24,7 +25,7 @@ const buildBodyText = (sectionsInput) => {
   return `Use ${listLabel} to stay on track with your learning.`;
 };
 
-export default function LearnerQuickStartModal({ visible, onGotIt, onSkip, visibleSections = [] }) {
+export default function LearnerQuickStartModal({ visible, onGotIt, visibleSections = [] }) {
   const bodyText = buildBodyText(visibleSections);
   return (
     <Modal visible={visible} transparent animationType="fade">
@@ -35,11 +36,9 @@ export default function LearnerQuickStartModal({ visible, onGotIt, onSkip, visib
             {bodyText}
           </Text>
           <View style={styles.row}>
-            <TouchableOpacity onPress={onSkip} style={styles.skip} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={styles.skipText}>{"Don't show again"}</Text>
-            </TouchableOpacity>
             <TouchableOpacity onPress={onGotIt} style={styles.primary} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={styles.primaryText}>Got it</Text>
+              <Check size={16} color="#FFFFFF" strokeWidth={3} />
+              <Text style={styles.primaryText}>GOT IT!</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -81,26 +80,23 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     gap: 12,
   },
-  skip: {
-    paddingVertical: 8,
-  },
-  skipText: {
-    fontSize: 14,
-    color: '#64748b',
-    fontWeight: '600',
-  },
   primary: {
-    backgroundColor: '#4f46e5',
+    backgroundColor: '#4F46E5',
     paddingVertical: 10,
-    paddingHorizontal: 20,
+    paddingHorizontal: 18,
     borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   primaryText: {
     color: '#fff',
-    fontWeight: '700',
+    fontWeight: '800',
     fontSize: 15,
+    letterSpacing: 0.3,
+    ...(Platform.OS === 'web' && { fontFamily: '"League Spartan", sans-serif' }),
   },
 });
