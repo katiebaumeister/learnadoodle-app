@@ -67,27 +67,35 @@ export default function SubjectOverviewCard({
     return children.find(c => String(c.id) === String(childId));
   };
 
-  /** Weekday + time for "Up next" row, e.g. "Tue 9:00 AM–10:00 AM" */
+  /** Weekday + optional time for "Up next" row, e.g. "Tue 9:00 AM–10:00 AM" */
   const formatNextUpWhenLine = (item) => {
     if (!item) return '';
     const anchor = item.startTs || item.dueDate;
     if (!anchor) return '';
     const weekday = new Date(anchor).toLocaleDateString(undefined, { weekday: 'short' });
     const tOpts = { hour: 'numeric', minute: '2-digit' };
+    const eventTypeRaw = String(item?.eventType || item?.event_type || '').trim();
+    const isIntrinsicAllDayType = ['Project', 'Trip', 'Holiday', 'Other'].includes(eventTypeRaw);
+    const s = item?.startTs ? new Date(item.startTs) : null;
+    const e = item?.endTs ? new Date(item.endTs) : null;
+    const hasValidStart = !!s && !Number.isNaN(s.getTime());
+    const hasValidEnd = !!e && !Number.isNaN(e.getTime());
+    const isMidnightBounded =
+      hasValidStart &&
+      hasValidEnd &&
+      s.getHours() === 0 &&
+      s.getMinutes() === 0 &&
+      ((e.getHours() === 0 && e.getMinutes() === 0) ||
+        (e.getHours() === 23 && e.getMinutes() === 59));
+    const isTimeless =
+      item?.is_flexible === true ||
+      item?.isFlexible === true ||
+      (!isIntrinsicAllDayType && isMidnightBounded);
     let timeStr = '';
-    if (item.startTs && item.endTs) {
-      const s = new Date(item.startTs);
-      const e = new Date(item.endTs);
-      if (!Number.isNaN(s.getTime()) && !Number.isNaN(e.getTime())) {
-        timeStr =
-          s.getTime() !== e.getTime()
-            ? `${s.toLocaleTimeString(undefined, tOpts)}–${e.toLocaleTimeString(undefined, tOpts)}`
-            : s.toLocaleTimeString(undefined, tOpts);
-      }
-    }
-    if (!timeStr) {
-      const d = new Date(item.dueDate || item.startTs);
-      timeStr = Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, tOpts);
+    if (!isTimeless && hasValidStart) {
+      timeStr = hasValidEnd && s.getTime() !== e.getTime()
+        ? `${s.toLocaleTimeString(undefined, tOpts)}–${e.toLocaleTimeString(undefined, tOpts)}`
+        : s.toLocaleTimeString(undefined, tOpts);
     }
     return timeStr ? `${weekday} ${timeStr}` : weekday;
   };

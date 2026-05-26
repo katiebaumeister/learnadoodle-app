@@ -2812,10 +2812,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setPlacement(initialSchedulingMode ? 'calendar' : (isBacklog ? 'backlog' : 'calendar'));
 
     // All day inference
-    // IMPORTANT: keep "no explicit time" events editable by treating flexible rows as timeless,
-    // not as locked all-day rows.
+    // IMPORTANT: keep "no explicit time" events editable by treating flexible/timeless
+    // lesson rows as untimed (empty editable fields), not as locked all-day rows.
     const isFlexibleTimeless = event?.is_flexible === true;
-    const inferredAllDay =
+    const eventTypeRaw = String(event?.event_type || eventType || '').trim();
+    const isIntrinsicAllDayType = ['Project', 'Trip', 'Holiday', 'Other'].includes(eventTypeRaw);
+    const inferredAllDayFromBounds =
       !!startTs &&
       (() => {
         try {
@@ -2848,12 +2850,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         }
         return false;
       })();
+    const shouldTreatAsUntimed =
+      isFlexibleTimeless || (inferredAllDayFromBounds && !isIntrinsicAllDayType);
+    const inferredAllDay = inferredAllDayFromBounds && !shouldTreatAsUntimed;
 
     setDraftAllDay(inferredAllDay);
     setAllDay(inferredAllDay);
 
     // Time handling: prefer start_local/end_local from RPC (family timezone) so plan times display correctly
-    if (inferredAllDay || isFlexibleTimeless || (!startTs && !endTs)) {
+    if (inferredAllDay || shouldTreatAsUntimed || (!startTs && !endTs)) {
       setDraftStartTime('');
       setDraftEndTime('');
       setStartTime('');
@@ -6309,26 +6314,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <Text style={styles.timeLabel}>Start</Text>
                   {Platform.OS === 'web' ? (
                     <input
-                      type="time"
+                      type="text"
                       placeholder="Optional"
-                      value={startTime ? (() => {
-                        const parts = parseTimeString(startTime);
-                        if (parts) {
-                          return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                        }
-                        return '';
-                      })() : ''}
+                      value={startTime || ''}
                       onChange={(e) => {
-                        const [hours, minutes] = e.target.value.split(':').map(Number);
-                        if (!isNaN(hours) && !isNaN(minutes)) {
-                          const hour12 = hours % 12 || 12;
-                          const period = hours >= 12 ? 'PM' : 'AM';
-                          const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-                          setStartTime(formatted);
-                          setDraftStartTime(formatted);
-                          if (validationErrors.time) {
-                            setValidationErrors({ ...validationErrors, time: null });
-                          }
+                        const formatted = formatTimeInput(e.target.value || '');
+                        setStartTime(formatted);
+                        setDraftStartTime(formatted);
+                        if (validationErrors.time) {
+                          setValidationErrors({ ...validationErrors, time: null });
                         }
                       }}
                       disabled={allDay}
@@ -6384,23 +6378,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <Text style={styles.timeLabel}>End</Text>
                   {Platform.OS === 'web' ? (
                     <input
-                      type="time"
-                      value={endTime ? (() => {
-                        const parts = parseTimeString(endTime);
-                        if (parts) {
-                          return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                        }
-                        return '';
-                      })() : ''}
+                      type="text"
+                      placeholder="Optional"
+                      value={endTime || ''}
                       onChange={(e) => {
-                        const [hours, minutes] = e.target.value.split(':').map(Number);
-                        if (!isNaN(hours) && !isNaN(minutes)) {
-                          const hour12 = hours % 12 || 12;
-                          const period = hours >= 12 ? 'PM' : 'AM';
-                          const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-                          setEndTime(formatted);
-                          setDraftEndTime(formatted);
-                        }
+                        const formatted = formatTimeInput(e.target.value || '');
+                        setEndTime(formatted);
+                        setDraftEndTime(formatted);
                       }}
                       disabled={allDay}
                       style={{

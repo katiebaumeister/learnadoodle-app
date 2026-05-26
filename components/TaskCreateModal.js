@@ -516,6 +516,9 @@ export default function TaskCreateModal({
       setRecurrenceEndAfterText('');
       setRecurrenceEndDate(null);
       setClassDayDefaultsApplied(false);
+      // Class Day auto-defaults can seed time fields; switching away should return to optional blank times.
+      setStartTime('');
+      setEndTime('');
     }
     if (isClassDayTitleAutofilled && title.trim() === 'Class Day') {
       setTitle('');
@@ -3433,27 +3436,16 @@ export default function TaskCreateModal({
                   <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
                       <View style={[styles.timeField, styles.timeFieldCompact]}>
                         <Text style={styles.timeLabel}>Start</Text>
-                        {Platform.OS === 'web' ? (
+                      {Platform.OS === 'web' ? (
                           <input
-                            type="time"
+                            type="text"
                             placeholder="Optional"
-                            value={startTime ? (() => {
-                              const parts = parseTimeString(startTime);
-                              if (parts) {
-                                return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                              }
-                              return '';
-                            })() : ''}
+                            value={startTime || ''}
                             onChange={(e) => {
-                              const [hours, minutes] = e.target.value.split(':').map(Number);
-                              if (!isNaN(hours) && !isNaN(minutes)) {
-                                const hour12 = hours % 12 || 12;
-                                const period = hours >= 12 ? 'PM' : 'AM';
-                                const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-                                setStartTime(formatted);
-                                if (validationErrors.time) {
-                                  setValidationErrors({ ...validationErrors, time: null });
-                                }
+                              const formatted = formatTimeInput(e.target.value || '', startTime);
+                              setStartTime(formatted);
+                              if (validationErrors.time) {
+                                setValidationErrors({ ...validationErrors, time: null });
                               }
                             }}
                             disabled={allDay}
@@ -3506,24 +3498,14 @@ export default function TaskCreateModal({
                       </View>
                       <View style={[styles.timeField, styles.timeFieldCompact]}>
                         <Text style={styles.timeLabel}>End</Text>
-                        {Platform.OS === 'web' ? (
+                      {Platform.OS === 'web' ? (
                           <input
-                            type="time"
-                            value={endTime ? (() => {
-                              const parts = parseTimeString(endTime);
-                              if (parts) {
-                                return `${parts.hours.toString().padStart(2, '0')}:${parts.minutes.toString().padStart(2, '0')}`;
-                              }
-                              return '';
-                            })() : ''}
+                            type="text"
+                            placeholder="Optional"
+                            value={endTime || ''}
                             onChange={(e) => {
-                              const [hours, minutes] = e.target.value.split(':').map(Number);
-                              if (!isNaN(hours) && !isNaN(minutes)) {
-                                const hour12 = hours % 12 || 12;
-                                const period = hours >= 12 ? 'PM' : 'AM';
-                                const formatted = `${hour12}:${minutes.toString().padStart(2, '0')} ${period}`;
-                                setEndTime(formatted);
-                              }
+                              const formatted = formatTimeInput(e.target.value || '', endTime);
+                              setEndTime(formatted);
                             }}
                             disabled={allDay}
                             style={{

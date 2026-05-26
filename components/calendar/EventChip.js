@@ -165,6 +165,28 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
   // Format time so display always matches actual scheduled local time
   const formatTime = () => {
+    // Timeless/flexible events intentionally have no explicit wall-clock time.
+    // Keep chip time empty instead of rendering 12:00 AM fallbacks.
+    if (ev?.is_flexible === true) {
+      return null;
+    }
+    // Defensive fallback: treat midnight-bounded lesson-like events as timeless.
+    // This prevents "12 AM" display for untimed rows that were persisted with day bounds.
+    const eventTypeRaw = String(ev?.event_type || ev?.type || '').trim();
+    const isIntrinsicAllDayType = ['Project', 'Trip', 'Holiday', 'Other'].includes(eventTypeRaw);
+    if (!isIntrinsicAllDayType && (ev?.start_ts || ev?.start) && (ev?.end_ts || ev?.end)) {
+      const s = new Date(ev.start_ts || ev.start);
+      const en = new Date(ev.end_ts || ev.end);
+      if (!Number.isNaN(s.getTime()) && !Number.isNaN(en.getTime())) {
+        const startsAtMidnight = s.getHours() === 0 && s.getMinutes() === 0;
+        const endsAtMidnight = en.getHours() === 0 && en.getMinutes() === 0;
+        const endsAtEndOfDay = en.getHours() === 23 && en.getMinutes() === 59;
+        if (startsAtMidnight && (endsAtMidnight || endsAtEndOfDay)) {
+          return null;
+        }
+      }
+    }
+
     // Debug logging for the specific event we're tracking
     // if (ev && ev.id === 'fd8afe0d-ffc8-4753-9ea6-32835b52fcb6') {
     //   console.log('[EventChip] formatTime called for fd8afe0d-ffc8-4753-9ea6-32835b52fcb6:', {

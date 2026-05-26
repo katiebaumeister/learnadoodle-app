@@ -2534,6 +2534,25 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const day = String(d.getDate()).padStart(2, '0');
       return `${y}-${m}-${day}`;
     };
+    const normalizeEventId = (value) => cleanPlannerEventId(String(value || '').replace(/^event-/, ''));
+    const idsMatch = (left, right) => {
+      const l = normalizeEventId(left);
+      const r = normalizeEventId(right);
+      return !!l && !!r && l === r;
+    };
+    const patchOverviewNextItem = (nextItem, patch) => {
+      if (!nextItem || !patch) return nextItem;
+      if (!idsMatch(nextItem.eventId || nextItem.id, patch.id)) return nextItem;
+      return {
+        ...nextItem,
+        id: patch.id || nextItem.id,
+        eventId: patch.id || nextItem.eventId || nextItem.id,
+        title: patch.title ?? nextItem.title,
+        dueDate: patch.start_ts ?? nextItem.dueDate,
+        startTs: patch.start_ts ?? nextItem.startTs,
+        endTs: patch.end_ts ?? nextItem.endTs,
+      };
+    };
 
     const handleEventPatched = (event) => {
       const patch = event?.detail?.patch;
@@ -2601,6 +2620,60 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
         nextEvents[newDateKey] = [...(nextEvents[newDateKey] || []), patched];
         return nextEvents;
+      });
+
+      setHomeData((prev) => {
+        if (!prev || !Array.isArray(prev.learning) || prev.learning.length === 0) return prev;
+        let changed = false;
+        const nextLearning = prev.learning.map((row) => {
+          if (!idsMatch(row?.id, eventId)) return row;
+          changed = true;
+          return {
+            ...row,
+            ...patch,
+            data: {
+              ...(row?.data || {}),
+              ...patch,
+            },
+          };
+        });
+        return changed ? { ...prev, learning: nextLearning } : prev;
+      });
+
+      setSubjectDetailCache((prev) => {
+        if (!prev || typeof prev !== 'object') return prev;
+        let changed = false;
+        const next = {};
+        for (const [subjectKey, payload] of Object.entries(prev)) {
+          const detail = payload?.detail;
+          if (!detail || !Array.isArray(detail.events)) {
+            next[subjectKey] = payload;
+            continue;
+          }
+          let rowChanged = false;
+          const nextEvents = detail.events.map((row) => {
+            if (!idsMatch(row?.id, eventId)) return row;
+            changed = true;
+            rowChanged = true;
+            return { ...row, ...patch };
+          });
+          next[subjectKey] = rowChanged
+            ? { ...payload, detail: { ...detail, events: nextEvents } }
+            : payload;
+        }
+        return changed ? next : prev;
+      });
+
+      setSubjectsOverviewCache((prev) => {
+        if (!Array.isArray(prev) || prev.length === 0) return prev;
+        let changed = false;
+        const next = prev.map((subjectRow) => {
+          const nextItem = patchOverviewNextItem(subjectRow?.nextItem, patch);
+          if (nextItem === subjectRow?.nextItem) return subjectRow;
+          changed = true;
+          return { ...subjectRow, nextItem };
+        });
+        return changed ? next : prev;
       });
     };
     const handleAttendancePatched = (event) => {
@@ -3404,6 +3477,99 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         }
         return changed ? next : prev;
       });
+
+      if (idStr || cleanSeriesLinkIds.length > 0 || academicYearIdStr || (sourceBlockIdStr && seriesAcademicYearIdStr)) {
+        setHomeData((prev) => {
+          if (!prev || !Array.isArray(prev.learning)) return prev;
+          const nextLearning = (prev.learning || []).filter((row) => {
+            if (!row) return false;
+            if (idStr && idsMatch(row?.id, idStr)) return false;
+            if (cleanSeriesLinkIds.length > 0) {
+              const rowId = normalizeEventId(row?.id);
+              const rowParentId = normalizeEventId(row?.parent_event_id);
+              const rowRecurrenceId = normalizeEventId(row?.recurrence_id);
+              if (
+                cleanSeriesLinkIds.includes(rowId) ||
+                cleanSeriesLinkIds.includes(rowParentId) ||
+                cleanSeriesLinkIds.includes(rowRecurrenceId)
+              ) return false;
+            }
+            if (academicYearIdStr && String(row?.academic_year_id || '') === academicYearIdStr) return false;
+            if (sourceBlockIdStr && seriesAcademicYearIdStr) {
+              if (String(row?.source_block_id || '') === sourceBlockIdStr && String(row?.academic_year_id || '') === seriesAcademicYearIdStr) return false;
+            }
+            return true;
+          });
+          return nextLearning.length === (prev.learning || []).length ? prev : { ...prev, learning: nextLearning };
+        });
+
+        setSubjectDetailCache((prev) => {
+          if (!prev || typeof prev !== 'object') return prev;
+          let changed = false;
+          const next = {};
+          for (const [subjectKey, payload] of Object.entries(prev)) {
+            const detail = payload?.detail;
+            if (!detail) {
+              next[subjectKey] = payload;
+              continue;
+            }
+            const currentEvents = Array.isArray(detail.events) ? detail.events : [];
+            const filteredEvents = currentEvents.filter((row) => {
+              if (idStr && idsMatch(row?.id, idStr)) return false;
+              if (cleanSeriesLinkIds.length > 0) {
+                const rowId = normalizeEventId(row?.id);
+                const rowParentId = normalizeEventId(row?.parent_event_id);
+                const rowRecurrenceId = normalizeEventId(row?.recurrence_id);
+                if (
+                  cleanSeriesLinkIds.includes(rowId) ||
+                  cleanSeriesLinkIds.includes(rowParentId) ||
+                  cleanSeriesLinkIds.includes(rowRecurrenceId)
+                ) return false;
+              }
+              if (academicYearIdStr && String(row?.academic_year_id || '') === academicYearIdStr) return false;
+              if (sourceBlockIdStr && seriesAcademicYearIdStr) {
+                if (String(row?.source_block_id || '') === sourceBlockIdStr && String(row?.academic_year_id || '') === seriesAcademicYearIdStr) return false;
+              }
+              return true;
+            });
+            const attendanceRows = Array.isArray(detail.attendanceRecords) ? detail.attendanceRecords : [];
+            const filteredAttendance = attendanceRows.filter((row) => {
+              if (!idStr) return true;
+              return !idsMatch(row?.event_id, idStr);
+            });
+            if (filteredEvents.length !== currentEvents.length || filteredAttendance.length !== attendanceRows.length) {
+              changed = true;
+              next[subjectKey] = {
+                ...payload,
+                detail: {
+                  ...detail,
+                  events: filteredEvents,
+                  attendanceRecords: filteredAttendance,
+                },
+              };
+            } else {
+              next[subjectKey] = payload;
+            }
+          }
+          return changed ? next : prev;
+        });
+
+        setSubjectsOverviewCache((prev) => {
+          if (!Array.isArray(prev) || prev.length === 0) return prev;
+          let changed = false;
+          const next = prev.map((subjectRow) => {
+            if (!subjectRow?.nextItem) return subjectRow;
+            const nextEventId = subjectRow.nextItem.eventId || subjectRow.nextItem.id;
+            const shouldClear =
+              (idStr && idsMatch(nextEventId, idStr)) ||
+              (cleanSeriesLinkIds.length > 0 && cleanSeriesLinkIds.includes(normalizeEventId(nextEventId)));
+            if (!shouldClear) return subjectRow;
+            changed = true;
+            return { ...subjectRow, nextItem: null };
+          });
+          return changed ? next : prev;
+        });
+      }
     };
 
     window.addEventListener('eventDeleted', handleEventDeletedForPlanner);

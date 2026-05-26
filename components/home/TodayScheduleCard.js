@@ -223,10 +223,26 @@ export default function TodayScheduleCard({
           showsVerticalScrollIndicator={false}
         >
           {events.map((event) => {
+            const eventTypeRaw = String(event?.event_type || event?.type || '').trim();
+            const isIntrinsicAllDayType = ['Project', 'Trip', 'Holiday', 'Other'].includes(eventTypeRaw);
+            const isMidnightBounded =
+              !!(event?.start_ts || event?.start) &&
+              !!(event?.end_ts || event?.end) &&
+              (() => {
+                const start = new Date(event.start_ts || event.start);
+                const end = new Date(event.end_ts || event.end);
+                if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+                const startsAtMidnight = start.getHours() === 0 && start.getMinutes() === 0;
+                const endsAtMidnight = end.getHours() === 0 && end.getMinutes() === 0;
+                const endsAtEndOfDay = end.getHours() === 23 && end.getMinutes() === 59;
+                return startsAtMidnight && (endsAtMidnight || endsAtEndOfDay);
+              })();
+            const isTimeless = event?.is_flexible === true || (!isIntrinsicAllDayType && isMidnightBounded);
             const eventChildIds = getEventChildIdsForDisplay(event, children);
-            const startTime = formatTime(event.start_local || event.start_ts);
-            const endTime = event.end_ts || event.end_local ? formatTime(event.end_ts || event.end_local) : null;
-            const timeRange = endTime ? `${startTime} - ${endTime}` : startTime;
+            const startTime = isTimeless ? '' : formatTime(event.start_local || event.start_ts);
+            const endTime = isTimeless ? null : (event.end_ts || event.end_local ? formatTime(event.end_ts || event.end_local) : null);
+            const timeRange = startTime ? (endTime ? `${startTime} - ${endTime}` : startTime) : '';
+            const timeLabel = timeRange || (isTimeless ? 'No time saved' : '');
             const isAssignment = (event.event_type || event.type || '').toLowerCase() === 'assignment';
             const isHoliday = (event.event_type || event.type || '').toLowerCase() === 'holiday';
             const done = isEventDone(event);
@@ -283,7 +299,7 @@ export default function TodayScheduleCard({
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <View style={styles.timeColumn}>
-                    <Text style={styles.timeText}>{timeRange}</Text>
+                    <Text style={[styles.timeText, isTimeless && styles.timePlaceholderText]}>{timeLabel}</Text>
                   </View>
                   <View style={styles.contentColumn}>
                     <View style={styles.titleRow}>
@@ -648,6 +664,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  timePlaceholderText: {
+    color: '#9ca3af',
   },
   contentColumn: {
     flex: 1,
