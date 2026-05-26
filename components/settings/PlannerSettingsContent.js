@@ -94,6 +94,36 @@ const clearPlannerSettingsSessionSnapshot = (snapshotCacheKey) => {
   }
 };
 
+const buildPlannerInitialDataSignature = (initialData) => {
+  if (!initialData || typeof initialData !== 'object') return 'none';
+  const settings = initialData.settings && typeof initialData.settings === 'object'
+    ? initialData.settings
+    : {};
+  const exclusions = Array.isArray(initialData.exclusions) ? initialData.exclusions : [];
+  const subjects = Array.isArray(initialData.subjects) ? initialData.subjects : [];
+  return JSON.stringify({
+    schoolYearLabel: settings.school_year_label || settings.default_school_year || '',
+    attendanceTrackingMode: settings.attendance_tracking_mode || '',
+    constraintMode: settings.default_constraint_mode || '',
+    targetDays: settings.default_target_days ?? null,
+    targetHours: settings.default_target_hours ?? null,
+    excludedHolidayDates: Array.isArray(initialData.excluded_holiday_dates) ? initialData.excluded_holiday_dates : [],
+    exclusions: exclusions.map((row) => ({
+      id: row?.id ?? null,
+      exclusion_type: row?.exclusion_type || '',
+      start_date: row?.start_date || '',
+      end_date: row?.end_date || '',
+      label: row?.label || '',
+    })),
+    subjectTargets: subjects.map((subject) => ({
+      id: subject?.id ?? null,
+      mode: subject?.default_constraint_mode || '',
+      days: subject?.default_target_days ?? null,
+      hours: subject?.default_target_hours ?? null,
+    })),
+  });
+};
+
 const parsePositiveIntOrNull = (value) => {
   const n = parseInt(String(value ?? '').trim(), 10);
   return Number.isFinite(n) && n >= 0 ? n : null;
@@ -450,6 +480,10 @@ export default function PlannerSettingsContent({
     [lockedSchoolYearLabel]
   );
   const isSchoolYearLocked = Boolean(normalizedLockedSchoolYearLabel);
+  const initialDataSignature = useMemo(
+    () => buildPlannerInitialDataSignature(initialData),
+    [initialData]
+  );
   const snapshotCacheKey = useMemo(() => {
     const yearLabel = normalizeSchoolYearLabel(
       isSchoolYearLocked ? normalizedLockedSchoolYearLabel : selectedSchoolYearLabel
@@ -707,6 +741,7 @@ export default function PlannerSettingsContent({
       normalizedLockedSchoolYearLabel || '',
       selectedYearLabel || '',
       initialDataYearLabel || '',
+      initialDataSignature,
     ].join('::');
     if (appliedInitialDataKeyRef.current === initialDataApplyKey) return;
     appliedInitialDataKeyRef.current = initialDataApplyKey;
@@ -814,7 +849,13 @@ export default function PlannerSettingsContent({
       if (firstActiveTarget.mode === 'hours') setTargetHours(firstActiveTarget.hours || '0');
     }
     setLoading(false);
-  }, [initialData, isSchoolYearLocked, normalizedLockedSchoolYearLabel, selectedSchoolYearLabel]);
+  }, [
+    initialData,
+    isSchoolYearLocked,
+    normalizedLockedSchoolYearLabel,
+    selectedSchoolYearLabel,
+    initialDataSignature,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1709,7 +1750,7 @@ export default function PlannerSettingsContent({
       clearPlannerSettingsSessionSnapshot(snapshotCacheKey);
     }
     onRequestClose?.();
-  }, [embeddedInModal, readOnly, persist, onRequestClose, snapshotCacheKey]);
+  }, [embeddedInModal, readOnly, persist, onRequestClose, snapshotCacheKey, hasPendingModalSave]);
 
   useEffect(() => {
     if (!(embeddedInModal && Platform.OS === 'web' && typeof window !== 'undefined')) return undefined;

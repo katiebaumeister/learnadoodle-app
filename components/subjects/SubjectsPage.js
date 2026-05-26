@@ -248,6 +248,14 @@ export default function SubjectsPage({
   const [planningPreferencesSchoolYearLabel, setPlanningPreferencesSchoolYearLabel] = useState(null);
   const [planningPreferencesInitialDataByYear, setPlanningPreferencesInitialDataByYear] = useState({});
   const [planningPreferencesSavedSinceOpen, setPlanningPreferencesSavedSinceOpen] = useState(false);
+  const planningPreferencesSavedSinceOpenRef = useRef(false);
+  const planningPreferencesSchoolYearLabelRef = useRef(null);
+  useEffect(() => {
+    planningPreferencesSavedSinceOpenRef.current = planningPreferencesSavedSinceOpen;
+  }, [planningPreferencesSavedSinceOpen]);
+  useEffect(() => {
+    planningPreferencesSchoolYearLabelRef.current = String(planningPreferencesSchoolYearLabel || '').trim() || null;
+  }, [planningPreferencesSchoolYearLabel]);
   const preloadPlanningPreferencesData = useCallback(async (schoolYearLabelInput) => {
     const schoolYearLabel = String(schoolYearLabelInput || '').trim();
     if (!familyId || !schoolYearLabel) return null;
@@ -282,15 +290,19 @@ export default function SubjectsPage({
     const targetYear = String(schoolYearLabelInput || '').trim() || selectedYearFilter || getCurrentSchoolYear();
     setPlanningPreferencesSchoolYearLabel(targetYear);
     setPlanningPreferencesSavedSinceOpen(false);
+    planningPreferencesSavedSinceOpenRef.current = false;
+    planningPreferencesSchoolYearLabelRef.current = targetYear;
     await preloadPlanningPreferencesData(targetYear);
     setShowPlanningPreferencesModal(true);
-  }, [preloadPlanningPreferencesData, selectedYearFilter]);
+  }, [preloadPlanningPreferencesData, selectedYearFilter, planningPreferencesInitialDataByYear]);
 
   const closePlanningPreferencesModal = useCallback(() => {
-    const closedYearLabel = String(planningPreferencesSchoolYearLabel || '').trim();
+    const closedYearLabel = String(planningPreferencesSchoolYearLabelRef.current || planningPreferencesSchoolYearLabel || '').trim();
+    const savedSinceOpen = planningPreferencesSavedSinceOpenRef.current;
     setShowPlanningPreferencesModal(false);
     setPlanningPreferencesSchoolYearLabel(null);
-    if (planningPreferencesSavedSinceOpen) {
+    planningPreferencesSchoolYearLabelRef.current = null;
+    if (savedSinceOpen) {
       if (closedYearLabel) {
         setPlanningPreferencesInitialDataByYear((prev) => {
           if (!prev || !prev[closedYearLabel]) return prev;
@@ -301,8 +313,9 @@ export default function SubjectsPage({
       }
       toast.push('Saved', 'success');
       setPlanningPreferencesSavedSinceOpen(false);
+      planningPreferencesSavedSinceOpenRef.current = false;
     }
-  }, [planningPreferencesSavedSinceOpen, planningPreferencesSchoolYearLabel, toast]);
+  }, [planningPreferencesSchoolYearLabel, toast]);
 
   const requestPlanningPreferencesClose = useCallback(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2074,7 +2087,18 @@ export default function SubjectsPage({
               lockedSchoolYearLabel={planningPreferencesSchoolYearLabel || null}
               onRequestClose={closePlanningPreferencesModal}
               onSave={() => {
+                const activeYearLabel = String(planningPreferencesSchoolYearLabelRef.current || planningPreferencesSchoolYearLabel || '').trim();
                 setPlanningPreferencesSavedSinceOpen(true);
+                planningPreferencesSavedSinceOpenRef.current = true;
+                if (activeYearLabel) {
+                  // Invalidate preloaded payload immediately so reopen refetches latest values.
+                  setPlanningPreferencesInitialDataByYear((prev) => {
+                    if (!prev || !prev[activeYearLabel]) return prev;
+                    const next = { ...prev };
+                    delete next[activeYearLabel];
+                    return next;
+                  });
+                }
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
                   window.dispatchEvent(new CustomEvent('refreshSubjects'));

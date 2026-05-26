@@ -19,36 +19,29 @@ import {
 } from '../lib/services/deleteSubjectCascade';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
-const GRADE_OPTION_SET = new Set(GRADE_OPTIONS);
 
-function normalizeGradeValue(rawGrade) {
-  if (rawGrade == null) return null;
-  const trimmed = String(rawGrade).trim();
-  if (!trimmed) return null;
-  const lower = trimmed.toLowerCase();
-  if (lower === 'k' || lower === 'kindergarten') return 'K';
-  const match = lower.match(/\d+/);
+const formatSchoolYearLabel = (startYear) => `${startYear}/${String(startYear + 1).slice(-2)}`;
+const parseSchoolYearLabel = (label) => {
+  const text = String(label || '').trim();
+  const match = text.match(/^(\d{4})\s*\/\s*(\d{2,4})$/);
   if (!match) return null;
-  const parsed = parseInt(match[0], 10);
-  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 12) return null;
-  return String(parsed);
-}
+  const start = Number(match[1]);
+  let end = Number(match[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (end < 100) end = Math.floor(start / 100) * 100 + end;
+  if (end !== start + 1) return null;
+  return { start, end };
+};
+const normalizeSchoolYearLabel = (label) => {
+  const parsed = parseSchoolYearLabel(label);
+  return parsed ? formatSchoolYearLabel(parsed.start) : '';
+};
 
-function gradeSortValue(normalizedGrade) {
-  if (normalizedGrade === 'K') return 0;
-  const n = parseInt(String(normalizedGrade), 10);
-  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+function getFallbackSchoolYearOptions() {
+  const now = new Date();
+  const currentStart = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return Array.from({ length: 12 }, (_, idx) => formatSchoolYearLabel(currentStart + idx));
 }
-
-// School year options: 2025/26 through 2040/41 (16 years)
-function getSchoolYearOptions() {
-  const options = [];
-  for (let y = 2025; y <= 2040; y++) {
-    options.push(`${y}/${String(y + 1).slice(-2)}`);
-  }
-  return options;
-}
-const SCHOOL_YEAR_OPTIONS = getSchoolYearOptions();
 const TERM_OPTIONS = [
   { id: 'full_year', label: 'Full year' },
   { id: 'fall_term', label: 'Fall term' },
@@ -106,9 +99,10 @@ export default function AddSubjectModal({
   const [subjectNameInputFocused, setSubjectNameInputFocused] = useState(false);
   const [additionalNotes, setAdditionalNotes] = useState('');
   const [selectedChildIds, setSelectedChildIds] = useState([]);
-  const [grade, setGrade] = useState(GRADE_OPTIONS[0] || '');
+  const [grade, setGrade] = useState('');
   const [gradeManuallyEdited, setGradeManuallyEdited] = useState(false);
   const [schoolYear, setSchoolYear] = useState(initialSchoolYear || getDefaultSchoolYear());
+  const [schoolYearOptions, setSchoolYearOptions] = useState(() => getFallbackSchoolYearOptions());
   const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
   const [schoolTerm, setSchoolTerm] = useState(initialSchoolTerm || getDefaultSchoolTerm());
   const [showSchoolTermDropdown, setShowSchoolTermDropdown] = useState(false);
@@ -177,7 +171,7 @@ export default function AddSubjectModal({
       if (subject) {
         setSubjectName(subject.name || '');
         setAdditionalNotes(subject.notes || subject.summary || '');
-        setGrade(subject.grade || GRADE_OPTIONS[0] || '');
+        setGrade(subject.grade || '');
         setGradeManuallyEdited(true);
         setSchoolYear(subject.school_year || getDefaultSchoolYear());
         setSchoolTerm(subject.school_term || getDefaultSchoolTerm());
@@ -193,7 +187,7 @@ export default function AddSubjectModal({
       } else {
         // Add mode - use defaults
         setAdditionalNotes('');
-        setGrade(GRADE_OPTIONS[0] || '');
+        setGrade('');
         setGradeManuallyEdited(false);
         setSchoolYear(initialSchoolYear || getDefaultSchoolYear());
         setSchoolTerm(initialSchoolTerm || getDefaultSchoolTerm());
@@ -217,7 +211,7 @@ export default function AddSubjectModal({
       setSubjectName('');
       setAdditionalNotes('');
       setSelectedChildIds([]);
-      setGrade(GRADE_OPTIONS[0] || '');
+      setGrade('');
       setGradeManuallyEdited(false);
       setSchoolYear(getDefaultSchoolYear());
       setShowSchoolYearDropdown(false);
@@ -241,29 +235,51 @@ export default function AddSubjectModal({
     }
   }, [visible, defaultChildId, defaultChildIds, defaultSubjectName, initialSchoolTerm, initialSchoolYear, subject]);
 
-  // Add mode: default grade to selected students (lowest grade when multiple).
   useEffect(() => {
-    if (!visible) return;
-    if (subject) return;
-    if (isSubmitting) return;
-    if (gradeManuallyEdited) return;
-    if (!Array.isArray(selectedChildIds) || selectedChildIds.length === 0) return;
-    if (!Array.isArray(children) || children.length === 0) return;
-
-    const selectedSet = new Set(selectedChildIds.map(String));
-    const normalizedSelectedGrades = (children || [])
-      .filter((child) => selectedSet.has(String(child?.id)))
-      .map((child) => normalizeGradeValue(child?.grade_level ?? child?.grade ?? child?.grade_label))
-      .filter((g) => g && GRADE_OPTION_SET.has(g));
-
-    if (!normalizedSelectedGrades.length) return;
-    const lowestGrade = [...normalizedSelectedGrades].sort(
-      (a, b) => gradeSortValue(a) - gradeSortValue(b)
-    )[0];
-    if (lowestGrade && lowestGrade !== grade) {
-      setGrade(lowestGrade);
-    }
-  }, [visible, subject, isSubmitting, gradeManuallyEdited, selectedChildIds, children, grade]);
+    let cancelled = false;
+    const loadSchoolYearOptions = async () => {
+      try {
+        const { data } = await supabase
+          .from('school_year_templates')
+          .select('label, start_year')
+          .order('start_year', { ascending: true });
+        if (cancelled) return;
+        const dbLabels = Array.from(
+          new Set((data || []).map((row) => normalizeSchoolYearLabel(row?.label)).filter(Boolean))
+        );
+        const futureLabels = getFallbackSchoolYearOptions();
+        const nextOptions = Array.from(new Set([...dbLabels, ...futureLabels]))
+          .filter(Boolean)
+          .sort((a, b) => {
+            const ay = parseSchoolYearLabel(a)?.start ?? 0;
+            const by = parseSchoolYearLabel(b)?.start ?? 0;
+            return ay - by;
+          });
+        const normalizedSelected = normalizeSchoolYearLabel(schoolYear);
+        if (normalizedSelected && !nextOptions.includes(normalizedSelected)) {
+          nextOptions.push(normalizedSelected);
+          nextOptions.sort((a, b) => {
+            const ay = parseSchoolYearLabel(a)?.start ?? 0;
+            const by = parseSchoolYearLabel(b)?.start ?? 0;
+            return ay - by;
+          });
+        }
+        setSchoolYearOptions(nextOptions.length > 0 ? nextOptions : getFallbackSchoolYearOptions());
+      } catch (_) {
+        if (cancelled) return;
+        setSchoolYearOptions((prev) => {
+          const fallback = getFallbackSchoolYearOptions();
+          const normalizedSelected = normalizeSchoolYearLabel(schoolYear);
+          if (normalizedSelected && !fallback.includes(normalizedSelected)) fallback.push(normalizedSelected);
+          return Array.isArray(prev) && prev.length > 0 ? prev : fallback;
+        });
+      }
+    };
+    if (visible) loadSchoolYearOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, schoolYear]);
 
   // Clear transient validation/banner errors as soon as form state is corrected.
   useEffect(() => {
@@ -1078,9 +1094,9 @@ export default function AddSubjectModal({
                     <ChevronDown size={18} color="#6b7280" />
                   </TouchableOpacity>
                   {showSchoolYearDropdown && (
-                    <View style={[styles.dropdownList, styles.schoolScopeDropdownList]}>
+                    <View style={styles.dropdownList}>
                       <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
-                        {SCHOOL_YEAR_OPTIONS.map((opt) => (
+                        {schoolYearOptions.map((opt) => (
                           <TouchableOpacity
                             key={opt}
                             style={[styles.dropdownOption, opt === schoolYear && styles.dropdownOptionSelected]}
@@ -1114,7 +1130,7 @@ export default function AddSubjectModal({
                     <ChevronDown size={18} color="#6b7280" />
                   </TouchableOpacity>
                   {showSchoolTermDropdown && (
-                    <View style={[styles.dropdownList, styles.schoolScopeDropdownList]}>
+                    <View style={styles.dropdownList}>
                       {TERM_OPTIONS.map((opt) => (
                         <TouchableOpacity
                           key={opt.id}
@@ -1664,12 +1680,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     maxHeight: 200,
     zIndex: 150,
-  },
-  schoolScopeDropdownList: {
-    top: undefined,
-    bottom: '100%',
-    marginTop: 0,
-    marginBottom: 4,
   },
   dropdownScroll: {
     maxHeight: 200,
