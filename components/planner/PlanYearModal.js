@@ -2476,6 +2476,7 @@ export default function PlanYearModal({
   });
   const planPrefsFamilySaveTimerRef = useRef(null);
   const planPrefsSubjectTimersRef = useRef({});
+  const planPrefsSubjectPendingRowsRef = useRef({});
   const planPrefsHolidaySaveTimerRef = useRef(null);
   const planPrefsExclusionsSaveTimerRef = useRef(null);
   const planPrefsExcludedDatesSaveTimerRef = useRef(null);
@@ -8177,6 +8178,31 @@ export default function PlanYearModal({
     }, 400);
   }, [familyId, toast, dispatchPlanningPrefsSynced, selectedSchoolYearOption?.label]);
 
+  const flushFamilyPlannerTargetsSave = useCallback(() => {
+    if (!familyId || !planPrefsFamilySaveTimerRef.current) return;
+    clearTimeout(planPrefsFamilySaveTimerRef.current);
+    planPrefsFamilySaveTimerRef.current = null;
+    const snap = planPrefsSnapRef.current;
+    saveFamilyPlannerSettings(
+      familyId,
+      {
+        default_constraint_mode: snap.planConstraintMode,
+        default_target_days: snap.planConstraintMode === 'days' ? (parseInt(snap.planTargetDays, 10) || null) : null,
+        default_target_hours: snap.planConstraintMode === 'hours' ? (parseFloat(snap.planTargetHours) || null) : null,
+        default_planned_hours_per_day:
+          snap.planConstraintMode === 'hours' ? (parseFloat(snap.hoursPerDay) || null) : null,
+      },
+      selectedSchoolYearOption?.label || null
+    )
+      .then(({ error }) => {
+        if (error) throw error;
+        dispatchPlanningPrefsSynced();
+      })
+      .catch((e) => {
+        toast?.push?.(e?.message || 'Failed to save planning preferences', 'error');
+      });
+  }, [familyId, toast, dispatchPlanningPrefsSynced, selectedSchoolYearOption?.label]);
+
   const persistFamilyHolidaySettingsDebounced = useCallback(
     (followValue) => {
       if (!familyId) return;
@@ -8289,12 +8315,16 @@ export default function PlanYearModal({
   const schedulePersistSubjectPlanningTarget = useCallback(
     (subjectId, row) => {
       const timers = planPrefsSubjectTimersRef.current;
+      const pendingRows = planPrefsSubjectPendingRowsRef.current;
+      pendingRows[subjectId] = row;
       if (timers[subjectId]) clearTimeout(timers[subjectId]);
       timers[subjectId] = setTimeout(async () => {
         delete timers[subjectId];
-        const mode = row.mode || 'none';
-        const days = mode === 'days' && row.days?.trim() ? parseInt(row.days, 10) : null;
-        const hours = mode === 'hours' && row.hours?.trim() ? parseFloat(row.hours) : null;
+        const pendingRow = pendingRows[subjectId] || row;
+        delete pendingRows[subjectId];
+        const mode = pendingRow.mode || 'none';
+        const days = mode === 'days' && pendingRow.days?.trim() ? parseInt(pendingRow.days, 10) : null;
+        const hours = mode === 'hours' && pendingRow.hours?.trim() ? parseFloat(pendingRow.hours) : null;
         try {
           const { error } = await supabase
             .from('subject')
@@ -8314,6 +8344,45 @@ export default function PlanYearModal({
     [toast, dispatchPlanningPrefsSynced],
   );
 
+  const flushSubjectPlanningTargetsSave = useCallback(async () => {
+    const timers = planPrefsSubjectTimersRef.current;
+    const pendingRows = planPrefsSubjectPendingRowsRef.current;
+    const subjectIds = Array.from(new Set([...Object.keys(timers), ...Object.keys(pendingRows)]));
+    if (subjectIds.length === 0) return;
+    subjectIds.forEach((subjectId) => {
+      if (timers[subjectId]) clearTimeout(timers[subjectId]);
+      delete timers[subjectId];
+    });
+
+    let hasSavedAtLeastOne = false;
+    for (const subjectId of subjectIds) {
+      const row = pendingRows[subjectId];
+      delete pendingRows[subjectId];
+      if (!row) continue;
+      const mode = row.mode || 'none';
+      const days = mode === 'days' && row.days?.trim() ? parseInt(row.days, 10) : null;
+      const hours = mode === 'hours' && row.hours?.trim() ? parseFloat(row.hours) : null;
+      try {
+        const { error } = await supabase
+          .from('subject')
+          .update({
+            default_constraint_mode: mode,
+            default_target_days: days,
+            default_target_hours: hours,
+          })
+          .eq('id', subjectId);
+        if (error) throw error;
+        hasSavedAtLeastOne = true;
+      } catch (e) {
+        toast?.push?.(e?.message || 'Failed to save subject target', 'error');
+      }
+    }
+
+    if (hasSavedAtLeastOne) {
+      dispatchPlanningPrefsSynced();
+    }
+  }, [toast, dispatchPlanningPrefsSynced]);
+
   useEffect(() => {
     return () => {
       if (planPrefsFamilySaveTimerRef.current) clearTimeout(planPrefsFamilySaveTimerRef.current);
@@ -8325,11 +8394,14 @@ export default function PlanYearModal({
         if (t) clearTimeout(t);
       });
       planPrefsSubjectTimersRef.current = {};
+      planPrefsSubjectPendingRowsRef.current = {};
     };
   }, []);
 
   useEffect(() => {
     if (!visible) {
+      flushFamilyPlannerTargetsSave();
+      flushSubjectPlanningTargetsSave();
       if (planPrefsFamilySaveTimerRef.current) {
         clearTimeout(planPrefsFamilySaveTimerRef.current);
         planPrefsFamilySaveTimerRef.current = null;
@@ -8346,13 +8418,10 @@ export default function PlanYearModal({
         clearTimeout(planPrefsExcludedDatesSaveTimerRef.current);
         planPrefsExcludedDatesSaveTimerRef.current = null;
       }
-      Object.keys(planPrefsSubjectTimersRef.current).forEach((k) => {
-        const t = planPrefsSubjectTimersRef.current[k];
-        if (t) clearTimeout(t);
-        delete planPrefsSubjectTimersRef.current[k];
-      });
+      planPrefsSubjectTimersRef.current = {};
+      planPrefsSubjectPendingRowsRef.current = {};
     }
-  }, [visible]);
+  }, [visible, flushFamilyPlannerTargetsSave, flushSubjectPlanningTargetsSave]);
 
   const handleApplyToCalendar = async () => {
     setCadenceWeekdayHighlightIndices([]);

@@ -2540,6 +2540,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const r = normalizeEventId(right);
       return !!l && !!r && l === r;
     };
+    const rowMatchesDeletedId = (row, deletedId) => {
+      if (!deletedId || !row) return false;
+      return (
+        idsMatch(row?.id, deletedId) ||
+        idsMatch(row?.event_id, deletedId) ||
+        idsMatch(row?.data?.id, deletedId) ||
+        idsMatch(row?.data?.event_id, deletedId)
+      );
+    };
     const patchOverviewNextItem = (nextItem, patch) => {
       if (!nextItem || !patch) return nextItem;
       if (!idsMatch(nextItem.eventId || nextItem.id, patch.id)) return nextItem;
@@ -3138,6 +3147,21 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // This allows the TaskCreateModal in WebLayout to trigger a calendar refresh
   useEffect(() => {
     if (Platform.OS !== 'web') return;
+    const normalizeEventId = (value) => cleanPlannerEventId(String(value || '').replace(/^event-/, ''));
+    const idsMatch = (left, right) => {
+      const l = normalizeEventId(left);
+      const r = normalizeEventId(right);
+      return !!l && !!r && l === r;
+    };
+    const rowMatchesDeletedId = (row, deletedId) => {
+      if (!deletedId || !row) return false;
+      return (
+        idsMatch(row?.id, deletedId) ||
+        idsMatch(row?.event_id, deletedId) ||
+        idsMatch(row?.data?.id, deletedId) ||
+        idsMatch(row?.data?.event_id, deletedId)
+      );
+    };
     
     const handleRefreshCalendar = async (event) => {
       // console.log('[WebContent] handleRefreshCalendar called', event?.detail);
@@ -3483,7 +3507,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           if (!prev || !Array.isArray(prev.learning)) return prev;
           const nextLearning = (prev.learning || []).filter((row) => {
             if (!row) return false;
-            if (idStr && idsMatch(row?.id, idStr)) return false;
+            if (idStr && rowMatchesDeletedId(row, idStr)) return false;
             if (cleanSeriesLinkIds.length > 0) {
               const rowId = normalizeEventId(row?.id);
               const rowParentId = normalizeEventId(row?.parent_event_id);
@@ -3515,7 +3539,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             }
             const currentEvents = Array.isArray(detail.events) ? detail.events : [];
             const filteredEvents = currentEvents.filter((row) => {
-              if (idStr && idsMatch(row?.id, idStr)) return false;
+              if (idStr && rowMatchesDeletedId(row, idStr)) return false;
               if (cleanSeriesLinkIds.length > 0) {
                 const rowId = normalizeEventId(row?.id);
                 const rowParentId = normalizeEventId(row?.parent_event_id);
@@ -3647,7 +3671,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             if (!prev) return prev;
             const updatedLearning = (prev.learning || []).filter((e) => {
               if (!e) return false;
-              if (deletedId && e.id === deletedId) return false;
+              if (deletedId && rowMatchesDeletedId(e, deletedId)) return false;
               if (deletedAcademicYearId && String(e.academic_year_id || '') === String(deletedAcademicYearId)) return false;
               return true;
             });
@@ -3693,7 +3717,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               
               // Filter out deleted event
               const updatedLearning = deletedId 
-                ? (data?.learning || []).filter(e => e.id !== deletedId)
+                ? (data?.learning || []).filter((e) => !rowMatchesDeletedId(e, deletedId))
                 : (data?.learning || []);
               
               const updatedData = {

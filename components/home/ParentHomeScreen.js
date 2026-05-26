@@ -328,6 +328,21 @@ export default function ParentHomeScreen({
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
+    const normalizeEventId = (value) => cleanPlannerEventId(String(value || '').replace(/^event-/, ''));
+    const idsMatch = (left, right) => {
+      const l = normalizeEventId(left);
+      const r = normalizeEventId(right);
+      return !!l && !!r && l === r;
+    };
+    const rowMatchesDeletedId = (row, deletedId) => {
+      if (!deletedId || !row) return false;
+      return (
+        idsMatch(row?.id, deletedId) ||
+        idsMatch(row?.event_id, deletedId) ||
+        idsMatch(row?.data?.id, deletedId) ||
+        idsMatch(row?.data?.event_id, deletedId)
+      );
+    };
     const onRefreshCalendar = (e) => {
       if (e?.detail?.skipHomeRefresh) return;
       loadDataRef.current(true);
@@ -361,11 +376,50 @@ export default function ParentHomeScreen({
         return changed ? { ...prev, learning: nextLearning } : prev;
       });
     };
+    const onEventDeleted = (e) => {
+      const deletedId = e?.detail?.eventId || e?.detail?.id;
+      const deletedAcademicYearId = e?.detail?.academicYearId || e?.detail?.academic_year_id;
+      const deletedSeriesMasterId = e?.detail?.seriesMasterEventId || e?.detail?.series_master_event_id;
+      const deletedSeriesLinkIds = Array.isArray(e?.detail?.seriesLinkIds) ? e.detail.seriesLinkIds : [];
+      const cleanSeriesMasterId = deletedSeriesMasterId ? normalizeEventId(deletedSeriesMasterId) : null;
+      const cleanSeriesLinkIds = Array.from(
+        new Set(
+          deletedSeriesLinkIds
+            .map((value) => normalizeEventId(value))
+            .filter(Boolean)
+            .concat(cleanSeriesMasterId ? [cleanSeriesMasterId] : [])
+        )
+      );
+      if (!deletedId && !deletedAcademicYearId && cleanSeriesLinkIds.length === 0) return;
+
+      setHomeData((prev) => {
+        if (!prev || !Array.isArray(prev.learning) || prev.learning.length === 0) return prev;
+        const nextLearning = prev.learning.filter((row) => {
+          if (!row) return false;
+          if (deletedId && rowMatchesDeletedId(row, deletedId)) return false;
+          if (cleanSeriesLinkIds.length > 0) {
+            const rowId = normalizeEventId(row?.id);
+            const rowParentId = normalizeEventId(row?.parent_event_id);
+            const rowRecurrenceId = normalizeEventId(row?.recurrence_id);
+            if (
+              cleanSeriesLinkIds.includes(rowId) ||
+              cleanSeriesLinkIds.includes(rowParentId) ||
+              cleanSeriesLinkIds.includes(rowRecurrenceId)
+            ) return false;
+          }
+          if (deletedAcademicYearId && String(row?.academic_year_id || '') === String(deletedAcademicYearId)) return false;
+          return true;
+        });
+        return nextLearning.length === prev.learning.length ? prev : { ...prev, learning: nextLearning };
+      });
+    };
     window.addEventListener('refreshCalendar', onRefreshCalendar);
     window.addEventListener('eventAttendancePatched', onAttendancePatched);
+    window.addEventListener('eventDeleted', onEventDeleted);
     return () => {
       window.removeEventListener('refreshCalendar', onRefreshCalendar);
       window.removeEventListener('eventAttendancePatched', onAttendancePatched);
+      window.removeEventListener('eventDeleted', onEventDeleted);
     };
   }, [familyId]);
 

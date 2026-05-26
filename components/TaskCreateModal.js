@@ -360,6 +360,29 @@ export default function TaskCreateModal({
   const [allDay, setAllDay] = useState(false);
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  const startTimeInputRef = useRef(null);
+  const endTimeInputRef = useRef(null);
+
+  function normalizeTimeValue(rawValue) {
+    const value = String(rawValue || '').replace(/_/g, '').trim();
+    if (!value || value === ':') return '';
+    return value;
+  }
+
+  function shouldSkipConflictEvent(ev) {
+    if (!ev) return true;
+    if (ev.status === 'canceled' || ev.canceled_at || ev.deleted_at) return true;
+    if (ev.is_backlog) return true;
+    if (ev.is_flexible === true) return true;
+    if (ev.recurrence_rule && String(ev.id || '') === String(ev.parent_event_id || '')) return true;
+    const start = new Date(ev.start_ts || ev.start);
+    const end = new Date(ev.end_ts || ev.end);
+    if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+      const durationMinutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+      if (durationMinutes >= 23 * 60) return true;
+    }
+    return false;
+  }
   
   // New academic and metadata fields
   const [eventType, setEventType] = useState('Lesson'); // Default to "Lesson" for new events
@@ -662,7 +685,9 @@ export default function TaskCreateModal({
     }
     const dueDateMs = dueDate instanceof Date ? dueDate.getTime() : NaN;
     const eventEndDateMs = eventEndDate instanceof Date ? eventEndDate.getTime() : NaN;
-    if (!visible || placement !== 'calendar' || allDay || !startTime || assigneeIds.length === 0 || !dueDate) {
+    const normalizedStartTime = normalizeTimeValue(startTime);
+    const normalizedEndTime = normalizeTimeValue(endTime);
+    if (!visible || placement !== 'calendar' || allDay || !normalizedStartTime || assigneeIds.length === 0 || !dueDate) {
       lastConflictCheckKeyRef.current = '';
       setConflictWarningSafely(null);
       return;
@@ -672,8 +697,8 @@ export default function TaskCreateModal({
       visible ? '1' : '0',
       placement || '',
       allDay ? '1' : '0',
-      String(startTime || ''),
-      String(endTime || ''),
+      String(normalizedStartTime || ''),
+      String(normalizedEndTime || ''),
       assigneeIdsSignature,
       Number.isFinite(dueDateMs) ? String(dueDateMs) : '',
       Number.isFinite(eventEndDateMs) ? String(eventEndDateMs) : '',
@@ -690,7 +715,7 @@ export default function TaskCreateModal({
         visible,
         placement,
         allDay,
-        startTime,
+        startTime: normalizedStartTime,
         assigneeIds: assigneeIds.length,
         dueDate: dueDate?.toISOString(),
         familyId,
@@ -700,7 +725,7 @@ export default function TaskCreateModal({
         const baseDate = new Date(dueDate);
         baseDate.setHours(0, 0, 0, 0);
         
-        const resolvedStart = applyTimeToDate(baseDate, startTime);
+        const resolvedStart = applyTimeToDate(baseDate, normalizedStartTime);
         if (!resolvedStart) {
           if (cancelled) return;
           setConflictWarningSafely(null);
@@ -718,8 +743,8 @@ export default function TaskCreateModal({
           const endDateDay = eventEndDate.getDate();
           resolvedEnd = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
         } else {
-          resolvedEnd = endTime.trim() 
-            ? applyTimeToDate(baseDate, endTime)
+          resolvedEnd = normalizedEndTime
+            ? applyTimeToDate(baseDate, normalizedEndTime)
             : new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
         }
         
@@ -757,6 +782,7 @@ export default function TaskCreateModal({
         // Check for overlaps
         const conflicts = [];
         for (const event of existingEvents || []) {
+          if (shouldSkipConflictEvent(event)) continue;
           const eventStart = new Date(event.start_ts);
           const eventEnd = new Date(event.end_ts || event.start_ts);
           
@@ -1682,98 +1708,250 @@ export default function TaskCreateModal({
 
   // Label functions removed - labels no longer used
 
-  // Format time input to enforce "00:00 AM/PM" format in real-time
+  // Format time input as a guided mask while preserving typed intent.
   const formatTimeInput = (text, previousValue = '') => {
-    if (!text) return '';
-    
-    // Remove all non-numeric characters except colon, space, and A/P/M
-    let cleaned = text.replace(/[^0-9:APM\s]/gi, '');
-    
-    // Check for AM/PM in the original text (case insensitive) - preserve it
-    const upperText = text.toUpperCase();
-    const hasAM = upperText.includes('AM');
-    const hasPM = upperText.includes('PM');
-    
-    // Extract numbers only
-    const numbers = cleaned.replace(/[^0-9]/g, '');
-    
-    // If empty, return empty (allow clearing)
-    if (numbers.length === 0) {
-      return '';
-    }
-    
-    // Limit to 4 digits (HHMM)
-    const digits = numbers.slice(0, 4);
-    
-    // Format based on length
-    let formatted = '';
-    if (digits.length === 1) {
-      // Single digit: "1" -> "1"
-      formatted = digits;
-    } else if (digits.length === 2) {
-      // Two digits: "10" -> "10" (hours)
-      const num = parseInt(digits, 10);
-      if (num > 12) {
-        // If > 12, treat as ":10" (minutes)
-        formatted = `:${digits}`;
+    if (!text || !String(text).trim()) return '';
+    const raw = String(text);
+    const upperText = raw.toUpperCase();
+    const condensedUpperText = upperText.replace(/\s+/g, '');
+    const hasExplicitAM = /\bAM\b/.test(upperText) || condensedUpperText.endsWith('AM');
+    const hasExplicitPM = /\bPM\b/.test(upperText) || condensedUpperText.endsWith('PM');
+    const hasPartialAM = !hasExplicitAM && !hasExplicitPM && condensedUpperText.includes('A');
+    const hasPartialPM = !hasExplicitAM && !hasExplicitPM && condensedUpperText.includes('P');
+    const previousUpper = String(previousValue || '').toUpperCase();
+    const previousPeriod = previousUpper.includes('PM')
+      ? 'PM'
+      : previousUpper.includes('AM')
+        ? 'AM'
+        : '';
+    let period = hasExplicitPM || hasPartialPM
+      ? 'PM'
+      : hasExplicitAM || hasPartialAM
+        ? 'AM'
+        : previousPeriod || '__';
+
+    let hourDigits = '';
+    let minuteDigits = '';
+    if (raw.includes(':')) {
+      const colonIndex = raw.indexOf(':');
+      hourDigits = raw.slice(0, colonIndex).replace(/\D/g, '').slice(0, 2);
+      minuteDigits = raw.slice(colonIndex + 1).replace(/\D/g, '').slice(0, 2);
+    } else {
+      const digits = raw.replace(/\D/g, '').slice(0, 4);
+      if (digits.length <= 2) {
+        hourDigits = digits;
       } else {
-        formatted = digits;
-      }
-    } else if (digits.length === 3) {
-      // Three digits: "103" -> "10:3"
-      const hours = digits.slice(0, 2);
-      const minDigit = digits.slice(2);
-      const hoursNum = parseInt(hours, 10);
-      if (hoursNum > 12) {
-        // Invalid hours, use first digit as hour
-        formatted = `${digits[0]}:${digits.slice(1)}`;
-      } else {
-        formatted = `${hours}:${minDigit}`;
-      }
-    } else if (digits.length >= 4) {
-      // Four digits: "1030" -> "10:30"
-      const hours = digits.slice(0, 2);
-      const minutes = digits.slice(2, 4);
-      const hoursNum = parseInt(hours, 10);
-      const minutesNum = parseInt(minutes, 10);
-      
-      // Validate hours (1-12)
-      let validHours = hours;
-      if (hoursNum > 12) {
-        // Use first digit as hour if second makes it > 12
-        validHours = hours[0];
-        formatted = `${validHours}:${minutes}`;
-      } else if (hoursNum === 0) {
-        validHours = '12';
-        formatted = `${validHours}:${minutes}`;
-      } else {
-        // Validate minutes (0-59)
-        const validMinutes = minutesNum > 59 ? '59' : minutes;
-        formatted = `${validHours}:${validMinutes}`;
+        hourDigits = digits.slice(0, 2);
+        minuteDigits = digits.slice(2);
       }
     }
-    
-    // Add AM/PM - always add when we have a complete time
-    let period = '';
-    if (hasPM) {
-      period = ' PM';
-    } else if (hasAM) {
-      period = ' AM';
-    } else if (formatted.includes(':') && formatted.length >= 4) {
-      // Auto-add AM/PM when we have complete time format (HH:MM)
-      const parts = formatted.split(':');
-      if (parts.length === 2 && parts[1].length === 2) {
-        // Complete time format, default to AM
-        period = ' AM';
+
+    if (hourDigits.length === 2) {
+      const hourNum = parseInt(hourDigits, 10);
+      if (hourNum === 0) {
+        hourDigits = '12';
+      } else if (hourNum > 12) {
+        minuteDigits = `${hourDigits[1]}${minuteDigits}`.slice(0, 2);
+        hourDigits = hourDigits[0];
       }
     }
-    
-    return formatted + period;
+
+    if (minuteDigits.length === 2) {
+      const minuteNum = parseInt(minuteDigits, 10);
+      if (minuteNum > 59) {
+        minuteDigits = '59';
+      }
+    }
+
+    const hourMask = `${hourDigits[0] || '_'}${hourDigits[1] || '_'}`;
+    const minuteMask = `${minuteDigits[0] || '_'}${minuteDigits[1] || '_'}`;
+    const periodMask = `${period[0] || '_'}${period[1] || '_'}`;
+    return `${hourMask}:${minuteMask} ${periodMask}`;
+  };
+
+  const TIME_MASK = '__:__ __';
+  const TIME_TOKEN_INDEXES = [0, 1, 3, 4, 6, 7];
+  const DIGIT_TOKEN_INDEXES = [0, 1, 3, 4];
+  const setMaskedCaret = (inputEl, pos) => {
+    if (Platform.OS !== 'web' || !inputEl) return;
+    requestAnimationFrame(() => {
+      try {
+        inputEl.setSelectionRange(pos, pos);
+      } catch (_) {
+        // Ignore selection errors in unsupported states.
+      }
+    });
+  };
+  const normalizeMask = (value, previousValue = '') => {
+    const next = formatTimeInput(value || TIME_MASK, previousValue || '');
+    return next || TIME_MASK;
+  };
+  const nextTokenIndex = (pos, inclusive = true) => {
+    for (const idx of TIME_TOKEN_INDEXES) {
+      if ((inclusive && idx >= pos) || (!inclusive && idx > pos)) return idx;
+    }
+    return TIME_TOKEN_INDEXES[TIME_TOKEN_INDEXES.length - 1];
+  };
+  const prevTokenIndex = (pos, inclusive = true) => {
+    for (let i = TIME_TOKEN_INDEXES.length - 1; i >= 0; i -= 1) {
+      const idx = TIME_TOKEN_INDEXES[i];
+      if ((inclusive && idx <= pos) || (!inclusive && idx < pos)) return idx;
+    }
+    return TIME_TOKEN_INDEXES[0];
+  };
+  const clearTokenAt = (chars, idx) => {
+    if (!TIME_TOKEN_INDEXES.includes(idx)) return;
+    chars[idx] = '_';
+    if (idx === 6 || idx === 7) {
+      chars[6] = '_';
+      chars[7] = '_';
+    }
+  };
+  const snapTimeCaretToToken = (inputEl) => {
+    if (Platform.OS !== 'web' || !inputEl) return;
+    const caret = typeof inputEl.selectionStart === 'number' ? inputEl.selectionStart : 0;
+    if (TIME_TOKEN_INDEXES.includes(caret)) return;
+    if (caret <= 2) {
+      setMaskedCaret(inputEl, caret <= 1 ? caret : 3);
+      return;
+    }
+    if (caret <= 5) {
+      setMaskedCaret(inputEl, caret <= 4 ? caret : 6);
+      return;
+    }
+    setMaskedCaret(inputEl, caret >= 7 ? 7 : 6);
+  };
+  const handleTimeMaskedWebKeyDown = (e, value, setValue) => {
+    if (Platform.OS !== 'web') return;
+    const key = String(e.key || '');
+    if (key === 'Tab') return;
+    const inputEl = e.currentTarget;
+    const current = normalizeMask(value, value);
+    const chars = current.split('');
+    const start = typeof inputEl.selectionStart === 'number' ? inputEl.selectionStart : 0;
+    const end = typeof inputEl.selectionEnd === 'number' ? inputEl.selectionEnd : start;
+    const hasSelection = end > start;
+    const clearSelectionTokens = () => {
+      if (!hasSelection) return false;
+      for (const idx of TIME_TOKEN_INDEXES) {
+        if (idx >= start && idx < end) clearTokenAt(chars, idx);
+      }
+      return true;
+    };
+
+    if (key === 'ArrowLeft') {
+      e.preventDefault();
+      setMaskedCaret(inputEl, prevTokenIndex(start, false));
+      return;
+    }
+    if (key === 'ArrowRight') {
+      e.preventDefault();
+      setMaskedCaret(inputEl, nextTokenIndex(start, false));
+      return;
+    }
+    if (key === 'Home') {
+      e.preventDefault();
+      setMaskedCaret(inputEl, 0);
+      return;
+    }
+    if (key === 'End') {
+      e.preventDefault();
+      setMaskedCaret(inputEl, 7);
+      return;
+    }
+    if (key === 'Backspace') {
+      e.preventDefault();
+      if (clearSelectionTokens()) {
+        const nextValue = chars.join('');
+        setValue(nextValue);
+        setMaskedCaret(inputEl, prevTokenIndex(start, true));
+        return;
+      }
+      const target = prevTokenIndex(start, false);
+      clearTokenAt(chars, target);
+      const nextValue = chars.join('');
+      setValue(nextValue);
+      setMaskedCaret(inputEl, target);
+      return;
+    }
+    if (key === 'Delete') {
+      e.preventDefault();
+      if (clearSelectionTokens()) {
+        const nextValue = chars.join('');
+        setValue(nextValue);
+        setMaskedCaret(inputEl, start);
+        return;
+      }
+      const target = nextTokenIndex(start, true);
+      clearTokenAt(chars, target);
+      const nextValue = chars.join('');
+      setValue(nextValue);
+      setMaskedCaret(inputEl, target);
+      return;
+    }
+
+    if (key.length !== 1) return;
+    const upper = key.toUpperCase();
+    const isDigit = /^[0-9]$/.test(upper);
+    const isPeriodKey = upper === 'A' || upper === 'P' || upper === 'M';
+    if (!isDigit && !isPeriodKey) {
+      e.preventDefault();
+      return;
+    }
+
+    e.preventDefault();
+    clearSelectionTokens();
+    let target = nextTokenIndex(start, true);
+
+    if (isDigit) {
+      if (!DIGIT_TOKEN_INDEXES.includes(target)) {
+        target = nextTokenIndex(0, true);
+      }
+      if (target === 0 && Number(upper) > 1) {
+        chars[0] = '0';
+        chars[1] = upper;
+        const nextValue = chars.join('');
+        setValue(nextValue);
+        setMaskedCaret(inputEl, 3);
+        return;
+      }
+      if (target === 1 && chars[0] === '_') {
+        chars[0] = '0';
+      }
+      if (target === 0 && Number(upper) > 1) return;
+      if (target === 1) {
+        const tens = chars[0];
+        if (tens === '1' && Number(upper) > 2) return;
+      }
+      if (target === 3 && Number(upper) > 5) return;
+      chars[target] = upper;
+      const nextValue = chars.join('');
+      setValue(nextValue);
+      setMaskedCaret(inputEl, nextTokenIndex(target, false));
+      return;
+    }
+
+    // Period editing
+    if (upper === 'A' || upper === 'P') {
+      chars[6] = upper;
+      chars[7] = 'M';
+      const nextValue = chars.join('');
+      setValue(nextValue);
+      setMaskedCaret(inputEl, 7);
+      return;
+    }
+    if (upper === 'M' && (chars[6] === 'A' || chars[6] === 'P')) {
+      chars[7] = 'M';
+      const nextValue = chars.join('');
+      setValue(nextValue);
+      setMaskedCaret(inputEl, 7);
+    }
   };
 
   const parseTimeString = (timeStr) => {
     if (!timeStr) return null;
-    const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    const normalized = String(timeStr).replace(/_/g, '').trim();
+    const match = normalized.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
     if (!match) return null;
 
     let hours = parseInt(match[1], 10);
@@ -2044,6 +2222,7 @@ export default function TaskCreateModal({
       const resolvedEnd = new Date(endDate || startDate);
 
       for (const event of dedupedEvents) {
+        if (shouldSkipConflictEvent(event)) continue;
         const eventStart = new Date(event.start_ts);
         const eventEnd = new Date(event.end_ts || event.start_ts);
 
@@ -2464,7 +2643,17 @@ export default function TaskCreateModal({
         const baseDate = new Date(dueDate);
         baseDate.setHours(0, 0, 0, 0);
         const eventEndDateToUse = dueDate;
-        const hasExplicitStartTime = Boolean(startTime.trim());
+        const normalizedStartTime = normalizeTimeValue(startTime);
+        const normalizedEndTime = normalizeTimeValue(endTime);
+        if (!allDay && !normalizedStartTime && normalizedEndTime) {
+          setValidationErrors((prev) => ({
+            ...prev,
+            time: 'Enter a start time before adding an end time.',
+          }));
+          setSubmitting(false);
+          return;
+        }
+        const hasExplicitStartTime = Boolean(normalizedStartTime);
         const isFlexibleForSave = allDay || !hasExplicitStartTime;
 
         let startDate;
@@ -2481,18 +2670,24 @@ export default function TaskCreateModal({
             endDate = new Date(baseDate);
             endDate.setHours(23, 59, 0, 0);
           } else {
-            const resolvedStart = applyTimeToDate(baseDate, startTime);
+            const resolvedStart = applyTimeToDate(baseDate, normalizedStartTime);
             if (!resolvedStart) {
-              toast.push('Enter a valid start time, e.g. 9:00 AM', 'error');
+              setValidationErrors((prev) => ({
+                ...prev,
+                time: 'Enter a valid start time (e.g., 9:00 AM) or leave it blank.',
+              }));
               setSubmitting(false);
               return;
             }
             startDate = resolvedStart;
 
-            if (endTime.trim()) {
-              let resolvedEnd = applyTimeToDate(baseDate, endTime);
+            if (normalizedEndTime) {
+              let resolvedEnd = applyTimeToDate(baseDate, normalizedEndTime);
               if (!resolvedEnd) {
-                toast.push('Enter a valid end time, e.g. 10:00 AM', 'error');
+                setValidationErrors((prev) => ({
+                  ...prev,
+                  time: 'Enter a valid end time (e.g., 10:00 AM) or leave it blank.',
+                }));
                 setSubmitting(false);
                 return;
               }
@@ -2566,7 +2761,7 @@ export default function TaskCreateModal({
             if (allDay) {
               dayStart.setHours(0, 0, 0, 0);
             } else {
-              const resolvedStart = applyTimeToDate(dayStart, startTime);
+              const resolvedStart = applyTimeToDate(dayStart, normalizedStartTime);
               if (resolvedStart) {
                 dayStart.setTime(resolvedStart.getTime());
               }
@@ -2576,8 +2771,8 @@ export default function TaskCreateModal({
             if (allDay) {
               dayEnd.setHours(23, 59, 0, 0);
             } else {
-              if (endTime.trim()) {
-                const resolvedEnd = applyTimeToDate(dayEnd, endTime);
+              if (normalizedEndTime) {
+                const resolvedEnd = applyTimeToDate(dayEnd, normalizedEndTime);
                 if (resolvedEnd) {
                   dayEnd.setTime(resolvedEnd.getTime());
                 } else {
@@ -2927,7 +3122,7 @@ export default function TaskCreateModal({
               // Calculate start and end dates for conflict detection
               const baseDate = new Date(dueDate);
               baseDate.setHours(0, 0, 0, 0);
-              let resolvedStart = applyTimeToDate(baseDate, startTime) || baseDate;
+              let resolvedStart = applyTimeToDate(baseDate, normalizedStartTime) || baseDate;
               
               let resolvedEnd;
               if (isMultiDayEventType && eventEndDate) {
@@ -2935,8 +3130,8 @@ export default function TaskCreateModal({
                 const endDateMonth = eventEndDate.getMonth();
                 const endDateDay = eventEndDate.getDate();
                 resolvedEnd = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
-              } else if (endTime.trim()) {
-                resolvedEnd = applyTimeToDate(baseDate, endTime) || new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+              } else if (normalizedEndTime) {
+                resolvedEnd = applyTimeToDate(baseDate, normalizedEndTime) || new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
               } else {
                 resolvedEnd = new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
               }
@@ -2970,7 +3165,7 @@ export default function TaskCreateModal({
           // Try to handle as overlap error one more time
           const baseDate = new Date(dueDate);
           baseDate.setHours(0, 0, 0, 0);
-          let resolvedStart = applyTimeToDate(baseDate, startTime) || baseDate;
+          let resolvedStart = applyTimeToDate(baseDate, normalizedStartTime) || baseDate;
           
           let resolvedEnd;
           if (isMultiDayEventType && eventEndDate) {
@@ -2978,8 +3173,8 @@ export default function TaskCreateModal({
             const endDateMonth = eventEndDate.getMonth();
             const endDateDay = eventEndDate.getDate();
             resolvedEnd = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
-          } else if (endTime.trim()) {
-            resolvedEnd = applyTimeToDate(baseDate, endTime) || new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+          } else if (normalizedEndTime) {
+            resolvedEnd = applyTimeToDate(baseDate, normalizedEndTime) || new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
           } else {
             resolvedEnd = new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
           }
@@ -2993,12 +3188,12 @@ export default function TaskCreateModal({
         return;
       }
 
-      if (data?.id && createdRecurrenceRule && placement === 'calendar' && !allDay && startTime.trim()) {
+      if (data?.id && createdRecurrenceRule && placement === 'calendar' && !allDay && normalizedStartTime) {
         const baseDateForNormalization = new Date(dueDate);
         baseDateForNormalization.setHours(0, 0, 0, 0);
-        const desiredStart = applyTimeToDate(baseDateForNormalization, startTime.trim());
-        const desiredEnd = endTime.trim()
-          ? (applyTimeToDate(baseDateForNormalization, endTime.trim()) || null)
+        const desiredStart = applyTimeToDate(baseDateForNormalization, normalizedStartTime);
+        const desiredEnd = normalizedEndTime
+          ? (applyTimeToDate(baseDateForNormalization, normalizedEndTime) || null)
           : null;
         if (desiredStart) {
           const normalizedDesiredEnd =
@@ -3438,11 +3633,28 @@ export default function TaskCreateModal({
                         <Text style={styles.timeLabel}>Start</Text>
                       {Platform.OS === 'web' ? (
                           <input
+                            ref={startTimeInputRef}
                             type="text"
                             placeholder="Optional"
                             value={startTime || ''}
+                            onFocus={() => {
+                              if (!startTime) {
+                                setStartTime('__:__ __');
+                                requestAnimationFrame(() => {
+                                  try {
+                                    startTimeInputRef.current?.setSelectionRange(0, 0);
+                                  } catch (_) {}
+                                });
+                              }
+                            }}
+                            onBlur={() => {
+                              setStartTime((prev) => (prev === '__:__ __' ? '' : prev));
+                            }}
+                            onKeyDown={(e) => handleTimeMaskedWebKeyDown(e, startTime, setStartTime)}
+                            onMouseUp={(e) => snapTimeCaretToToken(e.currentTarget)}
                             onChange={(e) => {
-                              const formatted = formatTimeInput(e.target.value || '', startTime);
+                              const rawValue = e.target.value || '';
+                              const formatted = formatTimeInput(rawValue, startTime);
                               setStartTime(formatted);
                               if (validationErrors.time) {
                                 setValidationErrors({ ...validationErrors, time: null });
@@ -3476,6 +3688,12 @@ export default function TaskCreateModal({
                             placeholder="Optional"
                             placeholderTextColor={MUTED}
                             value={startTime}
+                            onFocus={() => {
+                              if (!startTime) setStartTime('__:__ __');
+                            }}
+                            onBlur={() => {
+                              setStartTime((prev) => (prev === '__:__ __' ? '' : prev));
+                            }}
                             onChangeText={(text) => {
                               const formatted = formatTimeInput(text, startTime);
                               setStartTime(formatted);
@@ -3500,11 +3718,28 @@ export default function TaskCreateModal({
                         <Text style={styles.timeLabel}>End</Text>
                       {Platform.OS === 'web' ? (
                           <input
+                            ref={endTimeInputRef}
                             type="text"
                             placeholder="Optional"
                             value={endTime || ''}
+                            onFocus={() => {
+                              if (!endTime) {
+                                setEndTime('__:__ __');
+                                requestAnimationFrame(() => {
+                                  try {
+                                    endTimeInputRef.current?.setSelectionRange(0, 0);
+                                  } catch (_) {}
+                                });
+                              }
+                            }}
+                            onBlur={() => {
+                              setEndTime((prev) => (prev === '__:__ __' ? '' : prev));
+                            }}
+                            onKeyDown={(e) => handleTimeMaskedWebKeyDown(e, endTime, setEndTime)}
+                            onMouseUp={(e) => snapTimeCaretToToken(e.currentTarget)}
                             onChange={(e) => {
-                              const formatted = formatTimeInput(e.target.value || '', endTime);
+                              const rawValue = e.target.value || '';
+                              const formatted = formatTimeInput(rawValue, endTime);
                               setEndTime(formatted);
                             }}
                             disabled={allDay}
@@ -3532,6 +3767,12 @@ export default function TaskCreateModal({
                             placeholder="Optional"
                             placeholderTextColor={MUTED}
                             value={endTime}
+                            onFocus={() => {
+                              if (!endTime) setEndTime('__:__ __');
+                            }}
+                            onBlur={() => {
+                              setEndTime((prev) => (prev === '__:__ __' ? '' : prev));
+                            }}
                             onChangeText={(text) => {
                               const formatted = formatTimeInput(text, endTime);
                               setEndTime(formatted);
@@ -3842,10 +4083,14 @@ export default function TaskCreateModal({
                                 try {
                                 const baseDate = new Date(dueDate);
                                 baseDate.setHours(0, 0, 0, 0);
-                                const resolvedStart = applyTimeToDate(baseDate, startTime);
-                                const resolvedEnd = endTime.trim() 
-                                  ? applyTimeToDate(baseDate, endTime)
-                                  : new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+                                const normalizedStart = normalizeTimeValue(startTime);
+                                const normalizedEnd = normalizeTimeValue(endTime);
+                                const resolvedStart = applyTimeToDate(baseDate, normalizedStart);
+                                const resolvedEnd = resolvedStart
+                                  ? (normalizedEnd
+                                      ? applyTimeToDate(baseDate, normalizedEnd)
+                                      : new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000))
+                                  : null;
                                 
                                 if (!resolvedStart || !resolvedEnd) {
                                   console.warn('[TaskCreateModal] Could not resolve start/end times for suggestion');

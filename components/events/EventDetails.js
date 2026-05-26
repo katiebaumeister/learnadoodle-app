@@ -474,161 +474,98 @@ const formatDateInput = (value) => {
   return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
 };
 
-// Format time input to enforce HH:MM AM/PM with validation
-const formatTimeInput = (value) => {
-  // Preserve colon and extract AM/PM
-  const upper = value.toUpperCase();
-  const hasAM = upper.includes('AM');
-  const hasPM = upper.includes('PM');
-  const hasColon = value.includes(':');
-  
-  // If there's a colon, split into hour and minute parts
+// Format time input as a guided mask while preserving typed intent.
+const formatTimeInput = (value, previousValue = '') => {
+  if (!value || !String(value).trim()) return '';
+  const raw = String(value);
+  const upper = raw.toUpperCase();
+  const condensedUpper = upper.replace(/\s+/g, '');
+  const hasExplicitAM = /\bAM\b/.test(upper) || condensedUpper.endsWith('AM');
+  const hasExplicitPM = /\bPM\b/.test(upper) || condensedUpper.endsWith('PM');
+  const hasPartialAM = !hasExplicitAM && !hasExplicitPM && condensedUpper.includes('A');
+  const hasPartialPM = !hasExplicitAM && !hasExplicitPM && condensedUpper.includes('P');
+  const previousUpper = String(previousValue || '').toUpperCase();
+  const previousPeriod = previousUpper.includes('PM')
+    ? 'PM'
+    : previousUpper.includes('AM')
+      ? 'AM'
+      : '';
+  let period = hasExplicitPM || hasPartialPM
+    ? 'PM'
+    : hasExplicitAM || hasPartialAM
+      ? 'AM'
+      : previousPeriod || '__';
+
   let hourDigits = '';
   let minuteDigits = '';
-  if (hasColon) {
-    const colonIndex = value.indexOf(':');
-    const beforeColon = value.slice(0, colonIndex);
-    const afterColon = value.slice(colonIndex + 1);
-    hourDigits = beforeColon.replace(/[^\d]/g, '');
-    minuteDigits = afterColon.replace(/[^\d]/g, '');
+  if (raw.includes(':')) {
+    const colonIndex = raw.indexOf(':');
+    hourDigits = raw.slice(0, colonIndex).replace(/\D/g, '').slice(0, 2);
+    minuteDigits = raw.slice(colonIndex + 1).replace(/\D/g, '').slice(0, 2);
   } else {
-    // No colon - extract all digits
-    hourDigits = value.replace(/[^\d]/g, '');
-    minuteDigits = '';
-  }
-  
-  const digits = hourDigits + minuteDigits; // For length checks
-
-  if (digits.length === 0) {
-    return '';
-  }
-  
-  // Single digit hour - allow 1-9 (valid hours in 12-hour format)
-  if (hourDigits.length === 1 && minuteDigits.length === 0) {
-    const d = parseInt(hourDigits, 10);
-    if (d === 0 || d > 9) {
-      return '';
-    }
-    // Preserve colon if present (user is typing minutes)
-    if (hasColon) {
-      const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
-      const result = `${hourDigits}:${minuteDigits}${ampm}`;
-
-      return result;
-    }
-    // No colon - just preserve AM/PM if present
-    const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
-
-    return hourDigits + ampm;
-  }
-  
-  // Single digit hour with minutes being typed
-  if (hourDigits.length === 1 && minuteDigits.length > 0) {
-    const d = parseInt(hourDigits, 10);
-    if (d === 0 || d > 9) {
-      return '';
-    }
-    // Limit minutes to 2 digits
-    const limitedMinutes = minuteDigits.slice(0, 2);
-    // Validate minutes (0-59)
-    if (limitedMinutes.length === 2) {
-      const mins = parseInt(limitedMinutes, 10);
-      if (mins > 59) {
-        // Invalid minutes - keep only first digit
-        const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
-        const result = `${hourDigits}:${limitedMinutes[0]}${ampm}`;
-
-        return result;
-      }
-    }
-    const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
-    const result = `${hourDigits}:${limitedMinutes}${ampm}`;
-
-    return result;
-  }
-  
-  // Two digit hour - validate hours (1-12)
-  if (hourDigits.length === 2 && minuteDigits.length === 0) {
-    const hours = parseInt(hourDigits, 10);
-    if (hours > 12) {
-      // Invalid hour like "20" - keep only first digit and add colon for minutes
-
-      return `${hourDigits[0]}:`;
-    }
-    if (hours === 0) {
-      return '';
-    }
-    // Auto-insert colon after 2 digits if not already present (unless AM/PM is already set)
-    const ampm = hasPM ? 'PM' : hasAM ? 'AM' : '';
-    if (hasColon) {
-      // Already has colon - preserve it
-      const result = `${hourDigits}:${minuteDigits}${ampm ? ' ' + ampm : ''}`;
-
-      return result;
-    } else if (ampm) {
-      // If AM/PM is set, don't auto-add colon yet
-      const result = `${hourDigits} ${ampm}`;
-
-      return result;
+    const digits = raw.replace(/\D/g, '').slice(0, 4);
+    if (digits.length <= 2) {
+      hourDigits = digits;
     } else {
-      // Auto-add colon to allow typing minutes
-      const result = `${hourDigits}:`;
-
-      return result;
+      hourDigits = digits.slice(0, 2);
+      minuteDigits = digits.slice(2);
     }
   }
-  
-  // Two digit hour with minutes being typed
-  if (hourDigits.length === 2 && minuteDigits.length > 0) {
-    const hours = parseInt(hourDigits, 10);
-    if (hours > 12 || hours === 0) {
-      return `${hourDigits[0]}:${minuteDigits}`;
+
+  if (hourDigits.length === 2) {
+    const hourNum = parseInt(hourDigits, 10);
+    if (hourNum === 0) {
+      hourDigits = '12';
+    } else if (hourNum > 12) {
+      minuteDigits = `${hourDigits[1]}${minuteDigits}`.slice(0, 2);
+      hourDigits = hourDigits[0];
     }
-    // Limit minutes to 2 digits
-    const limitedMinutes = minuteDigits.slice(0, 2);
-    // Validate minutes (0-59)
-    if (limitedMinutes.length === 2) {
-      const mins = parseInt(limitedMinutes, 10);
-      if (mins > 59) {
-        // Invalid minutes - keep only first digit
-        const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
-        const result = `${hourDigits}:${limitedMinutes[0]}${ampm}`;
+  }
 
-        return result;
-      }
+  if (minuteDigits.length === 2) {
+    const minuteNum = parseInt(minuteDigits, 10);
+    if (minuteNum > 59) {
+      minuteDigits = '59';
     }
-    const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
-    const result = `${hourDigits}:${limitedMinutes}${ampm}`;
-
-    return result;
-  }
-  
-  // Handle remaining edge cases - if we get here, something unexpected happened
-  // Fallback: try to format based on total digits
-
-  // If we have hour digits but no colon and no minutes, just return what we have
-  if (hourDigits.length > 0 && !hasColon && minuteDigits.length === 0) {
-    const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
-    return hourDigits + ampm;
-  }
-  
-  // If we have both hour and minute digits, format them
-  if (hourDigits.length > 0 && minuteDigits.length > 0) {
-    const limitedMinutes = minuteDigits.slice(0, 2);
-    const ampm = hasPM ? ' PM' : hasAM ? ' AM' : '';
-    return `${hourDigits}:${limitedMinutes}${ampm}`;
   }
 
-  return '';
+  const hourMask = `${hourDigits[0] || '_'}${hourDigits[1] || '_'}`;
+  const minuteMask = `${minuteDigits[0] || '_'}${minuteDigits[1] || '_'}`;
+  const periodMask = `${period[0] || '_'}${period[1] || '_'}`;
+  return `${hourMask}:${minuteMask} ${periodMask}`;
+};
+
+const normalizeTimeValue = (rawValue) => {
+  const value = String(rawValue || '').replace(/_/g, '').trim();
+  if (!value || value === ':') return '';
+  return value;
+};
+
+const shouldSkipConflictEvent = (ev) => {
+  if (!ev) return true;
+  if (ev.status === 'canceled' || ev.canceled_at || ev.deleted_at) return true;
+  if (ev.is_backlog) return true;
+  if (ev.is_flexible === true) return true;
+  // Recurring master/template rows are not concrete scheduled instances.
+  if (ev.recurrence_rule && String(ev.id || '') === String(ev.parent_event_id || '')) return true;
+  const start = new Date(ev.start_ts || ev.start);
+  const end = new Date(ev.end_ts || ev.end);
+  if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())) {
+    const durationMinutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+    // Legacy timeless rows may still be persisted as full-day windows.
+    if (durationMinutes >= 23 * 60) return true;
+  }
+  return false;
 };
 
 // Validate and convert time string to 24-hour format for storage
 const parseTimeTo24Hour = (timeStr) => {
   if (!timeStr) return null;
+  const normalized = String(timeStr).replace(/_/g, '').trim();
   
   // Handle formats: "8 AM", "8:00 AM", "08:00 AM", "8", "8:00"
   // Match: (hours)(optional colon and minutes)(optional AM/PM)
-  const match = timeStr.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?/i);
+  const match = normalized.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
   if (!match) return null;
   
   let hours = parseInt(match[1], 10);
@@ -666,7 +603,8 @@ const combineDateTime = (dateStr, timeStr, fallbackMinutes = 0) => {
 // Helper functions for time/date parsing (matching TaskCreateModal)
 const parseTimeString = (timeStr) => {
   if (!timeStr) return null;
-  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  const normalized = String(timeStr).replace(/_/g, '').trim();
+  const match = normalized.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   if (!match) return null;
 
   let hours = parseInt(match[1], 10);
@@ -1021,6 +959,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [draftEndTime, setDraftEndTime] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  const startTimeInputRef = useRef(null);
+  const endTimeInputRef = useRef(null);
   const [draftChildId, setDraftChildId] = useState(null);
   const [assigneeIds, setAssigneeIds] = useState(() => initialAssigneeIdsFromEvent(event));
   const [draftAllDay, setDraftAllDay] = useState(false);
@@ -1031,6 +971,183 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [draftTags, setDraftTags] = useState([]);
   const [tagInput, setTagInput] = useState('');
   const [showAcademicDetails, setShowAcademicDetails] = useState(() => eventHasAcademicDetailsSection(event));
+  const TIME_MASK = '__:__ __';
+  const TIME_TOKEN_INDEXES = [0, 1, 3, 4, 6, 7];
+  const DIGIT_TOKEN_INDEXES = [0, 1, 3, 4];
+  const setMaskedCaret = (inputEl, pos) => {
+    if (Platform.OS !== 'web' || !inputEl) return;
+    requestAnimationFrame(() => {
+      try {
+        inputEl.setSelectionRange(pos, pos);
+      } catch (_) {
+        // Ignore selection errors in unsupported states.
+      }
+    });
+  };
+  const normalizeMask = (value, previousValue = '') => {
+    const next = formatTimeInput(value || TIME_MASK, previousValue || '');
+    return next || TIME_MASK;
+  };
+  const nextTokenIndex = (pos, inclusive = true) => {
+    for (const idx of TIME_TOKEN_INDEXES) {
+      if ((inclusive && idx >= pos) || (!inclusive && idx > pos)) return idx;
+    }
+    return TIME_TOKEN_INDEXES[TIME_TOKEN_INDEXES.length - 1];
+  };
+  const prevTokenIndex = (pos, inclusive = true) => {
+    for (let i = TIME_TOKEN_INDEXES.length - 1; i >= 0; i -= 1) {
+      const idx = TIME_TOKEN_INDEXES[i];
+      if ((inclusive && idx <= pos) || (!inclusive && idx < pos)) return idx;
+    }
+    return TIME_TOKEN_INDEXES[0];
+  };
+  const clearTokenAt = (chars, idx) => {
+    if (!TIME_TOKEN_INDEXES.includes(idx)) return;
+    chars[idx] = '_';
+    if (idx === 6 || idx === 7) {
+      chars[6] = '_';
+      chars[7] = '_';
+    }
+  };
+  const snapTimeCaretToToken = (inputEl) => {
+    if (Platform.OS !== 'web' || !inputEl) return;
+    const caret = typeof inputEl.selectionStart === 'number' ? inputEl.selectionStart : 0;
+    if (TIME_TOKEN_INDEXES.includes(caret)) return;
+    if (caret <= 2) {
+      setMaskedCaret(inputEl, caret <= 1 ? caret : 3);
+      return;
+    }
+    if (caret <= 5) {
+      setMaskedCaret(inputEl, caret <= 4 ? caret : 6);
+      return;
+    }
+    setMaskedCaret(inputEl, caret >= 7 ? 7 : 6);
+  };
+  const handleTimeMaskedWebKeyDown = (e, value, setValue) => {
+    if (Platform.OS !== 'web') return;
+    const key = String(e.key || '');
+    if (key === 'Tab') return;
+    const inputEl = e.currentTarget;
+    const current = normalizeMask(value, value);
+    const chars = current.split('');
+    const start = typeof inputEl.selectionStart === 'number' ? inputEl.selectionStart : 0;
+    const end = typeof inputEl.selectionEnd === 'number' ? inputEl.selectionEnd : start;
+    const hasSelection = end > start;
+    const clearSelectionTokens = () => {
+      if (!hasSelection) return false;
+      for (const idx of TIME_TOKEN_INDEXES) {
+        if (idx >= start && idx < end) clearTokenAt(chars, idx);
+      }
+      return true;
+    };
+
+    if (key === 'ArrowLeft') {
+      e.preventDefault();
+      setMaskedCaret(inputEl, prevTokenIndex(start, false));
+      return;
+    }
+    if (key === 'ArrowRight') {
+      e.preventDefault();
+      setMaskedCaret(inputEl, nextTokenIndex(start, false));
+      return;
+    }
+    if (key === 'Home') {
+      e.preventDefault();
+      setMaskedCaret(inputEl, 0);
+      return;
+    }
+    if (key === 'End') {
+      e.preventDefault();
+      setMaskedCaret(inputEl, 7);
+      return;
+    }
+    if (key === 'Backspace') {
+      e.preventDefault();
+      if (clearSelectionTokens()) {
+        const nextValue = chars.join('');
+        setValue(nextValue);
+        setMaskedCaret(inputEl, prevTokenIndex(start, true));
+        return;
+      }
+      const target = prevTokenIndex(start, false);
+      clearTokenAt(chars, target);
+      const nextValue = chars.join('');
+      setValue(nextValue);
+      setMaskedCaret(inputEl, target);
+      return;
+    }
+    if (key === 'Delete') {
+      e.preventDefault();
+      if (clearSelectionTokens()) {
+        const nextValue = chars.join('');
+        setValue(nextValue);
+        setMaskedCaret(inputEl, start);
+        return;
+      }
+      const target = nextTokenIndex(start, true);
+      clearTokenAt(chars, target);
+      const nextValue = chars.join('');
+      setValue(nextValue);
+      setMaskedCaret(inputEl, target);
+      return;
+    }
+
+    if (key.length !== 1) return;
+    const upper = key.toUpperCase();
+    const isDigit = /^[0-9]$/.test(upper);
+    const isPeriodKey = upper === 'A' || upper === 'P' || upper === 'M';
+    if (!isDigit && !isPeriodKey) {
+      e.preventDefault();
+      return;
+    }
+
+    e.preventDefault();
+    clearSelectionTokens();
+    let target = nextTokenIndex(start, true);
+
+    if (isDigit) {
+      if (!DIGIT_TOKEN_INDEXES.includes(target)) {
+        target = nextTokenIndex(0, true);
+      }
+      if (target === 0 && Number(upper) > 1) {
+        chars[0] = '0';
+        chars[1] = upper;
+        const nextValue = chars.join('');
+        setValue(nextValue);
+        setMaskedCaret(inputEl, 3);
+        return;
+      }
+      if (target === 1 && chars[0] === '_') {
+        chars[0] = '0';
+      }
+      if (target === 0 && Number(upper) > 1) return;
+      if (target === 1) {
+        const tens = chars[0];
+        if (tens === '1' && Number(upper) > 2) return;
+      }
+      if (target === 3 && Number(upper) > 5) return;
+      chars[target] = upper;
+      const nextValue = chars.join('');
+      setValue(nextValue);
+      setMaskedCaret(inputEl, nextTokenIndex(target, false));
+      return;
+    }
+
+    if (upper === 'A' || upper === 'P') {
+      chars[6] = upper;
+      chars[7] = 'M';
+      const nextValue = chars.join('');
+      setValue(nextValue);
+      setMaskedCaret(inputEl, 7);
+      return;
+    }
+    if (upper === 'M' && (chars[6] === 'A' || chars[6] === 'P')) {
+      chars[7] = 'M';
+      const nextValue = chars.join('');
+      setValue(nextValue);
+      setMaskedCaret(inputEl, 7);
+    }
+  };
   const [showLogisticDetails, setShowLogisticDetails] = useState(
     () => !!(event?.location || event?.mode || event?.instructor)
   );
@@ -4148,8 +4265,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           const endDateDay = eventEndDate.getDate();
           resolvedEnd = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
         } else {
-          resolvedEnd = endTime.trim()
-            ? applyTimeToDate(baseDate, endTime)
+          const normalizedEndTime = normalizeTimeValue(endTime);
+          resolvedEnd = normalizedEndTime
+            ? applyTimeToDate(baseDate, normalizedEndTime)
             : new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
         }
 
@@ -4247,6 +4365,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         const conflicts = [];
         for (const otherEv of existingEvents || []) {
           if (event?.id && otherEv.id === event.id) continue;
+          if (shouldSkipConflictEvent(otherEv)) continue;
 
           const eventStart = new Date(otherEv.start_ts);
           const eventEnd = new Date(otherEv.end_ts || otherEv.start_ts);
@@ -4378,6 +4497,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const resolvedEnd = new Date(endDate || startDate);
 
       for (const existingEvent of existingEvents) {
+        if (shouldSkipConflictEvent(existingEvent)) continue;
         const eventStart = new Date(existingEvent.start_ts);
         const eventEnd = new Date(existingEvent.end_ts || existingEvent.start_ts);
 
@@ -4554,6 +4674,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
     // Use dueDate for date, startTime/endTime for times (matching TaskCreateModal structure)
     const dateToUse = dueDate ? toDateInput(dueDate.toISOString()) : draftDate;
+    const normalizedStartInput = normalizeTimeValue(startTime) || normalizeTimeValue(draftStartTime);
+    const normalizedEndInput = normalizeTimeValue(endTime) || normalizeTimeValue(draftEndTime);
+    if (!(allDay || draftAllDay) && !normalizedStartInput && normalizedEndInput) {
+      setValidationErrors((prev) => ({
+        ...prev,
+        time: 'Enter a start time before adding an end time.',
+      }));
+      return;
+    }
     
     if (dateToUse) {
       if (allDay || draftAllDay) {
@@ -4567,7 +4696,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           return;
         }
       } else {
-        const timeToUse = startTime.trim() || draftStartTime.trim();
+        const timeToUse = normalizedStartInput;
         if (!timeToUse) {
           // Keep start/end optional by defaulting blank-time edits to all-day bounds.
           const baseDate = dueDate || new Date(dateToUse);
@@ -4579,17 +4708,23 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           hasExplicitStartTime = true;
           const resolvedStart = applyTimeToDate(dueDate || new Date(dateToUse), timeToUse);
           if (!resolvedStart) {
-            Alert.alert('Validation', 'Enter a valid start time, e.g. 9:00 AM');
+            setValidationErrors((prev) => ({
+              ...prev,
+              time: 'Enter a valid start time (e.g., 9:00 AM) or leave it blank.',
+            }));
             return;
           }
           startDateObj = resolvedStart;
 
-          if (endTime.trim() || draftEndTime.trim()) {
+          if (normalizedEndInput) {
             // Single-day event with end time
-            const endTimeToUse = endTime.trim() || draftEndTime.trim();
+            const endTimeToUse = normalizedEndInput;
             let resolvedEnd = applyTimeToDate(dueDate || new Date(dateToUse), endTimeToUse);
             if (!resolvedEnd) {
-              Alert.alert('Validation', 'Enter a valid end time, e.g. 10:00 AM');
+              setValidationErrors((prev) => ({
+                ...prev,
+                time: 'Enter a valid end time (e.g., 10:00 AM) or leave it blank.',
+              }));
               return;
             }
             if (resolvedEnd <= startDateObj) {
@@ -5095,6 +5230,228 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         } catch (seriesErr) {
           console.warn('[EventDetails] Series update threw:', seriesErr);
           toast.push('Updated this event, but could not apply all series changes.', 'error');
+        }
+      }
+
+      // Split-weekday recurrence compatibility:
+      // when editing a weekly series and selecting additional weekdays, create missing weekday series rows
+      // so events actually appear on newly selected days.
+      if (
+        isSeriesEditScope &&
+        isRecurring &&
+        recurrenceType === 'weekly' &&
+        seriesLinkIds.length > 0
+      ) {
+        const recurrenceRuleObject =
+          recurrenceRule && typeof recurrenceRule === 'string'
+            ? (() => {
+                try { return JSON.parse(recurrenceRule); } catch (_) { return null; }
+              })()
+            : recurrenceRule;
+        const selectedWeekdayCodes = normalizeByWeekday(
+          Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 0
+            ? recurrenceWeekdays
+            : recurrenceRuleObject?.byweekday
+        );
+        if (recurrenceRuleObject && selectedWeekdayCodes.length > 0) {
+          const filterClauses = seriesLinkIds.flatMap((id) => [
+            `id.eq.${id}`,
+            `parent_event_id.eq.${id}`,
+            `recurrence_id.eq.${id}`,
+          ]);
+          const scopedFamilyId = String(familyId || event?.family_id || '').trim();
+          const seriesRowsQuery = supabase
+            .from('events')
+            .select('id, parent_event_id, recurrence_id, start_ts')
+            .or(filterClauses.join(','))
+            .is('deleted_at', null);
+          const { data: seriesRows, error: seriesRowsError } = scopedFamilyId
+            ? await seriesRowsQuery.eq('family_id', scopedFamilyId)
+            : await seriesRowsQuery;
+          if (!seriesRowsError && Array.isArray(seriesRows) && seriesRows.length > 0) {
+            const weekdayToMasterId = new Map();
+            seriesRows.forEach((row) => {
+              const rowStart = row?.start_ts ? new Date(row.start_ts) : null;
+              if (!(rowStart instanceof Date) || Number.isNaN(rowStart.getTime())) return;
+              const weekdayCode = WEEKDAY_FROM_DATE[rowStart.getDay()];
+              if (!weekdayCode) return;
+              const masterId = cleanPlannerEventId(String(row?.parent_event_id || row?.id || ''));
+              if (!masterId) return;
+              if (!weekdayToMasterId.has(weekdayCode)) {
+                weekdayToMasterId.set(weekdayCode, masterId);
+              }
+            });
+
+            const existingWeekdayCodes = Array.from(weekdayToMasterId.keys());
+            const selectedWeekdaySet = new Set(selectedWeekdayCodes);
+            const existingWeekdaySet = new Set(existingWeekdayCodes);
+            const weekdaysToAdd = selectedWeekdayCodes.filter((code) => !existingWeekdaySet.has(code));
+            const weekdaysToRemove = existingWeekdayCodes.filter((code) => !selectedWeekdaySet.has(code));
+            const groupRecurrenceId = cleanPlannerEventId(String(event?.recurrence_id || seriesLinkIds[0] || targetEventId || ''));
+
+            if (weekdaysToRemove.length > 0) {
+              const nowIso = new Date().toISOString();
+              for (const weekdayCode of weekdaysToRemove) {
+                const weekdayMasterId = weekdayToMasterId.get(weekdayCode);
+                if (!weekdayMasterId) continue;
+                let removeQuery = supabase
+                  .from('events')
+                  .update({ deleted_at: nowIso })
+                  .or(`id.eq.${weekdayMasterId},parent_event_id.eq.${weekdayMasterId},recurrence_id.eq.${weekdayMasterId}`)
+                  .is('deleted_at', null);
+                if (scopedFamilyId) {
+                  removeQuery = removeQuery.eq('family_id', scopedFamilyId);
+                }
+                const { error: removeErr } = await removeQuery;
+                if (removeErr) {
+                  console.warn('[EventDetails] Failed to remove deselected weekday series:', {
+                    weekdayCode,
+                    weekdayMasterId,
+                    error: removeErr,
+                  });
+                }
+              }
+            }
+
+            if (weekdaysToAdd.length > 0 && scopedFamilyId) {
+              const baselineStart =
+                startDateObj instanceof Date && !Number.isNaN(startDateObj.getTime())
+                  ? new Date(startDateObj)
+                  : (() => {
+                      const fallback = new Date(event?.start_ts || event?.start || Date.now());
+                      return Number.isNaN(fallback.getTime()) ? new Date() : fallback;
+                    })();
+              const baselineEnd =
+                endDateObj instanceof Date && !Number.isNaN(endDateObj.getTime())
+                  ? new Date(endDateObj)
+                  : (() => {
+                      const fallback = new Date(event?.end_ts || '');
+                      if (!Number.isNaN(fallback.getTime())) return fallback;
+                      return new Date(baselineStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
+                    })();
+              const durationMs = Math.max(
+                baselineEnd.getTime() - baselineStart.getTime(),
+                DEFAULT_DURATION_MINUTES * 60 * 1000
+              );
+              const baselineWeekday = baselineStart.getDay();
+              const normalizedIntervalWeeks = Number.isFinite(Number(recurrenceRuleObject?.interval))
+                ? Math.max(1, Number(recurrenceRuleObject.interval))
+                : 1;
+              const weekdayCodeToIndex = (code) =>
+                WEEKDAY_FROM_DATE.indexOf(String(code || '').slice(0, 2).toUpperCase());
+              const totalCount = Number.isFinite(Number(recurrenceRuleObject?.count))
+                ? Math.max(0, Number(recurrenceRuleObject.count))
+                : null;
+              const countsByWeekday = (() => {
+                if (!totalCount || totalCount <= 0) return null;
+                const weekdayIndices = selectedWeekdayCodes
+                  .map((code) => weekdayCodeToIndex(code))
+                  .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx <= 6)
+                  .sort((a, b) => a - b);
+                if (weekdayIndices.length === 0) return null;
+                const nextByWeekday = new Map();
+                const result = new Map();
+                weekdayIndices.forEach((weekdayIdx) => {
+                  const firstDate = new Date(baselineStart);
+                  const daysUntilWeekday = (weekdayIdx - baselineWeekday + 7) % 7;
+                  firstDate.setDate(firstDate.getDate() + daysUntilWeekday);
+                  nextByWeekday.set(weekdayIdx, firstDate);
+                  result.set(weekdayIdx, 0);
+                });
+                let emitted = 0;
+                while (emitted < totalCount) {
+                  let chosenWeekday = null;
+                  let chosenDate = null;
+                  weekdayIndices.forEach((weekdayIdx) => {
+                    const candidate = nextByWeekday.get(weekdayIdx);
+                    if (!candidate) return;
+                    if (
+                      !chosenDate ||
+                      candidate.getTime() < chosenDate.getTime() ||
+                      (candidate.getTime() === chosenDate.getTime() && chosenWeekday != null && weekdayIdx < chosenWeekday)
+                    ) {
+                      chosenWeekday = weekdayIdx;
+                      chosenDate = candidate;
+                    }
+                  });
+                  if (chosenWeekday == null || !chosenDate) break;
+                  result.set(chosenWeekday, (result.get(chosenWeekday) || 0) + 1);
+                  emitted += 1;
+                  const nextDate = new Date(chosenDate);
+                  nextDate.setDate(nextDate.getDate() + (7 * normalizedIntervalWeeks));
+                  nextByWeekday.set(chosenWeekday, nextDate);
+                }
+                return result;
+              })();
+
+              for (const weekdayCode of weekdaysToAdd) {
+                const weekdayIndex = weekdayCodeToIndex(weekdayCode);
+                if (!Number.isInteger(weekdayIndex) || weekdayIndex < 0 || weekdayIndex > 6) continue;
+                const daysUntilWeekday = (weekdayIndex - baselineWeekday + 7) % 7;
+                const seriesStart = new Date(baselineStart);
+                seriesStart.setDate(seriesStart.getDate() + daysUntilWeekday);
+                const seriesEnd = new Date(seriesStart.getTime() + durationMs);
+                const splitRule = {
+                  ...recurrenceRuleObject,
+                  byweekday: [weekdayCode],
+                };
+                if (countsByWeekday) {
+                  const perDayCount = countsByWeekday.get(weekdayIndex) || 0;
+                  if (perDayCount <= 0) continue;
+                  splitRule.count = perDayCount;
+                }
+                const rpcParams = {
+                  _family_id: scopedFamilyId,
+                  _child_id: newChildIds.length > 0 ? newChildIds[0] : null,
+                  _child_ids: newChildIds,
+                  _title: cleanUpdates.title || event?.title || 'Untitled Event',
+                  _start_ts: seriesStart.toISOString(),
+                  _description: cleanUpdates.description ?? event?.description ?? null,
+                  _end_ts: seriesEnd.toISOString(),
+                  _status: cleanUpdates.status || normalizeStatus(event?.status || 'scheduled'),
+                  _source: event?.source || 'manual',
+                  _tags: cleanUpdates.tags ?? event?.tags ?? null,
+                  _is_flexible: cleanUpdates.is_flexible === true,
+                  _event_type: cleanUpdates.event_type ?? event?.event_type ?? null,
+                  _subject_id: cleanUpdates.subject_id ?? event?.subject_id ?? null,
+                  _unit: cleanUpdates.unit ?? event?.unit ?? null,
+                  _grade: cleanUpdates.grade ?? event?.grade ?? null,
+                  _percent_of_total_grade: cleanUpdates.percent_of_total_grade ?? event?.percent_of_total_grade ?? null,
+                  _location: cleanUpdates.location ?? event?.location ?? null,
+                  _mode: cleanUpdates.mode ?? event?.mode ?? null,
+                  _instructor: cleanUpdates.instructor ?? event?.instructor ?? null,
+                  _goal_link: cleanUpdates.goal_link ?? event?.goal_link ?? null,
+                  _minutes: Math.max(1, Math.round(durationMs / 60000)),
+                  _materials_attachment_ids: cleanUpdates.materials_attachment_ids ?? event?.materials_attachment_ids ?? null,
+                  _recurrence_rule: JSON.stringify(splitRule),
+                };
+                const { data: createdData, error: createErr } = await supabase.rpc('create_task_event', rpcParams);
+                if (createErr || !createdData?.ok || !createdData?.id) {
+                  console.warn('[EventDetails] Failed to create added weekday series:', {
+                    weekdayCode,
+                    error: createErr || createdData,
+                  });
+                  continue;
+                }
+                const createdSeriesId = cleanPlannerEventId(String(createdData.id || ''));
+                if (groupRecurrenceId && createdSeriesId) {
+                  const { error: linkErr } = await supabase
+                    .from('events')
+                    .update({ recurrence_id: groupRecurrenceId })
+                    .eq('family_id', scopedFamilyId)
+                    .or(`id.eq.${createdSeriesId},parent_event_id.eq.${createdSeriesId},recurrence_id.eq.${createdSeriesId}`)
+                    .is('deleted_at', null);
+                  if (linkErr) {
+                    console.warn('[EventDetails] Failed linking added weekday series to recurrence group:', {
+                      groupRecurrenceId,
+                      createdSeriesId,
+                      error: linkErr,
+                    });
+                  }
+                }
+              }
+            }
+          }
         }
       }
 
@@ -6314,11 +6671,35 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <Text style={styles.timeLabel}>Start</Text>
                   {Platform.OS === 'web' ? (
                     <input
+                      ref={startTimeInputRef}
                       type="text"
                       placeholder="Optional"
                       value={startTime || ''}
+                      onFocus={() => {
+                        if (!startTime) {
+                          setStartTime('__:__ __');
+                          setDraftStartTime('__:__ __');
+                          requestAnimationFrame(() => {
+                            try {
+                              startTimeInputRef.current?.setSelectionRange(0, 0);
+                            } catch (_) {}
+                          });
+                        }
+                      }}
+                      onBlur={() => {
+                        setStartTime((prev) => (prev === '__:__ __' ? '' : prev));
+                        setDraftStartTime((prev) => (prev === '__:__ __' ? '' : prev));
+                      }}
+                      onKeyDown={(e) =>
+                        handleTimeMaskedWebKeyDown(e, startTime, (next) => {
+                          setStartTime(next);
+                          setDraftStartTime(next);
+                        })
+                      }
+                      onMouseUp={(e) => snapTimeCaretToToken(e.currentTarget)}
                       onChange={(e) => {
-                        const formatted = formatTimeInput(e.target.value || '');
+                        const rawValue = e.target.value || '';
+                        const formatted = formatTimeInput(rawValue, startTime);
                         setStartTime(formatted);
                         setDraftStartTime(formatted);
                         if (validationErrors.time) {
@@ -6353,8 +6734,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       placeholder="Optional"
                       placeholderTextColor={MUTED}
                       value={startTime}
+                      onFocus={() => {
+                        if (!startTime) {
+                          setStartTime('__:__ __');
+                          setDraftStartTime('__:__ __');
+                        }
+                      }}
+                      onBlur={() => {
+                        setStartTime((prev) => (prev === '__:__ __' ? '' : prev));
+                        setDraftStartTime((prev) => (prev === '__:__ __' ? '' : prev));
+                      }}
                       onChangeText={(text) => {
-                        const formatted = formatTimeInput(text);
+                        const formatted = formatTimeInput(text, startTime);
                         setStartTime(formatted);
                         setDraftStartTime(formatted);
                         if (validationErrors.time) {
@@ -6378,11 +6769,35 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <Text style={styles.timeLabel}>End</Text>
                   {Platform.OS === 'web' ? (
                     <input
+                      ref={endTimeInputRef}
                       type="text"
                       placeholder="Optional"
                       value={endTime || ''}
+                      onFocus={() => {
+                        if (!endTime) {
+                          setEndTime('__:__ __');
+                          setDraftEndTime('__:__ __');
+                          requestAnimationFrame(() => {
+                            try {
+                              endTimeInputRef.current?.setSelectionRange(0, 0);
+                            } catch (_) {}
+                          });
+                        }
+                      }}
+                      onBlur={() => {
+                        setEndTime((prev) => (prev === '__:__ __' ? '' : prev));
+                        setDraftEndTime((prev) => (prev === '__:__ __' ? '' : prev));
+                      }}
+                      onKeyDown={(e) =>
+                        handleTimeMaskedWebKeyDown(e, endTime, (next) => {
+                          setEndTime(next);
+                          setDraftEndTime(next);
+                        })
+                      }
+                      onMouseUp={(e) => snapTimeCaretToToken(e.currentTarget)}
                       onChange={(e) => {
-                        const formatted = formatTimeInput(e.target.value || '');
+                        const rawValue = e.target.value || '';
+                        const formatted = formatTimeInput(rawValue, endTime);
                         setEndTime(formatted);
                         setDraftEndTime(formatted);
                       }}
@@ -6411,8 +6826,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       placeholder="Optional"
                       placeholderTextColor={MUTED}
                       value={endTime}
+                      onFocus={() => {
+                        if (!endTime) {
+                          setEndTime('__:__ __');
+                          setDraftEndTime('__:__ __');
+                        }
+                      }}
+                      onBlur={() => {
+                        setEndTime((prev) => (prev === '__:__ __' ? '' : prev));
+                        setDraftEndTime((prev) => (prev === '__:__ __' ? '' : prev));
+                      }}
                       onChangeText={(text) => {
-                        const formatted = formatTimeInput(text);
+                        const formatted = formatTimeInput(text, endTime);
                         setEndTime(formatted);
                         setDraftEndTime(formatted);
                       }}
