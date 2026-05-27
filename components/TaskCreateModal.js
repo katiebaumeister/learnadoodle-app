@@ -178,6 +178,18 @@ const WEEKDAY_OPTIONS = [
   { value: 5, label: 'Fri', rrule: 'FR' },
   { value: 6, label: 'Sat', rrule: 'SA' },
 ];
+const TIME_SELECT_OPTIONS = (() => {
+  const options = [];
+  for (let hour24 = 0; hour24 < 24; hour24 += 1) {
+    for (const minute of [0, 30]) {
+      const period = hour24 >= 12 ? 'PM' : 'AM';
+      const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+      const minuteLabel = String(minute).padStart(2, '0');
+      options.push(`${hour12}:${minuteLabel} ${period}`);
+    }
+  }
+  return options;
+})();
 
 const normalizeEventTypeForPersistence = (type) => {
   if (type === 'Scheduled Class Day') return 'Schedule Block';
@@ -360,8 +372,11 @@ export default function TaskCreateModal({
   const [allDay, setAllDay] = useState(false);
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  const useTimeDropdownsOnWeb = true;
   const startTimeInputRef = useRef(null);
   const endTimeInputRef = useRef(null);
+  const startTimeJustFocusedRef = useRef(false);
+  const endTimeJustFocusedRef = useRef(false);
 
   function normalizeTimeValue(rawValue) {
     const value = String(rawValue || '').replace(/_/g, '').trim();
@@ -409,6 +424,14 @@ export default function TaskCreateModal({
   const lessonButtonRef = useRef(null);
   const lessonDropdownRef = useRef(null);
   const [showLessonDropdown, setShowLessonDropdown] = useState(false);
+  const [showStartTimeDropdown, setShowStartTimeDropdown] = useState(false);
+  const [showEndTimeDropdown, setShowEndTimeDropdown] = useState(false);
+  const startTimeButtonRef = useRef(null);
+  const startTimeDropdownRef = useRef(null);
+  const endTimeButtonRef = useRef(null);
+  const endTimeDropdownRef = useRef(null);
+  const [startTimeDropdownPosition, setStartTimeDropdownPosition] = useState({ top: 0, left: 0, width: 148, maxHeight: 220 });
+  const [endTimeDropdownPosition, setEndTimeDropdownPosition] = useState({ top: 0, left: 0, width: 148, maxHeight: 220 });
   const [lessonDropdownPosition, setLessonDropdownPosition] = useState({ top: 0, left: 0, width: 200, maxHeight: 220 });
   const [lessonOptions, setLessonOptions] = useState([]);
   const [loadingLessonOptions, setLoadingLessonOptions] = useState(false);
@@ -1191,6 +1214,96 @@ export default function TaskCreateModal({
       document.removeEventListener('mousedown', handleLessonClickOutside);
     };
   }, [showLessonDropdown]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !showStartTimeDropdown) return;
+    const handleStartTimeClickOutside = (event) => {
+      const buttonNode = startTimeButtonRef.current?._nativeNode || startTimeButtonRef.current;
+      const dropdownNode = startTimeDropdownRef.current?._nativeNode || startTimeDropdownRef.current;
+      if (!buttonNode || !dropdownNode || !event?.target) return;
+      if (!buttonNode.contains(event.target) && !dropdownNode.contains(event.target)) {
+        setShowStartTimeDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleStartTimeClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleStartTimeClickOutside);
+    };
+  }, [showStartTimeDropdown]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !showEndTimeDropdown) return;
+    const handleEndTimeClickOutside = (event) => {
+      const buttonNode = endTimeButtonRef.current?._nativeNode || endTimeButtonRef.current;
+      const dropdownNode = endTimeDropdownRef.current?._nativeNode || endTimeDropdownRef.current;
+      if (!buttonNode || !dropdownNode || !event?.target) return;
+      if (!buttonNode.contains(event.target) && !dropdownNode.contains(event.target)) {
+        setShowEndTimeDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleEndTimeClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleEndTimeClickOutside);
+    };
+  }, [showEndTimeDropdown]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !showStartTimeDropdown || !startTimeButtonRef.current) return;
+    const updatePosition = () => {
+      const node = startTimeButtonRef.current?._nativeNode || startTimeButtonRef.current;
+      if (!node?.getBoundingClientRect) return;
+      const rect = node.getBoundingClientRect();
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+      const dropdownMaxHeight = 220;
+      const spaceBelow = viewportHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      let top = rect.bottom + 4;
+      let maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceBelow - 10, 140));
+      if (spaceBelow < 140 && spaceAbove > spaceBelow) {
+        maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceAbove - 10, 140));
+        top = Math.max(8, rect.top - maxHeight - 4);
+      }
+      setStartTimeDropdownPosition({ top, left: rect.left, width: rect.width, maxHeight });
+    };
+    updatePosition();
+    const timeoutId = setTimeout(updatePosition, 0);
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [showStartTimeDropdown]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !showEndTimeDropdown || !endTimeButtonRef.current) return;
+    const updatePosition = () => {
+      const node = endTimeButtonRef.current?._nativeNode || endTimeButtonRef.current;
+      if (!node?.getBoundingClientRect) return;
+      const rect = node.getBoundingClientRect();
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+      const dropdownMaxHeight = 220;
+      const spaceBelow = viewportHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      let top = rect.bottom + 4;
+      let maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceBelow - 10, 140));
+      if (spaceBelow < 140 && spaceAbove > spaceBelow) {
+        maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceAbove - 10, 140));
+        top = Math.max(8, rect.top - maxHeight - 4);
+      }
+      setEndTimeDropdownPosition({ top, left: rect.left, width: rect.width, maxHeight });
+    };
+    updatePosition();
+    const timeoutId = setTimeout(updatePosition, 0);
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [showEndTimeDropdown]);
   
   // Close material dropdown when clicking outside (web only)
   useEffect(() => {
@@ -1219,6 +1332,13 @@ export default function TaskCreateModal({
       };
     }
   }, [showMaterialDropdown]);
+
+  useEffect(() => {
+    if (!visible) {
+      setShowStartTimeDropdown(false);
+      setShowEndTimeDropdown(false);
+    }
+  }, [visible]);
   
   // Reset position ready flag when dropdown closes
   useEffect(() => {
@@ -2594,6 +2714,9 @@ export default function TaskCreateModal({
       let data;
       let error;
       let createdRecurrenceRule = null;
+      // Used across create + fallback error handlers (including overlap flows).
+      const normalizedStartTime = normalizeTimeValue(startTime);
+      const normalizedEndTime = normalizeTimeValue(endTime);
 
       if (placement === 'backlog') {
         // For backlog items, use is_backlog flag instead of far future dates
@@ -2650,8 +2773,6 @@ export default function TaskCreateModal({
         const baseDate = new Date(dueDate);
         baseDate.setHours(0, 0, 0, 0);
         const eventEndDateToUse = dueDate;
-        const normalizedStartTime = normalizeTimeValue(startTime);
-        const normalizedEndTime = normalizeTimeValue(endTime);
         if (!allDay && !normalizedStartTime && normalizedEndTime) {
           setValidationErrors((prev) => ({
             ...prev,
@@ -3601,7 +3722,13 @@ export default function TaskCreateModal({
 
           <SafeView>
             {placement === 'calendar' && (
-              <View style={[styles.scheduleFieldsWrap, validationErrors.time && styles.scheduleFieldsWrapError]}>
+              <View
+                style={[
+                  styles.scheduleFieldsWrap,
+                  validationErrors.time && styles.scheduleFieldsWrapError,
+                  (showStartTimeDropdown || showEndTimeDropdown) && styles.scheduleFieldsWrapOverlay,
+                ]}
+              >
                 <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
                   <View style={[styles.timeField, styles.dateFieldInline]}>
                     <Text style={styles.timeLabel}>Date <Text style={{ color: '#ef4444' }}>*</Text></Text>
@@ -3639,26 +3766,137 @@ export default function TaskCreateModal({
                       <View style={[styles.timeField, styles.timeFieldCompact]}>
                         <Text style={styles.timeLabel}>Start</Text>
                       {Platform.OS === 'web' ? (
+                        useTimeDropdownsOnWeb ? (
+                          <View style={[styles.selectContainer, styles.timeSelectContainer]}>
+                            <TouchableOpacity
+                              ref={startTimeButtonRef}
+                              style={[
+                                styles.select,
+                                styles.academicSelect,
+                                styles.timeSelectButton,
+                                allDay && styles.timeInputDisabled,
+                                validationErrors.time && styles.inputError,
+                              ]}
+                              onPress={() => {
+                                if (allDay) return;
+                                setShowStartTimeDropdown((prev) => !prev);
+                                setShowEndTimeDropdown(false);
+                              }}
+                              disabled={allDay}
+                              {...(Platform.OS === 'web' && { cursor: allDay ? 'not-allowed' : 'pointer' })}
+                            >
+                              <Text style={[styles.selectText, !startTime && styles.selectPlaceholder]}>
+                                {startTime || 'Optional'}
+                              </Text>
+                              <ChevronDown size={16} color={allDay ? MUTED : SUB} />
+                            </TouchableOpacity>
+                            {showStartTimeDropdown && (
+                              (() => {
+                                let ReactDOM;
+                                try {
+                                  ReactDOM = require('react-dom');
+                                } catch (_) {
+                                  ReactDOM = null;
+                                }
+                                const dropdownContent = (
+                                  <View
+                                    ref={startTimeDropdownRef}
+                                    style={[
+                                      styles.selectOptions,
+                                      styles.timeSelectOptions,
+                                      Platform.OS === 'web' && {
+                                        position: 'fixed',
+                                        top: startTimeDropdownPosition.top,
+                                        left: startTimeDropdownPosition.left,
+                                        width: startTimeDropdownPosition.width || 148,
+                                        maxHeight: startTimeDropdownPosition.maxHeight || 220,
+                                        marginTop: 0,
+                                        zIndex: 99999,
+                                      },
+                                    ]}
+                                  >
+                                    <ScrollView
+                                      nestedScrollEnabled
+                                      keyboardShouldPersistTaps="handled"
+                                      showsVerticalScrollIndicator
+                                      style={{ maxHeight: Math.max(140, (startTimeDropdownPosition.maxHeight || 220) - 4) }}
+                                    >
+                                      <TouchableOpacity
+                                        style={[styles.selectOption, !startTime && styles.selectOptionActive]}
+                                        onPress={() => {
+                                          setStartTime('');
+                                          setShowStartTimeDropdown(false);
+                                          if (validationErrors.time) {
+                                            setValidationErrors({ ...validationErrors, time: null });
+                                          }
+                                        }}
+                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                      >
+                                        <Text style={[styles.selectOptionText, !startTime && styles.selectOptionTextActive]}>
+                                          Optional
+                                        </Text>
+                                      </TouchableOpacity>
+                                      {TIME_SELECT_OPTIONS.map((timeOption) => {
+                                        const active = startTime === timeOption;
+                                        return (
+                                          <TouchableOpacity
+                                            key={`start-${timeOption}`}
+                                            style={[styles.selectOption, active && styles.selectOptionActive]}
+                                            onPress={() => {
+                                              setStartTime(timeOption);
+                                              setShowStartTimeDropdown(false);
+                                              if (validationErrors.time) {
+                                                setValidationErrors({ ...validationErrors, time: null });
+                                              }
+                                            }}
+                                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                          >
+                                            <Text style={[styles.selectOptionText, active && styles.selectOptionTextActive]}>
+                                              {timeOption}
+                                            </Text>
+                                          </TouchableOpacity>
+                                        );
+                                      })}
+                                    </ScrollView>
+                                  </View>
+                                );
+                                if (ReactDOM && typeof document !== 'undefined' && document.body) {
+                                  return ReactDOM.createPortal(dropdownContent, document.body);
+                                }
+                                return dropdownContent;
+                              })()
+                            )}
+                          </View>
+                        ) : (
                           <input
                             ref={startTimeInputRef}
                             type="text"
                             placeholder="Optional"
                             value={startTime || ''}
                             onFocus={() => {
+                              startTimeJustFocusedRef.current = true;
                               if (!startTime) {
                                 setStartTime('__:__ __');
-                                requestAnimationFrame(() => {
-                                  try {
-                                    startTimeInputRef.current?.setSelectionRange(0, 0);
-                                  } catch (_) {}
-                                });
                               }
+                              requestAnimationFrame(() => {
+                                try {
+                                  startTimeInputRef.current?.setSelectionRange(0, 0);
+                                } catch (_) {}
+                              });
                             }}
                             onBlur={() => {
+                              startTimeJustFocusedRef.current = false;
                               setStartTime((prev) => (prev === '__:__ __' ? '' : prev));
                             }}
                             onKeyDown={(e) => handleTimeMaskedWebKeyDown(e, startTime, setStartTime)}
-                            onMouseUp={(e) => snapTimeCaretToToken(e.currentTarget)}
+                            onMouseUp={(e) => {
+                              if (startTimeJustFocusedRef.current) {
+                                startTimeJustFocusedRef.current = false;
+                                setMaskedCaret(e.currentTarget, 0);
+                                return;
+                              }
+                              snapTimeCaretToToken(e.currentTarget);
+                            }}
                             onChange={(e) => {
                               const rawValue = e.target.value || '';
                               const formatted = formatTimeInput(rawValue, startTime);
@@ -3690,6 +3928,7 @@ export default function TaskCreateModal({
                               }),
                             }}
                           />
+                        )
                         ) : (
                           <TextInput
                             placeholder="Optional"
@@ -3724,26 +3963,130 @@ export default function TaskCreateModal({
                       <View style={[styles.timeField, styles.timeFieldCompact]}>
                         <Text style={styles.timeLabel}>End</Text>
                       {Platform.OS === 'web' ? (
+                        useTimeDropdownsOnWeb ? (
+                          <View style={[styles.selectContainer, styles.timeSelectContainer]}>
+                            <TouchableOpacity
+                              ref={endTimeButtonRef}
+                              style={[
+                                styles.select,
+                                styles.academicSelect,
+                                styles.timeSelectButton,
+                                allDay && styles.timeInputDisabled,
+                              ]}
+                              onPress={() => {
+                                if (allDay) return;
+                                setShowEndTimeDropdown((prev) => !prev);
+                                setShowStartTimeDropdown(false);
+                              }}
+                              disabled={allDay}
+                              {...(Platform.OS === 'web' && { cursor: allDay ? 'not-allowed' : 'pointer' })}
+                            >
+                              <Text style={[styles.selectText, !endTime && styles.selectPlaceholder]}>
+                                {endTime || 'Optional'}
+                              </Text>
+                              <ChevronDown size={16} color={allDay ? MUTED : SUB} />
+                            </TouchableOpacity>
+                            {showEndTimeDropdown && (
+                              (() => {
+                                let ReactDOM;
+                                try {
+                                  ReactDOM = require('react-dom');
+                                } catch (_) {
+                                  ReactDOM = null;
+                                }
+                                const dropdownContent = (
+                                  <View
+                                    ref={endTimeDropdownRef}
+                                    style={[
+                                      styles.selectOptions,
+                                      styles.timeSelectOptions,
+                                      Platform.OS === 'web' && {
+                                        position: 'fixed',
+                                        top: endTimeDropdownPosition.top,
+                                        left: endTimeDropdownPosition.left,
+                                        width: endTimeDropdownPosition.width || 148,
+                                        maxHeight: endTimeDropdownPosition.maxHeight || 220,
+                                        marginTop: 0,
+                                        zIndex: 99999,
+                                      },
+                                    ]}
+                                  >
+                                    <ScrollView
+                                      nestedScrollEnabled
+                                      keyboardShouldPersistTaps="handled"
+                                      showsVerticalScrollIndicator
+                                      style={{ maxHeight: Math.max(140, (endTimeDropdownPosition.maxHeight || 220) - 4) }}
+                                    >
+                                      <TouchableOpacity
+                                        style={[styles.selectOption, !endTime && styles.selectOptionActive]}
+                                        onPress={() => {
+                                          setEndTime('');
+                                          setShowEndTimeDropdown(false);
+                                        }}
+                                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                      >
+                                        <Text style={[styles.selectOptionText, !endTime && styles.selectOptionTextActive]}>
+                                          Optional
+                                        </Text>
+                                      </TouchableOpacity>
+                                      {TIME_SELECT_OPTIONS.map((timeOption) => {
+                                        const active = endTime === timeOption;
+                                        return (
+                                          <TouchableOpacity
+                                            key={`end-${timeOption}`}
+                                            style={[styles.selectOption, active && styles.selectOptionActive]}
+                                            onPress={() => {
+                                              setEndTime(timeOption);
+                                              setShowEndTimeDropdown(false);
+                                            }}
+                                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                                          >
+                                            <Text style={[styles.selectOptionText, active && styles.selectOptionTextActive]}>
+                                              {timeOption}
+                                            </Text>
+                                          </TouchableOpacity>
+                                        );
+                                      })}
+                                    </ScrollView>
+                                  </View>
+                                );
+                                if (ReactDOM && typeof document !== 'undefined' && document.body) {
+                                  return ReactDOM.createPortal(dropdownContent, document.body);
+                                }
+                                return dropdownContent;
+                              })()
+                            )}
+                          </View>
+                        ) : (
                           <input
                             ref={endTimeInputRef}
                             type="text"
                             placeholder="Optional"
                             value={endTime || ''}
                             onFocus={() => {
+                              endTimeJustFocusedRef.current = true;
                               if (!endTime) {
                                 setEndTime('__:__ __');
-                                requestAnimationFrame(() => {
-                                  try {
-                                    endTimeInputRef.current?.setSelectionRange(0, 0);
-                                  } catch (_) {}
-                                });
                               }
+                              requestAnimationFrame(() => {
+                                try {
+                                  endTimeInputRef.current?.setSelectionRange(0, 0);
+                                } catch (_) {}
+                              });
                             }}
                             onBlur={() => {
+                              endTimeJustFocusedRef.current = false;
                               setEndTime((prev) => (prev === '__:__ __' ? '' : prev));
                             }}
                             onKeyDown={(e) => handleTimeMaskedWebKeyDown(e, endTime, setEndTime)}
-                            onMouseUp={(e) => snapTimeCaretToToken(e.currentTarget)}
+                            onMouseUp={(e) => {
+                              if (endTimeJustFocusedRef.current) {
+                                endTimeJustFocusedRef.current = false;
+                                setMaskedCaret(e.currentTarget, 0);
+                                return;
+                              }
+                              snapTimeCaretToToken(e.currentTarget);
+                            }}
                             onChange={(e) => {
                               const rawValue = e.target.value || '';
                               const formatted = formatTimeInput(rawValue, endTime);
@@ -3769,6 +4112,7 @@ export default function TaskCreateModal({
                               opacity: allDay ? 0.9 : 1,
                             }}
                           />
+                        )
                         ) : (
                           <TextInput
                             placeholder="Optional"
@@ -6160,6 +6504,11 @@ const styles = StyleSheet.create({
   },
   scheduleFieldsWrap: {
     marginBottom: 8,
+    overflow: 'visible',
+  },
+  scheduleFieldsWrapOverlay: {
+    position: 'relative',
+    zIndex: 30000,
   },
   scheduleFieldsWrapError: {
     borderColor: '#ef4444',
@@ -6353,9 +6702,11 @@ const styles = StyleSheet.create({
   timeInputsRowInline: {
     flex: 1,
     minWidth: 220,
+    overflow: 'visible',
   },
   timeField: {
     flex: 1,
+    overflow: 'visible',
   },
   timeFieldCompact: {
     ...(Platform.OS === 'web'
@@ -6791,6 +7142,23 @@ const styles = StyleSheet.create({
   selectContainer: {
     position: 'relative',
     zIndex: 1000,
+  },
+  timeSelectContainer: {
+    width: '100%',
+    maxWidth: 100,
+    zIndex: 32000,
+  },
+  timeSelectButton: {
+    minHeight: 40,
+    height: 40,
+    borderRadius: 14,
+    paddingVertical: 10,
+  },
+  timeSelectOptions: {
+    borderRadius: 14,
+    marginTop: 4,
+    maxHeight: 220,
+    zIndex: 32000,
   },
   academicSelectContainer: {
     width: '100%',

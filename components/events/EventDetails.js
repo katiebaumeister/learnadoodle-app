@@ -706,6 +706,18 @@ const RECURRENCE_WEEKDAY_OPTIONS = [
   { value: 'FR', label: 'Fri' },
   { value: 'SA', label: 'Sat' },
 ];
+const TIME_SELECT_OPTIONS = (() => {
+  const options = [];
+  for (let hour24 = 0; hour24 < 24; hour24 += 1) {
+    for (const minute of [0, 30]) {
+      const period = hour24 >= 12 ? 'PM' : 'AM';
+      const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+      const minuteLabel = String(minute).padStart(2, '0');
+      options.push(`${hour12}:${minuteLabel} ${period}`);
+    }
+  }
+  return options;
+})();
 const WEEKDAY_FROM_DATE = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 const CLASS_DAY_DEFAULT_WEEKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR'];
 const RECURRENCE_SERIES_UI_CACHE = new Map();
@@ -967,8 +979,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [draftEndTime, setDraftEndTime] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
-  const startTimeInputRef = useRef(null);
-  const endTimeInputRef = useRef(null);
   const [draftChildId, setDraftChildId] = useState(null);
   const [assigneeIds, setAssigneeIds] = useState(() => initialAssigneeIdsFromEvent(event));
   const [draftAllDay, setDraftAllDay] = useState(false);
@@ -979,183 +989,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [draftTags, setDraftTags] = useState([]);
   const [tagInput, setTagInput] = useState('');
   const [showAcademicDetails, setShowAcademicDetails] = useState(() => eventHasAcademicDetailsSection(event));
-  const TIME_MASK = '__:__ __';
-  const TIME_TOKEN_INDEXES = [0, 1, 3, 4, 6, 7];
-  const DIGIT_TOKEN_INDEXES = [0, 1, 3, 4];
-  const setMaskedCaret = (inputEl, pos) => {
-    if (Platform.OS !== 'web' || !inputEl) return;
-    requestAnimationFrame(() => {
-      try {
-        inputEl.setSelectionRange(pos, pos);
-      } catch (_) {
-        // Ignore selection errors in unsupported states.
-      }
-    });
-  };
-  const normalizeMask = (value, previousValue = '') => {
-    const next = formatTimeInput(value || TIME_MASK, previousValue || '');
-    return next || TIME_MASK;
-  };
-  const nextTokenIndex = (pos, inclusive = true) => {
-    for (const idx of TIME_TOKEN_INDEXES) {
-      if ((inclusive && idx >= pos) || (!inclusive && idx > pos)) return idx;
-    }
-    return TIME_TOKEN_INDEXES[TIME_TOKEN_INDEXES.length - 1];
-  };
-  const prevTokenIndex = (pos, inclusive = true) => {
-    for (let i = TIME_TOKEN_INDEXES.length - 1; i >= 0; i -= 1) {
-      const idx = TIME_TOKEN_INDEXES[i];
-      if ((inclusive && idx <= pos) || (!inclusive && idx < pos)) return idx;
-    }
-    return TIME_TOKEN_INDEXES[0];
-  };
-  const clearTokenAt = (chars, idx) => {
-    if (!TIME_TOKEN_INDEXES.includes(idx)) return;
-    chars[idx] = '_';
-    if (idx === 6 || idx === 7) {
-      chars[6] = '_';
-      chars[7] = '_';
-    }
-  };
-  const snapTimeCaretToToken = (inputEl) => {
-    if (Platform.OS !== 'web' || !inputEl) return;
-    const caret = typeof inputEl.selectionStart === 'number' ? inputEl.selectionStart : 0;
-    if (TIME_TOKEN_INDEXES.includes(caret)) return;
-    if (caret <= 2) {
-      setMaskedCaret(inputEl, caret <= 1 ? caret : 3);
-      return;
-    }
-    if (caret <= 5) {
-      setMaskedCaret(inputEl, caret <= 4 ? caret : 6);
-      return;
-    }
-    setMaskedCaret(inputEl, caret >= 7 ? 7 : 6);
-  };
-  const handleTimeMaskedWebKeyDown = (e, value, setValue) => {
-    if (Platform.OS !== 'web') return;
-    const key = String(e.key || '');
-    if (key === 'Tab') return;
-    const inputEl = e.currentTarget;
-    const current = normalizeMask(value, value);
-    const chars = current.split('');
-    const start = typeof inputEl.selectionStart === 'number' ? inputEl.selectionStart : 0;
-    const end = typeof inputEl.selectionEnd === 'number' ? inputEl.selectionEnd : start;
-    const hasSelection = end > start;
-    const clearSelectionTokens = () => {
-      if (!hasSelection) return false;
-      for (const idx of TIME_TOKEN_INDEXES) {
-        if (idx >= start && idx < end) clearTokenAt(chars, idx);
-      }
-      return true;
-    };
-
-    if (key === 'ArrowLeft') {
-      e.preventDefault();
-      setMaskedCaret(inputEl, prevTokenIndex(start, false));
-      return;
-    }
-    if (key === 'ArrowRight') {
-      e.preventDefault();
-      setMaskedCaret(inputEl, nextTokenIndex(start, false));
-      return;
-    }
-    if (key === 'Home') {
-      e.preventDefault();
-      setMaskedCaret(inputEl, 0);
-      return;
-    }
-    if (key === 'End') {
-      e.preventDefault();
-      setMaskedCaret(inputEl, 7);
-      return;
-    }
-    if (key === 'Backspace') {
-      e.preventDefault();
-      if (clearSelectionTokens()) {
-        const nextValue = chars.join('');
-        setValue(nextValue);
-        setMaskedCaret(inputEl, prevTokenIndex(start, true));
-        return;
-      }
-      const target = prevTokenIndex(start, false);
-      clearTokenAt(chars, target);
-      const nextValue = chars.join('');
-      setValue(nextValue);
-      setMaskedCaret(inputEl, target);
-      return;
-    }
-    if (key === 'Delete') {
-      e.preventDefault();
-      if (clearSelectionTokens()) {
-        const nextValue = chars.join('');
-        setValue(nextValue);
-        setMaskedCaret(inputEl, start);
-        return;
-      }
-      const target = nextTokenIndex(start, true);
-      clearTokenAt(chars, target);
-      const nextValue = chars.join('');
-      setValue(nextValue);
-      setMaskedCaret(inputEl, target);
-      return;
-    }
-
-    if (key.length !== 1) return;
-    const upper = key.toUpperCase();
-    const isDigit = /^[0-9]$/.test(upper);
-    const isPeriodKey = upper === 'A' || upper === 'P' || upper === 'M';
-    if (!isDigit && !isPeriodKey) {
-      e.preventDefault();
-      return;
-    }
-
-    e.preventDefault();
-    clearSelectionTokens();
-    let target = nextTokenIndex(start, true);
-
-    if (isDigit) {
-      if (!DIGIT_TOKEN_INDEXES.includes(target)) {
-        target = nextTokenIndex(0, true);
-      }
-      if (target === 0 && Number(upper) > 1) {
-        chars[0] = '0';
-        chars[1] = upper;
-        const nextValue = chars.join('');
-        setValue(nextValue);
-        setMaskedCaret(inputEl, 3);
-        return;
-      }
-      if (target === 1 && chars[0] === '_') {
-        chars[0] = '0';
-      }
-      if (target === 0 && Number(upper) > 1) return;
-      if (target === 1) {
-        const tens = chars[0];
-        if (tens === '1' && Number(upper) > 2) return;
-      }
-      if (target === 3 && Number(upper) > 5) return;
-      chars[target] = upper;
-      const nextValue = chars.join('');
-      setValue(nextValue);
-      setMaskedCaret(inputEl, nextTokenIndex(target, false));
-      return;
-    }
-
-    if (upper === 'A' || upper === 'P') {
-      chars[6] = upper;
-      chars[7] = 'M';
-      const nextValue = chars.join('');
-      setValue(nextValue);
-      setMaskedCaret(inputEl, 7);
-      return;
-    }
-    if (upper === 'M' && (chars[6] === 'A' || chars[6] === 'P')) {
-      chars[7] = 'M';
-      const nextValue = chars.join('');
-      setValue(nextValue);
-      setMaskedCaret(inputEl, 7);
-    }
-  };
   const [showLogisticDetails, setShowLogisticDetails] = useState(
     () => !!(event?.location || event?.mode || event?.instructor)
   );
@@ -1184,6 +1017,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const lessonDropdownRef = useRef(null);
   const [showLessonDropdown, setShowLessonDropdown] = useState(false);
   const [lessonDropdownPosition, setLessonDropdownPosition] = useState({ top: 0, left: 0, width: 200, maxHeight: 220 });
+  const startTimeButtonRef = useRef(null);
+  const startTimeDropdownRef = useRef(null);
+  const endTimeButtonRef = useRef(null);
+  const endTimeDropdownRef = useRef(null);
+  const [showStartTimeDropdown, setShowStartTimeDropdown] = useState(false);
+  const [showEndTimeDropdown, setShowEndTimeDropdown] = useState(false);
+  const [startTimeDropdownPosition, setStartTimeDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
+  const [endTimeDropdownPosition, setEndTimeDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
   const [lessonOptions, setLessonOptions] = useState([]);
   const [loadingLessonOptions, setLoadingLessonOptions] = useState(false);
   
@@ -1506,6 +1347,86 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     document.addEventListener('mousedown', handleLessonClickOutside);
     return () => document.removeEventListener('mousedown', handleLessonClickOutside);
   }, [showLessonDropdown]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !showStartTimeDropdown || !startTimeButtonRef.current) return undefined;
+    const updatePosition = () => {
+      const node = startTimeButtonRef.current?._nativeNode || startTimeButtonRef.current;
+      if (!node || typeof node.getBoundingClientRect !== 'function') return;
+      const rect = node.getBoundingClientRect();
+      setStartTimeDropdownPosition((prev) => {
+        const next = { top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 150) };
+        if (prev?.top === next.top && prev?.left === next.left && prev?.width === next.width) return prev;
+        return next;
+      });
+    };
+    const timeoutId = setTimeout(updatePosition, 0);
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [showStartTimeDropdown]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !showEndTimeDropdown || !endTimeButtonRef.current) return undefined;
+    const updatePosition = () => {
+      const node = endTimeButtonRef.current?._nativeNode || endTimeButtonRef.current;
+      if (!node || typeof node.getBoundingClientRect !== 'function') return;
+      const rect = node.getBoundingClientRect();
+      setEndTimeDropdownPosition((prev) => {
+        const next = { top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 150) };
+        if (prev?.top === next.top && prev?.left === next.left && prev?.width === next.width) return prev;
+        return next;
+      });
+    };
+    const timeoutId = setTimeout(updatePosition, 0);
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [showEndTimeDropdown]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || (!showStartTimeDropdown && !showEndTimeDropdown)) return undefined;
+    const handleClickOutside = (event) => {
+      const target = event?.target;
+      if (!target) return;
+      const startButtonNode = startTimeButtonRef.current?._nativeNode || startTimeButtonRef.current;
+      const startDropdownNode = startTimeDropdownRef.current?._nativeNode || startTimeDropdownRef.current;
+      const endButtonNode = endTimeButtonRef.current?._nativeNode || endTimeButtonRef.current;
+      const endDropdownNode = endTimeDropdownRef.current?._nativeNode || endTimeDropdownRef.current;
+
+      const inStart = (startButtonNode && startButtonNode.contains(target))
+        || (startDropdownNode && startDropdownNode.contains(target));
+      const inEnd = (endButtonNode && endButtonNode.contains(target))
+        || (endDropdownNode && endDropdownNode.contains(target));
+
+      if (!inStart) setShowStartTimeDropdown(false);
+      if (!inEnd) setShowEndTimeDropdown(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showStartTimeDropdown, showEndTimeDropdown]);
+
+  useEffect(() => {
+    if (allDay) {
+      setShowStartTimeDropdown(false);
+      setShowEndTimeDropdown(false);
+    }
+  }, [allDay]);
+
+  useEffect(() => {
+    if (!editing) {
+      setShowStartTimeDropdown(false);
+      setShowEndTimeDropdown(false);
+    }
+  }, [editing]);
 
   const isParentView = useMemo(
     () => session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true,
@@ -2568,7 +2489,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       errors.assignee = 'At least one assignee is required';
     }
 
-    if (isRecurring && placement === 'calendar') {
+    if (isRecurring && placement === 'calendar' && !isSingleSeriesOccurrenceEdit) {
       if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
         errors.recurrenceWeekdays = 'Select at least one weekday';
       }
@@ -2601,7 +2522,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (!eventType) return false;
     const isMultiDayEvent = false; // No multi-day events in new system
     if (isMultiDayEvent && placement === 'calendar' && !eventEndDate) return false;
-    if (isRecurring && placement === 'calendar') {
+    if (isRecurring && placement === 'calendar' && !isSingleSeriesOccurrenceEdit) {
       if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) return false;
       if (recurrenceEndType === 'after') {
         const fromNum = recurrenceEndAfter != null ? Number(recurrenceEndAfter) : NaN;
@@ -3248,6 +3169,70 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setSchedulingBacklog(false);
     }
   }, [event, initialSchedulingMode, applySubjectSelection]);
+
+  // In Edit Series mode, show the series anchor start date (not the clicked occurrence date).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!event?.id || !isSeriesEditScope) return;
+
+      const cleanEventId = cleanPlannerEventId(String(event.id || ''));
+      const masterId = resolveSeriesMasterEventId(event, cleanEventId);
+      let seriesStartTs = null;
+
+      if (masterId) {
+        const masterQuery = supabase
+          .from('events')
+          .select('start_ts')
+          .eq('id', masterId)
+          .is('deleted_at', null)
+          .maybeSingle();
+        const { data: masterRow } = familyId
+          ? await masterQuery.eq('family_id', familyId)
+          : await masterQuery;
+        if (masterRow?.start_ts) {
+          seriesStartTs = masterRow.start_ts;
+        }
+      }
+
+      if (!seriesStartTs) {
+        const seriesLinkIds = resolveSeriesLinkIds(event, cleanEventId);
+        if (seriesLinkIds.length > 0) {
+          const filterClauses = seriesLinkIds.flatMap((id) => [
+            `id.eq.${id}`,
+            `recurrence_id.eq.${id}`,
+            `parent_event_id.eq.${id}`,
+          ]);
+          let firstSeriesQuery = supabase
+            .from('events')
+            .select('start_ts')
+            .or(filterClauses.join(','))
+            .is('deleted_at', null)
+            .order('start_ts', { ascending: true })
+            .limit(1);
+          if (familyId) {
+            firstSeriesQuery = firstSeriesQuery.eq('family_id', familyId);
+          }
+          const { data: firstSeriesRows } = await firstSeriesQuery;
+          if (Array.isArray(firstSeriesRows) && firstSeriesRows[0]?.start_ts) {
+            seriesStartTs = firstSeriesRows[0].start_ts;
+          }
+        }
+      }
+
+      if (cancelled || !seriesStartTs) return;
+      const seriesStartDate = new Date(seriesStartTs);
+      if (Number.isNaN(seriesStartDate.getTime())) return;
+
+      setDueDate(seriesStartDate);
+      setDraftDate(toDateInput(seriesStartDate.toISOString()));
+      setCalendarViewMonth(seriesStartDate);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [event?.id, event?.parent_event_id, event?.recurrence_id, isSeriesEditScope, familyId]);
 
   // Recurring instances often omit recurrence_rule on the row; load the series master's rule for the toggle + recurrence UI.
   useEffect(() => {
@@ -6657,65 +6642,91 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 <View style={[styles.timeField, styles.timeFieldCompact]}>
                   <Text style={styles.timeLabel}>Start</Text>
                   {Platform.OS === 'web' ? (
-                    <input
-                      ref={startTimeInputRef}
-                      type="text"
-                      placeholder="Optional"
-                      value={startTime || ''}
-                      onFocus={() => {
-                        if (!startTime) {
-                          setStartTime('__:__ __');
-                          setDraftStartTime('__:__ __');
-                          requestAnimationFrame(() => {
-                            try {
-                              startTimeInputRef.current?.setSelectionRange(0, 0);
-                            } catch (_) {}
-                          });
+                    <View style={styles.selectContainer}>
+                      <TouchableOpacity
+                        ref={startTimeButtonRef}
+                        style={[
+                          styles.select,
+                          styles.timeSelectButton,
+                          allDay && styles.timeInputDisabled,
+                          validationErrors.time && styles.inputError,
+                        ]}
+                        onPress={() => {
+                          if (allDay) return;
+                          setShowStartTimeDropdown((prev) => !prev);
+                          setShowEndTimeDropdown(false);
+                        }}
+                        disabled={allDay}
+                      >
+                        <Text style={[styles.selectText, !startTime && styles.selectPlaceholder]}>
+                          {startTime || 'Optional'}
+                        </Text>
+                        <ChevronDown size={16} color={MUTED} />
+                      </TouchableOpacity>
+                      {showStartTimeDropdown && (() => {
+                        let ReactDOM;
+                        try {
+                          ReactDOM = require('react-dom');
+                        } catch (_) {
+                          ReactDOM = null;
                         }
-                      }}
-                      onBlur={() => {
-                        setStartTime((prev) => (prev === '__:__ __' ? '' : prev));
-                        setDraftStartTime((prev) => (prev === '__:__ __' ? '' : prev));
-                      }}
-                      onKeyDown={(e) =>
-                        handleTimeMaskedWebKeyDown(e, startTime, (next) => {
-                          setStartTime(next);
-                          setDraftStartTime(next);
-                        })
-                      }
-                      onMouseUp={(e) => snapTimeCaretToToken(e.currentTarget)}
-                      onChange={(e) => {
-                        const rawValue = e.target.value || '';
-                        const formatted = formatTimeInput(rawValue, startTime);
-                        setStartTime(formatted);
-                        setDraftStartTime(formatted);
-                        if (validationErrors.time) {
-                          setValidationErrors({ ...validationErrors, time: null });
+                        const dropdownContent = (
+                          <View
+                            ref={startTimeDropdownRef}
+                            style={[
+                              styles.selectOptions,
+                              styles.timeSelectOptions,
+                              Platform.OS === 'web' && {
+                                position: 'fixed',
+                                top: startTimeDropdownPosition.top,
+                                left: startTimeDropdownPosition.left,
+                                width: startTimeDropdownPosition.width || 150,
+                                marginTop: 0,
+                                zIndex: 99999,
+                              },
+                            ]}
+                          >
+                            <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={{ maxHeight: 220 }}>
+                              <TouchableOpacity
+                                style={[styles.selectOption, !startTime && styles.selectOptionActive]}
+                                onPress={() => {
+                                  setStartTime('');
+                                  setDraftStartTime('');
+                                  setShowStartTimeDropdown(false);
+                                  if (validationErrors.time) {
+                                    setValidationErrors((prev) => ({ ...prev, time: null }));
+                                  }
+                                }}
+                              >
+                                <Text style={[styles.selectOptionText, !startTime && styles.selectOptionTextActive]}>Optional</Text>
+                              </TouchableOpacity>
+                              {TIME_SELECT_OPTIONS.map((timeOption) => (
+                                <TouchableOpacity
+                                  key={`start-${timeOption}`}
+                                  style={[styles.selectOption, startTime === timeOption && styles.selectOptionActive]}
+                                  onPress={() => {
+                                    setStartTime(timeOption);
+                                    setDraftStartTime(timeOption);
+                                    setShowStartTimeDropdown(false);
+                                    if (validationErrors.time) {
+                                      setValidationErrors((prev) => ({ ...prev, time: null }));
+                                    }
+                                  }}
+                                >
+                                  <Text style={[styles.selectOptionText, startTime === timeOption && styles.selectOptionTextActive]}>
+                                    {timeOption}
+                                  </Text>
+                                </TouchableOpacity>
+                              ))}
+                            </ScrollView>
+                          </View>
+                        );
+                        if (ReactDOM?.createPortal && typeof document !== 'undefined' && document.body) {
+                          return ReactDOM.createPortal(dropdownContent, document.body);
                         }
-                      }}
-                      disabled={allDay}
-                      style={{
-                        backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
-                        borderRadius: 14,
-                        paddingTop: 10,
-                        paddingBottom: 10,
-                        paddingLeft: 12,
-                        paddingRight: 12,
-                        borderWidth: 1,
-                        borderColor: validationErrors.time ? '#ef4444' : BORDER,
-                        borderStyle: 'solid',
-                        fontSize: 14,
-                        color: allDay ? MUTED : FG,
-                        width: '100%',
-                        maxWidth: 100,
-                        height: 'auto',
-                        outline: 'none',
-                        opacity: allDay ? 0.9 : 1,
-                        ...(validationErrors.time && {
-                          borderColor: '#ef4444',
-                        }),
-                      }}
-                    />
+                        return dropdownContent;
+                      })()}
+                    </View>
                   ) : (
                     <TextInput
                       placeholder="Optional"
@@ -6755,59 +6766,84 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 <View style={[styles.timeField, styles.timeFieldCompact]}>
                   <Text style={styles.timeLabel}>End</Text>
                   {Platform.OS === 'web' ? (
-                    <input
-                      ref={endTimeInputRef}
-                      type="text"
-                      placeholder="Optional"
-                      value={endTime || ''}
-                      onFocus={() => {
-                        if (!endTime) {
-                          setEndTime('__:__ __');
-                          setDraftEndTime('__:__ __');
-                          requestAnimationFrame(() => {
-                            try {
-                              endTimeInputRef.current?.setSelectionRange(0, 0);
-                            } catch (_) {}
-                          });
+                    <View style={styles.selectContainer}>
+                      <TouchableOpacity
+                        ref={endTimeButtonRef}
+                        style={[
+                          styles.select,
+                          styles.timeSelectButton,
+                          allDay && styles.timeInputDisabled,
+                        ]}
+                        onPress={() => {
+                          if (allDay) return;
+                          setShowEndTimeDropdown((prev) => !prev);
+                          setShowStartTimeDropdown(false);
+                        }}
+                        disabled={allDay}
+                      >
+                        <Text style={[styles.selectText, !endTime && styles.selectPlaceholder]}>
+                          {endTime || 'Optional'}
+                        </Text>
+                        <ChevronDown size={16} color={MUTED} />
+                      </TouchableOpacity>
+                      {showEndTimeDropdown && (() => {
+                        let ReactDOM;
+                        try {
+                          ReactDOM = require('react-dom');
+                        } catch (_) {
+                          ReactDOM = null;
                         }
-                      }}
-                      onBlur={() => {
-                        setEndTime((prev) => (prev === '__:__ __' ? '' : prev));
-                        setDraftEndTime((prev) => (prev === '__:__ __' ? '' : prev));
-                      }}
-                      onKeyDown={(e) =>
-                        handleTimeMaskedWebKeyDown(e, endTime, (next) => {
-                          setEndTime(next);
-                          setDraftEndTime(next);
-                        })
-                      }
-                      onMouseUp={(e) => snapTimeCaretToToken(e.currentTarget)}
-                      onChange={(e) => {
-                        const rawValue = e.target.value || '';
-                        const formatted = formatTimeInput(rawValue, endTime);
-                        setEndTime(formatted);
-                        setDraftEndTime(formatted);
-                      }}
-                      disabled={allDay}
-                      style={{
-                        backgroundColor: allDay ? '#F8FAFC' : '#ffffff',
-                        borderRadius: 14,
-                        paddingTop: 10,
-                        paddingBottom: 10,
-                        paddingLeft: 12,
-                        paddingRight: 12,
-                        borderWidth: 1,
-                        borderColor: BORDER,
-                        borderStyle: 'solid',
-                        fontSize: 14,
-                        color: allDay ? MUTED : FG,
-                        width: '100%',
-                        maxWidth: 100,
-                        height: 'auto',
-                        outline: 'none',
-                        opacity: allDay ? 0.9 : 1,
-                      }}
-                    />
+                        const dropdownContent = (
+                          <View
+                            ref={endTimeDropdownRef}
+                            style={[
+                              styles.selectOptions,
+                              styles.timeSelectOptions,
+                              Platform.OS === 'web' && {
+                                position: 'fixed',
+                                top: endTimeDropdownPosition.top,
+                                left: endTimeDropdownPosition.left,
+                                width: endTimeDropdownPosition.width || 150,
+                                marginTop: 0,
+                                zIndex: 99999,
+                              },
+                            ]}
+                          >
+                            <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={{ maxHeight: 220 }}>
+                              <TouchableOpacity
+                                style={[styles.selectOption, !endTime && styles.selectOptionActive]}
+                                onPress={() => {
+                                  setEndTime('');
+                                  setDraftEndTime('');
+                                  setShowEndTimeDropdown(false);
+                                }}
+                              >
+                                <Text style={[styles.selectOptionText, !endTime && styles.selectOptionTextActive]}>Optional</Text>
+                              </TouchableOpacity>
+                              {TIME_SELECT_OPTIONS.map((timeOption) => (
+                                <TouchableOpacity
+                                  key={`end-${timeOption}`}
+                                  style={[styles.selectOption, endTime === timeOption && styles.selectOptionActive]}
+                                  onPress={() => {
+                                    setEndTime(timeOption);
+                                    setDraftEndTime(timeOption);
+                                    setShowEndTimeDropdown(false);
+                                  }}
+                                >
+                                  <Text style={[styles.selectOptionText, endTime === timeOption && styles.selectOptionTextActive]}>
+                                    {timeOption}
+                                  </Text>
+                                </TouchableOpacity>
+                              ))}
+                            </ScrollView>
+                          </View>
+                        );
+                        if (ReactDOM?.createPortal && typeof document !== 'undefined' && document.body) {
+                          return ReactDOM.createPortal(dropdownContent, document.body);
+                        }
+                        return dropdownContent;
+                      })()}
+                    </View>
                   ) : (
                     <TextInput
                       placeholder="Optional"
@@ -6887,7 +6923,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 </View>
               </View>
             </View>
-            {isRecurring && (
+            {isRecurring && !isSingleSeriesOccurrenceEdit && (
               <View style={styles.recurringSectionContent}>
                 <View style={[styles.repeatGrid, useCompactRepeatGrid && styles.repeatGridCompact]}>
                   <View style={[styles.repeatGroup, styles.repeatGroupPattern]}>
@@ -6984,6 +7020,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                           key={endType}
                           onPress={() => {
                             setRecurrenceEndType(endType);
+                            if (
+                              endType === 'on' &&
+                              isSeriesEditScope &&
+                              !recurrenceEndDate &&
+                              dueDate instanceof Date &&
+                              !Number.isNaN(dueDate.getTime())
+                            ) {
+                              setRecurrenceEndDate(new Date(dueDate));
+                            }
                             if (validationErrors.recurrenceEnd) {
                               setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
                             }
@@ -10955,6 +11000,19 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  timeSelectButton: {
+    minHeight: 40,
+    height: 40,
+    borderRadius: 14,
+    paddingVertical: 10,
+    width: '100%',
+    maxWidth: 100,
+  },
+  timeSelectOptions: {
+    borderRadius: 14,
+    maxHeight: 220,
+    zIndex: 32000,
   },
   timeInputDisabled: {
     backgroundColor: '#F8FAFC',

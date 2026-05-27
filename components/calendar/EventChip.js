@@ -538,8 +538,6 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   const shouldShowDoneStyling = isDone && !hideDoneStyling;
   // Always show lighter text for completed events, but only strikethrough when hideDoneStyling is false
   const shouldShowLighterText = isDone;
-  // Lesson that does not count toward 180-day/hour requirement (show muted + tooltip)
-  const isExcludedFromPlan = ((ev?.event_type || ev?.type || '').toLowerCase() === 'lesson') && ev?.counts_toward_plan === false;
 
   // Get accent color values for styling (used for borders, text accents, etc.)
   const getAccentColor = (colorName) => {
@@ -571,7 +569,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       paddingHorizontal: 4,
       paddingVertical: 4,
       width: '100%',
-      opacity: isExcludedFromPlan ? 0.78 : (shouldShowLighterText ? 0.5 : 1),
+      opacity: shouldShowLighterText ? 0.5 : 1,
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
       }),
@@ -821,7 +819,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       </View>
     );
 
-    return renderWrapper(baseStyle, content, (Platform.OS === 'web' && isExcludedFromPlan) ? { title: 'Excluded from instructional requirement' } : {});
+    return renderWrapper(baseStyle, content);
   }
 
   if (compact) {
@@ -832,7 +830,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       paddingHorizontal: 6,
       paddingVertical: 3,
       maxWidth: '100%',
-      opacity: isExcludedFromPlan ? 0.78 : (shouldShowLighterText ? 0.5 : 1),
+      opacity: shouldShowLighterText ? 0.5 : 1,
     };
 
     const { IconComponent: SubjectIcon, iconColor: subjectIconColor } = getSubjectIcon();
@@ -994,7 +992,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
     return (
       <>
-        {renderWrapper(baseStyle, content, (Platform.OS === 'web' && isExcludedFromPlan) ? { title: 'Excluded from instructional requirement' } : {})}
+        {renderWrapper(baseStyle, content)}
         {/* Conflict Tooltip */}
         {Platform.OS === 'web' && showConflictTooltip && conflictInfo && (() => {
           let ReactDOM;
@@ -1047,7 +1045,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     backgroundColor: getBackgroundColor(),
     paddingHorizontal: 0,
     paddingVertical: 2, // Significantly reduced spacing
-    opacity: isExcludedFromPlan ? 0.78 : (shouldShowLighterText ? 0.5 : 1),
+    opacity: shouldShowLighterText ? 0.5 : 1,
   };
 
   const { IconComponent: SubjectIcon, iconColor: subjectIconColor } = getSubjectIcon();
@@ -1237,7 +1235,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
   return (
     <>
-      {renderWrapper(baseStyle, content, (Platform.OS === 'web' && isExcludedFromPlan) ? { title: 'Excluded from instructional requirement' } : {})}
+      {renderWrapper(baseStyle, content)}
       {/* Conflict Tooltip */}
       {Platform.OS === 'web' && showConflictTooltip && conflictInfo && (() => {
         let ReactDOM;
