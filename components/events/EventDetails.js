@@ -2159,6 +2159,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const lastMaterialsLoadKeyRef = useRef('');
   const lastSubjectsLoadKeyRef = useRef('');
   const lastChipConflictHydrationKeyRef = useRef('');
+  const loggedInvalidAcademicYearIdsRef = useRef(new Set());
 
   const editConflictEnterOp = useRef(new Animated.Value(0)).current;
   const editConflictEnterY = useRef(new Animated.Value(5)).current;
@@ -2168,6 +2169,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   useEffect(() => {
     onEditingChangeRef.current = onEditingChange;
   }, [onEditingChange]);
+
+  const logInvalidAcademicYearIdOnce = useCallback((source, rawAcademicYearId) => {
+    if (!__DEV__) return;
+    const value = String(rawAcademicYearId ?? '').trim();
+    if (!value) return;
+    const key = `${source}:${value}`;
+    if (loggedInvalidAcademicYearIdsRef.current.has(key)) return;
+    loggedInvalidAcademicYearIdsRef.current.add(key);
+    console.warn('[EventDetails] Skipping academic_years query for non-UUID academic_year_id:', {
+      source,
+      academic_year_id: rawAcademicYearId,
+      event_id: event?.id || null,
+    });
+  }, [event?.id]);
 
   useEffect(() => {
     setChipConflictBannerDismissed((prev) => (prev ? false : prev));
@@ -3514,6 +3529,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       if (Array.isArray(recurrenceWeekdays) && recurrenceWeekdays.length > 0) return;
       if (isPartOfRecurringSeries(event) && !event?.recurrence_rule) return;
       if (!isPlanYearBlockSeries(event) || !event?.academic_year_id) return;
+      if (!isUUID(String(event.academic_year_id))) {
+        logInvalidAcademicYearIdOnce('recurrence-weekday-load', event.academic_year_id);
+        return;
+      }
       try {
         const { data, error } = await supabase
           .from('academic_years')
@@ -3650,7 +3669,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         return true;
       });
       // This event may reference a year row that was dropped by dedupe (same date range, different id) — always include it.
-      if (academicYearId && !list.some((a) => a.id === academicYearId)) {
+      const hasValidAcademicYearId = academicYearId && isUUID(String(academicYearId));
+      if (academicYearId && !hasValidAcademicYearId) {
+        logInvalidAcademicYearIdOnce('linked-row-merge', academicYearId);
+      }
+      if (hasValidAcademicYearId && !list.some((a) => a.id === academicYearId)) {
         const { data: linkedRow } = await supabase
           .from('academic_years')
           .select('id, start_date, end_date, year_name')
@@ -3679,6 +3702,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   // When academic_year_id is set after the list query, or preloaded list omitted this id, merge the row in.
   useEffect(() => {
     if (!familyId || !academicYearId) return;
+    if (!isUUID(String(academicYearId))) {
+      logInvalidAcademicYearIdOnce('single-row-load', academicYearId);
+      return;
+    }
     let cancelled = false;
     (async () => {
       const { data: one, error } = await supabase
@@ -3696,7 +3723,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return () => {
       cancelled = true;
     };
-  }, [familyId, academicYearId]);
+  }, [familyId, academicYearId, logInvalidAcademicYearIdOnce]);
 
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes (for editing)
   useEffect(() => {
@@ -5005,6 +5032,95 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const seriesLinkIds = isSeriesEditScope
         ? resolveSeriesLinkIds(event, targetEventId)
         : [];
+      const scopedFamilyId = String(familyId || event?.family_id || '').trim();
+      let resolvedSeriesLinkIds = [...seriesLinkIds];
+      const resolvedSeriesRowsById = new Map();
+      const attendanceLockedSeriesRowIds = new Set();
+      const todayStartLocal = new Date();
+      todayStartLocal.setHours(0, 0, 0, 0);
+      if (isSeriesEditScope && seriesLinkIds.length > 0) {
+        try {
+          // Expand linkage ids so updates apply to the full series even when legacy rows
+          // use mixed recurrence_id / parent_event_id linkage patterns.
+          let probeIds = [...seriesLinkIds];
+          let pass = 0;
+          while (probeIds.length > 0 && pass < 3) {
+            const filterClauses = probeIds.flatMap((id) => [
+              `id.eq.${id}`,
+              `parent_event_id.eq.${id}`,
+              `recurrence_id.eq.${id}`,
+            ]);
+            let resolveQuery = supabase
+              .from('events')
+              .select('id, parent_event_id, recurrence_id, start_ts, status')
+              .or(filterClauses.join(','))
+              .is('deleted_at', null);
+            if (scopedFamilyId) resolveQuery = resolveQuery.eq('family_id', scopedFamilyId);
+            const { data: linkedRows, error: linkedRowsError } = await resolveQuery;
+            if (linkedRowsError || !Array.isArray(linkedRows) || linkedRows.length === 0) break;
+            linkedRows.forEach((row) => {
+              const rowId = cleanPlannerEventId(String(row?.id || ''));
+              if (!rowId) return;
+              resolvedSeriesRowsById.set(rowId, row);
+            });
+            const discoveredIds = Array.from(
+              new Set(
+                linkedRows.flatMap((row) => [
+                  cleanPlannerEventId(String(row?.id || '')),
+                  cleanPlannerEventId(String(row?.parent_event_id || '')),
+                  cleanPlannerEventId(String(row?.recurrence_id || '')),
+                ]).filter(Boolean)
+              )
+            );
+            const nextProbeIds = discoveredIds.filter((id) => !resolvedSeriesLinkIds.includes(id));
+            if (nextProbeIds.length === 0) {
+              resolvedSeriesLinkIds = Array.from(new Set([...resolvedSeriesLinkIds, ...discoveredIds]));
+              break;
+            }
+            resolvedSeriesLinkIds = Array.from(new Set([...resolvedSeriesLinkIds, ...discoveredIds]));
+            probeIds = nextProbeIds;
+            pass += 1;
+          }
+        } catch (resolveErr) {
+          console.warn('[EventDetails] Failed to expand series scope ids:', resolveErr);
+        }
+      }
+      if (isSeriesEditScope && resolvedSeriesRowsById.size > 0) {
+        const resolvedSeriesRows = Array.from(resolvedSeriesRowsById.values());
+        const pastRows = resolvedSeriesRows.filter((row) => {
+          const rowStart = row?.start_ts ? new Date(row.start_ts) : null;
+          return rowStart instanceof Date && !Number.isNaN(rowStart.getTime()) && rowStart < todayStartLocal;
+        });
+        pastRows.forEach((row) => {
+          const normalized = normalizeStatus(String(row?.status || ''));
+          if (normalized === 'done' || normalized === 'completed') {
+            const rowId = cleanPlannerEventId(String(row?.id || ''));
+            if (rowId) attendanceLockedSeriesRowIds.add(rowId);
+          }
+        });
+        const pastRowIds = pastRows
+          .map((row) => cleanPlannerEventId(String(row?.id || '')))
+          .filter(Boolean);
+        if (pastRowIds.length > 0) {
+          try {
+            let attendanceQuery = supabase
+              .from('attendance_records')
+              .select('event_id')
+              .in('event_id', pastRowIds);
+            if (scopedFamilyId) attendanceQuery = attendanceQuery.eq('family_id', scopedFamilyId);
+            const { data: attendanceRows } = await attendanceQuery;
+            (attendanceRows || []).forEach((row) => {
+              const lockedId = cleanPlannerEventId(String(row?.event_id || ''));
+              if (lockedId) attendanceLockedSeriesRowIds.add(lockedId);
+            });
+          } catch (attendanceErr) {
+            console.warn('[EventDetails] Failed checking attendance-locked rows:', attendanceErr);
+          }
+        }
+      }
+      const editableSeriesRowIds = resolvedSeriesRowsById.size > 0
+        ? Array.from(resolvedSeriesRowsById.keys()).filter((id) => !attendanceLockedSeriesRowIds.has(id))
+        : [];
       const seriesSharedUpdates = isSeriesEditScope
         ? Object.fromEntries(
             Object.entries(cleanUpdates).filter(([key]) => key !== 'start_ts' && key !== 'end_ts')
@@ -5309,9 +5425,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         isSeriesEditScope &&
         seriesSharedUpdates &&
         Object.keys(seriesSharedUpdates).length > 0 &&
-        seriesLinkIds.length > 0
+        (resolvedSeriesRowsById.size > 0 || resolvedSeriesLinkIds.length > 0)
       ) {
-        const filterClauses = seriesLinkIds.flatMap((id) => [
+        const filterClauses = resolvedSeriesLinkIds.flatMap((id) => [
           `id.eq.${id}`,
           `parent_event_id.eq.${id}`,
           `recurrence_id.eq.${id}`,
@@ -5319,22 +5435,82 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         try {
           let seriesQuery = supabase
             .from('events')
-            .update(seriesSharedUpdates)
-            .or(filterClauses.join(','))
-            .is('deleted_at', null);
-          const scopedFamilyId = String(familyId || event?.family_id || '').trim();
-          if (scopedFamilyId) {
+            .update(seriesSharedUpdates);
+          if (resolvedSeriesRowsById.size > 0) {
+            if (editableSeriesRowIds.length === 0) {
+              seriesQuery = null;
+            } else {
+              seriesQuery = seriesQuery.in('id', editableSeriesRowIds);
+            }
+          } else {
+            seriesQuery = seriesQuery.or(filterClauses.join(',')).is('deleted_at', null);
+          }
+          if (seriesQuery && scopedFamilyId) {
             seriesQuery = seriesQuery.eq('family_id', scopedFamilyId);
           }
-          const { error: seriesUpdateError } = await seriesQuery;
-          if (seriesUpdateError) {
-            console.warn('[EventDetails] Series update partially failed:', seriesUpdateError);
-            toast.push('Updated this event, but could not apply all series changes.', 'error');
+          if (seriesQuery) {
+            const { error: seriesUpdateError } = await seriesQuery;
+            if (seriesUpdateError) {
+              console.warn('[EventDetails] Series update partially failed:', seriesUpdateError);
+              toast.push('Updated this event, but could not apply all series changes.', 'error');
+            }
           }
         } catch (seriesErr) {
           console.warn('[EventDetails] Series update threw:', seriesErr);
           toast.push('Updated this event, but could not apply all series changes.', 'error');
         }
+      }
+
+      if (
+        isSeriesEditScope &&
+        startDateObj instanceof Date &&
+        !Number.isNaN(startDateObj.getTime()) &&
+        (resolvedSeriesRowsById.size > 0 || resolvedSeriesLinkIds.length > 0)
+      ) {
+        const seriesStartBoundary = new Date(startDateObj);
+        seriesStartBoundary.setHours(0, 0, 0, 0);
+        const boundaryIso = seriesStartBoundary.toISOString();
+        const nowIso = new Date().toISOString();
+        try {
+          let archiveQuery = supabase
+            .from('events')
+            .update({ deleted_at: nowIso });
+          if (resolvedSeriesRowsById.size > 0) {
+            if (editableSeriesRowIds.length === 0) {
+              archiveQuery = null;
+            } else {
+              archiveQuery = archiveQuery
+                .in('id', editableSeriesRowIds)
+                .lt('start_ts', boundaryIso)
+                .is('deleted_at', null);
+            }
+          } else {
+            const archiveFilterClauses = resolvedSeriesLinkIds.flatMap((id) => [
+              `id.eq.${id}`,
+              `parent_event_id.eq.${id}`,
+              `recurrence_id.eq.${id}`,
+            ]);
+            archiveQuery = archiveQuery
+              .or(archiveFilterClauses.join(','))
+              .lt('start_ts', boundaryIso)
+              .is('deleted_at', null);
+          }
+          if (archiveQuery && scopedFamilyId) archiveQuery = archiveQuery.eq('family_id', scopedFamilyId);
+          if (archiveQuery) {
+            const { error: archiveError } = await archiveQuery;
+            if (archiveError) {
+              console.warn('[EventDetails] Failed archiving pre-series-start rows:', archiveError);
+            }
+          }
+        } catch (archiveErr) {
+          console.warn('[EventDetails] Exception archiving pre-series-start rows:', archiveErr);
+        }
+      }
+      if (isSeriesEditScope && attendanceLockedSeriesRowIds.size > 0) {
+        toast.push(
+          `Preserved ${attendanceLockedSeriesRowIds.size} past attendance-locked occurrence${attendanceLockedSeriesRowIds.size === 1 ? '' : 's'}.`,
+          'info'
+        );
       }
 
       // Split-weekday recurrence compatibility:
@@ -5344,7 +5520,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         isSeriesEditScope &&
         isRecurring &&
         recurrenceType === 'weekly' &&
-        seriesLinkIds.length > 0
+        (resolvedSeriesRowsById.size > 0 || resolvedSeriesLinkIds.length > 0)
       ) {
         const recurrenceRuleObject =
           recurrenceRule && typeof recurrenceRule === 'string'
@@ -5358,21 +5534,58 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             : recurrenceRuleObject?.byweekday
         );
         if (recurrenceRuleObject && selectedWeekdayCodes.length > 0) {
-          const filterClauses = seriesLinkIds.flatMap((id) => [
+          const filterClauses = resolvedSeriesLinkIds.flatMap((id) => [
             `id.eq.${id}`,
             `parent_event_id.eq.${id}`,
             `recurrence_id.eq.${id}`,
           ]);
-          const scopedFamilyId = String(familyId || event?.family_id || '').trim();
-          const seriesRowsQuery = supabase
+          let seriesRowsQuery = supabase
             .from('events')
             .select('id, parent_event_id, recurrence_id, start_ts')
-            .or(filterClauses.join(','))
             .is('deleted_at', null);
-          const { data: seriesRows, error: seriesRowsError } = scopedFamilyId
-            ? await seriesRowsQuery.eq('family_id', scopedFamilyId)
-            : await seriesRowsQuery;
+          if (resolvedSeriesRowsById.size > 0) {
+            if (editableSeriesRowIds.length === 0) {
+              seriesRowsQuery = null;
+            } else {
+              seriesRowsQuery = seriesRowsQuery.in('id', editableSeriesRowIds);
+            }
+          } else {
+            seriesRowsQuery = seriesRowsQuery.or(filterClauses.join(','));
+          }
+          if (seriesRowsQuery && scopedFamilyId) {
+            seriesRowsQuery = seriesRowsQuery.eq('family_id', scopedFamilyId);
+          }
+          const { data: seriesRows, error: seriesRowsError } = seriesRowsQuery
+            ? await seriesRowsQuery
+            : { data: [], error: null };
           if (!seriesRowsError && Array.isArray(seriesRows) && seriesRows.length > 0) {
+            // Hard-remove rows that no longer match the selected weekly weekday set.
+            const selectedWeekdaySet = new Set(selectedWeekdayCodes);
+            const weekdayRowsToRemove = seriesRows
+              .filter((row) => {
+                const rowStart = row?.start_ts ? new Date(row.start_ts) : null;
+                if (!(rowStart instanceof Date) || Number.isNaN(rowStart.getTime())) return false;
+                const weekdayCode = WEEKDAY_FROM_DATE[rowStart.getDay()];
+                return weekdayCode && !selectedWeekdaySet.has(weekdayCode);
+              })
+              .map((row) => cleanPlannerEventId(String(row?.id || '')))
+              .filter(Boolean);
+            if (weekdayRowsToRemove.length > 0) {
+              const nowIso = new Date().toISOString();
+              let removeRowsQuery = supabase
+                .from('events')
+                .update({ deleted_at: nowIso })
+                .in('id', Array.from(new Set(weekdayRowsToRemove)))
+                .is('deleted_at', null);
+              if (scopedFamilyId) {
+                removeRowsQuery = removeRowsQuery.eq('family_id', scopedFamilyId);
+              }
+              const { error: removeRowsErr } = await removeRowsQuery;
+              if (removeRowsErr) {
+                console.warn('[EventDetails] Failed removing deselected weekday rows:', removeRowsErr);
+              }
+            }
+
             const weekdayToMasterId = new Map();
             seriesRows.forEach((row) => {
               const rowStart = row?.start_ts ? new Date(row.start_ts) : null;
@@ -5387,7 +5600,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             });
 
             const existingWeekdayCodes = Array.from(weekdayToMasterId.keys());
-            const selectedWeekdaySet = new Set(selectedWeekdayCodes);
             const existingWeekdaySet = new Set(existingWeekdayCodes);
             const weekdaysToAdd = selectedWeekdayCodes.filter((code) => !existingWeekdaySet.has(code));
             const weekdaysToRemove = existingWeekdayCodes.filter((code) => !selectedWeekdaySet.has(code));
@@ -6601,7 +6813,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           <View style={[styles.scheduleFieldsWrap, validationErrors.time && styles.scheduleFieldsWrapError]}>
             <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
               <View style={[styles.timeField, styles.dateFieldInline]}>
-                <Text style={styles.timeLabel}>Date <Text style={{ color: '#ef4444' }}>*</Text></Text>
+                <Text style={styles.timeLabel}>
+                  {isSeriesEditScope ? 'Series start date' : 'Date'} <Text style={{ color: '#ef4444' }}>*</Text>
+                </Text>
                 <View style={[styles.chip, validationErrors.date && styles.chipFieldError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>
                   <TouchableOpacity
                     onPress={() => {
