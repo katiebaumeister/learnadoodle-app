@@ -68,7 +68,14 @@ export function useWeekDataWithOffline(weekStart, childIds, familyId) {
         end_ts: addDays(weekStart, 7).toISOString(),
       };
       
-      const cachedEvents = await offlineStorage.getAllEvents(familyId, dateRange);
+      const cachedEventsRaw = await offlineStorage.getAllEvents(familyId, dateRange);
+      const cachedEvents = (Array.isArray(cachedEventsRaw) ? cachedEventsRaw : []).filter((event) => {
+        if (!event || typeof event !== 'object') return false;
+        if (event.deleted_at) return false;
+        const status = String(event.status || '').trim().toLowerCase();
+        if (status === 'canceled' || status === 'cancelled') return false;
+        return true;
+      });
       
       // Check if cached events have start_local (required for correct timezone display)
       // If cached events are missing start_local, they're from before the SQL fix
@@ -99,25 +106,7 @@ export function useWeekDataWithOffline(weekStart, childIds, familyId) {
         console.log('[useWeekDataWithOffline] Refresh triggered - skipping cache, fetching fresh data');
       }
       
-      if (!isRefreshTrigger && cachedEvents.length > 0 && cachedEventsHaveStartLocal && !weekChanged) {
-        // Filter events by childIds if specified
-        let filteredEvents = cachedEvents;
-        if (childIds && childIds.length > 0) {
-          filteredEvents = cachedEvents.filter(e => childIds.includes(e.child_id));
-        }
-        
-        // Return cached events immediately
-        if (active) {
-          setData(prev => ({
-            ...prev,
-            events: filteredEvents,
-          }));
-          if (shouldShowLoading) {
-            setLoading(false);
-          }
-        }
-        // Continue to fetch fresh data in background (don't return early)
-      } else if (cachedEvents.length > 0 && !cachedEventsHaveStartLocal) {
+      if (cachedEvents.length > 0 && !cachedEventsHaveStartLocal) {
         // Cached events are missing start_local - don't use them, wait for RPC
       }
       
@@ -181,9 +170,13 @@ export function useWeekDataWithOffline(weekStart, childIds, familyId) {
       } catch (err) {
         // Fallback to cached data if available
         if (cachedEvents.length > 0 && active) {
+          let filteredEvents = cachedEvents;
+          if (childIds && childIds.length > 0) {
+            filteredEvents = cachedEvents.filter(e => childIds.includes(e.child_id));
+          }
           setData(prev => ({
             ...prev,
-            events: cachedEvents,
+            events: filteredEvents,
           }));
         }
         if (shouldShowLoading) {
