@@ -93,13 +93,30 @@ function isMissingColumnError(error, columnName) {
 function extractLatestReviewFeedbackFromNotes(notesValue) {
   const text = String(notesValue || '');
   if (!text) return '';
-  const re = /Review feedback \([^)]+\):\s*([^\n]+)/g;
+  const re = /Review (?:feedback|update) \([^)]+\):\s*([^\n]+)/g;
   let match = null;
   let latest = '';
   while ((match = re.exec(text)) !== null) {
-    latest = String(match[1] || '').trim();
+    const body = String(match[1] || '').trim();
+    const feedbackMatch = body.match(/feedback:\s*(.+)$/i);
+    latest = String((feedbackMatch && feedbackMatch[1]) || body).trim();
   }
   return latest;
+}
+
+function extractReviewHistoryLinesFromNotes(notesValue) {
+  const text = String(notesValue || '');
+  if (!text) return [];
+  const lines = [];
+  const re = /Review (?:feedback|update) \(([^)]+)\):\s*([^\n]+)/g;
+  let match = null;
+  while ((match = re.exec(text)) !== null) {
+    const when = String(match[1] || '').trim();
+    const body = String(match[2] || '').trim();
+    if (!body) continue;
+    lines.push(when ? `${when} — ${body}` : body);
+  }
+  return lines.reverse();
 }
 
 export default function AssignmentReviewModal({
@@ -119,6 +136,7 @@ export default function AssignmentReviewModal({
   const [percentGradeValue, setPercentGradeValue] = useState('');
   const [linkedEventId, setLinkedEventId] = useState(null);
   const [linkedEventNotes, setLinkedEventNotes] = useState('');
+  const [reviewHistoryLines, setReviewHistoryLines] = useState([]);
 
   useEffect(() => {
     loadRubric();
@@ -136,6 +154,7 @@ export default function AssignmentReviewModal({
         setPercentGradeValue('');
         setLinkedEventNotes('');
         setFeedback('');
+        setReviewHistoryLines([]);
         return;
       }
       try {
@@ -187,7 +206,23 @@ export default function AssignmentReviewModal({
             ? String(eventRow.percent_of_total_grade)
             : ''
         );
-        setLinkedEventNotes(String(eventRow?.notes || ''));
+        const hydratedNotes = String(eventRow?.notes || '');
+        setLinkedEventNotes(hydratedNotes);
+        const parsedHistory = extractReviewHistoryLinesFromNotes(hydratedNotes);
+        if (parsedHistory.length > 0) {
+          setReviewHistoryLines(parsedHistory);
+        } else {
+          const seededParts = [];
+          const existingGrade = String(eventRow?.grade || '').trim();
+          const existingPercent = eventRow?.percent_of_total_grade;
+          if (existingGrade) seededParts.push(`Grade: ${existingGrade}`);
+          if (existingPercent != null && String(existingPercent).trim() !== '') {
+            seededParts.push(`%: ${existingPercent}`);
+          }
+          const existingFeedback = String(assignmentRow?.review_feedback || assignment?.review_feedback || '').trim();
+          if (existingFeedback) seededParts.push(`Feedback: ${existingFeedback}`);
+          setReviewHistoryLines(seededParts.length > 0 ? [`Most recent saved review — ${seededParts.join(' · ')}`] : []);
+        }
         if (!seedFeedback) {
           const feedbackFromNotes = extractLatestReviewFeedbackFromNotes(eventRow?.notes);
           if (feedbackFromNotes) {
@@ -200,6 +235,7 @@ export default function AssignmentReviewModal({
           setPercentGradeValue('');
           setLinkedEventNotes('');
           setFeedback(String(assignment?.review_feedback || ''));
+          setReviewHistoryLines([]);
         }
       }
     };
@@ -278,36 +314,108 @@ export default function AssignmentReviewModal({
       let eventPersisted = false;
       let reviewPersisted = false;
       let reviewApiError = null;
+      let targetLinkedEventId = linkedEventId || resolveLinkedEventId(assignment);
+
+      // If linked event id was not hydrated yet, resolve directly from DB at submit time.
+      if (!targetLinkedEventId) {
+        try {
+          const { data: assignmentRow } = await supabase
+            .from('assignments')
+            .select('id, linked_event_ids')
+            .eq('id', assignment.id)
+            .maybeSingle();
+          targetLinkedEventId = resolveLinkedEventId({
+            ...assignment,
+            linked_event_ids: assignmentRow?.linked_event_ids ?? assignment?.linked_event_ids,
+          });
+          if (targetLinkedEventId) {
+            setLinkedEventId(String(targetLinkedEventId));
+          }
+        } catch (_) {
+          // best effort — review fields can still persist
+        }
+      }
 
       // Persist grade + feedback into the linked event regardless of review API success.
-      if (linkedEventId) {
+      if (targetLinkedEventId) {
+        // Always read latest notes before appending review feedback to avoid overwriting
+        // when submit happens before hydrateLinkedEventFields has finished.
         let nextNotes = String(linkedEventNotes || '').trim();
-        if (feedbackTrim) {
-          const feedbackLine = `Review feedback (${now}): ${feedbackTrim}`;
-          nextNotes = nextNotes ? `${nextNotes}\n\n${feedbackLine}` : feedbackLine;
+        let previousGrade = '';
+        let previousPercent = '';
+        try {
+          let { data: latestEventRow, error: latestEventErr } = await supabase
+            .from('events')
+            .select('id, grade, percent_of_total_grade, notes')
+            .eq('id', targetLinkedEventId)
+            .maybeSingle();
+          if (latestEventErr && isMissingColumnError(latestEventErr, 'percent_of_total_grade')) {
+            const fallback = await supabase
+              .from('events')
+              .select('id, grade, notes')
+              .eq('id', targetLinkedEventId)
+              .maybeSingle();
+            latestEventRow = fallback.data;
+            latestEventErr = fallback.error;
+          }
+          if (latestEventRow?.notes != null) {
+            nextNotes = String(latestEventRow.notes || '').trim();
+          }
+          previousGrade = String(latestEventRow?.grade || '').trim();
+          if (latestEventRow?.percent_of_total_grade != null && String(latestEventRow?.percent_of_total_grade).trim() !== '') {
+            previousPercent = String(latestEventRow.percent_of_total_grade).trim();
+          }
+        } catch (_) {
+          // best effort
+        }
+        const previousParts = [];
+        if (previousGrade) previousParts.push(`Grade: ${previousGrade}`);
+        if (previousPercent) previousParts.push(`%: ${previousPercent}`);
+        const previousFeedback = extractLatestReviewFeedbackFromNotes(nextNotes);
+        if (previousFeedback) previousParts.push(`Feedback: ${previousFeedback}`);
+
+        const reviewSummaryParts = [];
+        if (cleanedGrade) reviewSummaryParts.push(`Grade: ${cleanedGrade}`);
+        if (Number.isFinite(parsedPercent)) reviewSummaryParts.push(`%: ${parsedPercent}`);
+        if (feedbackTrim) reviewSummaryParts.push(`Feedback: ${feedbackTrim}`);
+        const hasPreviousAndChanged =
+          previousParts.length > 0 &&
+          previousParts.join(' · ') !== reviewSummaryParts.join(' · ');
+        if (hasPreviousAndChanged) {
+          const previousLine = `Review update (${now}): Previous values — ${previousParts.join(' · ')}`;
+          nextNotes = nextNotes ? `${nextNotes}\n\n${previousLine}` : previousLine;
+        }
+        if (reviewSummaryParts.length > 0) {
+          const reviewLine = `Review update (${now}): ${reviewSummaryParts.join(' · ')}`;
+          nextNotes = nextNotes ? `${nextNotes}\n\n${reviewLine}` : reviewLine;
         }
         const eventUpdates = {
           grade: cleanedGrade || null,
           percent_of_total_grade: Number.isFinite(parsedPercent) ? parsedPercent : null,
         };
-        if (feedbackTrim) {
+        if (reviewSummaryParts.length > 0) {
           eventUpdates.notes = nextNotes;
         }
-        let { error: eventUpErr } = await supabase
+        let { data: eventUpRow, error: eventUpErr } = await supabase
           .from('events')
           .update(eventUpdates)
-          .eq('id', linkedEventId);
+          .eq('id', targetLinkedEventId)
+          .select('id')
+          .maybeSingle();
         if (eventUpErr && isMissingColumnError(eventUpErr, 'percent_of_total_grade')) {
           const fallbackUpdates = { ...eventUpdates };
           delete fallbackUpdates.percent_of_total_grade;
-          ({ error: eventUpErr } = await supabase
+          ({ data: eventUpRow, error: eventUpErr } = await supabase
             .from('events')
             .update(fallbackUpdates)
-            .eq('id', linkedEventId));
+            .eq('id', targetLinkedEventId)
+            .select('id')
+            .maybeSingle());
         }
-        if (!eventUpErr) {
+        if (!eventUpErr && eventUpRow?.id) {
           eventPersisted = true;
-          if (feedbackTrim) setLinkedEventNotes(nextNotes);
+          setLinkedEventNotes(nextNotes);
+          setReviewHistoryLines(extractReviewHistoryLinesFromNotes(nextNotes));
         }
       }
 
@@ -356,6 +464,7 @@ export default function AssignmentReviewModal({
     setPercentGradeValue('');
     setLinkedEventNotes('');
     setLinkedEventId(null);
+    setReviewHistoryLines([]);
     onClose();
   };
 
@@ -471,6 +580,16 @@ export default function AssignmentReviewModal({
                 )}
               </View>
             </View>
+            {reviewHistoryLines.length > 0 ? (
+              <View style={styles.reviewHistoryCard}>
+                <Text style={styles.reviewHistoryLabel}>Review history</Text>
+                {reviewHistoryLines.map((line, idx) => (
+                  <Text key={`review-history-${idx}`} style={styles.reviewHistoryLine}>
+                    {line}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
 
             {rubric && (
               <View style={styles.sectionRubric}>
@@ -656,6 +775,29 @@ const styles = StyleSheet.create({
     color: LD.muted,
     lineHeight: 21,
     marginTop: 10,
+  },
+  reviewHistoryCard: {
+    marginTop: -8,
+    marginBottom: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: LD.border,
+    backgroundColor: '#F8FAFC',
+  },
+  reviewHistoryLabel: {
+    fontSize: 12,
+    color: LD.muted,
+    marginBottom: 6,
+    ...fontDisplay('600'),
+  },
+  reviewHistoryLine: {
+    fontSize: 12,
+    color: LD.inkSoft,
+    lineHeight: 17,
+    marginBottom: 3,
+    ...fontDisplay('400'),
   },
   submissionAttachmentList: {
     marginTop: 10,

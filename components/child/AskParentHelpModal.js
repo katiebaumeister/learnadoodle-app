@@ -34,6 +34,14 @@ async function appendHelpLogQuiet(assignmentId, body, reasonLabelForLog) {
   }
 }
 
+function dispatchAssignmentRefreshEvents() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+  window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+  window.dispatchEvent(new CustomEvent('refreshRightRail'));
+  window.dispatchEvent(new CustomEvent('refreshCalendar'));
+}
+
 const REASONS = [
   { id: 'understand', label: "I'm confused about this" },
   { id: 'time', label: 'I need more time' },
@@ -93,13 +101,13 @@ export default function AskParentHelpModal({
     if (assignment?.due_date) {
       const d = new Date(assignment.due_date);
       if (!Number.isNaN(d.getTime())) {
-        return `Due ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       }
     }
     return null;
   }, [eventContext?.start_ts, eventContext?.end_ts, assignment?.due_date]);
 
-  const latestHistoryLine = useMemo(() => {
+  const historyLines = useMemo(() => {
     const formatWhen = (value) => {
       if (!value) return 'recently';
       const parsed = new Date(value);
@@ -132,19 +140,27 @@ export default function AskParentHelpModal({
     const normalized = log
       .map((entry) => {
         const body = String(entry?.body || entry?.message || entry?.note || '').trim();
+        const senderRole = String(entry?.sender_role || '').trim().toLowerCase();
+        const reason = String(entry?.reason || '').trim().toLowerCase();
         const tsRaw = entry?.created_at || entry?.timestamp || assignment?.updated_at || assignment?.created_at || null;
         const ts = new Date(tsRaw || 0).getTime();
         if (!Number.isFinite(ts) || ts <= 0) return null;
-        return { body, ts, tsRaw };
+        return { body, ts, tsRaw, senderRole, reason };
       })
       .filter(Boolean)
       .sort((a, b) => b.ts - a.ts);
 
-    const latest = normalized[0];
-    if (!latest) return null;
-    return latest.body
-      ? `Sent to parent ${formatWhen(latest.tsRaw)} — "${latest.body}"`
-      : `Sent to parent ${formatWhen(latest.tsRaw)}`;
+    if (normalized.length === 0) return [];
+    return normalized.map((entry) => {
+      const actor = entry.senderRole === 'parent' ? 'Parent' : 'You';
+      const verb =
+        entry.senderRole === 'parent'
+          ? 'replied'
+          : (entry.reason === 'sent_assignment' ? 'sent assignment' : 'sent to parent');
+      return entry.body
+        ? `${actor} ${verb} ${formatWhen(entry.tsRaw)} — "${entry.body}"`
+        : `${actor} ${verb} ${formatWhen(entry.tsRaw)}`;
+    });
   }, [assignment?.help_message_log, assignment?.updated_at, assignment?.created_at]);
 
   const handleSend = async () => {
@@ -168,6 +184,7 @@ export default function AskParentHelpModal({
         });
         if (upErr) throw upErr;
         await appendHelpLogQuiet(assignment.id, noteBlock || reasonLabel, reasonLabel);
+        dispatchAssignmentRefreshEvents();
         onSent?.();
         onClose?.();
         return;
@@ -215,6 +232,7 @@ export default function AskParentHelpModal({
             await appendHelpLogQuiet(created.id, noteBlock || reasonLabel, reasonLabel);
           }
         }
+        dispatchAssignmentRefreshEvents();
         onSent?.();
         onClose?.();
         return;
@@ -233,6 +251,7 @@ export default function AskParentHelpModal({
     assignment?.title ||
     eventContext?.title ||
     'this work';
+  const contextHeaderLine = contextSubtitle ? `${titleRef} · ${contextSubtitle}` : titleRef;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -268,12 +287,9 @@ export default function AskParentHelpModal({
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
           >
-            <Text style={styles.contextTitle} numberOfLines={3}>
-              {titleRef}
+            <Text style={styles.contextTitle} numberOfLines={1}>
+              {contextHeaderLine}
             </Text>
-            {contextSubtitle ? (
-              <Text style={styles.contextWhen}>{contextSubtitle}</Text>
-            ) : null}
 
             {/* Zone 2 — decision (chips) */}
             <Text style={[styles.sectionLabel, styles.sectionLabelDecision]}>What do you need help with?</Text>
@@ -301,9 +317,13 @@ export default function AskParentHelpModal({
 
             {/* Zone 3 — expression (breathing room) */}
             <Text style={[styles.sectionLabel, styles.sectionLabelNote]}>Add a message</Text>
-            {latestHistoryLine ? (
+            {historyLines.length > 0 ? (
               <View style={styles.historyBox}>
-                <Text style={styles.historyText}>{latestHistoryLine}</Text>
+                {historyLines.map((line, idx) => (
+                  <Text key={`help-history-${idx}`} style={styles.historyText}>
+                    {line}
+                  </Text>
+                ))}
               </View>
             ) : null}
             <TextInput
@@ -380,23 +400,13 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(148, 163, 184, 0.35)',
   },
   contextTitle: {
-    fontSize: 14,
-    fontWeight: '400',
-    color: colors.textSecondary,
-    lineHeight: 21,
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.text,
+    lineHeight: 22,
+    marginBottom: 6,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  contextWhen: {
-    fontSize: 14,
-    fontWeight: '400',
-    color: colors.textSecondary,
-    lineHeight: 21,
-    marginTop: 0,
-    marginBottom: 0,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   sectionLabel: {

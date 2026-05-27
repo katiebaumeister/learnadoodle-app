@@ -8312,6 +8312,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 setAskHelpModalAssignment(null);
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+                  window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+                  window.dispatchEvent(new CustomEvent('refreshRightRail'));
+                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
                 }
               }}
               familyId={familyId}
@@ -8376,7 +8379,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             animationType="fade"
             onRequestClose={closeSendToStudentModal}
           >
-            <Pressable
+            <View
               style={{
                 flex: 1,
                 backgroundColor: 'rgba(15, 23, 42, 0.4)',
@@ -8384,13 +8387,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 alignItems: 'center',
                 padding: 16,
               }}
-              onPress={closeSendToStudentModal}
             >
+              <TouchableOpacity
+                onPress={closeSendToStudentModal}
+                activeOpacity={1}
+                style={StyleSheet.absoluteFillObject}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                {...(Platform.OS === 'web' && { cursor: 'default' })}
+              />
               <View
-                onStartShouldSetResponder={() => true}
-                onResponderRelease={(e) => {
-                  e?.stopPropagation?.();
-                }}
+                pointerEvents="box-none"
                 style={{
                   backgroundColor: '#FFFFFF',
                   borderRadius: 24,
@@ -8526,7 +8533,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   </View>
                 </View>
               </View>
-            </Pressable>
+            </View>
           </Modal>
           ) : null}
 

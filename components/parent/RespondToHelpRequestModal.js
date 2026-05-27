@@ -30,6 +30,14 @@ const QUICK_ACTIONS = [
   { id: 'resource', label: 'Recommend resource', text: 'I recommend looking at: ' },
 ];
 
+function dispatchRightRailRefreshEvents() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+  window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+  window.dispatchEvent(new CustomEvent('refreshRightRail'));
+  window.dispatchEvent(new CustomEvent('refreshCalendar'));
+}
+
 /** One line: event title · type · date · time (or assignment + subject/due if no event) */
 function buildContextHeadline(linkedEvent, assignment, subjectName) {
   const fallbackTitle = displayAssignmentTitle(assignment?.title);
@@ -250,6 +258,7 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
       }
 
       toast.push(`Response sent to ${childName}`, 'success');
+      dispatchRightRailRefreshEvents();
       reset();
       if (onResponded) onResponded(assignment.id);
       else onClose?.();

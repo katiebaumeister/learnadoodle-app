@@ -66,10 +66,12 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = () => loadDataRef.current();
     window.addEventListener('childAssignmentsNeedRefresh', handler);
+    window.addEventListener('parentAssignmentsNeedRefresh', handler);
     window.addEventListener('refreshCalendar', handler);
     window.addEventListener('refreshRightRail', handler);
     return () => {
       window.removeEventListener('childAssignmentsNeedRefresh', handler);
+      window.removeEventListener('parentAssignmentsNeedRefresh', handler);
       window.removeEventListener('refreshCalendar', handler);
       window.removeEventListener('refreshRightRail', handler);
     };
@@ -620,6 +622,9 @@ export default function ChildHomeRightRail({ familyId, childId }) {
           loadData();
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+            window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+            window.dispatchEvent(new CustomEvent('refreshRightRail'));
+            window.dispatchEvent(new CustomEvent('refreshCalendar'));
           }
         }}
         familyId={familyId}
