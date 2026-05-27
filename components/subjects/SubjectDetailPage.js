@@ -420,6 +420,8 @@ export default function SubjectDetailPage({
   children = [],
   onBack,
   onEditSubject,
+  canManageMaterials = true,
+  canManageAttendance = true,
   onOpenPlannerSettings = null,
   onOpenExportModalForSection = null,
   preloadedSubjectData = null,
@@ -2932,17 +2934,19 @@ export default function SubjectDetailPage({
         <View id="materials-section" style={styles.section}>
           <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials</Text>
-            <TouchableOpacity
-              style={styles.emptyStateButton}
-              onPress={openAddMaterialModal}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Add new material"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={16} color="#6B7280" />
-              <Text style={styles.emptyStateButtonText}>Add new material</Text>
-            </TouchableOpacity>
+            {canManageMaterials ? (
+              <TouchableOpacity
+                style={styles.emptyStateButton}
+                onPress={openAddMaterialModal}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Add new material"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Plus size={16} color="#6B7280" />
+                <Text style={styles.emptyStateButtonText}>Add new material</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
           {materials.length > 0 ? (
             <>
@@ -3131,17 +3135,19 @@ export default function SubjectDetailPage({
               <View style={styles.attendanceSectionHeader}>
                 <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Attendance</Text>
                 <View style={styles.sectionHeaderActions}>
-                  <TouchableOpacity
-                    style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
-                    onPress={() => setShowPastEventsAttendanceModal(true)}
-                    activeOpacity={0.7}
-                    accessibilityRole="button"
-                    accessibilityLabel="Bulk edit attendance"
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Edit2 size={14} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Bulk edit attendance</Text>
-                  </TouchableOpacity>
+                  {canManageAttendance ? (
+                    <TouchableOpacity
+                      style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+                      onPress={() => setShowPastEventsAttendanceModal(true)}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel="Bulk edit attendance"
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Edit2 size={14} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Bulk edit attendance</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               </View>
               {(attendanceViewMode === 'list' ? attendanceRecordsListUI.length > 0 : attendanceRecordsForUI.length > 0) ? (

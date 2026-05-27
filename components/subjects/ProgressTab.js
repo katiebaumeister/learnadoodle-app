@@ -193,6 +193,7 @@ export default function ProgressTab({
   onOpenSubject,
   onRefreshSubjectDetail,
   onEditChild = null,
+  canManageAttendance = true,
 }) {
   const students = useMemo(
     () => (Array.isArray(children) ? children : [])
@@ -1447,7 +1448,7 @@ export default function ProgressTab({
     [savedProfileGradeLabel, subjectsForYearLabel]
   );
   const progressDisplayName = selectedStudent?.name || 'Student';
-  const progressHeaderTitle = isChildView ? 'Your Progress' : `${progressDisplayName}'s Progress`;
+  const progressHeaderTitle = isChildView ? `${progressDisplayName} - Your Progress` : `${progressDisplayName}'s Progress`;
   const subjectsSectionTitle = isChildView ? 'Your Subjects' : `${progressDisplayName}'s Subjects`;
   const attendanceSectionTitle = isChildView
     ? 'Your Attendance - All Subjects'
@@ -1578,6 +1579,7 @@ export default function ProgressTab({
   ) : null;
 
   const isWeb = Platform.OS === 'web';
+  const canEditChildButton = typeof onEditChild === 'function' && !!selectedStudentRecord;
   return (
     <View style={styles.page}>
       <View style={styles.progressShell}>
@@ -1612,19 +1614,19 @@ export default function ProgressTab({
               </View>
             </View>
             <View style={styles.headerActions}>
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => {
-                  if (typeof onEditChild === 'function' && selectedStudentRecord) {
+              {canEditChildButton ? (
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => {
                     onEditChild(selectedStudentRecord);
-                  }
-                }}
-                activeOpacity={0.75}
-                {...(Platform.OS === 'web' ? { cursor: (typeof onEditChild === 'function' && selectedStudentRecord) ? 'pointer' : 'default' } : {})}
-              >
-                <Edit2 size={14} color="#6B7280" />
-                <Text style={styles.actionButtonText}>Edit child</Text>
-              </TouchableOpacity>
+                  }}
+                  activeOpacity={0.75}
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                >
+                  <Edit2 size={14} color="#6B7280" />
+                  <Text style={styles.actionButtonText}>Edit child</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         </View>
@@ -1658,15 +1660,17 @@ export default function ProgressTab({
               <View style={styles.attendanceSectionHeader}>
                 <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>{attendanceSectionTitle}</Text>
                 <View style={styles.sectionHeaderActions}>
-                  <TouchableOpacity
-                    style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
-                    onPress={() => openSubjectPicker('attendance_edit')}
-                    activeOpacity={0.7}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Edit2 size={14} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Bulk edit attendance</Text>
-                  </TouchableOpacity>
+                  {canManageAttendance ? (
+                    <TouchableOpacity
+                      style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+                      onPress={() => openSubjectPicker('attendance_edit')}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Edit2 size={14} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Bulk edit attendance</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               </View>
               <View style={styles.progressSectionBody}>

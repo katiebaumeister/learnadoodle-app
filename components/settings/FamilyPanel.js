@@ -2722,146 +2722,152 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             <Text style={styles.mainContentTitle}>Profile</Text>
             
             {/* Account Management Section */}
-            <View style={styles.profileAccountSection}>
-              <Text style={styles.subsectionTitle}>Account management</Text>
-              <View style={styles.subsectionDivider} />
-              
-              {/* Email Field */}
-              <View style={styles.profileFieldGroup}>
-              <Text style={styles.profileFieldLabel}>Email</Text>
-              <View style={styles.profileEmailInputContainer}>
-                <TextInput
-                  style={[styles.profileDarkInput, styles.profileEmailInput]}
-                  value={displayEmail}
-                  onChangeText={isViewingAsChild ? undefined : setProfileEmail}
-                  placeholder="Enter your email"
-                  placeholderTextColor="#6b7280"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  editable={!isViewingAsChild && !profileEditLocked}
-                />
-                {hasProfileChanges && (
-                  <TouchableOpacity
-                    style={styles.profileEmailCheckButton}
-                    onPress={async () => {
-                      setSavingProfile(true);
-                      try {
-                        // Update email if changed
-                        await handleSaveProfile();
-                      } catch (err) {
-                        toast.push(err.message || 'Failed to save changes', 'error');
-                      } finally {
-                        setSavingProfile(false);
-                      }
-                    }}
-                    disabled={savingProfile}
-                    {...(Platform.OS === 'web' && { cursor: savingProfile ? 'not-allowed' : 'pointer' })}
-                  >
-                    {savingProfile ? (
-                      <ActivityIndicator size="small" color="#60a5fa" />
-                    ) : (
-                      <Check size={20} color="#60a5fa" />
-                    )}
-                  </TouchableOpacity>
-                )}
+            <View style={[styles.profileSection, styles.profileSectionFirst]}>
+              <View style={styles.profileSectionHeader}>
+                <Text style={[styles.subsectionTitle, styles.profileSectionTitle]}>Account management</Text>
               </View>
-              {hasProfileChanges && (
-                <Text style={styles.profileEmailSaveHint}>
-                  Click the checkmark to save your changes
-                </Text>
-              )}
-              <Text style={styles.profileEmailHint}>
-                Changing your email will send a verification link to the new address. Your email will only be updated after you verify it.
-              </Text>
-              {user && !user.email_confirmed_at && (
-                <View style={styles.profileEmailVerify}>
-                  <Text style={styles.profileEmailVerifyText}>Email not verified. </Text>
-                  <TouchableOpacity onPress={() => toast.push('Verification email sent!', 'success')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                    <Text style={styles.profileEmailVerifyLink}>Verify now</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
-            
-            {/* Reset Password Button */}
-            <View style={styles.profileFieldGroup}>
-              <Text style={styles.profileFieldLabel}>Password</Text>
-              <TouchableOpacity
-                style={styles.profileResetPasswordButton}
-                onPress={handleResetPassword}
-                disabled={resettingPassword}
-                {...(Platform.OS === 'web' && { cursor: resettingPassword ? 'not-allowed' : 'pointer' })}
-              >
-                {resettingPassword ? (
-                  <ActivityIndicator size="small" color="#374151" />
-                ) : (
-                  <Text style={styles.profileResetPasswordButtonText}>Reset password</Text>
-                )}
-              </TouchableOpacity>
-              <Text style={styles.profileResetPasswordHint}>
-                We'll send you an email with a link to reset your password.
-              </Text>
-            </View>
-
-            <View style={styles.profileSectionSpacer}>
-              <Text style={styles.subsectionTitle}>User Experience</Text>
-              <View style={styles.subsectionDivider} />
-            </View>
-
-            <View
-              style={[
-                styles.profileFieldGroup,
-                canEditOnboardingGoal && showGoalDropdown && styles.profileFieldGroupDropdownOpen,
-              ]}
-            >
-              <Text style={styles.profileFieldLabel}>Goal</Text>
-              {canEditOnboardingGoal ? (
-                <>
-                  <View ref={goalDropdownRef} style={styles.profileGoalDropdownWrap}>
-                    <TouchableOpacity
-                      style={[styles.profileReadOnlyValue, styles.profileGoalInlineTrigger]}
-                      onPress={() => setShowGoalDropdown((prev) => !prev)}
-                      disabled={savingOnboardingGoal}
-                      {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
-                    >
-                      <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
-                      <ChevronDown
-                        size={16}
-                        color="#6b7280"
-                        style={showGoalDropdown ? { transform: [{ rotate: '180deg' }] } : undefined}
-                      />
-                    </TouchableOpacity>
-                    {showGoalDropdown && (
-                      <View style={styles.profileGoalDropdownMenu}>
-                        {ONBOARDING_GOAL_OPTIONS.map((option) => {
-                          const selected = onboardingGoalId === option.id;
-                          return (
-                            <TouchableOpacity
-                              key={option.id}
-                              style={styles.profileGoalDropdownItem}
-                              onPress={() => handleRequestGoalChange(option.id)}
-                              disabled={savingOnboardingGoal}
-                              {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
-                            >
-                              <Text style={[styles.profileGoalDropdownItemText, selected && styles.profileGoalDropdownItemTextSelected]}>
-                                {option.label}
-                              </Text>
-                            {selected ? <Check size={14} color="#111827" /> : null}
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
+              <View style={styles.profileSectionBody}>
+                {/* Email Field */}
+                <View style={styles.profileFieldGroup}>
+                  <Text style={styles.profileFieldLabel}>Email</Text>
+                  <View style={styles.profileEmailInputContainer}>
+                    <TextInput
+                      style={[styles.profileDarkInput, styles.profileEmailInput]}
+                      value={displayEmail}
+                      onChangeText={isViewingAsChild ? undefined : setProfileEmail}
+                      placeholder="Enter your email"
+                      placeholderTextColor="#6b7280"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      editable={!isViewingAsChild && !profileEditLocked}
+                    />
+                    {hasProfileChanges && (
+                      <TouchableOpacity
+                        style={styles.profileEmailCheckButton}
+                        onPress={async () => {
+                          setSavingProfile(true);
+                          try {
+                            // Update email if changed
+                            await handleSaveProfile();
+                          } catch (err) {
+                            toast.push(err.message || 'Failed to save changes', 'error');
+                          } finally {
+                            setSavingProfile(false);
+                          }
+                        }}
+                        disabled={savingProfile}
+                        {...(Platform.OS === 'web' && { cursor: savingProfile ? 'not-allowed' : 'pointer' })}
+                      >
+                        {savingProfile ? (
+                          <ActivityIndicator size="small" color="#60a5fa" />
+                        ) : (
+                          <Check size={20} color="#60a5fa" />
+                        )}
+                      </TouchableOpacity>
                     )}
                   </View>
-                  <Text style={styles.profileGoalHint}>
-                    Switching this changes parts of your planning experience, but all your existing data stays intact.
+                  {hasProfileChanges && (
+                    <Text style={styles.profileEmailSaveHint}>
+                      Click the checkmark to save your changes
+                    </Text>
+                  )}
+                  <Text style={styles.profileEmailHint}>
+                    Changing your email will send a verification link to the new address. Your email will only be updated after you verify it.
                   </Text>
-                </>
-              ) : (
-                <View style={styles.profileReadOnlyValue}>
-                  <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
+                  {user && !user.email_confirmed_at && (
+                    <View style={styles.profileEmailVerify}>
+                      <Text style={styles.profileEmailVerifyText}>Email not verified. </Text>
+                      <TouchableOpacity onPress={() => toast.push('Verification email sent!', 'success')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                        <Text style={styles.profileEmailVerifyLink}>Verify now</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
-              )}
+                
+                {/* Reset Password Button */}
+                <View style={[styles.profileFieldGroup, styles.profileFieldGroupLast]}>
+                  <Text style={styles.profileFieldLabel}>Password</Text>
+                  <TouchableOpacity
+                    style={styles.profileResetPasswordButton}
+                    onPress={handleResetPassword}
+                    disabled={resettingPassword}
+                    {...(Platform.OS === 'web' && { cursor: resettingPassword ? 'not-allowed' : 'pointer' })}
+                  >
+                    {resettingPassword ? (
+                      <ActivityIndicator size="small" color="#374151" />
+                    ) : (
+                      <Text style={styles.profileResetPasswordButtonText}>Reset password</Text>
+                    )}
+                  </TouchableOpacity>
+                  <Text style={styles.profileResetPasswordHint}>
+                    We'll send you an email with a link to reset your password.
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.profileSection}>
+              <View style={styles.profileSectionHeader}>
+                <Text style={[styles.subsectionTitle, styles.profileSectionTitle]}>User Experience</Text>
+              </View>
+              <View style={styles.profileSectionBody}>
+                <View
+                  style={[
+                    styles.profileFieldGroup,
+                    styles.profileFieldGroupLast,
+                    canEditOnboardingGoal && showGoalDropdown && styles.profileFieldGroupDropdownOpen,
+                  ]}
+                >
+                  <Text style={styles.profileFieldLabel}>Goal</Text>
+                  {canEditOnboardingGoal ? (
+                    <>
+                      <View ref={goalDropdownRef} style={styles.profileGoalDropdownWrap}>
+                        <TouchableOpacity
+                          style={[styles.profileReadOnlyValue, styles.profileGoalInlineTrigger]}
+                          onPress={() => setShowGoalDropdown((prev) => !prev)}
+                          disabled={savingOnboardingGoal}
+                          {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
+                        >
+                          <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
+                          <ChevronDown
+                            size={16}
+                            color="#6b7280"
+                            style={showGoalDropdown ? { transform: [{ rotate: '180deg' }] } : undefined}
+                          />
+                        </TouchableOpacity>
+                        {showGoalDropdown && (
+                          <View style={styles.profileGoalDropdownMenu}>
+                            {ONBOARDING_GOAL_OPTIONS.map((option) => {
+                              const selected = onboardingGoalId === option.id;
+                              return (
+                                <TouchableOpacity
+                                  key={option.id}
+                                  style={styles.profileGoalDropdownItem}
+                                  onPress={() => handleRequestGoalChange(option.id)}
+                                  disabled={savingOnboardingGoal}
+                                  {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
+                                >
+                                  <Text style={[styles.profileGoalDropdownItemText, selected && styles.profileGoalDropdownItemTextSelected]}>
+                                    {option.label}
+                                  </Text>
+                                  {selected ? <Check size={14} color="#111827" /> : null}
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        )}
+                      </View>
+                      <Text style={styles.profileGoalHint}>
+                        Switching this changes parts of your planning experience, but all your existing data stays intact.
+                      </Text>
+                    </>
+                  ) : (
+                    <View style={styles.profileReadOnlyValue}>
+                      <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
             </View>
 
             {/* Danger Zone - Delete account (parents only) */}
@@ -2950,7 +2956,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 )}
               </View>
             )}
-            </View>
           </View>
         );
       }
@@ -6750,10 +6755,30 @@ function createStyles(tokens) {
     profileAccountSection: {
       marginTop: 0,
     },
+    profileSection: {
+      marginTop: 30,
+    },
+    profileSectionFirst: {
+      marginTop: 0,
+    },
+    profileSectionHeader: {
+      paddingBottom: 18,
+      borderBottomWidth: 1,
+      borderBottomColor: '#e5e7eb',
+    },
+    profileSectionTitle: {
+      marginBottom: 0,
+    },
+    profileSectionBody: {
+      paddingTop: 24,
+    },
     profileFieldGroup: {
       position: 'relative',
       marginTop: 0,
-      marginBottom: SettingsLayout.fieldSpacing,
+      marginBottom: 22,
+    },
+    profileFieldGroupLast: {
+      marginBottom: 0,
     },
     profileFieldGroupDropdownOpen: {
       zIndex: 80,
@@ -6767,7 +6792,7 @@ function createStyles(tokens) {
     profileFieldLabel: {
       ...SettingsTypography.label,
       color: '#111827',
-      marginBottom: SettingsLayout.labelSpacing,
+      marginBottom: 16,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -6776,8 +6801,8 @@ function createStyles(tokens) {
       ...SettingsTypography.body,
       paddingHorizontal: 16,
       paddingVertical: 12,
-      minHeight: SettingsLayout.rowHeight,
-      borderRadius: 12,
+      minHeight: 46,
+      borderRadius: 14,
       backgroundColor: '#f9fafb',
       color: '#111827',
       borderWidth: 1,
@@ -6788,7 +6813,7 @@ function createStyles(tokens) {
     },
     profileEmailInputContainer: {
       position: 'relative',
-      marginBottom: 4,
+      marginBottom: 0,
     },
     profileEmailInput: {
       paddingRight: 50,
@@ -6840,14 +6865,14 @@ function createStyles(tokens) {
     profileEmailSaveHint: {
       ...SettingsTypography.secondary,
       color: '#60a5fa',
-      marginTop: 8,
+      marginTop: 10,
       lineHeight: 18,
       fontWeight: '500',
     },
     profileEmailHint: {
       ...SettingsTypography.secondary,
       color: '#6b7280',
-      marginTop: 8,
+      marginTop: 10,
       lineHeight: 18,
       marginBottom: 0,
     },
@@ -6884,7 +6909,7 @@ function createStyles(tokens) {
       borderColor: '#e5e7eb',
       backgroundColor: '#ffffff',
       alignSelf: 'flex-start',
-      marginTop: 4,
+      marginTop: 0,
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
         transition: 'all 0.2s ease',
@@ -6901,7 +6926,7 @@ function createStyles(tokens) {
     profileResetPasswordHint: {
       ...SettingsTypography.secondary,
       color: '#6b7280',
-      marginTop: 8,
+      marginTop: 10,
       lineHeight: 18,
     },
     profileReadOnlyValue: {
@@ -6923,9 +6948,9 @@ function createStyles(tokens) {
     profileGoalHint: {
       ...SettingsTypography.secondary,
       color: '#6b7280',
-      marginTop: 8,
+      marginTop: 10,
       lineHeight: 18,
-      marginBottom: 8,
+      marginBottom: 0,
     },
     profileGoalInlineTrigger: {
       flexDirection: 'row',
@@ -6934,7 +6959,7 @@ function createStyles(tokens) {
       paddingRight: 14,
     },
     profileGoalDropdownWrap: {
-      marginTop: 2,
+      marginTop: 0,
       position: 'relative',
       alignSelf: 'flex-start',
       zIndex: 120,
@@ -8405,8 +8430,8 @@ function createStyles(tokens) {
     dangerZoneAccount: {
       position: 'relative',
       zIndex: 1,
-      marginTop: 8,
-      paddingTop: 16,
+      marginTop: 30,
+      paddingTop: 24,
       borderTopWidth: 1,
       borderTopColor: '#e5e7eb',
     },

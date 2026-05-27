@@ -215,6 +215,23 @@ export default function SubjectsPage({
     : childPermissionsResolved
       ? effectivePermissions?.canManageEvents === true
       : false;
+  const canManageSubjectsActions = !isChildView
+    ? true
+    : childPermissionsResolved
+      ? effectivePermissions?.canManageSubjects === true
+      : false;
+  const canManageMaterialsActions = !isChildView
+    ? true
+    : childPermissionsResolved
+      ? effectivePermissions?.canManageMaterials === true
+      : false;
+  const canManageAttendanceActions = !isChildView
+    ? true
+    : childPermissionsResolved
+      ? effectivePermissions?.canManageEvents === true
+      : false;
+  const canShowEditChildButton = !isChildView;
+  const canShowEditSubjectButton = !isChildView;
   const showChildModeToggle = isChildView && (canShowChildProgressTab || canShowChildScheduleTab);
   const childId = isChildView && safeAccessibleChildren.length > 0 ? (safeAccessibleChildren[0]?.id ?? safeAccessibleChildren[0]) : null;
   const modeStorageKey = useMemo(
@@ -2180,7 +2197,9 @@ export default function SubjectsPage({
             }
           }}
           onBack={handleBack}
-          onEditSubject={onEditSubject}
+          onEditSubject={canShowEditSubjectButton && canManageSubjectsActions ? onEditSubject : null}
+          canManageMaterials={canManageMaterialsActions}
+          canManageAttendance={canManageAttendanceActions}
           onOpenExportModalForSection={(sectionType) => openSubjectsExportModal(sectionType)}
         />
         {renderPlanningPreferencesModal()}
@@ -2393,31 +2412,6 @@ export default function SubjectsPage({
           </View>
         )}
         <View style={styles.headerActions}>
-          {isChildView && (
-            <TouchableOpacity
-              ref={helpButtonRef}
-              onPress={() => {
-                if (showHelpPopover) {
-                  clearHelpPopoverCloseTimer();
-                  setShowHelpPopover(false);
-                  return;
-                }
-                openHelpPopover();
-              }}
-              style={styles.helpButton}
-              {...(Platform.OS === 'web' && {
-                cursor: 'pointer',
-                onMouseEnter: () => {
-                  openHelpPopover();
-                },
-                onMouseLeave: () => {
-                  scheduleHelpPopoverClose();
-                },
-              })}
-            >
-              <HelpCircle size={22} color="rgba(15,23,42,0.7)" />
-            </TouchableOpacity>
-          )}
           <View style={styles.searchContainer}>
             <TextInput
               style={styles.searchInput}
@@ -2517,7 +2511,8 @@ export default function SubjectsPage({
             hideYearHeader
             isChildView={isChildView}
             onRefreshSubjectDetail={refreshSubjectDetailById}
-            onEditChild={onEditChild}
+            onEditChild={canShowEditChildButton ? onEditChild : null}
+            canManageAttendance={canManageAttendanceActions}
             onOpenScheduleTab={() => handleModeFilterChange('plan')}
             onOpenSubject={(subjectId, options = null) => {
               const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));

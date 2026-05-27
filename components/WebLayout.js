@@ -4045,8 +4045,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     })}
                   </View>
                   
-                  {/* Help + Export icons - right of Filters */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0, position: 'relative' }}>
+                  {/* Help + Export icons - right of Filters (hidden for learner child accounts) */}
+                  {session?.role_flags?.isChild !== true ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0, position: 'relative' }}>
                     <TouchableOpacity
                       ref={helpButtonRef}
                       onPress={() => {
@@ -4226,7 +4227,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         </View>
                       ) : null}
                     </View>
-                  </View>
+                    </View>
+                  ) : null}
                   
                 </View>
 
@@ -4782,7 +4784,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       />
 
       <LearnerQuickStartModal
-        visible={Platform.OS === 'web' && learnerQuickStartOpen && !onboardingBlocked}
+        visible={false}
         onGotIt={handleLearnerGotIt}
         onSkip={handleLearnerDontShow}
         visibleSections={learnerQuickStartSections}
