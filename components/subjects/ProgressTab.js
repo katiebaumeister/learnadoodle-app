@@ -1598,38 +1598,40 @@ export default function ProgressTab({
           </View>
         ) : null}
 
-        <View style={styles.progressHeader}>
-          <View style={[styles.progressHeaderTop, !isWeb && styles.progressHeaderTopStacked]}>
-            <View style={styles.progressHeaderTitleSection}>
-              <View style={styles.progressHeaderIdentityRow}>
-                <Image
-                  source={sourceForChild(selectedStudentRecord)}
-                  style={styles.progressHeaderAvatar}
-                  resizeMode="cover"
-                />
-                <View style={styles.progressHeaderTitleCopy}>
-                  <Text style={styles.progressHeaderTitle}>{progressHeaderTitle}</Text>
-                  <Text style={styles.progressHeaderSubtext}>{gradeAndSubjectsLine}</Text>
+        {!isChildView ? (
+          <View style={styles.progressHeader}>
+            <View style={[styles.progressHeaderTop, !isWeb && styles.progressHeaderTopStacked]}>
+              <View style={styles.progressHeaderTitleSection}>
+                <View style={styles.progressHeaderIdentityRow}>
+                  <Image
+                    source={sourceForChild(selectedStudentRecord)}
+                    style={styles.progressHeaderAvatar}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.progressHeaderTitleCopy}>
+                    <Text style={styles.progressHeaderTitle}>{progressHeaderTitle}</Text>
+                    <Text style={styles.progressHeaderSubtext}>{gradeAndSubjectsLine}</Text>
+                  </View>
                 </View>
               </View>
-            </View>
-            <View style={styles.headerActions}>
-              {canEditChildButton ? (
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => {
-                    onEditChild(selectedStudentRecord);
-                  }}
-                  activeOpacity={0.75}
-                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-                >
-                  <Edit2 size={14} color="#6B7280" />
-                  <Text style={styles.actionButtonText}>Edit child</Text>
-                </TouchableOpacity>
-              ) : null}
+              <View style={styles.headerActions}>
+                {canEditChildButton ? (
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => {
+                      onEditChild(selectedStudentRecord);
+                    }}
+                    activeOpacity={0.75}
+                    {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                  >
+                    <Edit2 size={14} color="#6B7280" />
+                    <Text style={styles.actionButtonText}>Edit child</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
           </View>
-        </View>
+        ) : null}
         <View style={[styles.section, styles.subjectsSection]}>
           <Text style={styles.sectionTitle}>{subjectsSectionTitle}</Text>
           {subjectProgressRows.length === 0 ? (
