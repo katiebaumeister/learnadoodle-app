@@ -14,7 +14,6 @@ import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { getAssignments } from '../../lib/services/assignmentsClient';
 import AskParentHelpModal from './AskParentHelpModal';
-import StudentHelpHistoryModal from './StudentHelpHistoryModal';
 import {
   formatSchoolEventTypeLabel,
   isSchoolWorkEventType,
@@ -41,8 +40,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [helpModalAssignment, setHelpModalAssignment] = useState(null);
   const [helpModalEvent, setHelpModalEvent] = useState(null);
-  const [helpHistoryVisible, setHelpHistoryVisible] = useState(false);
-  const [helpHistoryAssignment, setHelpHistoryAssignment] = useState(null);
   const [linkedEventsById, setLinkedEventsById] = useState({});
 
   const loadData = async () => {
@@ -84,7 +81,40 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       setAssignments([]);
       return;
     }
-    setAssignments(data || []);
+    const baseRows = Array.isArray(data) ? data : [];
+    if (baseRows.length === 0) {
+      setAssignments([]);
+      return;
+    }
+    try {
+      const ids = baseRows.map((row) => row?.id).filter(Boolean);
+      if (ids.length === 0) {
+        setAssignments(baseRows);
+        return;
+      }
+      const { data: reviewRows, error: reviewErr } = await supabase
+        .from('assignments')
+        .select('id, review_status, review_feedback, reviewed_at')
+        .in('id', ids);
+      if (reviewErr || !Array.isArray(reviewRows)) {
+        setAssignments(baseRows);
+        return;
+      }
+      const reviewById = new Map(reviewRows.map((row) => [String(row.id), row]));
+      const merged = baseRows.map((row) => {
+        const review = reviewById.get(String(row?.id || '')) || null;
+        if (!review) return row;
+        return {
+          ...row,
+          review_status: review.review_status ?? row.review_status ?? null,
+          review_feedback: review.review_feedback ?? row.review_feedback ?? null,
+          reviewed_at: review.reviewed_at ?? row.reviewed_at ?? null,
+        };
+      });
+      setAssignments(merged);
+    } catch (_) {
+      setAssignments(baseRows);
+    }
   };
 
   const loadUpcomingEvents = async () => {
@@ -263,10 +293,60 @@ export default function ChildHomeRightRail({ familyId, childId }) {
           eventId: linkedEventId,
           initialEvent: null,
           childEventFocus: 'submission',
+          assignment,
         },
       })
     );
   };
+
+  const formatSubmittedOnLabel = (assignment) => {
+    const ts = assignment?.submitted_at || assignment?.updated_at || assignment?.created_at || null;
+    if (!ts) return 'Submitted';
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return 'Submitted';
+    return `Submitted on ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+  };
+
+  const isPastSavedDateForSubmission = (assignment) => {
+    const linkedEvent = linkedEventsById[String(linkedEventIdForAssignment(assignment) || '')] || null;
+    const savedDateRaw = linkedEvent?.start_ts || assignment?.due_date || null;
+    if (!savedDateRaw) return false;
+    const savedDate = new Date(savedDateRaw);
+    if (Number.isNaN(savedDate.getTime())) return false;
+    return Date.now() > savedDate.getTime();
+  };
+
+  const openSubmittedAction = (assignment) => {
+    const linkedEventId = linkedEventIdForAssignment(assignment);
+    if (!linkedEventId || Platform.OS !== 'web' || typeof window === 'undefined') {
+      toast.push('This assignment is not linked to an event yet.', 'info');
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent('openEventModal', {
+        detail: {
+          eventId: linkedEventId,
+          initialEvent: null,
+          childEventFocus: 'submission',
+          assignment,
+          submissionViewOnly: isSubmissionReviewed(assignment) || isPastSavedDateForSubmission(assignment),
+        },
+      })
+    );
+  };
+
+  const isSubmissionReviewed = (assignment) => {
+    const reviewStatus = String(assignment?.review_status || '').trim().toLowerCase();
+    if (reviewStatus && reviewStatus !== 'pending') return true;
+    if (assignment?.reviewed_at) return true;
+    return String(assignment?.review_feedback || '').trim().length > 0;
+  };
+
+  const submissionActionLabel = (assignment) => (
+    isSubmissionReviewed(assignment)
+      ? 'Feedback received'
+      : formatSubmittedOnLabel(assignment)
+  );
 
   const formatEventDate = (dateString) => {
     const date = new Date(dateString);
@@ -298,8 +378,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     metaLine,
     sourceTag,
     onCta,
-    onAskAnother,
-    onAskedPress,
     ctaLabel = 'Ask for help',
     ctaDisabled = false,
     ctaDone = false,
@@ -314,43 +392,14 @@ export default function ChildHomeRightRail({ familyId, childId }) {
         </Text>
         {sourceTag ? <Text style={styles.helpRowSource}>{sourceTag}</Text> : null}
       </View>
-      {ctaDone ? (
-        <View style={styles.helpAskedColumn}>
-          {onAskedPress ? (
-            <TouchableOpacity
-              onPress={onAskedPress}
-              accessibilityRole="button"
-              accessibilityLabel="View what you sent"
-              hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <View style={styles.askedPill}>
-                <Text style={styles.askedPillText}>Asked</Text>
-              </View>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.askedPill}>
-              <Text style={styles.askedPillText}>Asked</Text>
-            </View>
-          )}
-          <TouchableOpacity
-            onPress={onAskAnother}
-            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Text style={styles.askAnotherLink}>Ask another question</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <TouchableOpacity
-          style={[styles.helpCta, ctaDisabled && styles.helpCtaDone]}
-          onPress={onCta}
-          disabled={ctaDisabled}
-          {...(Platform.OS === 'web' && { cursor: ctaDisabled ? 'default' : 'pointer' })}
-        >
-          <Text style={styles.helpCtaText}>{ctaLabel}</Text>
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity
+        style={[styles.helpCta, (ctaDisabled || ctaDone) && styles.helpCtaDone]}
+        onPress={onCta}
+        disabled={ctaDisabled}
+        {...(Platform.OS === 'web' && { cursor: ctaDisabled ? 'default' : 'pointer' })}
+      >
+        <Text style={[styles.helpCtaText, ctaDone && styles.helpCtaTextDone]}>{ctaLabel}</Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -361,12 +410,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       title: a.title || 'Schoolwork',
       metaLine,
       onCta: () => openHelpForAssignment(a),
-      onAskAnother: () => openHelpForAssignment(a),
-      onAskedPress: () => {
-        setHelpHistoryAssignment(a);
-        setHelpHistoryVisible(true);
-      },
-      ctaLabel,
+      ctaLabel: a?.need_help ? 'Asked for help' : ctaLabel,
       ctaDisabled: false,
       ctaDone: !!a.need_help,
     });
@@ -426,6 +470,15 @@ export default function ChildHomeRightRail({ familyId, childId }) {
                         {assignmentEventMetaLine(a)}
                       </Text>
                     </View>
+                    <TouchableOpacity
+                      style={styles.helpCta}
+                      onPress={() => openSubmittedAction(a)}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={[styles.helpCtaText, styles.submittedActionTextItalic]}>
+                        {submissionActionLabel(a)}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 );
               })}
@@ -549,16 +602,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
         childId={childId}
         assignment={helpModalAssignment}
         eventContext={helpModalEvent}
-      />
-
-      <StudentHelpHistoryModal
-        visible={helpHistoryVisible}
-        onClose={() => {
-          setHelpHistoryVisible(false);
-          setHelpHistoryAssignment(null);
-        }}
-        assignment={helpHistoryAssignment}
-        contextTitle={helpHistoryAssignment?.title || undefined}
       />
     </>
   );
@@ -873,38 +916,10 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  submittedActionTextItalic: {
+    fontStyle: 'italic',
+  },
   helpCtaTextDone: {
     color: '#94A3B8',
-  },
-  helpAskedColumn: {
-    alignItems: 'flex-end',
-    gap: 6,
-    flexShrink: 0,
-    maxWidth: 120,
-  },
-  askedPill: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: '#EBF5FF',
-    borderWidth: 1,
-    borderColor: '#89B5E4',
-  },
-  askedPillText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#89B5E4',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  askAnotherLink: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#89B5E4',
-    textDecorationLine: 'underline',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
 });

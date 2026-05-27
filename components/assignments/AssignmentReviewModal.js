@@ -13,7 +13,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
-import { X, CheckCircle, XCircle, FileText } from 'lucide-react';
+import { X, Check, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
 import RubricScoring from '../rubrics/RubricScoring';
@@ -47,13 +47,30 @@ function formatDueShort(ts) {
   if (!ts) return null;
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return null;
-  return `Due ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function displayAssignmentTitle(raw) {
   if (!raw || typeof raw !== 'string') return 'Schoolwork';
   const t = raw.replace(/^Help:\s*/i, '').trim();
   return t || 'Schoolwork';
+}
+
+function resolveLinkedEventId(assignment) {
+  const raw = assignment?.linked_event_ids;
+  if (Array.isArray(raw) && raw.length > 0) return String(raw[0]);
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return String(parsed[0]);
+      if (parsed && typeof parsed === 'object' && parsed.id) return String(parsed.id);
+    } catch (_) {
+      if (raw.includes('-')) return raw;
+    }
+  }
+  if (assignment?.linked_event_id) return String(assignment.linked_event_id);
+  if (assignment?.event_id) return String(assignment.event_id);
+  return null;
 }
 
 export default function AssignmentReviewModal({
@@ -64,16 +81,77 @@ export default function AssignmentReviewModal({
   submissionReview = true,
 }) {
   const [feedback, setFeedback] = useState('');
-  const [decision, setDecision] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [rubric, setRubric] = useState(null);
   const [showRubricScoring, setShowRubricScoring] = useState(false);
   const [feedbackFocused, setFeedbackFocused] = useState(false);
   const [submissionAttachments, setSubmissionAttachments] = useState([]);
+  const [gradeValue, setGradeValue] = useState('');
+  const [percentGradeValue, setPercentGradeValue] = useState('');
+  const [linkedEventId, setLinkedEventId] = useState(null);
+  const [linkedEventNotes, setLinkedEventNotes] = useState('');
 
   useEffect(() => {
     loadRubric();
   }, [assignment]);
+
+  useEffect(() => {
+    setLinkedEventId(resolveLinkedEventId(assignment));
+  }, [assignment?.id, assignment?.linked_event_ids]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hydrateLinkedEventFields = async () => {
+      if (!assignment) {
+        setGradeValue('');
+        setPercentGradeValue('');
+        setLinkedEventNotes('');
+        setFeedback('');
+        return;
+      }
+      try {
+        // Always seed feedback from saved assignment review values.
+        const { data: assignmentRow } = await supabase
+          .from('assignments')
+          .select('id, review_feedback, linked_event_ids')
+          .eq('id', assignment.id)
+          .maybeSingle();
+        if (cancelled) return;
+        setFeedback(String(assignmentRow?.review_feedback || assignment?.review_feedback || ''));
+
+        const resolvedEventId =
+          resolveLinkedEventId({ ...assignment, linked_event_ids: assignmentRow?.linked_event_ids ?? assignment?.linked_event_ids }) ||
+          linkedEventId;
+        if (!resolvedEventId) return;
+
+        const { data, error } = await supabase
+          .from('events')
+          .select('id, grade, percent_of_total_grade, notes')
+          .eq('id', resolvedEventId)
+          .maybeSingle();
+        if (cancelled || error || !data) return;
+        setLinkedEventId(String(resolvedEventId));
+        setGradeValue(String(data?.grade || '').trim());
+        setPercentGradeValue(
+          data?.percent_of_total_grade != null && data?.percent_of_total_grade !== ''
+            ? String(data.percent_of_total_grade)
+            : ''
+        );
+        setLinkedEventNotes(String(data?.notes || ''));
+      } catch (_) {
+        if (!cancelled) {
+          setGradeValue('');
+          setPercentGradeValue('');
+          setLinkedEventNotes('');
+          setFeedback(String(assignment?.review_feedback || ''));
+        }
+      }
+    };
+    hydrateLinkedEventFields();
+    return () => {
+      cancelled = true;
+    };
+  }, [assignment?.id, linkedEventId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,28 +204,95 @@ export default function AssignmentReviewModal({
   };
 
   const handleSubmit = async () => {
-    if (!assignment || decision == null) return;
+    if (!assignment) return;
 
     setSubmitting(true);
     try {
-      const reviewStatus = decision === 'approve' ? 'approved' : 'needs_revision';
-
-      const { reviewAssignment } = await import('../../lib/services/gradebookClient');
-      const result = await reviewAssignment(assignment.id, {
-        review_status: reviewStatus,
-        rating: null,
-        feedback: feedback || null,
-        reviewed_by: null,
+      const reviewStatus = 'approved';
+      const cleanedGrade = String(gradeValue || '').trim();
+      const cleanedPercent = String(percentGradeValue || '').trim();
+      const parsedPercent = cleanedPercent === '' ? null : Number(cleanedPercent);
+      const feedbackTrim = String(feedback || '').trim();
+      const now = new Date().toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
       });
+      let eventPersisted = false;
+      let reviewPersisted = false;
+      let reviewApiError = null;
 
-      if (result.success) {
+      // Persist grade + feedback into the linked event regardless of review API success.
+      if (linkedEventId) {
+        let nextNotes = String(linkedEventNotes || '').trim();
+        if (feedbackTrim) {
+          const feedbackLine = `Review feedback (${now}): ${feedbackTrim}`;
+          nextNotes = nextNotes ? `${nextNotes}\n\n${feedbackLine}` : feedbackLine;
+        }
+        const eventUpdates = {
+          grade: cleanedGrade || null,
+          percent_of_total_grade: Number.isFinite(parsedPercent) ? parsedPercent : null,
+        };
+        if (feedbackTrim) {
+          eventUpdates.notes = nextNotes;
+        }
+        const { error: eventUpErr } = await supabase
+          .from('events')
+          .update(eventUpdates)
+          .eq('id', linkedEventId);
+        if (!eventUpErr) {
+          eventPersisted = true;
+          if (feedbackTrim) setLinkedEventNotes(nextNotes);
+        }
+      }
+
+      // Best-effort gradebook review API call.
+      try {
+        const { reviewAssignment } = await import('../../lib/services/gradebookClient');
+        const result = await reviewAssignment(assignment.id, {
+          review_status: reviewStatus,
+          rating: null,
+          feedback: feedbackTrim || null,
+          reviewed_by: null,
+        });
+        if (result?.success) {
+          reviewPersisted = true;
+        } else {
+          reviewApiError = result?.error || 'Failed to submit review';
+        }
+      } catch (e) {
+        reviewApiError = e?.message || 'Failed to submit review';
+      }
+
+      // Fallback: persist essential review fields directly on assignment.
+      if (!reviewPersisted) {
+        const { error: assignmentUpErr } = await supabase
+          .from('assignments')
+          .update({
+            review_status: reviewStatus,
+            review_feedback: feedbackTrim || null,
+            reviewed_at: new Date().toISOString(),
+          })
+          .eq('id', assignment.id);
+        if (!assignmentUpErr) {
+          reviewPersisted = true;
+        }
+      }
+
+      if (eventPersisted || reviewPersisted) {
         Alert.alert('Success', 'Review submitted successfully!');
         if (onReviewed) {
-          onReviewed(assignment.id, { feedback, review_status: reviewStatus });
+          onReviewed(assignment.id, {
+            feedback: feedbackTrim,
+            review_status: reviewStatus,
+            grade: cleanedGrade || null,
+            percent_of_total_grade: cleanedPercent || null,
+          });
         }
         handleClose();
       } else {
-        Alert.alert('Error', result.error || 'Failed to submit review');
+        Alert.alert('Error', reviewApiError || 'Failed to submit review');
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to submit review');
@@ -159,8 +304,11 @@ export default function AssignmentReviewModal({
   const handleClose = () => {
     if (submitting) return;
     setFeedback('');
-    setDecision(null);
     setFeedbackFocused(false);
+    setGradeValue('');
+    setPercentGradeValue('');
+    setLinkedEventNotes('');
+    setLinkedEventId(null);
     onClose();
   };
 
@@ -170,8 +318,8 @@ export default function AssignmentReviewModal({
       : assignment?.description || '';
 
   const childName = assignment?.child?.first_name || assignment?.child?.name || 'Student';
-  const subjectName = assignment?.subject?.name || '—';
-
+  const subjectName = String(assignment?.subject?.name || '').trim();
+  const percentPlaceholder = subjectName ? `% total ${subjectName} grade` : '% total grade';
   const submittedTs = useMemo(() => {
     if (!assignment) return null;
     return assignment.submitted_at || assignment.updated_at || null;
@@ -179,10 +327,10 @@ export default function AssignmentReviewModal({
 
   const contextPrimary = useMemo(() => {
     const sum = formatSubmittedSummary(submittedTs);
-    return `${childName} · ${subjectName} · ${sum}`;
-  }, [childName, subjectName, submittedTs]);
+    return `${childName} · ${sum}`;
+  }, [childName, submittedTs]);
 
-  const contextSecondary = useMemo(() => {
+  const contextDateLine = useMemo(() => {
     if (!assignment) return null;
     if (assignment.due_date) {
       return formatDueShort(assignment.due_date);
@@ -196,19 +344,18 @@ export default function AssignmentReviewModal({
 
   const titleDisplay = displayAssignmentTitle(assignment?.title);
 
-  const isApprove = decision === 'approve';
-  const isNeedsChanges = decision === 'needs_changes';
-
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
-      <TouchableOpacity
-        style={styles.modalOverlay}
-        activeOpacity={1}
-        onPress={handleClose}
-        accessibilityRole="button"
-        accessibilityLabel="Dismiss"
-      >
-        <TouchableOpacity style={styles.modalContent} activeOpacity={1} onPress={() => {}}>
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={handleClose}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        />
+        <View style={styles.modalContent}>
           <TouchableOpacity
             onPress={handleClose}
             style={styles.closeFab}
@@ -229,17 +376,13 @@ export default function AssignmentReviewModal({
             <Text style={styles.modalTitle}>Review submission</Text>
 
             <View style={styles.contextCard}>
-              <View style={styles.contextAccent} />
               <View style={styles.contextCardInner}>
-                <Text style={styles.contextEyebrow}>Reading response</Text>
-                <Text style={styles.contextMainTitle}>{titleDisplay}</Text>
+                <Text style={styles.contextMainTitle}>
+                  {contextDateLine ? `${titleDisplay} · ${contextDateLine}` : titleDisplay}
+                </Text>
                 <Text style={styles.contextMetaLine}>{contextPrimary}</Text>
-                {contextSecondary ? (
-                  <Text style={styles.contextMetaSecondary}>{contextSecondary}</Text>
-                ) : null}
                 {submissionReview ? (
                   <>
-                    <Text style={styles.submittedWorkLabel}>Submitted work</Text>
                     {submissionBody?.trim() ? (
                       <Text style={styles.assignmentDescription}>{submissionBody}</Text>
                     ) : (
@@ -282,46 +425,6 @@ export default function AssignmentReviewModal({
               </View>
             </View>
 
-            <View style={styles.sectionDecision}>
-              <Text style={styles.labelCalm}>Decision</Text>
-              <View style={styles.decisionContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.decisionButton,
-                    isApprove && styles.decisionButtonApproveSelected,
-                  ]}
-                  onPress={() => setDecision('approve')}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <CheckCircle size={20} color={isApprove ? LD.blueMuted : LD.muted} />
-                  <Text style={[styles.decisionButtonText, isApprove && styles.decisionButtonTextSelected]}>
-                    Approve
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.decisionButton,
-                    isNeedsChanges && styles.decisionButtonNeedsSelected,
-                  ]}
-                  onPress={() => setDecision('needs_changes')}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <XCircle size={20} color={isNeedsChanges ? colors.orangeBold : LD.muted} />
-                  <Text style={[styles.decisionButtonText, isNeedsChanges && styles.decisionNeedsTextSelected]}>
-                    Needs changes
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              {isApprove ? (
-                <Text style={styles.decisionExplainer}>This submission will be marked complete.</Text>
-              ) : isNeedsChanges ? (
-                <Text style={styles.decisionExplainer}>This submission will be returned for revision.</Text>
-              ) : (
-                <Text style={styles.decisionExplainerMuted}>Choose Approve or Needs changes.</Text>
-              )}
-            </View>
-
             {rubric && (
               <View style={styles.sectionRubric}>
                 <View style={styles.sectionHeaderRow}>
@@ -350,6 +453,27 @@ export default function AssignmentReviewModal({
               </View>
             )}
 
+            <View style={styles.sectionGrades}>
+              <Text style={styles.labelCalm}>Grade</Text>
+              <View style={styles.gradeFieldsRow}>
+                <TextInput
+                  style={[styles.gradeInput, styles.gradeInputPrimary]}
+                  value={gradeValue}
+                  onChangeText={setGradeValue}
+                  placeholder="Grade"
+                  placeholderTextColor={LD.placeholder}
+                />
+                <TextInput
+                  style={[styles.gradeInput, styles.gradeInputSecondary]}
+                  value={percentGradeValue}
+                  onChangeText={setPercentGradeValue}
+                  placeholder={percentPlaceholder}
+                  placeholderTextColor={LD.placeholder}
+                  keyboardType="decimal-pad"
+                />
+              </View>
+            </View>
+
             <View style={styles.sectionFeedback}>
               <Text style={styles.labelCalm}>Feedback for student</Text>
               <TextInput
@@ -368,41 +492,30 @@ export default function AssignmentReviewModal({
                 numberOfLines={6}
                 textAlignVertical="top"
               />
-              {isNeedsChanges ? (
-                <Text style={styles.feedbackHint}>Tell the student what to revise before resubmitting.</Text>
-              ) : isApprove ? (
-                <Text style={styles.feedbackHint}>Optional: leave encouragement or a short note.</Text>
-              ) : null}
             </View>
 
             <View style={styles.footer}>
               <TouchableOpacity
                 style={[
-                  styles.primaryButton,
-                  (submitting || decision == null) && styles.primaryButtonDisabled,
+                  styles.footerPillButton,
+                  styles.footerSaveButton,
+                  submitting && styles.footerSaveButtonDisabled,
                 ]}
                 onPress={handleSubmit}
-                disabled={submitting || decision == null}
+                disabled={submitting}
                 {...(Platform.OS === 'web' && {
-                  cursor: submitting || decision == null ? 'not-allowed' : 'pointer',
+                  cursor: submitting ? 'not-allowed' : 'pointer',
                 })}
               >
-                <Text style={styles.primaryButtonText}>
-                  {submitting ? 'Sending…' : 'Send review'}
+                <Check size={16} color="#5B6880" />
+                <Text style={styles.footerSaveButtonText}>
+                  {submitting ? 'Saving…' : 'Save feedback'}
                 </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={handleClose}
-                disabled={submitting}
-                {...(Platform.OS === 'web' && { cursor: submitting ? 'not-allowed' : 'pointer' })}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
-        </TouchableOpacity>
-      </TouchableOpacity>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -416,7 +529,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   modalContent: {
-    backgroundColor: LD.shell,
+    backgroundColor: '#FFFFFF',
     borderRadius: 24,
     width: '100%',
     maxWidth: 680,
@@ -457,31 +570,17 @@ const styles = StyleSheet.create({
     ...fontDisplay('600'),
   },
   contextCard: {
-    flexDirection: 'row',
     borderRadius: 18,
     overflow: 'hidden',
     marginBottom: 20,
-    backgroundColor: LD.fillWash,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: LD.border,
-  },
-  contextAccent: {
-    width: 3,
-    backgroundColor: LD.accentBar,
-    opacity: 0.85,
+    borderColor: '#D6DCE8',
   },
   contextCardInner: {
     flex: 1,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    paddingLeft: 13,
-  },
-  contextEyebrow: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: LD.muted,
-    marginBottom: 6,
-    ...fontDisplay('500'),
   },
   contextMainTitle: {
     fontSize: 19,
@@ -496,25 +595,20 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: LD.muted,
     lineHeight: 19,
+    marginTop: 4,
   },
   contextMetaSecondary: {
     fontSize: 12,
     color: LD.mutedLight,
-    marginTop: 4,
+    marginTop: 2,
     lineHeight: 17,
-  },
-  submittedWorkLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: LD.muted,
-    marginTop: 12,
-    marginBottom: 6,
   },
   assignmentDescription: {
     fontSize: 14,
     fontWeight: '400',
     color: LD.muted,
     lineHeight: 21,
+    marginTop: 10,
   },
   submissionAttachmentList: {
     marginTop: 10,
@@ -604,6 +698,29 @@ const styles = StyleSheet.create({
   sectionRubric: {
     marginBottom: 20,
   },
+  sectionGrades: {
+    marginBottom: 18,
+  },
+  gradeFieldsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  gradeInput: {
+    borderWidth: 1,
+    borderColor: '#D6DCE8',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: LD.ink,
+    backgroundColor: '#FFFFFF',
+  },
+  gradeInputPrimary: {
+    flex: 1,
+  },
+  gradeInputSecondary: {
+    flex: 1,
+  },
   sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -643,7 +760,7 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: LD.ink,
     minHeight: 128,
-    backgroundColor: LD.fillSoft,
+    backgroundColor: '#FFFFFF',
   },
   feedbackInputFocused: {
     borderColor: LD.ring,
@@ -664,34 +781,35 @@ const styles = StyleSheet.create({
   footer: {
     marginTop: 10,
     paddingTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  primaryButton: {
-    backgroundColor: LD.black,
+  footerPillButton: {
+    minHeight: 44,
     paddingVertical: 15,
-    borderRadius: 14,
+    paddingHorizontal: 18,
+    borderRadius: 999,
     alignItems: 'center',
-    ...Platform.select({
-      web: { boxShadow: '0 2px 8px rgba(17, 24, 39, 0.12)' },
-      default: {},
-    }),
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    minWidth: 168,
   },
-  primaryButtonDisabled: {
-    opacity: 0.45,
+  footerSaveButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D6DCE8',
   },
-  primaryButtonText: {
-    fontSize: 16,
+  footerSaveButtonDisabled: {
+    opacity: 0.8,
+  },
+  footerSaveButtonText: {
+    fontSize: 14,
+    color: '#5B6880',
     fontWeight: '600',
-    color: '#ffffff',
-    ...fontDisplay('600'),
-  },
-  cancelButton: {
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  cancelButtonText: {
-    fontSize: 13,
-    fontWeight: '400',
-    color: LD.mutedLight,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

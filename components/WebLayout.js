@@ -230,6 +230,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [directSubmitAssignment, setDirectSubmitAssignment] = useState(null);
   const [directSubmitEventContext, setDirectSubmitEventContext] = useState(null);
   const [directSubmitChildId, setDirectSubmitChildId] = useState(null);
+  const [directSubmitViewOnly, setDirectSubmitViewOnly] = useState(false);
   const [eventModalEventId, setEventModalEventId] = useState(null);
   const [eventModalInitialEvent, setEventModalInitialEvent] = useState(null);
   /** null | 'help' | 'submission' — parent review inbox opens event details + matching modal */
@@ -271,6 +272,39 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     const map = linkedSummariesFromFamilyApiMembers(family.members, [editingChild.id]);
     return map[String(editingChild.id)]?.invite_email ?? null;
   }, [editingChild?.id, family?.members]);
+
+  const familyMembersForEventing = useMemo(() => {
+    const summaries = family?.child_invite_summaries && typeof family.child_invite_summaries === 'object'
+      ? family.child_invite_summaries
+      : {};
+    const members = Array.isArray(family?.members) ? family.members : [];
+    return (children || []).map((child) => {
+      const sid = String(child?.id || '');
+      const summary = sid ? summaries[sid] || null : null;
+      const member = members.find((m) => {
+        const mChild = m?.child_id != null ? String(m.child_id) : '';
+        const mId = m?.id != null ? String(m.id) : '';
+        return (mChild && mChild === sid) || (mId && mId === sid);
+      }) || null;
+      const inviteStatusRaw = String(
+        summary?.invite_status ||
+        member?.invite_status ||
+        ''
+      ).trim().toLowerCase();
+      const inviteStatus = inviteStatusRaw === 'connected' ? 'accepted' : inviteStatusRaw || 'none';
+      return {
+        id: child.id,
+        child_id: child.id,
+        first_name: child.first_name || child.name || 'Unknown',
+        name: child.first_name || child.name || 'Unknown',
+        avatar: child.avatar || child.avatar_url || null,
+        avatar_url: child.avatar_url || child.avatar || null,
+        role: 'child',
+        member_role: 'child',
+        invite_status: inviteStatus,
+      };
+    });
+  }, [children, family?.members, family?.child_invite_summaries]);
 
   // Keep familyId in sync with session when it becomes available or changes
   useEffect(() => {
@@ -2577,9 +2611,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const parentEventFocus = detail.parentEventFocus ?? null;
       const childEventFocus = detail.childEventFocus ?? null;
       const requestedSchedulingMode = detail.schedulingMode;
-      const schedulingMode = denyFamilyEventEdit
-        ? false
-        : (typeof requestedSchedulingMode === 'boolean' ? requestedSchedulingMode : true);
+      const forceReadOnlyEditForm =
+        sessionRef.current?.role_flags?.isChild === true && denyFamilyEventEdit;
+      const schedulingMode = forceReadOnlyEditForm
+        ? true
+        : denyFamilyEventEdit
+          ? false
+          : (typeof requestedSchedulingMode === 'boolean' ? requestedSchedulingMode : true);
       const editScope = detail.editScope === 'series' ? 'series' : 'single';
       const sendOnlyMode = !!detail.sendOnlyMode;
       const openConflictResolution = !!detail.openConflictResolution;
@@ -2648,6 +2686,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setDirectSubmitAssignment(detail.assignment || null);
           setDirectSubmitEventContext(eventContext);
           setDirectSubmitChildId(resolvedChildId);
+          setDirectSubmitViewOnly(detail.submissionViewOnly === true);
           setShowDirectSubmitForReviewModal(true);
         };
         openDirectChildModal();
@@ -5220,11 +5259,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           defaultTitle={taskModalDefaultTitle}
           defaultMaterialId={taskModalDefaultMaterialId}
           familyId={familyId}
-          familyMembers={children.map(child => ({
-            id: child.id,
-            name: child.first_name || child.name || 'Unknown',
-            role: 'child'
-          }))}
+          familyMembers={familyMembersForEventing}
           lists={[
             { id: 'inbox', name: 'Inbox' },
             ...children.map(child => ({
@@ -5253,6 +5288,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setDirectSubmitAssignment(null);
             setDirectSubmitEventContext(null);
             setDirectSubmitChildId(null);
+            setDirectSubmitViewOnly(false);
           }}
           onSubmitted={() => {
             if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -5266,6 +5302,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           childId={directSubmitChildId || session?.child_id || activeChildId || null}
           assignment={directSubmitAssignment}
           eventContext={directSubmitEventContext}
+          viewOnly={directSubmitViewOnly}
         />
       ) : null}
 
@@ -5310,14 +5347,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         preloadedAcademicYears={preloadedAcademicYears}
         preloadedSubjects={fullSubjects}
         preloadedFamilyAssignments={preloadedFamilyAssignments}
-        familyMembers={children.map(child => ({
-          id: child.id,
-          first_name: child.first_name || child.name || 'Unknown',
-          name: child.first_name || child.name || 'Unknown',
-          avatar: child.avatar || child.avatar_url || null,
-          avatar_url: child.avatar_url || child.avatar || null,
-          role: 'child'
-        }))}
+        familyMembers={familyMembersForEventing}
         parentEventFocus={eventModalParentFocus}
         onParentEventFocusConsumed={() => setEventModalParentFocus(null)}
         childEventFocus={eventModalChildFocus}

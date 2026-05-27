@@ -15,7 +15,7 @@ import {
   Switch,
   Alert,
 } from 'react-native';
-import { X } from 'lucide-react';
+import { X, Mail } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { updateAssignment } from '../../lib/services/assignmentsClient';
 import { getChildHelpMessageHistory } from '../../lib/assignmentHelpHistory';
@@ -43,8 +43,15 @@ function buildContextHeadline(linkedEvent, assignment, subjectName) {
     const fmt = (d) =>
       d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     const typeLabel = linkedEvent.event_type || 'Lesson';
-    const timePart =
-      end && !Number.isNaN(end.getTime()) ? `${fmt(start)}–${fmt(end)}` : fmt(start);
+    const startsAtMidnight = start.getHours() === 0 && start.getMinutes() === 0;
+    const endIsValid = !!(end && !Number.isNaN(end.getTime()));
+    const endsAtMidnight = endIsValid && end.getHours() === 0 && end.getMinutes() === 0;
+    const endsAtEndOfDay = endIsValid && end.getHours() === 23 && end.getMinutes() === 59;
+    const noSavedTime = startsAtMidnight && (!endIsValid || endsAtMidnight || endsAtEndOfDay);
+    if (noSavedTime) {
+      return `${eventTitle} · ${typeLabel} · ${dateStr}`;
+    }
+    const timePart = endIsValid ? `${fmt(start)}–${fmt(end)}` : fmt(start);
     return `${eventTitle} · ${typeLabel} · ${dateStr} · ${timePart}`;
   }
 
@@ -71,7 +78,6 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
   const toast = useToast();
   const [response, setResponse] = useState('');
   const [giveMoreTime, setGiveMoreTime] = useState(false);
-  const [markResolved, setMarkResolved] = useState(false);
   const [sending, setSending] = useState(false);
   const [linkedEvent, setLinkedEvent] = useState(null);
   const [responseFocused, setResponseFocused] = useState(false);
@@ -79,7 +85,6 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
   const reset = useCallback(() => {
     setResponse('');
     setGiveMoreTime(false);
-    setMarkResolved(false);
     setLinkedEvent(null);
     setResponseFocused(false);
   }, []);
@@ -88,7 +93,6 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
     if (!visible || !assignment) return;
     setResponse('');
     setGiveMoreTime(false);
-    setMarkResolved(false);
     setLinkedEvent(null);
     setResponseFocused(false);
     const load = async () => {
@@ -212,10 +216,10 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
   const handleSend = async () => {
     if (!assignment?.id) return;
     const trimmed = response.trim();
-    if (!trimmed && !markResolved) {
+    if (!trimmed) {
       Alert.alert(
-        'Add a response or mark as resolved',
-        'Write something for your learner, or check “Mark as resolved” to close this request.'
+        'Add a response',
+        'Write something for your learner before sending.'
       );
       return;
     }
@@ -232,9 +236,7 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
       }
 
       const updates = {};
-      if (markResolved) {
-        updates.need_help = false;
-      }
+      updates.need_help = false;
       if (giveMoreTime && assignment.due_date) {
         const d = new Date(assignment.due_date);
         if (!Number.isNaN(d.getTime())) {
@@ -271,18 +273,16 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
-      <TouchableOpacity
-        style={styles.modalOverlay}
-        activeOpacity={1}
-        onPress={handleClose}
-        accessibilityRole="button"
-        accessibilityLabel="Dismiss"
-      >
+      <View style={styles.modalOverlay}>
         <TouchableOpacity
-          style={styles.modalContent}
+          style={StyleSheet.absoluteFill}
           activeOpacity={1}
-          onPress={() => {}}
-        >
+          onPress={handleClose}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        />
+        <View style={styles.modalContent}>
           <TouchableOpacity
             onPress={handleClose}
             style={styles.closeFab}
@@ -380,36 +380,24 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
                   <Switch value={giveMoreTime} onValueChange={setGiveMoreTime} />
                 </View>
               ) : null}
-              <View style={[styles.optionRow, styles.optionRowLast]}>
-                <View style={styles.optionTextCol}>
-                  <Text style={styles.optionTitle}>Mark as resolved</Text>
-                  <Text style={styles.optionSub}>Close this help request after replying</Text>
-                </View>
-                <Switch value={markResolved} onValueChange={setMarkResolved} />
-              </View>
             </View>
 
             <View style={styles.footer}>
               <TouchableOpacity
-                style={[styles.primaryButton, sending && styles.primaryButtonDisabled]}
+                style={[styles.sendPillButton, sending && styles.sendPillButtonDisabled]}
                 onPress={handleSend}
                 disabled={sending}
                 {...(Platform.OS === 'web' && { cursor: sending ? 'not-allowed' : 'pointer' })}
               >
-                <Text style={styles.primaryButtonText}>{sending ? 'Sending…' : `Send to ${childName}`}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={handleClose}
-                disabled={sending}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <View style={styles.sendPillIconWrap}>
+                  <Mail size={12} color="#5B6880" />
+                </View>
+                <Text style={styles.sendPillText}>{sending ? 'Sending…' : `Send to ${childName}`}</Text>
               </TouchableOpacity>
             </View>
           </ScrollView>
-        </TouchableOpacity>
-      </TouchableOpacity>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -423,13 +411,13 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   modalContent: {
-    backgroundColor: LD.shell,
+    backgroundColor: '#FFFFFF',
     borderRadius: 24,
     width: '100%',
     maxWidth: 680,
     maxHeight: '92%',
     borderWidth: 1,
-    borderColor: LD.shellBorder,
+    borderColor: '#E5E7EB',
     overflow: 'hidden',
     position: 'relative',
     ...shellShadow,
@@ -444,9 +432,9 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.85)',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: LD.border,
+    borderColor: '#D6DCE8',
   },
   scroll: {
     flexGrow: 0,
@@ -464,9 +452,9 @@ const styles = StyleSheet.create({
     marginBottom: 18,
     paddingVertical: 14,
     paddingHorizontal: 14,
-    backgroundColor: LD.fillWash,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: LD.border,
+    borderColor: '#D6DCE8',
   },
   /** Scroll long student messages without growing the modal */
   contextScroll: {
@@ -475,7 +463,7 @@ const styles = StyleSheet.create({
   contextHeadline: {
     fontSize: 14,
     fontWeight: '500',
-    color: LD.inkSoft,
+    color: '#5B6880',
     lineHeight: 21,
     ...fontDisplay('500'),
   },
@@ -486,7 +474,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '400',
     fontStyle: 'italic',
-    color: LD.muted,
+    color: '#5B6880',
     lineHeight: 21,
     marginBottom: 4,
   },
@@ -494,24 +482,24 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: LD.border,
+    borderTopColor: '#D6DCE8',
     gap: 6,
   },
   threadLabel: {
     fontSize: 12,
-    color: LD.muted,
+    color: '#5B6880',
     ...fontDisplay('600'),
   },
   threadLine: {
     fontSize: 12,
     lineHeight: 17,
-    color: LD.muted,
+    color: '#5B6880',
     ...fontDisplay('400'),
   },
   signOff: {
     fontSize: 13,
     fontWeight: '500',
-    color: LD.inkSoft,
+    color: '#5B6880',
     marginTop: 10,
     textAlign: 'right',
     lineHeight: 19,
@@ -523,7 +511,7 @@ const styles = StyleSheet.create({
   labelCalm: {
     fontSize: 14,
     fontWeight: '600',
-    color: LD.inkSoft,
+    color: '#5B6880',
     marginBottom: 8,
     letterSpacing: 0.15,
     ...fontDisplay('600'),
@@ -538,7 +526,7 @@ const styles = StyleSheet.create({
   quickRepliesInlineLabel: {
     fontSize: 12,
     fontWeight: '400',
-    color: LD.inkSoft,
+    color: '#5B6880',
     marginRight: 4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -555,7 +543,7 @@ const styles = StyleSheet.create({
     color: LD.ink,
     minHeight: 144,
     maxHeight: 300,
-    backgroundColor: LD.fillSoft,
+    backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && { overflow: 'auto' }),
   },
   responseInputFocused: {
@@ -571,14 +559,14 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     paddingHorizontal: 11,
     borderRadius: 999,
-    backgroundColor: LD.fillWash,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: 'rgba(137, 181, 228, 0.28)',
+    borderColor: '#D6DCE8',
   },
   quickChipText: {
     fontSize: 12,
     fontWeight: '400',
-    color: LD.inkSoft,
+    color: '#5B6880',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -605,52 +593,57 @@ const styles = StyleSheet.create({
   optionTitle: {
     fontSize: 14,
     fontWeight: '500',
-    color: LD.inkSoft,
+    color: '#5B6880',
   },
   optionSub: {
     fontSize: 12,
     fontWeight: '400',
-    color: LD.muted,
+    color: '#7A8598',
     marginTop: 2,
     lineHeight: 16,
   },
   optionHint: {
     fontSize: 12,
     fontWeight: '500',
-    color: LD.blueMuted,
+    color: '#5B6880',
     marginTop: 4,
   },
   footer: {
     marginTop: 24,
     paddingTop: 0,
-  },
-  primaryButton: {
-    backgroundColor: LD.black,
-    paddingVertical: 15,
-    borderRadius: 14,
+    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    ...Platform.select({
-      web: { boxShadow: '0 2px 8px rgba(17, 24, 39, 0.12)' },
-      default: {},
-    }),
   },
-  primaryButtonDisabled: {
-    opacity: 0.5,
+  sendPillButton: {
+    alignSelf: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#D6DCE8',
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  primaryButtonText: {
-    fontSize: 16,
+  sendPillButtonDisabled: {
+    opacity: 0.7,
+  },
+  sendPillIconWrap: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+  },
+  sendPillText: {
+    fontSize: 14,
+    color: '#5B6880',
     fontWeight: '600',
-    color: '#ffffff',
-    ...fontDisplay('600'),
-  },
-  cancelButton: {
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  cancelButtonText: {
-    fontSize: 13,
-    fontWeight: '400',
-    color: LD.mutedLight,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

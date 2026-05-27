@@ -949,36 +949,24 @@ export default function EmbeddedNotificationCenter({
     return 'Send to student';
   };
 
+  const isSubmissionReviewed = (assignment) => {
+    const reviewStatus = String(assignment?.review_status || '').trim().toLowerCase();
+    if (reviewStatus === 'approved' || reviewStatus === 'reviewed') return true;
+    return !!assignment?.reviewed_at;
+  };
+
+  const submissionActionLabel = (assignment) => (
+    isSubmissionReviewed(assignment) ? 'Reviewed' : 'Review'
+  );
+
   const handleReview = (assignment) => {
-    const raw = assignment?.linked_event_ids;
-    let linkedEventId = null;
-    if (Array.isArray(raw) && raw.length > 0) linkedEventId = String(raw[0]);
-    else if (typeof raw === 'string') {
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) linkedEventId = String(parsed[0]);
-      } catch (_) {
-        /* ignore */
-      }
-    }
     // Help: open respond modal here so parent home does not stack event details + help.
     if (assignment.need_help) {
       setSelectedAssignment(assignment);
       setOpenModal('help');
       return;
     }
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && linkedEventId) {
-      window.dispatchEvent(
-        new CustomEvent('openEventModal', {
-          detail: {
-            eventId: linkedEventId,
-            initialEvent: null,
-            parentEventFocus: 'submission',
-          },
-        })
-      );
-      return;
-    }
+    // Open review directly from rail (no EventDetails modal in background).
     setSelectedAssignment(assignment);
     setOpenModal('submission');
   };
@@ -1262,11 +1250,12 @@ export default function EmbeddedNotificationCenter({
                             style={[
                               styles.rowActionButtonText,
                               selectedSection === 'help_requests' && !assignment.need_help && styles.rowActionButtonTextItalic,
+                              selectedSection === 'submissions' && isSubmissionReviewed(assignment) && styles.rowActionButtonTextItalic,
                             ]}
                           >
                             {selectedSection === 'help_requests'
                               ? helpActionLabel(assignment)
-                              : (assignment.need_help ? 'Respond' : 'Review')}
+                              : submissionActionLabel(assignment)}
                           </Text>
                         </TouchableOpacity>
                       </TouchableOpacity>

@@ -948,9 +948,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const isSeriesGroupEvent = isDeletableSeriesGroup(event);
   const isSeriesEditScope = editScope === 'series' && isSeriesGroupEvent;
   const isSingleSeriesOccurrenceEdit = isSeriesGroupEvent && !isSeriesEditScope;
-  const [editing, setEditing] = useState(readOnly ? false : initialSchedulingMode); // Start in edit mode only when editable
+  const [editing, setEditing] = useState(initialSchedulingMode);
   const [saving, setSaving] = useState(false);
-  const [schedulingBacklog, setSchedulingBacklog] = useState(readOnly ? false : initialSchedulingMode); // State for "Add to schedule" mode
+  const [schedulingBacklog, setSchedulingBacklog] = useState(initialSchedulingMode); // State for "Add to schedule" mode
 
   const [draftTitle, setDraftTitle] = useState('');
   const [draftDate, setDraftDate] = useState('');
@@ -1334,7 +1334,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [sendToStudentSubmitting, setSendToStudentSubmitting] = useState(false);
   const [sendToStudentInlineError, setSendToStudentInlineError] = useState('');
   const [invitedAssigneeIds, setInvitedAssigneeIds] = useState([]);
-  const [childInviteSummaries, setChildInviteSummaries] = useState({});
+  const [childInviteSummaries, setChildInviteSummaries] = useState(() => {
+    const seed = {};
+    (familyMembers || []).forEach((m) => {
+      const sid =
+        m?.child_id != null ? String(m.child_id)
+        : m?.id != null ? String(m.id)
+        : '';
+      if (!sid) return;
+      const raw = String(m?.invite_status || '').trim().toLowerCase();
+      const status = raw === 'connected' ? 'accepted' : raw;
+      if (!status) return;
+      seed[sid] = { invite_status: status };
+    });
+    return seed;
+  });
   const [inviteEligibilityReady, setInviteEligibilityReady] = useState(false);
   const [showSendInviteClarification, setShowSendInviteClarification] = useState(false);
 
@@ -1531,6 +1545,26 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return [...accepted];
   }, [assigneeIds, familyMembers]);
 
+  useEffect(() => {
+    const seed = {};
+    (familyMembers || []).forEach((m) => {
+      const sid =
+        m?.child_id != null ? String(m.child_id)
+        : m?.id != null ? String(m.id)
+        : '';
+      if (!sid) return;
+      const raw = String(m?.invite_status || '').trim().toLowerCase();
+      const status = raw === 'connected' ? 'accepted' : raw;
+      if (!status) return;
+      seed[sid] = { invite_status: status };
+    });
+    if (Object.keys(seed).length === 0) return;
+    setChildInviteSummaries((prev) => {
+      if (prev && Object.keys(prev).length > 0) return prev;
+      return seed;
+    });
+  }, [familyMembers]);
+
   const sendToStudentTargetLabel = useMemo(() => {
     if (!assigneeIds?.length) return 'No assignees selected';
     const names = assigneeIds
@@ -1560,7 +1594,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         const nextKey = [...new Set(acceptedInvitedAssigneeIdsFromMembers.map(String))].sort().join('|');
         return prevKey === nextKey ? prev : acceptedInvitedAssigneeIdsFromMembers;
       });
-      setChildInviteSummaries({});
       setInviteEligibilityReady(true);
       return;
     }
@@ -2634,13 +2667,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   // set editing and schedulingBacklog states and placement to 'calendar'
   // Also check for _openInEditMode flag on the event itself
   useEffect(() => {
+    const shouldOpenInEditMode = initialSchedulingMode || event?._openInEditMode;
     if (readOnly) {
-      setEditing(false);
-      setSchedulingBacklog(false);
-      onEditingChangeRef.current?.(false);
+      setEditing(!!shouldOpenInEditMode);
+      setSchedulingBacklog(!!shouldOpenInEditMode);
+      if (shouldOpenInEditMode) {
+        setPlacement('calendar');
+      }
+      onEditingChangeRef.current?.(!!shouldOpenInEditMode);
       return;
     }
-    const shouldOpenInEditMode = initialSchedulingMode || event?._openInEditMode;
     if (shouldOpenInEditMode) {
       setEditing(true);
       if (initialSchedulingMode || event?._openInEditMode) {

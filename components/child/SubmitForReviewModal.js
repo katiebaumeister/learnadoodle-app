@@ -38,6 +38,79 @@ function appendSubmissionNote(existingDescription, note) {
   return prev ? `${prev}\n\n${block}` : block;
 }
 
+function formatWhenShort(value) {
+  if (!value) return 'recently';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'recently';
+  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function linkedEventIdFromSources(assignment, eventContext) {
+  const raw = assignment?.linked_event_ids;
+  if (Array.isArray(raw) && raw.length > 0) return String(raw[0]);
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return String(parsed[0]);
+    } catch (_) {
+      return eventContext?.id ? String(eventContext.id) : null;
+    }
+  }
+  return eventContext?.id ? String(eventContext.id) : null;
+}
+
+function isUuid(value) {
+  const v = String(value || '').trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function extractSubmissionHistoryLines(assignment, reviewSnapshot = null) {
+  const lines = [];
+  const submittedTs = assignment?.submitted_at || assignment?.updated_at || assignment?.created_at || null;
+  if (submittedTs) {
+    lines.push(`Submitted on ${formatWhenShort(submittedTs)}`);
+  }
+  const reviewStatus = String(reviewSnapshot?.review_status || assignment?.review_status || '').trim().toLowerCase();
+  const reviewedAt = reviewSnapshot?.reviewed_at || assignment?.reviewed_at || null;
+  if (reviewStatus) {
+    const reviewLabel =
+      reviewStatus === 'approved'
+        ? 'Approved'
+        : reviewStatus === 'needs_revision'
+          ? 'Needs changes'
+          : 'Reviewed';
+    lines.push(`${reviewLabel}${reviewedAt ? ` on ${formatWhenShort(reviewedAt)}` : ''}`);
+  }
+  const gradeLabel = String(reviewSnapshot?.grade || '').trim();
+  const percentLabel =
+    reviewSnapshot?.percent_of_total_grade != null && reviewSnapshot?.percent_of_total_grade !== ''
+      ? String(reviewSnapshot.percent_of_total_grade).trim()
+      : '';
+  if (gradeLabel || percentLabel) {
+    const gradeParts = [];
+    if (gradeLabel) gradeParts.push(gradeLabel);
+    if (percentLabel) gradeParts.push(`${percentLabel}%`);
+    lines.push(`Grade: ${gradeParts.join(' · ')}`);
+  }
+  const reviewFeedback = String(reviewSnapshot?.review_feedback || assignment?.review_feedback || '').trim();
+  if (reviewFeedback) {
+    lines.push(`Parent feedback: "${reviewFeedback}"`);
+  }
+  const desc = String(assignment?.description || '');
+  if (desc.includes('[Submission from student]')) {
+    const blocks = desc
+      .split('[Submission from student]')
+      .map((part) => String(part || '').trim())
+      .filter(Boolean);
+    blocks.forEach((block) => {
+      const singleLine = block.replace(/\s+/g, ' ').trim();
+      if (!singleLine) return;
+      lines.push(`Student note: "${singleLine}"`);
+    });
+  }
+  return lines;
+}
+
 export default function SubmitForReviewModal({
   visible,
   onClose,
@@ -46,12 +119,14 @@ export default function SubmitForReviewModal({
   childId,
   assignment = null,
   eventContext = null,
+  viewOnly = false,
 }) {
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [error, setError] = useState(null);
   const [attachment, setAttachment] = useState(null); // {id, name}
+  const [reviewSnapshot, setReviewSnapshot] = useState(null);
 
   useEffect(() => {
     if (!visible) return;
@@ -59,6 +134,7 @@ export default function SubmitForReviewModal({
     setError(null);
     setUploadingAttachment(false);
     setAttachment(null);
+    setReviewSnapshot(null);
   }, [visible, assignment?.id, eventContext?.id]);
 
   const contextSubtitle = useMemo(() => {
@@ -73,6 +149,68 @@ export default function SubmitForReviewModal({
   }, [eventContext?.start_ts, eventContext?.end_ts, assignment?.due_date]);
 
   const titleRef = assignment?.title || eventContext?.title || 'this work';
+  const linkedEventId = useMemo(
+    () => linkedEventIdFromSources(assignment, eventContext),
+    [assignment?.linked_event_ids, eventContext?.id]
+  );
+  useEffect(() => {
+    let cancelled = false;
+    const loadReviewSnapshot = async () => {
+      if (!visible) return;
+      try {
+        let assignmentReview = null;
+        if (assignment?.id) {
+          const { data } = await supabase
+            .from('assignments')
+            .select('id, review_status, review_feedback, reviewed_at')
+            .eq('id', assignment.id)
+            .maybeSingle();
+          assignmentReview = data || null;
+        }
+        let eventGrade = null;
+        if (linkedEventId && isUuid(linkedEventId)) {
+          const { data } = await supabase
+            .from('events')
+            .select('id, grade, percent_of_total_grade')
+            .eq('id', linkedEventId)
+            .maybeSingle();
+          eventGrade = data || null;
+        }
+        if (cancelled) return;
+        setReviewSnapshot({
+          review_status: assignmentReview?.review_status || null,
+          review_feedback: assignmentReview?.review_feedback || null,
+          reviewed_at: assignmentReview?.reviewed_at || null,
+          grade: eventGrade?.grade || null,
+          percent_of_total_grade: eventGrade?.percent_of_total_grade ?? null,
+        });
+      } catch (_) {
+        if (!cancelled) setReviewSnapshot(null);
+      }
+    };
+    loadReviewSnapshot();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, assignment?.id, linkedEventId]);
+  const submissionHistoryLines = useMemo(
+    () => extractSubmissionHistoryLines(assignment, reviewSnapshot),
+    [
+      assignment?.id,
+      assignment?.description,
+      assignment?.submitted_at,
+      assignment?.updated_at,
+      assignment?.created_at,
+      assignment?.review_status,
+      assignment?.review_feedback,
+      assignment?.reviewed_at,
+      reviewSnapshot?.review_status,
+      reviewSnapshot?.review_feedback,
+      reviewSnapshot?.reviewed_at,
+      reviewSnapshot?.grade,
+      reviewSnapshot?.percent_of_total_grade,
+    ]
+  );
 
   const pickAttachment = async () => {
     if (Platform.OS !== 'web') {
@@ -253,22 +391,32 @@ export default function SubmitForReviewModal({
             {contextSubtitle ? <Text style={styles.contextWhen}>{contextSubtitle}</Text> : null}
 
             <Text style={[styles.sectionLabel, { marginTop: 10 }]}>Add a message</Text>
+            {submissionHistoryLines.length > 0 ? (
+              <View style={styles.historyBox}>
+                {submissionHistoryLines.map((line, idx) => (
+                  <Text key={`submission-history-${idx}`} style={styles.historyText}>
+                    {line}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
             <TextInput
               style={styles.input}
-              placeholder="Optional note for your parent..."
+              placeholder={viewOnly ? 'Submission is locked after the saved date.' : 'Optional note for your parent...'}
               placeholderTextColor={colors.muted}
               value={note}
               onChangeText={setNote}
               multiline
               textAlignVertical="top"
+              editable={!viewOnly}
             />
 
             <Text style={styles.sectionLabel}>Optional attachment</Text>
             <TouchableOpacity
               style={[styles.uploadButton, uploadingAttachment && styles.uploadButtonDisabled]}
               onPress={pickAttachment}
-              disabled={uploadingAttachment || sending}
-              {...(Platform.OS === 'web' && { cursor: uploadingAttachment || sending ? 'not-allowed' : 'pointer' })}
+              disabled={viewOnly || uploadingAttachment || sending}
+              {...(Platform.OS === 'web' && { cursor: viewOnly || uploadingAttachment || sending ? 'not-allowed' : 'pointer' })}
             >
               {uploadingAttachment ? (
                 <ActivityIndicator size="small" color="#5B6880" />
@@ -289,7 +437,7 @@ export default function SubmitForReviewModal({
             <View style={styles.ctaWrap}>
               <TouchableOpacity
                 style={[styles.cta, sending && styles.ctaDisabled]}
-                onPress={handleSubmit}
+                onPress={viewOnly ? onClose : handleSubmit}
                 disabled={sending || uploadingAttachment}
                 {...(Platform.OS === 'web' && { cursor: sending || uploadingAttachment ? 'not-allowed' : 'pointer' })}
               >
@@ -297,10 +445,12 @@ export default function SubmitForReviewModal({
                   <ActivityIndicator color="#5B6880" />
                 ) : (
                   <View style={styles.ctaRow}>
-                    <View style={styles.ctaIconWrap}>
-                      <Send size={12} color="#5B6880" />
-                    </View>
-                    <Text style={styles.ctaText}>Submit for review</Text>
+                    {!viewOnly ? (
+                      <View style={styles.ctaIconWrap}>
+                        <Send size={12} color="#5B6880" />
+                      </View>
+                    ) : null}
+                    <Text style={styles.ctaText}>{viewOnly ? 'Close' : 'Submit for review'}</Text>
                   </View>
                 )}
               </TouchableOpacity>
@@ -377,6 +527,24 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  historyBox: {
+    borderWidth: 1,
+    borderColor: '#D6DCE8',
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+    gap: 6,
+  },
+  historyText: {
+    fontSize: 12,
+    color: '#5B6880',
+    lineHeight: 17,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   input: {
     borderWidth: 1,
     borderColor: '#D6DCE8',
@@ -435,10 +603,10 @@ const styles = StyleSheet.create({
   },
   ctaWrap: {
     marginTop: 22,
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   cta: {
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
     borderRadius: 999,
     paddingHorizontal: 18,
     paddingVertical: 10,
