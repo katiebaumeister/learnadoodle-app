@@ -185,6 +185,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [showGoalDropdown, setShowGoalDropdown] = useState(false);
   const [pendingOnboardingGoal, setPendingOnboardingGoal] = useState(null);
   const [showGoalChangeConfirmModal, setShowGoalChangeConfirmModal] = useState(false);
+  const [showChildLogoutConfirmModal, setShowChildLogoutConfirmModal] = useState(false);
   const [savingOnboardingGoal, setSavingOnboardingGoal] = useState(false);
   const goalDropdownRef = useRef(null);
   const coursesSchoolYearDropdownRef = useRef(null);
@@ -2747,7 +2748,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       placeholderTextColor="#6b7280"
                       keyboardType="email-address"
                       autoCapitalize="none"
-                      editable={!isViewingAsChild && !profileEditLocked}
+                      editable={!isViewingAsChild && !profileEditLocked && !isChildMode}
                     />
                     {hasProfileChanges && (
                       <TouchableOpacity
@@ -2780,7 +2781,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     </Text>
                   )}
                   <Text style={styles.profileEmailHint}>
-                    Changing your email will send a verification link to the new address. Your email will only be updated after you verify it.
+                    {isChildMode
+                      ? "Your email and account is managed by your parent's account."
+                      : 'Changing your email will send a verification link to the new address. Your email will only be updated after you verify it.'}
                   </Text>
                   {user && !user.email_confirmed_at && (
                     <View style={styles.profileEmailVerify}>
@@ -2885,15 +2888,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               <View style={styles.dangerZoneAccount}>
                 <TouchableOpacity
                   style={styles.profileResetPasswordButton}
-                  onPress={async () => {
-                    setLoggingOut(true);
-                    try {
-                      await signOut();
-                    } catch (error) {
-                    } finally {
-                      setLoggingOut(false);
-                    }
-                  }}
+                  onPress={() => setShowChildLogoutConfirmModal(true)}
                   disabled={loggingOut}
                   {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
                 >
@@ -5037,6 +5032,81 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   <ActivityIndicator size="small" color="#ffffff" />
                 ) : (
                   <Text style={styles.inviteUrlCopyButtonText}>Confirm switch</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+      <Modal
+        visible={showChildLogoutConfirmModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (loggingOut) return;
+          setShowChildLogoutConfirmModal(false);
+        }}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            if (loggingOut) return;
+            setShowChildLogoutConfirmModal(false);
+          }}
+        >
+          <TouchableOpacity style={styles.inviteUrlModal} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.inviteUrlModalHeader}>
+              <Text style={styles.inviteUrlModalTitle}>Log out?</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  if (loggingOut) return;
+                  setShowChildLogoutConfirmModal(false);
+                }}
+                style={styles.inviteUrlModalClose}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                disabled={loggingOut}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inviteUrlModalDescription}>
+              Are you sure you want to log out?
+            </Text>
+
+            <View style={styles.inviteUrlModalActions}>
+              <TouchableOpacity
+                style={styles.inviteUrlDoneButton}
+                onPress={() => {
+                  if (loggingOut) return;
+                  setShowChildLogoutConfirmModal(false);
+                }}
+                {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
+                disabled={loggingOut}
+              >
+                <Text style={styles.inviteUrlDoneButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.inviteUrlCopyButton, loggingOut && styles.inviteUrlCopyButtonDisabled]}
+                onPress={async () => {
+                  if (loggingOut) return;
+                  setLoggingOut(true);
+                  try {
+                    await signOut();
+                  } catch (error) {
+                  } finally {
+                    setLoggingOut(false);
+                    setShowChildLogoutConfirmModal(false);
+                  }
+                }}
+                disabled={loggingOut}
+                {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
+              >
+                {loggingOut ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.inviteUrlCopyButtonText}>Log out</Text>
                 )}
               </TouchableOpacity>
             </View>
