@@ -3826,7 +3826,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
   useEffect(() => {
     if (!isLearnerRole) return;
-    if (activeTab !== 'profile' && activeTab !== 'settings' && activeTab !== 'children-list') return;
+    if (activeTab !== 'children-list') return;
     if (onTabChange) onTabChange('home');
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.history.replaceState({}, '', '/');

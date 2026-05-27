@@ -1275,33 +1275,158 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     const searchEvents = async () => {
       setIsSearchingPlanner(true);
       try {
+        const normalizedQuery = String(plannerSearchQuery || '').toLowerCase().trim();
+        const queryTokens = normalizedQuery.split(/\s+/).filter(Boolean);
+        const escapedQuery = normalizedQuery.replace(/[%_]/g, '\\$&');
         console.log('[PlannerSearch] Searching with query:', plannerSearchQuery, 'familyId:', familyId);
-        const eventsResult = await supabase
+        const childNameById = new Map(
+          (children || []).map((child) => [String(child?.id || ''), String(child?.first_name || child?.name || '').trim()])
+        );
+
+        // Match child-name tokens (e.g., "max", "lily") to IDs.
+        const matchedChildIds = (children || [])
+          .filter((child) => {
+            const fullName = `${child?.first_name || ''} ${child?.last_name || ''} ${child?.name || ''}`.toLowerCase();
+            return queryTokens.some((token) => token && fullName.includes(token));
+          })
+          .map((child) => child?.id)
+          .filter(Boolean);
+
+        const textSearch = await supabase
           .from('events')
-          .select('id, title, start_ts, status, is_backlog')
+          .select('*')
           .eq('family_id', familyId)
           .is('deleted_at', null)
           .neq('status', 'canceled')
-          .ilike('title', `%${plannerSearchQuery}%`)
-          .limit(20)
-          .order('start_ts', { ascending: false });
+          .or(`title.ilike.%${escapedQuery}%,description.ilike.%${escapedQuery}%,subject.ilike.%${escapedQuery}%,subject_name.ilike.%${escapedQuery}%,event_type.ilike.%${escapedQuery}%,source.ilike.%${escapedQuery}%`)
+          .order('start_ts', { ascending: false })
+          .limit(250);
 
-        console.log('[PlannerSearch] Query result:', { error: eventsResult.error, dataCount: eventsResult.data?.length });
+        // Fallback text query in case some columns in OR are unavailable in a deployment.
+        const titleOnlySearch = textSearch.error
+          ? await supabase
+              .from('events')
+              .select('*')
+              .eq('family_id', familyId)
+              .is('deleted_at', null)
+              .neq('status', 'canceled')
+              .ilike('title', `%${escapedQuery}%`)
+              .order('start_ts', { ascending: false })
+              .limit(250)
+          : null;
 
-        if (eventsResult.error) {
-          console.error('[PlannerSearch] Error searching events:', eventsResult.error);
+        const childSearch = matchedChildIds.length > 0
+          ? await supabase
+              .from('events')
+              .select('*')
+              .eq('family_id', familyId)
+              .is('deleted_at', null)
+              .neq('status', 'canceled')
+              .in('child_id', matchedChildIds)
+              .order('start_ts', { ascending: false })
+              .limit(250)
+          : { data: [], error: null };
+
+        if (textSearch.error && titleOnlySearch?.error) {
+          console.error('[PlannerSearch] Error searching events:', textSearch.error, titleOnlySearch.error);
           setPlannerSearchResults([]);
           setShowSearchDropdown(true);
-        } else if (eventsResult.data) {
-          // Keep all matching events (do not deduplicate by title).
-          const results = (eventsResult.data || [])
-            .map((event) => {
+          return;
+        }
+
+        const mergedById = new Map();
+        [...(textSearch.data || []), ...(titleOnlySearch?.data || []), ...(childSearch.data || [])].forEach((event) => {
+          if (!event?.id) return;
+          mergedById.set(event.id, event);
+        });
+
+        const mergedEvents = Array.from(mergedById.values());
+        const results = mergedEvents
+          .map((event) => {
               const eventDate = event.start_ts ? new Date(event.start_ts) : null;
               const hasValidDate = eventDate && Number.isFinite(eventDate.getTime());
               const isBacklog = event.is_backlog === true || (hasValidDate && eventDate.getFullYear() >= 2099);
+              const title = String(event.title || 'Untitled Event');
+              const description = String(event.description || '');
+              const eventType = String(event.event_type || event.source || '');
+              const subjectName = String(event.subject_name || event.subject || '');
+              const childNames = [];
+              const childId = String(event.child_id || '');
+              if (childId && childNameById.has(childId)) {
+                childNames.push(childNameById.get(childId));
+              }
+              if (Array.isArray(event.child_ids)) {
+                event.child_ids.forEach((id) => {
+                  const key = String(id || '');
+                  if (!key) return;
+                  const candidate = childNameById.get(key);
+                  if (candidate) childNames.push(candidate);
+                });
+              }
+              const uniqueChildNames = [...new Set(childNames.filter(Boolean))];
+              const childNamesText = uniqueChildNames.join(' ');
+
+              const fullDateLabel = hasValidDate
+                ? eventDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+                : '';
+              const shortDateLabel = hasValidDate
+                ? eventDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                : '';
+              const compactDateLabel = hasValidDate
+                ? `${eventDate.getMonth() + 1}/${eventDate.getDate()}`
+                : '';
+
+              const haystack = [
+                title,
+                description,
+                eventType,
+                subjectName,
+                childNamesText,
+                fullDateLabel,
+                shortDateLabel,
+                compactDateLabel,
+              ].join(' ').toLowerCase();
+
+              if (queryTokens.length > 0 && !queryTokens.every((token) => haystack.includes(token))) {
+                return null;
+              }
+
+              let score = 0;
+              let matchReason = 'Matched details';
+              const titleLower = title.toLowerCase();
+              const subjectLower = subjectName.toLowerCase();
+              const typeLower = eventType.toLowerCase();
+              const childLower = childNamesText.toLowerCase();
+              const dateLower = [fullDateLabel, shortDateLabel, compactDateLabel].join(' ').toLowerCase();
+
+              if (normalizedQuery && titleLower.includes(normalizedQuery)) {
+                score += 50;
+                matchReason = 'Matched title';
+              } else if (normalizedQuery && subjectLower.includes(normalizedQuery)) {
+                score += 35;
+                matchReason = 'Matched subject';
+              } else if (normalizedQuery && childLower.includes(normalizedQuery)) {
+                score += 30;
+                matchReason = 'Matched student';
+              } else if (normalizedQuery && typeLower.includes(normalizedQuery)) {
+                score += 25;
+                matchReason = 'Matched event type';
+              } else if (normalizedQuery && dateLower.includes(normalizedQuery)) {
+                score += 20;
+                matchReason = 'Matched date';
+              }
+
+              queryTokens.forEach((token) => {
+                if (titleLower.includes(token)) score += 8;
+                if (subjectLower.includes(token)) score += 6;
+                if (childLower.includes(token)) score += 6;
+                if (typeLower.includes(token)) score += 4;
+                if (dateLower.includes(token)) score += 3;
+              });
+
               return {
                 id: event.id,
-                title: event.title || 'Untitled Event',
+                title,
                 date: hasValidDate ? eventDate : new Date(0),
                 dateStr: isBacklog
                   ? 'Backlog'
@@ -1309,18 +1434,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     ? eventDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                     : 'No date',
                 isBacklog,
+                matchReason,
+                score,
               };
             })
-            .sort((a, b) => b.date - a.date)
+            .filter(Boolean)
+            .sort((a, b) => {
+              if (b.score !== a.score) return b.score - a.score;
+              return b.date - a.date;
+            })
             .slice(0, 20);
-          
-          console.log('[PlannerSearch] Mapped results:', results.length);
-          setPlannerSearchResults(results);
-          setShowSearchDropdown(true);
-        } else {
-          setPlannerSearchResults([]);
-          setShowSearchDropdown(true);
-        }
+
+        console.log('[PlannerSearch] Mapped results:', results.length);
+        setPlannerSearchResults(results);
+        setShowSearchDropdown(true);
       } catch (error) {
         console.error('[PlannerSearch] Exception searching events:', error);
         setPlannerSearchResults([]);
@@ -1332,7 +1459,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
     const timeoutId = setTimeout(searchEvents, 300);
     return () => clearTimeout(timeoutId);
-  }, [plannerSearchQuery, familyId]);
+  }, [plannerSearchQuery, familyId, children]);
 
   // Update search dropdown position
   useEffect(() => {

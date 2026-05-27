@@ -161,7 +161,7 @@ export default function LeftRail({
       // Same sidebar structure for learner roles; content is child-scoped in WebContent
       if (userRole === 'child' || userRole === 'student') {
         return allItems.filter((item) => {
-          if (item.key === 'records' || item.key === 'explore' || item.key === 'profile') return false;
+          if (item.key === 'records' || item.key === 'explore') return false;
           if (item.key === 'planner' && effectivePermissions.canViewPlanner === false) return false;
           if (item.key === 'subjects' && effectivePermissions.canViewSubjects === false) return false;
           if (item.key === 'materials' && effectivePermissions.canViewLibrary === false) return false;

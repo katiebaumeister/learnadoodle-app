@@ -230,10 +230,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   
   // Active section for sidebar navigation
   const normalizeSettingsSection = useCallback((section) => {
+    if (isChildMode) return 'profile';
     const normalized = String(section || '').trim().toLowerCase();
     if (normalized === 'user-controls') return 'members';
     return normalized || 'profile';
-  }, []);
+  }, [isChildMode]);
   const [activeSection, setActiveSection] = useState(normalizeSettingsSection(propInitialSection));
   /** Monthly AI units (internal); drives Subscription 80% warning. */
   const [aiUsedUnitsThisMonth, setAiUsedUnitsThisMonth] = useState(null);
@@ -248,6 +249,13 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setActiveSection(nextSection);
     }
   }, [activeSection, normalizeSettingsSection, propInitialSection]);
+
+  useEffect(() => {
+    if (!isChildMode) return;
+    if (activeSection !== 'profile') {
+      setActiveSection('profile');
+    }
+  }, [activeSection, isChildMode]);
 
   useEffect(() => {
     if (activeSection !== 'subscription' || !familyId) return;
@@ -2806,72 +2814,98 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               </View>
             </View>
 
-            <View style={styles.profileSection}>
-              <View style={styles.profileSectionHeader}>
-                <Text style={[styles.subsectionTitle, styles.profileSectionTitle]}>User Experience</Text>
-              </View>
-              <View style={styles.profileSectionBody}>
-                <View
-                  style={[
-                    styles.profileFieldGroup,
-                    styles.profileFieldGroupLast,
-                    canEditOnboardingGoal && showGoalDropdown && styles.profileFieldGroupDropdownOpen,
-                  ]}
-                >
-                  <Text style={styles.profileFieldLabel}>Goal</Text>
-                  {canEditOnboardingGoal ? (
-                    <>
-                      <View ref={goalDropdownRef} style={styles.profileGoalDropdownWrap}>
-                        <TouchableOpacity
-                          style={[styles.profileReadOnlyValue, styles.profileGoalInlineTrigger]}
-                          onPress={() => setShowGoalDropdown((prev) => !prev)}
-                          disabled={savingOnboardingGoal}
-                          {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
-                        >
-                          <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
-                          <ChevronDown
-                            size={16}
-                            color="#6b7280"
-                            style={showGoalDropdown ? { transform: [{ rotate: '180deg' }] } : undefined}
-                          />
-                        </TouchableOpacity>
-                        {showGoalDropdown && (
-                          <View style={styles.profileGoalDropdownMenu}>
-                            {ONBOARDING_GOAL_OPTIONS.map((option) => {
-                              const selected = onboardingGoalId === option.id;
-                              return (
-                                <TouchableOpacity
-                                  key={option.id}
-                                  style={styles.profileGoalDropdownItem}
-                                  onPress={() => handleRequestGoalChange(option.id)}
-                                  disabled={savingOnboardingGoal}
-                                  {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
-                                >
-                                  <Text style={[styles.profileGoalDropdownItemText, selected && styles.profileGoalDropdownItemTextSelected]}>
-                                    {option.label}
-                                  </Text>
-                                  {selected ? <Check size={14} color="#111827" /> : null}
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </View>
-                        )}
+            {!isChildMode ? (
+              <View style={styles.profileSection}>
+                <View style={styles.profileSectionHeader}>
+                  <Text style={[styles.subsectionTitle, styles.profileSectionTitle]}>User Experience</Text>
+                </View>
+                <View style={styles.profileSectionBody}>
+                  <View
+                    style={[
+                      styles.profileFieldGroup,
+                      styles.profileFieldGroupLast,
+                      canEditOnboardingGoal && showGoalDropdown && styles.profileFieldGroupDropdownOpen,
+                    ]}
+                  >
+                    <Text style={styles.profileFieldLabel}>Goal</Text>
+                    {canEditOnboardingGoal ? (
+                      <>
+                        <View ref={goalDropdownRef} style={styles.profileGoalDropdownWrap}>
+                          <TouchableOpacity
+                            style={[styles.profileReadOnlyValue, styles.profileGoalInlineTrigger]}
+                            onPress={() => setShowGoalDropdown((prev) => !prev)}
+                            disabled={savingOnboardingGoal}
+                            {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
+                          >
+                            <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
+                            <ChevronDown
+                              size={16}
+                              color="#6b7280"
+                              style={showGoalDropdown ? { transform: [{ rotate: '180deg' }] } : undefined}
+                            />
+                          </TouchableOpacity>
+                          {showGoalDropdown && (
+                            <View style={styles.profileGoalDropdownMenu}>
+                              {ONBOARDING_GOAL_OPTIONS.map((option) => {
+                                const selected = onboardingGoalId === option.id;
+                                return (
+                                  <TouchableOpacity
+                                    key={option.id}
+                                    style={styles.profileGoalDropdownItem}
+                                    onPress={() => handleRequestGoalChange(option.id)}
+                                    disabled={savingOnboardingGoal}
+                                    {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
+                                  >
+                                    <Text style={[styles.profileGoalDropdownItemText, selected && styles.profileGoalDropdownItemTextSelected]}>
+                                      {option.label}
+                                    </Text>
+                                    {selected ? <Check size={14} color="#111827" /> : null}
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          )}
+                        </View>
+                        <Text style={styles.profileGoalHint}>
+                          Switching this changes parts of your planning experience, but all your existing data stays intact.
+                        </Text>
+                      </>
+                    ) : (
+                      <View style={styles.profileReadOnlyValue}>
+                        <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
                       </View>
-                      <Text style={styles.profileGoalHint}>
-                        Switching this changes parts of your planning experience, but all your existing data stays intact.
-                      </Text>
-                    </>
-                  ) : (
-                    <View style={styles.profileReadOnlyValue}>
-                      <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
-                    </View>
-                  )}
+                    )}
+                  </View>
                 </View>
               </View>
-            </View>
+            ) : null}
 
-            {/* Danger Zone - Delete account (parents only) */}
-            {!isChildMode && (
+            {/* Child-mode footer action */}
+            {isChildMode ? (
+              <View style={styles.dangerZoneAccount}>
+                <TouchableOpacity
+                  style={styles.profileResetPasswordButton}
+                  onPress={async () => {
+                    setLoggingOut(true);
+                    try {
+                      await signOut();
+                    } catch (error) {
+                    } finally {
+                      setLoggingOut(false);
+                    }
+                  }}
+                  disabled={loggingOut}
+                  {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
+                >
+                  {loggingOut ? (
+                    <ActivityIndicator size="small" color="#374151" />
+                  ) : (
+                    <Text style={styles.profileResetPasswordButtonText}>Log out</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            ) : (
+              /* Danger Zone - Delete account (parents only) */
               <View style={styles.dangerZoneAccount}>
                 <TouchableOpacity
                   style={styles.dangerZoneToggle}
@@ -4784,7 +4818,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         <ScrollView 
           style={[
             styles.mainContent,
-            (activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') && styles.mainContentFullWidth
+            ((activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') || isChildMode) && styles.mainContentFullWidth
           ]} 
           contentContainerStyle={[
             styles.mainContentContainer,
@@ -4796,7 +4830,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         </ScrollView>
 
         {/* Right: Fixed sidebar - hidden on About, Terms, and Privacy pages */}
-        {activeSection !== 'about' && activeSection !== 'terms' && activeSection !== 'privacy' && (
+        {!isChildMode && activeSection !== 'about' && activeSection !== 'terms' && activeSection !== 'privacy' && (
           <View style={styles.sidebar}>
           <View style={styles.sidebarContent}>
           {/* Account Card */}
