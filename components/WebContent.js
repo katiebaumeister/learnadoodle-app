@@ -3820,7 +3820,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   ]);
   const isLearnerRole = roleForHome === 'child' || roleForHome === 'student';
   /** Tutors observe and support; they do not own the calendar. */
-  const plannerReadOnly = roleForHome === 'tutor' || propSession?.role_flags?.isTutor === true;
+  const isRestrictedChildForPlanner =
+    propSession?.role_flags?.isChild === true && !allowedRef.current('events');
+  const plannerReadOnly =
+    roleForHome === 'tutor' ||
+    propSession?.role_flags?.isTutor === true ||
+    isRestrictedChildForPlanner;
   const accessibleForHome = Array.isArray(propSession?.accessible_children) && propSession.accessible_children.length > 0
     ? propSession.accessible_children
     : accessibleChildren;

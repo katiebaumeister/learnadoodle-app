@@ -6296,125 +6296,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </SafeFieldRow>
           )}
 
-          {session?.role_flags?.isChild &&
-            event?.id &&
-            isSchoolWorkEventType(event?.event_type || eventType) && (
-              <SafeFieldRow style={[styles.fieldRow, { marginTop: 4 }]}>
-                <View
-                  style={{
-                    alignSelf: 'stretch',
-                    backgroundColor: 'rgba(79, 70, 229, 0.07)',
-                    borderRadius: 12,
-                    paddingTop: 10,
-                    paddingBottom: 18,
-                    paddingHorizontal: 14,
-                  }}
-                >
-                  <Text style={styles.fieldLabel}>Need help with this?</Text>
-                  {!linkedHelpReady ? (
-                    <View
-                      style={{
-                        minHeight: 72,
-                        marginTop: 8,
-                        justifyContent: 'center',
-                        alignItems: 'flex-start',
-                      }}
-                      accessibilityLabel="Loading help status"
-                    >
-                      <ActivityIndicator size="small" color="#89B5E4" />
-                    </View>
-                  ) : eventLinkedHelpAssignment?.need_help ? (
-                    <>
-                      <Text style={{ color: FG, fontSize: 14, marginTop: 6, lineHeight: 20 }}>
-                        Your parent can see your message. You can send another note anytime.
-                      </Text>
-                      <View
-                        style={{
-                          marginTop: 14,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          flexWrap: 'wrap',
-                          gap: 12,
-                        }}
-                      >
-                        <TouchableOpacity
-                          onPress={() => setShowStudentHelpHistoryModal(true)}
-                          activeOpacity={0.85}
-                          accessibilityRole="button"
-                          accessibilityLabel="View what you sent"
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <View
-                            style={{
-                              paddingHorizontal: 12,
-                              paddingVertical: 6,
-                              borderRadius: 999,
-                              backgroundColor: '#EBF5FF',
-                              borderWidth: 1,
-                              borderColor: '#89B5E4',
-                            }}
-                          >
-                            <Text
-                              style={{
-                                fontSize: 13,
-                                fontWeight: '700',
-                                color: '#89B5E4',
-                                ...(Platform.OS === 'web' && {
-                                  fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                                }),
-                              }}
-                            >
-                              Asked
-                            </Text>
-                          </View>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={() => {
-                            setAskHelpModalAssignment(eventLinkedHelpAssignment);
-                            setShowAskParentHelpModal(true);
-                          }}
-                          activeOpacity={0.85}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text
-                            style={{
-                              fontSize: 14,
-                              fontWeight: '600',
-                              color: '#89B5E4',
-                              ...(Platform.OS === 'web' && {
-                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                              }),
-                            }}
-                          >
-                            Ask another question
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    </>
-                  ) : (
-                    <>
-                      <TouchableOpacity
-                        onPress={() => {
-                          setAskHelpModalAssignment(null);
-                          setShowAskParentHelpModal(true);
-                        }}
-                        style={[styles.workflowActionButton, { marginTop: 16, alignSelf: 'flex-start' }]}
-                        activeOpacity={0.9}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <View style={styles.workflowActionButtonRow}>
-                          <View style={styles.workflowActionIconWrap}>
-                            <Mail size={12} color="#5B6880" />
-                          </View>
-                          <Text style={styles.workflowActionButtonText}>Ask for help</Text>
-                        </View>
-                      </TouchableOpacity>
-                    </>
-                  )}
-                </View>
-              </SafeFieldRow>
-            )}
-
           </SafeView>
         </ScrollView>
 
@@ -6485,6 +6366,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           },
         })}
       >
+      <View pointerEvents={readOnly ? 'none' : 'auto'}>
       {/* Header */}
       <View style={styles.headerEditEvent}>
         <View style={styles.headerContent}>
@@ -7889,92 +7771,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </SafeFieldRow>
           )}
         </ModalSectionCard>
+      </View>
 
       </ScrollView>
 
-      {session?.role_flags?.isChild && event?.id && isSchoolWorkEventType(eventType) && (
-        <View style={{ paddingHorizontal: 16, paddingBottom: 8, paddingTop: 4 }}>
-          <View
-            style={{
-              alignSelf: 'stretch',
-              backgroundColor: 'rgba(79, 70, 229, 0.07)',
-              borderRadius: 10,
-              paddingVertical: 10,
-              paddingHorizontal: 14,
-            }}
-          >
-            <Text style={{ fontSize: 12, fontWeight: '600', color: FG }}>Need help with this?</Text>
-            {!linkedHelpReady ? (
-              <View
-                style={{
-                  minHeight: 52,
-                  marginTop: 6,
-                  justifyContent: 'center',
-                  alignItems: 'flex-start',
-                }}
-                accessibilityLabel="Loading help status"
-              >
-                <ActivityIndicator size="small" color="#89B5E4" />
-              </View>
-            ) : eventLinkedHelpAssignment?.need_help ? (
-              <>
-                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4, lineHeight: 16 }}>
-                  Your parent can see your message. You can send another note anytime.
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, flexWrap: 'wrap', gap: 10 }}>
-                  <TouchableOpacity
-                    onPress={() => setShowStudentHelpHistoryModal(true)}
-                    activeOpacity={0.85}
-                    accessibilityRole="button"
-                    accessibilityLabel="View what you sent"
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <View
-                      style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 4,
-                        borderRadius: 999,
-                        backgroundColor: '#EBF5FF',
-                        borderWidth: 1,
-                        borderColor: '#89B5E4',
-                      }}
-                    >
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#89B5E4' }}>Asked</Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setAskHelpModalAssignment(eventLinkedHelpAssignment);
-                      setShowAskParentHelpModal(true);
-                    }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#89B5E4' }}>Ask another question</Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : (
-              <>
-                <TouchableOpacity
-                  onPress={() => {
-                    setAskHelpModalAssignment(null);
-                    setShowAskParentHelpModal(true);
-                  }}
-                  style={[styles.workflowActionButton, { marginTop: 10, alignSelf: 'flex-start' }]}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.workflowActionButtonRow}>
-                    <View style={styles.workflowActionIconWrap}>
-                      <Mail size={12} color="#5B6880" />
-                    </View>
-                    <Text style={styles.workflowActionButtonText}>Ask for help</Text>
-                  </View>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </View>
-      )}
       <View style={styles.footerDivider} />
       {/* Footer with Cancel, Delete Event (when editing), and Save */}
       <View style={styles.footerEditEvent}>
@@ -8008,22 +7808,22 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           )}
           <TouchableOpacity
           onPress={() => {
-            if (saving) return;
+            if (saving || readOnly) return;
             if (!validateFields({ showBanner: true })) return;
             handleSave();
           }}
-          disabled={saving}
+          disabled={saving || readOnly}
           style={[
             styles.createButton,
-            saving && styles.createButtonDisabled,
+            (saving || readOnly) && styles.createButtonDisabled,
           ]}
         >
           <Check size={16} color="#FFF" />
           <Text style={[
             styles.createButtonText,
-            saving && styles.createButtonTextDisabled,
+            (saving || readOnly) && styles.createButtonTextDisabled,
           ]}>
-            {saving ? 'Saving…' : 'Save changes'}
+            {saving ? 'Saving…' : (readOnly ? 'View only' : 'Save changes')}
           </Text>
           </TouchableOpacity>
         </View>

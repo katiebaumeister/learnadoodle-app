@@ -23,6 +23,16 @@ function formatContextLine(startTs, endTs) {
   const start = new Date(startTs);
   if (Number.isNaN(start.getTime())) return null;
   const datePart = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const startsAtMidnight = start.getHours() === 0 && start.getMinutes() === 0;
+  const isUntimedMidnightBounded = (() => {
+    if (!startsAtMidnight || !endTs) return false;
+    const end = new Date(endTs);
+    if (Number.isNaN(end.getTime())) return false;
+    const endsAtMidnight = end.getHours() === 0 && end.getMinutes() === 0;
+    const endsAtEndOfDay = end.getHours() === 23 && end.getMinutes() === 59;
+    return endsAtMidnight || endsAtEndOfDay;
+  })();
+  if (isUntimedMidnightBounded) return datePart;
   const fmtTime = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   const startT = fmtTime(start);
   if (endTs) {
@@ -62,6 +72,13 @@ function linkedEventIdFromSources(assignment, eventContext) {
 function isUuid(value) {
   const v = String(value || '').trim();
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
+function isMissingColumnError(error, columnName) {
+  const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
+  const needle = String(columnName || '').toLowerCase();
+  if (!msg || !needle) return false;
+  return msg.includes(needle) && (msg.includes('column') || msg.includes('schema cache') || msg.includes('select'));
 }
 
 function extractSubmissionHistoryLines(assignment, reviewSnapshot = null) {
@@ -169,12 +186,21 @@ export default function SubmitForReviewModal({
         }
         let eventGrade = null;
         if (linkedEventId && isUuid(linkedEventId)) {
-          const { data } = await supabase
+          let { data, error } = await supabase
             .from('events')
             .select('id, grade, percent_of_total_grade')
             .eq('id', linkedEventId)
             .maybeSingle();
-          eventGrade = data || null;
+          if (error && isMissingColumnError(error, 'percent_of_total_grade')) {
+            const fallback = await supabase
+              .from('events')
+              .select('id, grade')
+              .eq('id', linkedEventId)
+              .maybeSingle();
+            data = fallback.data;
+            error = fallback.error;
+          }
+          eventGrade = error ? null : (data || null);
         }
         if (cancelled) return;
         setReviewSnapshot({
@@ -411,7 +437,7 @@ export default function SubmitForReviewModal({
               editable={!viewOnly}
             />
 
-            <Text style={styles.sectionLabel}>Optional attachment</Text>
+            <Text style={styles.sectionLabel}>Attachment</Text>
             <TouchableOpacity
               style={[styles.uploadButton, uploadingAttachment && styles.uploadButtonDisabled]}
               onPress={pickAttachment}

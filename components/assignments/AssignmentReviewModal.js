@@ -56,6 +56,12 @@ function displayAssignmentTitle(raw) {
   return t || 'Schoolwork';
 }
 
+function firstUuidInText(value) {
+  const text = String(value || '');
+  const m = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+  return m ? String(m[0]) : null;
+}
+
 function resolveLinkedEventId(assignment) {
   const raw = assignment?.linked_event_ids;
   if (Array.isArray(raw) && raw.length > 0) return String(raw[0]);
@@ -65,12 +71,35 @@ function resolveLinkedEventId(assignment) {
       if (Array.isArray(parsed) && parsed.length > 0) return String(parsed[0]);
       if (parsed && typeof parsed === 'object' && parsed.id) return String(parsed.id);
     } catch (_) {
-      if (raw.includes('-')) return raw;
+      const extracted = firstUuidInText(raw);
+      if (extracted) return extracted;
     }
   }
+  if (raw && typeof raw === 'object' && raw.id) return String(raw.id);
   if (assignment?.linked_event_id) return String(assignment.linked_event_id);
   if (assignment?.event_id) return String(assignment.event_id);
+  const extractedFromAlt = firstUuidInText(assignment?.linked_event_ids_text || assignment?.linked_event_ref);
+  if (extractedFromAlt) return extractedFromAlt;
   return null;
+}
+
+function isMissingColumnError(error, columnName) {
+  const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
+  const needle = String(columnName || '').toLowerCase();
+  if (!msg || !needle) return false;
+  return msg.includes(needle) && (msg.includes('column') || msg.includes('schema cache') || msg.includes('select'));
+}
+
+function extractLatestReviewFeedbackFromNotes(notesValue) {
+  const text = String(notesValue || '');
+  if (!text) return '';
+  const re = /Review feedback \([^)]+\):\s*([^\n]+)/g;
+  let match = null;
+  let latest = '';
+  while ((match = re.exec(text)) !== null) {
+    latest = String(match[1] || '').trim();
+  }
+  return latest;
 }
 
 export default function AssignmentReviewModal({
@@ -111,13 +140,23 @@ export default function AssignmentReviewModal({
       }
       try {
         // Always seed feedback from saved assignment review values.
-        const { data: assignmentRow } = await supabase
+        let { data: assignmentRow, error: assignmentErr } = await supabase
           .from('assignments')
           .select('id, review_feedback, linked_event_ids')
           .eq('id', assignment.id)
           .maybeSingle();
+        if (assignmentErr && isMissingColumnError(assignmentErr, 'review_feedback')) {
+          const fallback = await supabase
+            .from('assignments')
+            .select('id, linked_event_ids')
+            .eq('id', assignment.id)
+            .maybeSingle();
+          assignmentRow = fallback.data;
+          assignmentErr = fallback.error;
+        }
         if (cancelled) return;
-        setFeedback(String(assignmentRow?.review_feedback || assignment?.review_feedback || ''));
+        const seedFeedback = String(assignmentRow?.review_feedback || assignment?.review_feedback || '');
+        setFeedback(seedFeedback);
 
         const resolvedEventId =
           resolveLinkedEventId({ ...assignment, linked_event_ids: assignmentRow?.linked_event_ids ?? assignment?.linked_event_ids }) ||
@@ -129,15 +168,32 @@ export default function AssignmentReviewModal({
           .select('id, grade, percent_of_total_grade, notes')
           .eq('id', resolvedEventId)
           .maybeSingle();
-        if (cancelled || error || !data) return;
+        let eventRow = data;
+        let eventErr = error;
+        if (eventErr && isMissingColumnError(eventErr, 'percent_of_total_grade')) {
+          const fallback = await supabase
+            .from('events')
+            .select('id, grade, notes')
+            .eq('id', resolvedEventId)
+            .maybeSingle();
+          eventRow = fallback.data;
+          eventErr = fallback.error;
+        }
+        if (cancelled || eventErr || !eventRow) return;
         setLinkedEventId(String(resolvedEventId));
-        setGradeValue(String(data?.grade || '').trim());
+        setGradeValue(String(eventRow?.grade || '').trim());
         setPercentGradeValue(
-          data?.percent_of_total_grade != null && data?.percent_of_total_grade !== ''
-            ? String(data.percent_of_total_grade)
+          eventRow?.percent_of_total_grade != null && eventRow?.percent_of_total_grade !== ''
+            ? String(eventRow.percent_of_total_grade)
             : ''
         );
-        setLinkedEventNotes(String(data?.notes || ''));
+        setLinkedEventNotes(String(eventRow?.notes || ''));
+        if (!seedFeedback) {
+          const feedbackFromNotes = extractLatestReviewFeedbackFromNotes(eventRow?.notes);
+          if (feedbackFromNotes) {
+            setFeedback(feedbackFromNotes);
+          }
+        }
       } catch (_) {
         if (!cancelled) {
           setGradeValue('');
@@ -237,47 +293,38 @@ export default function AssignmentReviewModal({
         if (feedbackTrim) {
           eventUpdates.notes = nextNotes;
         }
-        const { error: eventUpErr } = await supabase
+        let { error: eventUpErr } = await supabase
           .from('events')
           .update(eventUpdates)
           .eq('id', linkedEventId);
+        if (eventUpErr && isMissingColumnError(eventUpErr, 'percent_of_total_grade')) {
+          const fallbackUpdates = { ...eventUpdates };
+          delete fallbackUpdates.percent_of_total_grade;
+          ({ error: eventUpErr } = await supabase
+            .from('events')
+            .update(fallbackUpdates)
+            .eq('id', linkedEventId));
+        }
         if (!eventUpErr) {
           eventPersisted = true;
           if (feedbackTrim) setLinkedEventNotes(nextNotes);
         }
       }
 
-      // Best-effort gradebook review API call.
-      try {
-        const { reviewAssignment } = await import('../../lib/services/gradebookClient');
-        const result = await reviewAssignment(assignment.id, {
+      // Persist review fields directly (avoids noisy API 400 on environments
+      // where /api/gradebook/assignments/review is not configured consistently).
+      const { error: assignmentUpErr } = await supabase
+        .from('assignments')
+        .update({
           review_status: reviewStatus,
-          rating: null,
-          feedback: feedbackTrim || null,
-          reviewed_by: null,
-        });
-        if (result?.success) {
-          reviewPersisted = true;
-        } else {
-          reviewApiError = result?.error || 'Failed to submit review';
-        }
-      } catch (e) {
-        reviewApiError = e?.message || 'Failed to submit review';
-      }
-
-      // Fallback: persist essential review fields directly on assignment.
-      if (!reviewPersisted) {
-        const { error: assignmentUpErr } = await supabase
-          .from('assignments')
-          .update({
-            review_status: reviewStatus,
-            review_feedback: feedbackTrim || null,
-            reviewed_at: new Date().toISOString(),
-          })
-          .eq('id', assignment.id);
-        if (!assignmentUpErr) {
-          reviewPersisted = true;
-        }
+          review_feedback: feedbackTrim || null,
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq('id', assignment.id);
+      if (!assignmentUpErr) {
+        reviewPersisted = true;
+      } else {
+        reviewApiError = assignmentUpErr?.message || 'Failed to submit review';
       }
 
       if (eventPersisted || reviewPersisted) {
