@@ -1616,24 +1616,93 @@ async def invite_tutor(
 
         supabase = get_admin_client()
 
-        # Verify current user is a parent
-        # Use maybe_single() instead of single() to handle case where user doesn't have a family_members row yet
-        current_member_res = supabase.table("family_members").select("member_role").eq("user_id", user["id"]).eq("family_id", family_id).maybe_single().execute()
+        # Verify inviter permissions.
+        # Parents can invite any member type.
+        # Self-managed student accounts can request a parent invite only.
+        current_member_res = supabase.table("family_members").select("member_role, child_id, child_scope").eq("user_id", user["id"]).eq("family_id", family_id).maybe_single().execute()
+        current_member = current_member_res.data if (current_member_res and current_member_res.data) else None
         is_parent = False
+        is_self_managed_student = False
         
         # Check family_members first
-        if current_member_res and current_member_res.data and current_member_res.data.get("member_role") == 'parent':
+        if current_member and current_member.get("member_role") == 'parent':
             is_parent = True
         else:
             # Fallback: check profiles.role
-            profile_res = supabase.table("profiles").select("role").eq("id", user["id"]).maybe_single().execute()
+            profile_res = supabase.table("profiles").select("role, app_preferences").eq("id", user["id"]).maybe_single().execute()
             if profile_res and profile_res.data and profile_res.data.get("role") == 'parent':
                 is_parent = True
-        
-        if not is_parent:
+
+            # Student self-managed mode may invite only a parent into their family.
+            if (
+                not is_parent
+                and body.role == "parent"
+                and profile_res
+                and profile_res.data
+            ):
+                profile_row = profile_res.data or {}
+                profile_role = _norm_member_role(profile_row.get("role"))
+                app_preferences = profile_row.get("app_preferences") or {}
+                if isinstance(app_preferences, str):
+                    try:
+                        app_preferences = json.loads(app_preferences)
+                    except Exception:
+                        app_preferences = {}
+                student_self_signup = (
+                    isinstance(app_preferences, dict)
+                    and app_preferences.get("student_self_signup") is True
+                )
+                member_role = _norm_member_role((current_member or {}).get("member_role"))
+                is_child_member = member_role in ("child", "student") or profile_role in ("child", "student")
+
+                child_id = (current_member or {}).get("child_id")
+                if not child_id:
+                    raw_scope = _parse_child_scope_raw((current_member or {}).get("child_scope"))
+                    if isinstance(raw_scope, list) and len(raw_scope) > 0:
+                        child_id = raw_scope[0]
+
+                has_parent_member = False
+                try:
+                    parent_rows = (
+                        supabase.table("family_members")
+                        .select("id")
+                        .eq("family_id", family_id)
+                        .eq("member_role", "parent")
+                        .limit(1)
+                        .execute()
+                    )
+                    has_parent_member = bool(parent_rows.data and len(parent_rows.data) > 0)
+                except Exception:
+                    has_parent_member = False
+
+                has_accepted_child_invite = False
+                if child_id:
+                    try:
+                        invite_rows = (
+                            supabase.table("invites")
+                            .select("accepted_at")
+                            .eq("family_id", family_id)
+                            .eq("role", "child")
+                            .eq("child_id", str(child_id))
+                            .execute()
+                        )
+                        has_accepted_child_invite = any(
+                            bool(r.get("accepted_at")) for r in (invite_rows.data or [])
+                        )
+                    except Exception:
+                        has_accepted_child_invite = False
+
+                is_self_managed_student = bool(
+                    student_self_signup
+                    and is_child_member
+                    and not has_parent_member
+                    and not has_accepted_child_invite
+                )
+
+        if not is_parent and not (body.role == "parent" and is_self_managed_student):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only parents can invite members"
+                detail="Only parents can invite members. Self-managed student accounts may invite a parent only."
             )
 
         # Validate child_ids belong to family

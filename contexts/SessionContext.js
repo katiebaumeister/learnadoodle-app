@@ -57,13 +57,15 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
 
       const profilePromise = supabase
         .from('profiles')
-        .select('id, family_id, role')
+        .select('id, family_id, role, app_preferences')
         .eq('id', authUserId)
         .maybeSingle();
 
       const [meRes, profileResult] = await Promise.all([getMe(), profilePromise]);
       const profileRow = profileResult?.data ?? null;
       const profileFetchErr = profileResult?.error ?? null;
+      const studentSelfSignup = profileRow?.app_preferences?.student_self_signup === true;
+      let childLinkedViaAcceptedInvite = null;
 
       // If backend says 401 (e.g. user deleted), use the profile row we already fetched
       if (meRes?.error?.status === 401) {
@@ -98,6 +100,8 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
           child_id: null,
           child_scope: [],
           accessible_children: accessibleChildren,
+          student_self_signup: studentSelfSignup,
+          child_linked_via_accepted_invite: false,
           effective_role: memberRole || 'parent',
           role_flags: {
             isParent: (memberRole || 'parent') === 'parent',
@@ -120,11 +124,23 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
               const uid = m?.user_id ?? m?.id ?? null;
               return uid != null && String(uid) === String(authUserId);
             });
+            const parentMembers = members.filter((m) => {
+              const role = String(m?.member_role || m?.role || '').trim().toLowerCase();
+              return role === 'parent';
+            });
             if (myMember) {
               memberRole = myMember.member_role || myMember.role || null;
               childScope = Array.isArray(myMember.child_scope) ? myMember.child_scope : [];
               childId = myMember.child_id || null;
             }
+            const myRole = String(myMember?.member_role || myMember?.role || '').trim().toLowerCase();
+            const selfSignupChildWithParentLinked =
+              studentSelfSignup
+              && (myRole === 'child' || myRole === 'student')
+              && parentMembers.length > 0;
+            childLinkedViaAcceptedInvite =
+              selfSignupChildWithParentLinked
+              || data?.child_linked_via_accepted_invite === true;
             if (accessibleChildren.length === 0) {
               const childRows = Array.isArray(data?.children) ? data.children : [];
               if (memberRole === 'parent' || memberRole === 'tutor') {
@@ -213,6 +229,8 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
         child_id: childId,
         child_scope: childScope,
         accessible_children: accessibleChildren,
+        student_self_signup: studentSelfSignup,
+        child_linked_via_accepted_invite: childLinkedViaAcceptedInvite,
         effective_role: effectiveRole,
         role_flags: roleFlags,
         legacyMode: isLegacy,
@@ -241,6 +259,8 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
         child_id: null,
         child_scope: [],
         accessible_children: [],
+        student_self_signup: false,
+        child_linked_via_accepted_invite: null,
         effective_role: 'parent',
         role_flags: {
           isParent: true,

@@ -294,7 +294,7 @@ export default function OnboardingModal({
     setIsSaving(true);
     setError(null);
     try {
-      const res = await completeOnboarding({ family_id: fid });
+      const res = await completeOnboarding({ family_id: fid, onboarding_who: onboardingWho });
       if (res?.error) throw new Error(res.error?.message || res.error || 'Failed to complete.');
       if (onboardingWho === 'student') {
         const { data: authData } = await supabase.auth.getUser();

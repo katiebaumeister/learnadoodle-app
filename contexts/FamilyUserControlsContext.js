@@ -23,8 +23,12 @@ export function FamilyUserControlsProvider({ children }) {
   const authUserId = user?.id ?? null;
   const isChild = !!session?.role_flags?.isChild;
   const isTutor = !!session?.role_flags?.isTutor;
+  const isSelfManagedStudent =
+    isChild &&
+    session?.student_self_signup === true &&
+    session?.child_linked_via_accepted_invite !== true;
   const isRestrictedViewer = !!(
-    isChild || isTutor
+    (isChild || isTutor) && !isSelfManagedStudent
   );
 
   const [flags, setFlags] = useState(() => rowToFlagMap(null));
@@ -52,6 +56,12 @@ export function FamilyUserControlsProvider({ children }) {
       setFlags(nextFlags);
 
       if (!isRestrictedViewer) {
+        if (isSelfManagedStudent) {
+          setProfileType('child');
+          setActiveProfile('self_managed');
+          setEffectivePermissions(getEffectiveChildPermissions('self_managed'));
+          return;
+        }
         setProfileType(null);
         setActiveProfile(null);
         setEffectivePermissions(null);
@@ -101,7 +111,7 @@ export function FamilyUserControlsProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  }, [authUserId, familyId, isChild, isRestrictedViewer, isTutor, session?.accessible_children, session?.child_id]);
+  }, [authUserId, familyId, isChild, isRestrictedViewer, isSelfManagedStudent, isTutor, session?.accessible_children, session?.child_id]);
 
   useEffect(() => {
     load();
@@ -131,6 +141,7 @@ export function FamilyUserControlsProvider({ children }) {
       error,
       refresh: load,
       isRestrictedViewer,
+      isSelfManagedStudent,
       allowed,
       activeProfile,
       profileType,
@@ -143,6 +154,7 @@ export function FamilyUserControlsProvider({ children }) {
       error,
       load,
       isRestrictedViewer,
+      isSelfManagedStudent,
       allowed,
       activeProfile,
       profileType,
@@ -174,6 +186,7 @@ export function useOptionalFamilyUserControls() {
       error: null,
       refresh: () => {},
       isRestrictedViewer: false,
+      isSelfManagedStudent: false,
       allowed: () => true,
       activeProfile: null,
       profileType: null,

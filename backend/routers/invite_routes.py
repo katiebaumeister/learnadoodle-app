@@ -245,7 +245,7 @@ async def accept_invite(
 
         try:
             invite_res = supabase.table("invites").select(
-                "role, family_id, tutor_permission_profile"
+                "role, family_id, tutor_permission_profile, invited_by"
             ).eq("token", body.token).maybe_single().execute()
             invite_row = invite_res.data or {}
             if (invite_row.get("role") or "").strip().lower() == "tutor":
@@ -254,6 +254,54 @@ async def accept_invite(
                     supabase.table("family_members").update(
                         {"tutor_permission_profile": tutor_permission_profile}
                     ).eq("family_id", rpc_result.get("family_id")).eq("user_id", user["id"]).eq("member_role", "tutor").execute()
+
+            # If a self-managed student invited a parent and the parent accepted,
+            # switch the student's child permission profile to independent.
+            if (invite_row.get("role") or "").strip().lower() == "parent":
+                inviter_user_id = invite_row.get("invited_by")
+                linked_family_id = invite_row.get("family_id") or rpc_result.get("family_id")
+                if inviter_user_id and linked_family_id:
+                    prof_res = (
+                        supabase.table("profiles")
+                        .select("role, app_preferences")
+                        .eq("id", inviter_user_id)
+                        .maybe_single()
+                        .execute()
+                    )
+                    prof = prof_res.data or {}
+                    profile_role = str(prof.get("role") or "").strip().lower()
+                    app_prefs = prof.get("app_preferences") or {}
+                    if isinstance(app_prefs, str):
+                        try:
+                            app_prefs = json.loads(app_prefs)
+                        except Exception:
+                            app_prefs = {}
+                    is_student_self_signup = (
+                        isinstance(app_prefs, dict)
+                        and app_prefs.get("student_self_signup") is True
+                    )
+                    if profile_role in ("child", "student") and is_student_self_signup:
+                        member_res = (
+                            supabase.table("family_members")
+                            .select("member_role, child_id, child_scope")
+                            .eq("family_id", linked_family_id)
+                            .eq("user_id", inviter_user_id)
+                            .maybe_single()
+                            .execute()
+                        )
+                        member = member_res.data or {}
+                        member_role = str(member.get("member_role") or "").strip().lower()
+                        if member_role in ("child", "student"):
+                            child_id = member.get("child_id")
+                            if not child_id and isinstance(member.get("child_scope"), list) and len(member.get("child_scope")) > 0:
+                                child_id = member.get("child_scope")[0]
+                            if child_id:
+                                supabase.table("children").update(
+                                    {
+                                        "permission_profile": "independent",
+                                        "updated_at": datetime.utcnow().isoformat(),
+                                    }
+                                ).eq("id", str(child_id)).eq("family_id", linked_family_id).execute()
         except Exception as profile_apply_error:
             log_event("invite.accept.tutor_permission_apply_error", user_id=user["id"], error=str(profile_apply_error))
         

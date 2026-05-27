@@ -212,6 +212,11 @@ class ChildOut(BaseModel):
     support_notes: Optional[str] = None
 
 
+class CompleteOnboardingIn(BaseModel):
+    family_id: Optional[str] = None
+    onboarding_who: Optional[str] = None  # 'parent' | 'student'
+
+
 # ============================================================
 # Routes
 # ============================================================
@@ -651,6 +656,7 @@ async def get_children(
 
 @router.post("/complete")
 async def complete_onboarding(
+    body: Optional[CompleteOnboardingIn] = None,
     user: dict = Depends(get_current_user),
     __: None = Depends(rate_limiter),
 ):
@@ -675,6 +681,68 @@ async def complete_onboarding(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Family record not found"
             )
+
+        # Student self-signup onboarding should end as a child-role account.
+        # This allows learner-scoped experience from first login, before any parent link.
+        if body and body.onboarding_who == "student":
+            try:
+                child_res = (
+                    supabase.table("children")
+                    .select("id")
+                    .eq("family_id", family_id)
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                child_rows = child_res.data or []
+                child_id = child_rows[0]["id"] if child_rows else None
+
+                if child_id:
+                    fm_res = (
+                        supabase.table("family_members")
+                        .select("id")
+                        .eq("family_id", family_id)
+                        .eq("user_id", user["id"])
+                        .execute()
+                    )
+                    fm_rows = fm_res.data or []
+                    if fm_rows:
+                        for fm in fm_rows:
+                            if not fm.get("id"):
+                                continue
+                            supabase.table("family_members").update({
+                                "member_role": "child",
+                                "child_id": child_id,
+                                "child_scope": [child_id],
+                                "updated_at": datetime.utcnow().isoformat(),
+                            }).eq("id", fm["id"]).execute()
+                    else:
+                        supabase.table("family_members").insert({
+                            "family_id": family_id,
+                            "user_id": user["id"],
+                            "member_role": "child",
+                            "child_id": child_id,
+                            "child_scope": [child_id],
+                        }).execute()
+
+                    supabase.table("profiles").update({
+                        "family_id": family_id,
+                        "role": "child",
+                        "updated_at": datetime.utcnow().isoformat(),
+                    }).eq("id", user["id"]).execute()
+                else:
+                    log_event(
+                        "onboarding.complete.student_no_child",
+                        user_id=user["id"],
+                        family_id=family_id,
+                    )
+            except Exception as role_error:
+                log_event(
+                    "onboarding.complete.student_role_error",
+                    user_id=user["id"],
+                    family_id=family_id,
+                    error=str(role_error),
+                )
         log_event("onboarding.complete", user_id=user["id"], family_id=family_id)
         return {"success": True, "message": "Onboarding completed successfully"}
     except HTTPException:

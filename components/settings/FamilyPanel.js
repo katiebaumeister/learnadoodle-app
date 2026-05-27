@@ -161,17 +161,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   
   // Profile state
   const [profile, setProfile] = useState(propProfile);
+  const isSelfManagedStudent =
+    isChildMode
+    && profile?.app_preferences?.student_self_signup === true
+    && family?.child_linked_via_accepted_invite !== true;
+  const isChildRestrictedView = isChildMode && !isSelfManagedStudent;
+  const canManageChildInvites = !isChildRestrictedView && !isSelfManagedStudent;
 
   const isTutorViewer = propUserRole === 'tutor' || profile?.role === 'tutor';
   /** “(you)” suffix only for parents/admins viewing Family — not children or tutors. */
-  const showFamilyRowYouCue = !isChildMode && !isTutorViewer;
+  const showFamilyRowYouCue = !isChildRestrictedView && !isTutorViewer;
 
   /** Sidebar subscription card: parents always; tutors never; children only if they self-signed up as student in onboarding (stored in app_preferences). */
   const showFamilySubscriptionCard = useMemo(() => {
     if (isTutorViewer) return false;
     if (!isChildMode) return true;
-    return profile?.app_preferences?.student_self_signup === true;
-  }, [isTutorViewer, isChildMode, profile?.app_preferences?.student_self_signup]);
+    return isSelfManagedStudent;
+  }, [isTutorViewer, isChildMode, isSelfManagedStudent]);
   
   // Profile editing state
   const [editingProfile, setEditingProfile] = useState(false);
@@ -231,11 +237,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   
   // Active section for sidebar navigation
   const normalizeSettingsSection = useCallback((section) => {
-    if (isChildMode) return 'profile';
+    if (isChildRestrictedView) return 'profile';
     const normalized = String(section || '').trim().toLowerCase();
     if (normalized === 'user-controls') return 'members';
     return normalized || 'profile';
-  }, [isChildMode]);
+  }, [isChildRestrictedView]);
   const [activeSection, setActiveSection] = useState(normalizeSettingsSection(propInitialSection));
   /** Monthly AI units (internal); drives Subscription 80% warning. */
   const [aiUsedUnitsThisMonth, setAiUsedUnitsThisMonth] = useState(null);
@@ -252,11 +258,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   }, [activeSection, normalizeSettingsSection, propInitialSection]);
 
   useEffect(() => {
-    if (!isChildMode) return;
+    if (!isChildRestrictedView) return;
     if (activeSection !== 'profile') {
       setActiveSection('profile');
     }
-  }, [activeSection, isChildMode]);
+  }, [activeSection, isChildRestrictedView]);
 
   useEffect(() => {
     if (activeSection !== 'subscription' || !familyId) return;
@@ -1267,7 +1273,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       if (err) throw err;
       setParentInviteResultUrl(data.invite_url);
       setParentInviteEmail('');
-      toast.push('Parent invite sent successfully!', 'success');
+      toast.push(isSelfManagedStudent ? 'Parent request sent successfully!' : 'Parent invite sent successfully!', 'success');
       if (data.invite_url) {
         showInviteSuccessModal(data.invite_url, 'parent');
       }
@@ -2724,11 +2730,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         const hasProfileChanges = !isViewingAsChild && (profileEmail.trim() !== (profile?.email || user?.email || ''));
         const onboardingGoalId = family?.default_planning_mode || null;
         const onboardingGoalLabel = getOnboardingGoalLabel(onboardingGoalId);
-        const canEditOnboardingGoal = !isViewingAsChild && !isChildMode && !isTutorViewer && !profileEditLocked && Boolean(family?.id || familyId);
+        const canEditOnboardingGoal = !isViewingAsChild && !isChildRestrictedView && !isTutorViewer && !profileEditLocked && Boolean(family?.id || familyId);
         
         return (
           <View style={styles.mainContentInner}>
             <Text style={styles.mainContentTitle}>Profile</Text>
+            {isSelfManagedStudent ? (
+              <View style={styles.selfManagedStudentBadge}>
+                <Text style={styles.selfManagedStudentBadgeText}>
+                  Self-managed student mode: full settings access until you join a parent family.
+                </Text>
+              </View>
+            ) : null}
             
             {/* Account Management Section */}
             <View style={[styles.profileSection, styles.profileSectionFirst]}>
@@ -2748,7 +2761,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       placeholderTextColor="#6b7280"
                       keyboardType="email-address"
                       autoCapitalize="none"
-                      editable={!isViewingAsChild && !profileEditLocked && !isChildMode}
+                      editable={!isViewingAsChild && !profileEditLocked && !isChildRestrictedView}
                     />
                     {hasProfileChanges && (
                       <TouchableOpacity
@@ -2817,8 +2830,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               </View>
             </View>
 
-            {!isChildMode ? (
-              <View style={styles.profileSection}>
+            {!isChildRestrictedView ? (
+              <View style={[styles.profileSection, canEditOnboardingGoal && showGoalDropdown && styles.profileSectionDropdownOpen]}>
                 <View style={styles.profileSectionHeader}>
                   <Text style={[styles.subsectionTitle, styles.profileSectionTitle]}>User Experience</Text>
                 </View>
@@ -2884,7 +2897,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             ) : null}
 
             {/* Child-mode footer action */}
-            {isChildMode ? (
+            {isChildRestrictedView ? (
               <View style={styles.dangerZoneAccount}>
                 <TouchableOpacity
                   style={styles.profileResetPasswordButton}
@@ -3029,7 +3042,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 onValueChange={markNotificationToggle(setNotifMotivation)}
                 label="Motivation & engagement"
               />
-              {!isChildMode ? (
+              {!isChildRestrictedView ? (
                 <>
                   <NotificationCheckbox
                     value={notifParentGuidance}
@@ -3059,8 +3072,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             
             {/* Parents Section */}
             <View style={styles.membersSectionRow}>
-              <Text style={styles.subsectionTitle}>{isChildMode ? 'Your Parents' : 'Parents'}</Text>
-              {!isChildMode && (
+              <Text style={styles.subsectionTitle}>{isChildRestrictedView ? 'Your Parents' : 'Parents'}</Text>
+              {!isChildRestrictedView && (
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   {parents.length > 0 && (
                     <TouchableOpacity 
@@ -3083,7 +3096,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
                       <Plus size={16} color="#374151" />
-                      <Text style={styles.membersInviteButtonText}>Invite Parent</Text>
+                      <Text style={styles.membersInviteButtonText}>{isSelfManagedStudent ? 'Request Parent' : 'Invite Parent'}</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -3156,7 +3169,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   <Text style={styles.memberRowName}>
                     {getFamilyRowDisplayName(family?.family_name, { isParentViewer: showFamilyRowYouCue })}
                   </Text>
-                  {!isChildMode && (
+                  {!isChildRestrictedView && (
                     <View style={styles.memberRowActions}>
                       <TouchableOpacity
                         style={[
@@ -3178,14 +3191,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
             {parents.length === 0 && (
               <Text style={[styles.membersEmptyText, { marginTop: 8 }]}>
-                {profile?.role === 'parent' ? 'No other parents yet' : 'No parents found'}
+                {isSelfManagedStudent ? 'No parents yet' : (profile?.role === 'parent' ? 'No other parents yet' : 'No parents found')}
               </Text>
             )}
             
             {/* Children Section */}
             <View style={[styles.membersSectionRow, { marginTop: 32 }]}>
-              <Text style={styles.subsectionTitle}>{isChildMode ? 'Your Family' : 'Children'}</Text>
-              {!isChildMode && (
+              <Text style={styles.subsectionTitle}>{isChildRestrictedView ? 'Your Family' : 'Children'}</Text>
+              {!isChildRestrictedView && (
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   {children.length > 0 && (
                     <TouchableOpacity 
@@ -3197,22 +3210,26 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       <Text style={styles.membersInviteButtonText}>Generate ID</Text>
                     </TouchableOpacity>
                   )}
-                  <TouchableOpacity 
-                    style={styles.membersInviteButton} 
-                    onPress={() => setShowAddChildModal(true)} 
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Plus size={16} color="#374151" />
-                    <Text style={styles.membersInviteButtonText}>Add Child</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={styles.membersInviteButton} 
-                    onPress={() => handleOpenChildInviteModal(null)}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Plus size={16} color="#374151" />
-                    <Text style={styles.membersInviteButtonText}>Invite Child</Text>
-                  </TouchableOpacity>
+                  {canManageChildInvites ? (
+                    <>
+                      <TouchableOpacity 
+                        style={styles.membersInviteButton} 
+                        onPress={() => setShowAddChildModal(true)} 
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Plus size={16} color="#374151" />
+                        <Text style={styles.membersInviteButtonText}>Add Child</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        style={styles.membersInviteButton} 
+                        onPress={() => handleOpenChildInviteModal(null)}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Plus size={16} color="#374151" />
+                        <Text style={styles.membersInviteButtonText}>Invite Child</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : null}
                 </View>
               )}
             </View>
@@ -3277,7 +3294,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           {childIsCurrentViewer ? ' (you)' : ''}
                           {child.archived ? ' (Archived)' : ''}
                         </Text>
-                        {!isChildMode ? (
+                        {canManageChildInvites ? (
                           <View
                             style={[styles.childStatusPill, pillContainerStyle]}
                             accessible
@@ -3295,12 +3312,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           {ageGradeLine}
                         </Text>
                       ) : null}
-                      {!isChildMode && invSt === 'accepted' && inv?.invite_email ? (
+                      {canManageChildInvites && invSt === 'accepted' && inv?.invite_email ? (
                         <Text style={styles.memberRowChildEmailMuted} numberOfLines={1}>
                           {inv.invite_email}
                         </Text>
                       ) : null}
-                      {!isChildMode && invSt === 'pending' ? (
+                      {canManageChildInvites && invSt === 'pending' ? (
                         <>
                           {inv?.invite_email ? (
                             <Text style={styles.memberRowChildEmailMuted} numberOfLines={1}>
@@ -3325,7 +3342,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       ) : null}
                     </View>
                   </View>
-                  {!isChildMode && (
+                  {!isChildRestrictedView && (
                     <View style={styles.memberRowActions}>
                       <TouchableOpacity 
                         style={[
@@ -3345,8 +3362,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             
             {/* Tutors Section */}
             <View style={[styles.membersSectionRow, { marginTop: 32 }]}>
-              <Text style={styles.subsectionTitle}>{isChildMode ? 'Your Tutors' : 'Tutors'}</Text>
-              {!isChildMode && (
+              <Text style={styles.subsectionTitle}>{isChildRestrictedView ? 'Your Tutors' : 'Tutors'}</Text>
+              {!isChildRestrictedView && (
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   {tutors.length > 0 && (
                     <TouchableOpacity 
@@ -3391,7 +3408,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     <View style={styles.memberRowChildTextCol}>
                       <Text style={styles.memberRowName}>{tutor.name || tutor.email || 'Tutor'}</Text>
                     </View>
-                    {!isChildMode ? (
+                    {!isChildRestrictedView ? (
                       <View style={styles.memberRowActions}>
                         <TouchableOpacity
                           style={[
@@ -3421,7 +3438,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     ) : null}
                   </View>
                 ))}
-                {!isChildMode
+                {!isChildRestrictedView
                   ? pendingTutorInvites.map((invite) => {
                       const lastSentRel = invite?.sent_at ? formatInviteLastSent(invite.sent_at) : null;
                       return (
@@ -3573,7 +3590,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   ) : null}
                 </View>
               </View>
-              {!isChildMode && (
+              {!isChildRestrictedView && (
                 <TouchableOpacity
                   style={styles.coursesAddButton}
                   onPress={() => {
@@ -3602,7 +3619,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     ? `No courses are assigned to you for ${selectedCoursesSchoolYear} yet.`
                     : `No subjects found for ${selectedCoursesSchoolYear}. Add a subject to organize learning.`}
                 </Text>
-                {!isChildMode && (
+                {!isChildRestrictedView && (
                   <TouchableOpacity
                     style={styles.coursesEmptyButton}
                     onPress={() => {
@@ -3702,7 +3719,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                                 <Text style={styles.subjectCardActivity}> · {lastActivity}</Text>
                               </View>
                             </View>
-                            {!isChildMode && (
+                            {!isChildRestrictedView && (
                               <View style={styles.subjectCardActions}>
                                 <TouchableOpacity
                                   style={[
@@ -4813,7 +4830,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         <ScrollView 
           style={[
             styles.mainContent,
-            ((activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') || isChildMode) && styles.mainContentFullWidth
+            ((activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') || isChildRestrictedView) && styles.mainContentFullWidth
           ]} 
           contentContainerStyle={[
             styles.mainContentContainer,
@@ -4825,7 +4842,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         </ScrollView>
 
         {/* Right: Fixed sidebar - hidden on About, Terms, and Privacy pages */}
-        {!isChildMode && activeSection !== 'about' && activeSection !== 'terms' && activeSection !== 'privacy' && (
+        {!isChildRestrictedView && activeSection !== 'about' && activeSection !== 'terms' && activeSection !== 'privacy' && (
           <View style={styles.sidebar}>
           <View style={styles.sidebarContent}>
           {/* Account Card */}
@@ -5516,7 +5533,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowInviteUrlModal(false)}>
           <TouchableOpacity style={styles.inviteUrlModal} activeOpacity={1} onPress={() => {}}>
             <View style={styles.inviteUrlModalHeader}>
-              <Text style={styles.inviteUrlModalTitle}>Invite Sent Successfully!</Text>
+              <Text style={styles.inviteUrlModalTitle}>
+                {isSelfManagedStudent && inviteSuccessRole === 'parent'
+                  ? 'Parent Request Sent!'
+                  : 'Invite Sent Successfully!'}
+              </Text>
               <TouchableOpacity
                 onPress={() => setShowInviteUrlModal(false)}
                 style={styles.inviteUrlModalClose}
@@ -5528,7 +5549,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             
             <Text style={styles.inviteUrlModalDescription}>
               {inviteSuccessRole === 'child' && 'Invite sent! Ensure the child checks their email to verify their account.'}
-              {inviteSuccessRole === 'parent' && 'Invite sent! Ensure the parent checks their email to verify their account.'}
+              {inviteSuccessRole === 'parent' && (
+                isSelfManagedStudent
+                  ? 'Parent request sent! Ask your parent to check their email and accept to link accounts.'
+                  : 'Invite sent! Ensure the parent checks their email to verify their account.'
+              )}
               {inviteSuccessRole === 'tutor' && 'Invite sent! Ensure the tutor checks their email to verify their account.'}
               {!inviteSuccessRole && 'Invite sent! Ensure they check their email to verify their account.'}
             </Text>
@@ -5568,7 +5593,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         >
           <TouchableOpacity style={styles.childInviteModal} activeOpacity={1} onPress={() => {}}>
             <View style={styles.childInviteModalHeader}>
-              <Text style={styles.childInviteModalTitle}>Invite Parent</Text>
+              <Text style={styles.childInviteModalTitle}>{isSelfManagedStudent ? 'Request Parent Link' : 'Invite Parent'}</Text>
               <TouchableOpacity
                 onPress={() => {
                   setShowParentInviteModal(false);
@@ -5583,7 +5608,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
 
             <Text style={styles.inviteUrlModalDescription}>
-              Enter the email address of the parent you'd like to invite:
+              {isSelfManagedStudent
+                ? "Enter your parent's email to request they link as your parent account:"
+                : "Enter the email address of the parent you'd like to invite:"}
             </Text>
             <TextInput
               style={styles.childInviteEmailInput}
@@ -5621,7 +5648,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 ) : (
                   <>
                     <Send size={16} color="#ffffff" />
-                    <Text style={styles.inviteUrlCopyButtonText}>Send Invite</Text>
+                    <Text style={styles.inviteUrlCopyButtonText}>{isSelfManagedStudent ? 'Send Request' : 'Send Invite'}</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -5853,6 +5880,25 @@ function createStyles(tokens) {
       marginBottom: SettingsLayout.sectionSpacing,
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    selfManagedStudentBadge: {
+      marginTop: -8,
+      marginBottom: 18,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: '#bfdbfe',
+      backgroundColor: '#eff6ff',
+      alignSelf: 'flex-start',
+    },
+    selfManagedStudentBadgeText: {
+      fontSize: 12,
+      color: '#1d4ed8',
+      fontWeight: '600',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     sectionSubtitle: {
@@ -6861,6 +6907,13 @@ function createStyles(tokens) {
     },
     profileSection: {
       marginTop: 30,
+    },
+    profileSectionDropdownOpen: {
+      position: 'relative',
+      zIndex: 160,
+      ...(Platform.OS === 'web' && {
+        isolation: 'isolate',
+      }),
     },
     profileSectionFirst: {
       marginTop: 0,
