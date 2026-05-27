@@ -2020,6 +2020,25 @@ async def invite_tutor(
                 inviter_name = inviter_profile.data.get("first_name") or inviter_profile.data.get("name")
         except:
             pass
+        if is_self_managed_student and body.role == "parent" and not inviter_name:
+            try:
+                child_id_for_student = (current_member or {}).get("child_id")
+                if not child_id_for_student:
+                    scope_for_student = _parse_child_scope_raw((current_member or {}).get("child_scope"))
+                    if isinstance(scope_for_student, list) and len(scope_for_student) > 0:
+                        child_id_for_student = scope_for_student[0]
+                if child_id_for_student:
+                    child_res = (
+                        supabase.table("children")
+                        .select("first_name, name")
+                        .eq("id", str(child_id_for_student))
+                        .maybe_single()
+                        .execute()
+                    )
+                    if child_res and child_res.data:
+                        inviter_name = child_res.data.get("first_name") or child_res.data.get("name") or inviter_name
+            except Exception:
+                pass
 
         # Get child name if this is a child invite
         child_name = None
@@ -2039,6 +2058,7 @@ async def invite_tutor(
             inviter_name=inviter_name,
             child_name=child_name,
             accept_url=accept_url,
+            self_managed_parent_request=(body.role == "parent" and is_self_managed_student),
         )
 
         log_event(

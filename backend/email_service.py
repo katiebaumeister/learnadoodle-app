@@ -29,6 +29,7 @@ def send_invite_email(
     inviter_name: Optional[str] = None,
     child_name: Optional[str] = None,
     accept_url: Optional[str] = None,
+    self_managed_parent_request: bool = False,
 ) -> bool:
     """
     Send an invite email via Postmark.
@@ -87,7 +88,11 @@ def send_invite_email(
         else:
             greeting = "Hello,"
 
-        if safe_inviter and role == "child" and safe_child:
+        if self_managed_parent_request and role == "parent" and safe_inviter:
+            body_p1 = f"{safe_inviter} wants to link their child account to you on Learnadoodle."
+        elif self_managed_parent_request and role == "parent":
+            body_p1 = "A child wants to link their child account to you on Learnadoodle."
+        elif safe_inviter and role == "child" and safe_child:
             body_p1 = f"{safe_inviter} has invited you to join Learnadoodle to help manage {safe_child}'s learning journey."
         elif safe_inviter:
             body_p1 = f"{safe_inviter} has invited you to join their family on Learnadoodle."
@@ -98,6 +103,8 @@ def send_invite_email(
             body_p2 = "You'll get your own account to see your schedule and track your learning. Use the button below to accept your invite and get started."
         elif role == "tutor":
             body_p2 = "As a tutor, you can help track progress and support the children's learning. Use the button below to accept your invitation."
+        elif role == "parent" and self_managed_parent_request:
+            body_p2 = "Accept this request to link as their parent account and take full control of family settings and planning."
         elif role == "parent":
             body_p2 = "As a parent, you'll have full access to manage your family's learning journey. Use the button below to accept your invitation."
         else:
@@ -113,7 +120,11 @@ def send_invite_email(
         else:
             headline_plain = "You're invited to Learnadoodle!"
         greeting_plain = f"Hello {child_name}," if role == "child" and child_name else "Hello,"
-        if inviter_name and role == "child" and child_name:
+        if self_managed_parent_request and role == "parent" and inviter_name:
+            body_p1_plain = f"{inviter_name} wants to link their child account to you on Learnadoodle."
+        elif self_managed_parent_request and role == "parent":
+            body_p1_plain = "A child wants to link their child account to you on Learnadoodle."
+        elif inviter_name and role == "child" and child_name:
             body_p1_plain = (
                 f"{inviter_name} has invited you to join Learnadoodle to help manage "
                 f"{child_name}'s learning journey."
@@ -132,6 +143,11 @@ def send_invite_email(
                 "As a tutor, you can help track progress and support the children's learning. "
                 "Use the link below to accept your invitation."
             )
+        elif role == "parent" and self_managed_parent_request:
+            body_p2_plain = (
+                "Accept this request to link as their parent account and take full control "
+                "of family settings and planning."
+            )
         elif role == "parent":
             body_p2_plain = (
                 "As a parent, you'll have full access to manage your family's learning journey. "
@@ -146,12 +162,17 @@ def send_invite_email(
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
     <style>
+        html {
+            background-color: #ffffff !important;
+        }
         body {{
             font-family: 'DM Sans', Arial, Helvetica, sans-serif;
             line-height: 1.6;
-            color: #333;
-            background-color: #E6F4FC;
+            color: #111827 !important;
+            background-color: #ffffff !important;
             margin: 0;
             padding: 0;
         }}
@@ -159,11 +180,13 @@ def send_invite_email(
             max-width: 600px;
             margin: 0 auto;
             padding: 40px 20px;
+            background-color: #ffffff !important;
         }}
         .container {{
-            background-color: #ffffff;
+            background-color: #ffffff !important;
             border-radius: 12px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+            border: 1px solid #e5e7eb;
             padding: 40px 32px;
         }}
         .logo {{
@@ -195,7 +218,7 @@ def send_invite_email(
             margin: 28px 0 24px 0;
         }}
         .button {{
-            background-color: #000;
+            background-color: #2563eb !important;
             color: #ffffff !important;
             padding: 15px 32px;
             text-decoration: none;
@@ -204,6 +227,7 @@ def send_invite_email(
             font-weight: 600;
             font-size: 16px;
             font-family: 'DM Sans', Arial, Helvetica, sans-serif;
+            border: 1px solid #1d4ed8;
         }}
         .secondary {{
             font-size: 13px;
@@ -237,7 +261,7 @@ def send_invite_email(
         }}
     </style>
 </head>
-<body>
+<body style="background-color: #ffffff !important; color: #111827 !important;">
     <div class="wrap">
         <div class="container">
             <div class="logo">

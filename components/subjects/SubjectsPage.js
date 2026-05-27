@@ -2433,8 +2433,8 @@ export default function SubjectsPage({
               </View>
             )}
           </View>
-          {/* Hide + NEW button for child/student view */}
-          {!isChildView && (
+          {/* Show + NEW when subject management is allowed (includes self-managed students). */}
+          {canManageSubjectsActions && (
             <TouchableOpacity
               style={styles.newButton}
               onPress={() => {
