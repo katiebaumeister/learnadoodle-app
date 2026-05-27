@@ -6,7 +6,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Image, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
 import { Calendar, ListTodo, Calendar as CalendarIcon, FileText, ChevronRight } from 'lucide-react';
 import { colors } from '../../theme/colors';
 
@@ -19,7 +19,6 @@ export default function HomeHeroCard({
   onChipPress,
   onParentDigest,
   weatherStatus = 'light',
-  poodlePose = 'calm', // 'calm' | 'attentive' | 'alert'
   studentsWithActivity = [],
   readyCount = 0,
   blockCount = 0,
@@ -52,21 +51,6 @@ export default function HomeHeroCard({
     const year = date.getFullYear();
     return `${dayName}, ${month} ${day}, ${year}`;
   };
-
-  const getPoodleImage = () => {
-    // Use poodlePose for dynamic poses based on urgency
-    switch (poodlePose) {
-      case 'alert':
-        return require('../../assets/heavy.png'); // alert poodle (overdue exists)
-      case 'attentive':
-        return require('../../assets/normal.png'); // attentive poodle (items ready)
-      case 'calm':
-      default:
-        return require('../../assets/light.png'); // calm poodle (no urgency)
-    }
-  };
-
-  const needsSquareCrop = poodlePose === 'alert'; // Only alert (heavy) needs square crop
 
   // Animation refs for staggered casino-style appearance
   const stat1Opacity = useRef(new Animated.Value(0)).current;

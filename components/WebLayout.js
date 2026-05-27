@@ -512,24 +512,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [preloadedAcademicYears, setPreloadedAcademicYears] = useState(null);
   /** null = not loaded yet; rows seed EventModal help/submission strips without a blocking fetch */
   const [preloadedFamilyAssignments, setPreloadedFamilyAssignments] = useState(null);
-  const [forceHideLoader, setForceHideLoader] = useState(false);
   // Derived: must come after session/state used below (avoid TDZ)
   const onboardingBlocked = !!(
     session &&
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
-  const onboardingStatusPending = !!(user && session && !onboardingCheckDone);
-  // Fullscreen loader should be brief and fail-open quickly.
+  // Fullscreen loader: block on session + shell assets, and onboarding only when actually blocked.
   const showLoader = !!(
     user &&
     session &&
     ((session.loading === true) ||
-      onboardingStatusPending ||
       !shellImagesReady ||
       (onboardingBlocked && (!onboardingUiReady || !onboardingModalReady)))
   );
-  const showLoaderEffective = showLoader && !forceHideLoader;
+  const showLoaderEffective = showLoader;
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') {
@@ -546,19 +543,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       });
     return () => { cancelled = true; };
   }, []);
-
-  useEffect(() => {
-    if (!showLoader) {
-      setForceHideLoader(false);
-      return;
-    }
-    if (onboardingStatusPending || !shellImagesReady || (onboardingBlocked && !onboardingModalReady)) {
-      setForceHideLoader(false);
-      return;
-    }
-    const timeoutId = setTimeout(() => setForceHideLoader(true), 1200);
-    return () => clearTimeout(timeoutId);
-  }, [showLoader, onboardingStatusPending, shellImagesReady, onboardingBlocked, onboardingModalReady]);
 
   useEffect(() => {
     if (!onboardingBlocked) setOnboardingModalReady(false);

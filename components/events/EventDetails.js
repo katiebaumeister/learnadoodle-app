@@ -1329,6 +1329,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [sendToStudentNote, setSendToStudentNote] = useState('');
   const [queueSendToStudentAfterSave, setQueueSendToStudentAfterSave] = useState(false);
   const [sendToStudentSubmitting, setSendToStudentSubmitting] = useState(false);
+  const [sendToStudentInlineError, setSendToStudentInlineError] = useState('');
   const [invitedAssigneeIds, setInvitedAssigneeIds] = useState([]);
   const [showSendInviteClarification, setShowSendInviteClarification] = useState(false);
 
@@ -1495,8 +1496,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     const wanted = new Set(assigneeIds.map((id) => String(id)));
     const accepted = new Set();
     (familyMembers || []).forEach((m) => {
-      const inviteStatus = String(m?.invite_status || '').trim().toLowerCase();
-      // Sending requires a real accepted invite; empty/unknown status is not accepted.
+      const inviteStatusRaw = String(m?.invite_status || '').trim().toLowerCase();
+      // "connected" is a valid accepted/linked state for existing child accounts.
+      const inviteStatus = inviteStatusRaw === 'connected' ? 'accepted' : inviteStatusRaw;
       if (inviteStatus !== 'accepted') return;
       const role = String(m?.member_role || m?.role || '').toLowerCase();
       if (role && role !== 'child' && role !== 'student') return;
@@ -1559,7 +1561,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             rows = Array.isArray(data?.members)
               ? data.members.filter((m) => {
                   const role = String(m?.member_role || m?.role || '').toLowerCase();
-                  const status = String(m?.invite_status || '').toLowerCase();
+                  const statusRaw = String(m?.invite_status || '').toLowerCase();
+                  const status = statusRaw === 'connected' ? 'accepted' : statusRaw;
                   return (role === 'child' || role === 'student') && status === 'accepted';
                 })
               : [];
@@ -1570,7 +1573,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             .select('child_id, child_scope, member_role, invite_status')
             .eq('family_id', familyId)
             .in('member_role', ['child', 'student'])
-            .eq('invite_status', 'accepted');
+            .in('invite_status', ['accepted', 'connected']);
           if (!cancelled && !error) rows = Array.isArray(data) ? data : [];
         }
         if (cancelled) return;
@@ -1619,7 +1622,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const assigneeInviteStatusMap = useMemo(() => {
     const statusById = new Map();
     (familyMembers || []).forEach((m) => {
-      const statusRaw = String(m?.invite_status || '').trim().toLowerCase();
+      const statusRawBase = String(m?.invite_status || '').trim().toLowerCase();
+      const statusRaw = statusRawBase === 'connected' ? 'accepted' : statusRawBase;
       const status = statusRaw === 'accepted' || statusRaw === 'pending' ? statusRaw : 'none';
       const applyStatus = (id) => {
         if (id == null) return;
@@ -2222,6 +2226,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (sendToStudentSubmitting) return;
     setShowSendToStudentModal(false);
     setSendToStudentNote('');
+    setSendToStudentInlineError('');
     if (sendOnlyMode) {
       onClose?.();
     }
@@ -2229,15 +2234,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   const sendWorkToStudents = useCallback(
     async (note) => {
+      setSendToStudentInlineError('');
       const targetAssigneeIds = (sendEligibleAssigneeIds || []).map(String).filter(Boolean);
       if (!familyId || !event?.id || assigneeIds.length === 0) {
-        toast.push('Choose at least one student and save the event first.', 'error');
+        setSendToStudentInlineError('Choose at least one student and save the event first.');
         return;
       }
       if (targetAssigneeIds.length === 0) {
-        toast.push(
+        setSendToStudentInlineError(
           sendInviteClarificationText || 'Invite the assigned students before sending this assignment.',
-          'info'
         );
         return;
       }
@@ -2315,6 +2320,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             : 'Sent to student',
           'success'
         );
+        setSendToStudentInlineError('');
         setShowSendToStudentModal(false);
         setSendToStudentNote('');
         if (sendOnlyMode) {
@@ -8524,11 +8530,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ...fontDisplay('600'),
                     }}
                   >
-                    Note (optional)
+                    Note
                   </Text>
                   <TextInput
                     value={sendToStudentNote}
-                    onChangeText={setSendToStudentNote}
+                    onChangeText={(value) => {
+                      setSendToStudentNote(value);
+                      if (sendToStudentInlineError) setSendToStudentInlineError('');
+                    }}
                     onKeyPress={(e) => {
                       e?.stopPropagation?.();
                     }}
@@ -8558,14 +8567,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <View style={{ marginTop: 24 }}>
                     <TouchableOpacity
                       onPress={() => sendWorkToStudents(sendToStudentNote.trim())}
-                      disabled={sendToStudentSubmitting || !hasInvitedAssignee}
+                      disabled={sendToStudentSubmitting}
                       style={[
                         styles.workflowActionButton,
                         sendToStudentSubmitting && styles.workflowActionButtonDisabled,
-                        !hasInvitedAssignee && styles.workflowActionButtonDisabled,
                         { alignSelf: 'center' },
                       ]}
-                      {...(Platform.OS === 'web' && { cursor: (sendToStudentSubmitting || !hasInvitedAssignee) ? 'not-allowed' : 'pointer' })}
+                      {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'not-allowed' : 'pointer' })}
                     >
                       <View style={styles.workflowActionButtonRow}>
                         <View style={styles.workflowActionIconWrap}>
@@ -8576,6 +8584,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         </Text>
                       </View>
                     </TouchableOpacity>
+                    {sendToStudentInlineError ? (
+                      <Text style={[styles.errorTextSmall, { marginTop: 8, textAlign: 'center' }]}>
+                        {sendToStudentInlineError}
+                      </Text>
+                    ) : null}
                   </View>
                 </View>
               </TouchableOpacity>

@@ -383,7 +383,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       rowKey: `ev-${ev.id}`,
       title: ev.title || 'Schoolwork',
       metaLine,
-      sourceTag: 'Planner',
       onCta: () => openHelpForPlannerEvent(ev),
     });
   };
@@ -395,7 +394,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       rowKey: a.id,
       title: a.title || 'Schoolwork',
       metaLine,
-      sourceTag: 'Assignment',
       onCta: () => openHelpForAssignment(a),
       onAskAnother: () => openHelpForAssignment(a),
       onAskedPress: () => {
@@ -1024,25 +1022,28 @@ const styles = StyleSheet.create({
     }),
   },
   helpCta: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: 'rgba(79, 70, 229, 1)',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
     flexShrink: 0,
   },
   helpCtaDone: {
-    backgroundColor: 'rgba(148, 163, 184, 0.35)',
+    backgroundColor: '#F1F5F9',
+    borderColor: '#E2E8F0',
   },
   helpCtaText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#fff',
+    color: '#64748B',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   helpCtaTextDone: {
-    color: '#334155',
+    color: '#94A3B8',
   },
   helpAskedColumn: {
     alignItems: 'flex-end',

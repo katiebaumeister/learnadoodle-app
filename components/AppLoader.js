@@ -16,9 +16,8 @@ const AVATAR_SOURCES = {
 };
 
 const TOOLBAR_IDS = ['logo', 'home', 'planner', 'family', 'library', 'subject', 'more'];
-const HOME_POODLE_IDS = ['homePoodleLight', 'homePoodleNormal', 'homePoodleHeavy'];
 const CONNECTED_ACCOUNT_LOGO_IDS = ['googleLogo', 'dropboxLogo', 'notionLogo', 'youtubeLogo', 'quizletLogo', 'canvasLogo'];
-const SHELL_IMAGE_IDS = ['icon', ...TOOLBAR_IDS, ...HOME_POODLE_IDS, ...AVATAR_KEYS];
+const SHELL_IMAGE_IDS = ['icon', ...TOOLBAR_IDS, ...AVATAR_KEYS];
 
 const SHELL_SOURCES = {
   icon: require('../assets/icon.png'),
@@ -29,10 +28,6 @@ const SHELL_SOURCES = {
   library: require('../assets/library.png'),
   subject: require('../assets/subject.png'),
   more: require('../assets/more.png'),
-  /** Home hero / forecast poodles — decoded before shell gate opens */
-  homePoodleLight: require('../assets/light.png'),
-  homePoodleNormal: require('../assets/normal.png'),
-  homePoodleHeavy: require('../assets/heavy.png'),
   ...AVATAR_SOURCES,
 };
 
@@ -68,7 +63,7 @@ const CONNECTED_ACCOUNT_LOGO_SOURCES = {
   canvasLogo: require('../assets/canvas.png'),
 };
 
-/** Shell + sidebar + FAB + avatars + landing + connected-accounts logos */
+/** Shell + sidebar + avatars + landing + connected-accounts logos */
 const CRITICAL_WEB_IMAGE_IDS = [...SHELL_IMAGE_IDS, ...LANDING_PAGE_IDS, ...CONNECTED_ACCOUNT_LOGO_IDS];
 const CRITICAL_WEB_SOURCES = {
   ...SHELL_SOURCES,
@@ -79,7 +74,6 @@ const CRITICAL_WEB_SOURCES = {
 const TOTAL_PRELOAD = CRITICAL_WEB_IMAGE_IDS.length;
 /** No extra delay after images decode — gate opens as soon as shell assets are loaded. */
 const GATE_MIN_CYCLE_MS = 0;
-const STALL_FALLBACK_MS = 60000;
 /** App shell outer background — avoids white flash between landing and loader */
 const LOADER_BG = '#F6F7FB';
 const SPINNER_COLOR = '#6BB3E8';
@@ -96,7 +90,7 @@ function resolveUri(source) {
 let webShellImagesPromise = null;
 
 /**
- * Web: preload + decode shell, toolbar, FAB, prof1–10, landing page PNGs once (singleton).
+ * Web: preload + decode shell, toolbar, prof1–10, landing page PNGs once (singleton).
  * Call from index.js so decoding runs in parallel with the JS bundle before React root.
  * No-op resolve on native.
  */
@@ -139,7 +133,6 @@ export function ensureWebShellImagesLoaded() {
       img.onerror = () => onAssetDone(id);
       img.src = uri;
     });
-    setTimeout(finish, STALL_FALLBACK_MS);
   });
   return webShellImagesPromise;
 }
@@ -212,16 +205,8 @@ export default function AppLoader({ style, onShellAssetsReady, spinnerOnly = fal
     };
 
     const interval = setInterval(tryReady, 80);
-    const stallFallback = setTimeout(() => {
-      if (readyFiredRef.current) return;
-      if (typeof console !== 'undefined' && console.warn) {
-        console.warn('[AppLoader] Stall fallback after', STALL_FALLBACK_MS, 'ms');
-      }
-      fireShellReady();
-    }, STALL_FALLBACK_MS);
     return () => {
       clearInterval(interval);
-      clearTimeout(stallFallback);
     };
   }, [gateMode, allShellImagesLoaded]);
 

@@ -13,7 +13,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { X, Check } from 'lucide-react';
+import { X, Check, Send } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { createAssignment, updateAssignment } from '../../lib/services/assignmentsClient';
 import { colors } from '../../theme/colors';
@@ -190,19 +190,21 @@ export default function AskParentHelpModal({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.sheet}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.closeButton}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <X size={20} color={colors.text} />
+          </TouchableOpacity>
           <ScrollView
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
           >
-            {/* Zone 1 — context (tight) */}
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Ask for help</Text>
-              <TouchableOpacity onPress={onClose} hitSlop={12} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                <X size={22} color={colors.muted} />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.aboutLabel}>About this assignment</Text>
             <Text style={styles.contextTitle} numberOfLines={3}>
               {titleRef}
             </Text>
@@ -234,10 +236,8 @@ export default function AskParentHelpModal({
               })}
             </View>
 
-            <Text style={styles.reassurance}>Your parent will see this and respond.</Text>
-
             {/* Zone 3 — expression (breathing room) */}
-            <Text style={[styles.sectionLabel, styles.sectionLabelNote]}>Add a message (optional)</Text>
+            <Text style={[styles.sectionLabel, styles.sectionLabelNote]}>Add a message</Text>
             <TextInput
               style={styles.input}
               placeholder="Explain what you need help with…"
@@ -250,18 +250,25 @@ export default function AskParentHelpModal({
 
             {error ? <Text style={styles.err}>{error}</Text> : null}
 
-            <TouchableOpacity
-              style={[styles.cta, sending && styles.ctaDisabled]}
-              onPress={handleSend}
-              disabled={sending}
-              {...(Platform.OS === 'web' && { cursor: sending ? 'not-allowed' : 'pointer' })}
-            >
-              {sending ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.ctaText}>Send to parent</Text>
-              )}
-            </TouchableOpacity>
+            <View style={styles.ctaWrap}>
+              <TouchableOpacity
+                style={[styles.cta, sending && styles.ctaDisabled]}
+                onPress={handleSend}
+                disabled={sending}
+                {...(Platform.OS === 'web' && { cursor: sending ? 'not-allowed' : 'pointer' })}
+              >
+                {sending ? (
+                  <ActivityIndicator color="#5B6880" />
+                ) : (
+                  <View style={styles.ctaRow}>
+                    <View style={styles.ctaIconWrap}>
+                      <Send size={12} color="#5B6880" />
+                    </View>
+                    <Text style={styles.ctaText}>Send to parent</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
           </ScrollView>
         </View>
       </View>
@@ -286,58 +293,50 @@ const styles = StyleSheet.create({
     maxHeight: '90%',
   },
   scrollContent: {
+    paddingTop: 8,
     paddingBottom: 4,
   },
-  sheetHeader: {
-    flexDirection: 'row',
+  closeButton: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    zIndex: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  sheetTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.text,
-    flex: 1,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  aboutLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-    color: colors.textSecondary,
-    marginBottom: 6,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.35)',
   },
   contextTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text,
-    lineHeight: 22,
+    fontSize: 14,
+    fontWeight: '400',
+    color: colors.textSecondary,
+    lineHeight: 21,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   contextWhen: {
-    fontSize: 13,
+    fontSize: 14,
+    fontWeight: '400',
     color: colors.textSecondary,
-    marginTop: 4,
+    lineHeight: 21,
+    marginTop: 0,
     marginBottom: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   sectionLabel: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-    color: colors.text,
+    color: '#64748B',
+    letterSpacing: 0.15,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   sectionLabelDecision: {
@@ -362,7 +361,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.5)',
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#FFFFFF',
   },
   /** Selected: Leanadoodle light blue (ice bg + border/text tone — same as planner filter pills) */
   chipOn: {
@@ -391,15 +390,6 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  reassurance: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 18,
-    marginTop: 14,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   input: {
     minHeight: 96,
     borderWidth: 1,
@@ -419,26 +409,45 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 8,
   },
-  /** Leanadoodle primary: same light blue + League Spartan as Edit Event (EventDetails createButton) */
-  cta: {
-    backgroundColor: '#85C4F2',
-    paddingVertical: 16,
-    borderRadius: 12,
+  ctaWrap: {
+    marginTop: 24,
     alignItems: 'center',
-    marginTop: 4,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 6px rgba(133, 196, 242, 0.35)',
-    }),
+  },
+  cta: {
+    minHeight: 38,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D6DCE8',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
   },
   ctaDisabled: {
-    opacity: 0.7,
+    opacity: 0.5,
+  },
+  ctaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  ctaIconWrap: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
   },
   ctaText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '500',
+    color: '#5B6880',
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 14,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
 });
