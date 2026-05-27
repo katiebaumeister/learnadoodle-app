@@ -1184,12 +1184,24 @@ export default function EmbeddedNotificationCenter({
                           if (Platform.OS === 'web' && typeof window !== 'undefined' && event?.id) {
                             window.dispatchEvent(
                               new CustomEvent('openEventModal', {
-                                detail: { eventId: String(event.id), initialEvent: null },
+                                detail: {
+                                  eventId: String(event.id),
+                                  initialEvent: event,
+                                  schedulingMode: true,
+                                  editScope: 'single',
+                                },
                               })
                             );
                           }
                         }}
                         {...(Platform.OS === 'web' && {
+                          onMouseDown: (e) => {
+                            const button = e?.button ?? e?.nativeEvent?.button;
+                            if (button !== 2) return;
+                            e.preventDefault?.();
+                            e.stopPropagation?.();
+                            openPlannerContextMenu(e, String(event.id), event);
+                          },
                           onContextMenu: (e) => openPlannerContextMenu(e, String(event.id), event),
                         })}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}

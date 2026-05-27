@@ -1643,15 +1643,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     };
   }, [isParentView, familyId, assigneeIds, acceptedInvitedAssigneeIdsFromMembers]);
 
+  const effectiveInvitedAssigneeIds = useMemo(() => {
+    const fromState = [...new Set((invitedAssigneeIds || []).map(String))];
+    if (fromState.length > 0 || inviteEligibilityReady) return fromState;
+    return [...new Set((acceptedInvitedAssigneeIdsFromMembers || []).map(String))];
+  }, [invitedAssigneeIds, inviteEligibilityReady, acceptedInvitedAssigneeIdsFromMembers]);
+
   const sendEligibleAssigneeIds = useMemo(() => {
-    const invitedSet = new Set((invitedAssigneeIds || []).map(String));
+    const invitedSet = new Set((effectiveInvitedAssigneeIds || []).map(String));
     return (assigneeIds || []).map(String).filter((id) => invitedSet.has(id));
-  }, [assigneeIds, invitedAssigneeIds]);
+  }, [assigneeIds, effectiveInvitedAssigneeIds]);
 
   const sendBlockedAssigneeIds = useMemo(() => {
-    const invitedSet = new Set((invitedAssigneeIds || []).map(String));
+    const invitedSet = new Set((effectiveInvitedAssigneeIds || []).map(String));
     return (assigneeIds || []).map(String).filter((id) => !invitedSet.has(id));
-  }, [assigneeIds, invitedAssigneeIds]);
+  }, [assigneeIds, effectiveInvitedAssigneeIds]);
 
   const assigneeInviteStatusMap = useMemo(() => {
     const statusById = new Map();
@@ -1713,7 +1719,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   }, [familyMembers]);
 
   const sendInviteClarificationText = useMemo(() => {
-    if (!inviteEligibilityReady) return '';
     const invitedCount = sendEligibleAssigneeIds.length;
     const blockedCount = sendBlockedAssigneeIds.length;
     if (invitedCount <= 0 && blockedCount > 0) {
@@ -1760,7 +1765,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       return 'Some assigned students still need an invite before they can receive this assignment';
     }
     return '';
-  }, [inviteEligibilityReady, sendEligibleAssigneeIds, sendBlockedAssigneeIds, sendPendingAssigneeIds, sendNeedsInviteAssigneeIds, formatAssigneeNameList]);
+  }, [sendEligibleAssigneeIds, sendBlockedAssigneeIds, sendPendingAssigneeIds, sendNeedsInviteAssigneeIds, formatAssigneeNameList]);
 
   const openInviteChildModalForSend = useCallback(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -2293,10 +2298,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const sendWorkToStudents = useCallback(
     async (note) => {
       setSendToStudentInlineError('');
-      if (!inviteEligibilityReady) {
-        setSendToStudentInlineError('Checking invite status…');
-        return;
-      }
       const targetAssigneeIds = (sendEligibleAssigneeIds || []).map(String).filter(Boolean);
       if (!familyId || !event?.id || assigneeIds.length === 0) {
         setSendToStudentInlineError('Choose at least one student and save the event first.');
@@ -2402,7 +2403,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setSendToStudentSubmitting(false);
       }
     },
-    [inviteEligibilityReady, familyId, event, assigneeIds, sendEligibleAssigneeIds, sendInviteClarificationText, authUser?.id, draftTitle, eventType, subjectId, toast, sendOnlyMode, onClose, appendAssignmentSendLogQuiet, loadEventLinkedParentAssignments]
+    [familyId, event, assigneeIds, sendEligibleAssigneeIds, sendInviteClarificationText, authUser?.id, draftTitle, eventType, subjectId, toast, sendOnlyMode, onClose, appendAssignmentSendLogQuiet, loadEventLinkedParentAssignments]
   );
 
   const startPeriod = useMemo(() => {
@@ -8600,9 +8601,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ...fontDisplay('400'),
                     }}
                   >
-                    {!inviteEligibilityReady
-                      ? 'Checking invite status…'
-                      : sendInviteClarificationText
+                    {sendInviteClarificationText
                       ? sendInviteClarificationText
                       : (
                         sendTrackingSummary.hasShared
