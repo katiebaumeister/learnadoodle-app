@@ -567,7 +567,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
-  const homeNeedsInitialData = activeTab === 'home';
+  const isParentLikeHomeViewer =
+    session?.role_flags?.isParent === true ||
+    (!session?.role_flags?.isChild && !session?.role_flags?.isTutor);
+  const homeNeedsInitialData = activeTab === 'home' && isParentLikeHomeViewer;
   // Fullscreen loader: block on session + shell assets, and onboarding only when actually blocked.
   const showLoader = !!(
     user &&
@@ -605,6 +608,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setHomeInitialDataReady(true);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!homeNeedsInitialData || homeInitialDataReady) return;
+    const timeoutId = setTimeout(() => {
+      setHomeInitialDataReady(true);
+      if (typeof console !== 'undefined') {
+        console.warn('[WebLayout] Home initial-data gate timed out; releasing loader fail-safe.');
+      }
+    }, 12000);
+    return () => clearTimeout(timeoutId);
+  }, [homeNeedsInitialData, homeInitialDataReady]);
 
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
   const [filterExpanded, setFilterExpanded] = useState(false);
