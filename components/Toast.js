@@ -3,20 +3,25 @@ import { View, Text, StyleSheet, Platform, Animated } from 'react-native';
 import { X } from 'lucide-react';
 
 const ToastContext = createContext(null);
+const DEFAULT_TOAST_DURATION_MS = 3000;
+const ERROR_TOAST_DURATION_MS = 8000;
 
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
-  const push = useCallback((message, type = 'info', persistent = false) => {
+  const push = useCallback((message, type = 'info', persistent = false, durationMs = null) => {
     const id = Date.now().toString();
     const newToast = { id, message, type, persistent };
     setToasts((prev) => [...prev, newToast]);
     
-    // Auto-dismiss after 3 seconds unless persistent
+    // Auto-dismiss unless persistent. Keep error toasts longer so users can capture details.
     if (!persistent) {
+      const timeoutMs = Number.isFinite(durationMs)
+        ? durationMs
+        : (type === 'error' ? ERROR_TOAST_DURATION_MS : DEFAULT_TOAST_DURATION_MS);
       setTimeout(() => {
         setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, 3000);
+      }, timeoutMs);
     }
     
     return id;

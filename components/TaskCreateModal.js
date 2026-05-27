@@ -1951,19 +1951,26 @@ export default function TaskCreateModal({
   const parseTimeString = (timeStr) => {
     if (!timeStr) return null;
     const normalized = String(timeStr).replace(/_/g, '').trim();
-    const match = normalized.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    // Accept masked/manual formats: "6 PM", "6:00 PM", "18:00", "6:00"
+    const match = normalized.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
     if (!match) return null;
 
     let hours = parseInt(match[1], 10);
-    const minutes = parseInt(match[2], 10);
-    const period = match[3].toUpperCase();
+    const minutes = match[2] ? parseInt(match[2], 10) : 0;
+    const period = match[3] ? match[3].toUpperCase() : null;
 
-    if (hours === 0 || hours > 12 || minutes < 0 || minutes > 59) {
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes) || minutes < 0 || minutes > 59) {
       return null;
     }
 
-    if (period === 'PM' && hours !== 12) hours += 12;
-    if (period === 'AM' && hours === 12) hours = 0;
+    if (period) {
+      if (hours < 1 || hours > 12) return null;
+      if (period === 'PM' && hours !== 12) hours += 12;
+      if (period === 'AM' && hours === 12) hours = 0;
+    } else {
+      // No AM/PM provided: treat as 24-hour input.
+      if (hours < 0 || hours > 23) return null;
+    }
 
     return { hours, minutes };
   };
