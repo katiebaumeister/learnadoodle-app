@@ -134,7 +134,7 @@ export default function EmbeddedNotificationCenter({
   const [onboardingStatusReady, setOnboardingStatusReady] = useState(
     () => hideOnboardingCards || (initialBootstrap.fromCache && hasPositiveOnboardingSignal(initialBootstrap))
   );
-  const [dataReady, setDataReady] = useState(false);
+  const [dataReady, setDataReady] = useState(() => initialBootstrap.fromCache);
   const [selectedSection, setSelectedSection] = useState('help_requests');
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   /** null | 'submission' (review submitted work) | 'help' (respond to help request) */
@@ -147,7 +147,11 @@ export default function EmbeddedNotificationCenter({
   /** Re-read cache when family changes (same mount). */
   useLayoutEffect(() => {
     if (!familyId) {
+      setAssignments([]);
+      setUpcomingEvents([]);
+      setChildren([]);
       setRailBootstrapped(false);
+      setDataReady(false);
       setHasPendingChildInvite(false);
       setPendingInviteChildNames([]);
       setOnboardingStatusReady(hideOnboardingCards);
@@ -162,10 +166,12 @@ export default function EmbeddedNotificationCenter({
       setHasPendingChildInvite(b.hasPendingChildInvite);
       setPendingInviteChildNames(b.pendingInviteChildNames);
       setRailBootstrapped(true);
+      setDataReady(true);
       // Only trust positive cached onboarding status; negative cache can be stale.
       setOnboardingStatusReady(hideOnboardingCards || hasPositiveOnboardingSignal(b));
     } else {
       setRailBootstrapped(false);
+      setDataReady(false);
       setOnboardingStatusReady(hideOnboardingCards);
     }
   }, [familyId, hideOnboardingCards]);
@@ -277,10 +283,9 @@ export default function EmbeddedNotificationCenter({
     loadCycleRef.current = cycleId;
     setActiveLoadCycle(cycleId);
     setCommittedPrimaryCardMode(null);
-    if (!hideOnboardingCards) {
+    if (!hideOnboardingCards && !railBootstrapped) {
       setOnboardingStatusReady(false);
     }
-    setDataReady(false);
     logRail('load cycle start', { cycleId, familyId, summaryKnown });
 
     // Don't set loading state - load silently in background

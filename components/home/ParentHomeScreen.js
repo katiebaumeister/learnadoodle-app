@@ -112,6 +112,7 @@ export default function ParentHomeScreen({
   onAddSubject,
   onAddChild,
   hideRailOnboardingCards = false,
+  onInitialDataReady = null,
 }) {
   const session = useSession();
   const [homeData, setHomeData] = useState(null);
@@ -119,6 +120,13 @@ export default function ParentHomeScreen({
   const [notificationCount, setNotificationCount] = useState(0);
   const [error, setError] = useState(null);
   const [showParentDigest, setShowParentDigest] = useState(false);
+  const initialDataReadyFiredRef = useRef(false);
+
+  const markInitialDataReady = useCallback(() => {
+    if (initialDataReadyFiredRef.current) return;
+    initialDataReadyFiredRef.current = true;
+    onInitialDataReady?.();
+  }, [onInitialDataReady]);
 
   // Get familyId from session if not provided as prop
   const familyId = propFamilyId || session?.family_id;
@@ -178,6 +186,7 @@ export default function ParentHomeScreen({
       if (cachedData) {
         // Use cached data immediately - no loading state
         setHomeData(cachedData);
+        markInitialDataReady();
         setError(null);
         // Load notification count in background
         loadNotificationCount();
@@ -186,16 +195,10 @@ export default function ParentHomeScreen({
         return;
       }
       
-      // No cache - set empty data immediately (no loading state) and load in background
-      setHomeData({
-        learning: [],
-        tasks: [],
-        children: [],
-        subjects: [],
-      });
+      // No cache - keep startup loader visible until first real payload resolves.
       setError(null);
       // Load data in background silently
-      loadData(true);
+      loadData(true, { markInitialReady: true });
       // Load notification count in background
       loadNotificationCount();
     } else if (session && session.error) {
@@ -206,6 +209,7 @@ export default function ParentHomeScreen({
         children: [],
         subjects: [],
       });
+      markInitialDataReady();
     } else if (session && !session.loading && !familyId) {
       setError(new Error('No family ID available'));
       setHomeData({
@@ -214,11 +218,13 @@ export default function ParentHomeScreen({
         children: [],
         subjects: [],
       });
+      markInitialDataReady();
     }
     // Primitives only — avoid re-running when SessionContext value identity flickers.
-  }, [session?.loading, session?.error, familyId, selectedDate]);
+  }, [session?.loading, session?.error, familyId, selectedDate, markInitialDataReady]);
 
-  const loadData = async (silent = false) => {
+  const loadData = async (silent = false, options = {}) => {
+    const shouldMarkInitialReady = options?.markInitialReady === true;
     if (!familyId) return;
 
     try {
@@ -250,6 +256,9 @@ export default function ParentHomeScreen({
           subjects: [],
         };
         setHomeData(emptyData);
+        if (shouldMarkInitialReady) {
+          markInitialDataReady();
+        }
         // Still try to load notification count even if RPC fails
         try {
           await loadNotificationCount();
@@ -300,6 +309,9 @@ export default function ParentHomeScreen({
       
       setError(null);
       setHomeData(normalizedHomeData);
+      if (shouldMarkInitialReady) {
+        markInitialDataReady();
+      }
       
       // Save to cache
       saveHomeDataToCache(familyId, dateStr, normalizedHomeData);
@@ -320,6 +332,9 @@ export default function ParentHomeScreen({
         children: [],
         subjects: [],
       });
+      if (shouldMarkInitialReady) {
+        markInitialDataReady();
+      }
     }
   };
 

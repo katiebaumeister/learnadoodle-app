@@ -8,35 +8,26 @@
  * - TutorNavigator (tutor experience with assigned children only)
  */
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { useSession } from '../../contexts/SessionContext';
 import ParentNavigator from './ParentNavigator';
-import AppLoader, { ensureWebShellImagesLoaded } from '../AppLoader';
+import AppLoader from '../AppLoader';
 
 export default function RoleGate({ children, ...props }) {
   const session = useSession();
-  const [shellToolbarReady, setShellToolbarReady] = useState(Platform.OS !== 'web');
 
-  useEffect(() => {
-    if (Platform.OS !== 'web') return undefined;
-    let cancelled = false;
-    ensureWebShellImagesLoaded().then(() => {
-      if (!cancelled) setShellToolbarReady(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Session + web toolbar/shell PNGs preloaded/decoded so LeftRail does not pop in after first paint
-  if (session.loading || !shellToolbarReady) {
-    return <AppLoader />;
+  // Keep router-level fallback for truly missing session objects.
+  // Once we have a session object (even while session.loading=true), render the main shell
+  // so WebLayout owns a single continuous startup loader without spinner remounts.
+  if (!session) {
+    return <AppLoader spinnerOnly />;
   }
 
   // If no session, show error. If session but no family_id: allow parent through (new signup → onboarding will create family); others show error.
   const isNewParent = session?.role_flags?.isParent === true;
-  if (!session || (!session.family_id && !isNewParent)) {
+  const isSessionResolving = session?.loading === true;
+  if (!isSessionResolving && !session.family_id && !isNewParent) {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorTitle}>Unable to Load</Text>
@@ -49,11 +40,11 @@ export default function RoleGate({ children, ...props }) {
 
   // Route to appropriate navigator based on role
   // Child users use the same shell as parents (WebLayout: left sidebar + center grid) so structure/UI match; only content is child-scoped.
-  const { role_flags, effective_role } = session;
+  const roleFlags = session?.role_flags || {};
 
-  if (role_flags.isChild) {
+  if (roleFlags.isChild) {
     return <ParentNavigator session={session} user={props.user} userRole="child" {...props} />;
-  } else if (role_flags.isTutor) {
+  } else if (roleFlags.isTutor) {
     // Same WebLayout shell as parent/child: focused tutor content + rail in WebContent, not a separate mobile shell.
     return <ParentNavigator session={session} user={props.user} userRole="tutor" {...props} />;
   } else {

@@ -395,6 +395,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [initialOnboardingBlocked, setInitialOnboardingBlocked] = useState(false);
   const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
   const [shellImagesReady, setShellImagesReady] = useState(Platform.OS !== 'web');
+  const [homeInitialDataReady, setHomeInitialDataReady] = useState(false);
 
   /** Post-onboarding explorer tour (parents: 3-step; child/tutor: one modal). Persisted in profiles.app_preferences. */
   const [explorerParentTourOpen, setExplorerParentTourOpen] = useState(false);
@@ -566,12 +567,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
+  const homeNeedsInitialData = activeTab === 'home';
   // Fullscreen loader: block on session + shell assets, and onboarding only when actually blocked.
   const showLoader = !!(
     user &&
     session &&
     ((session.loading === true) ||
       !shellImagesReady ||
+      (homeNeedsInitialData && !homeInitialDataReady) ||
       (onboardingBlocked && (!onboardingUiReady || !onboardingModalReady)))
   );
   const showLoaderEffective = showLoader;
@@ -595,6 +598,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (!onboardingBlocked) setOnboardingModalReady(false);
   }, [onboardingBlocked]);
+
+  useEffect(() => {
+    // Keep startup loader for first Home hydration only.
+    if (activeTab !== 'home') {
+      setHomeInitialDataReady(true);
+    }
+  }, [activeTab]);
 
   const [selectedCalendarChildren, setSelectedCalendarChildren] = useState(null);
   const [filterExpanded, setFilterExpanded] = useState(false);
@@ -4801,6 +4811,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 session={session}
                 profile={profile}
                 preloadedPlanHealth={preloadedPlanHealth}
+                onHomeInitialDataReady={() => setHomeInitialDataReady(true)}
               />
               </View>
               {isPlanYearInline ? (
