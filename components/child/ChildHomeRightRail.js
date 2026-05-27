@@ -381,10 +381,11 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   };
 
   const formatEventTime = (dateString) => {
+    if (!dateString) return 'No time added';
     const date = new Date(dateString);
-    if (Number.isNaN(date.getTime())) return '';
+    if (Number.isNaN(date.getTime())) return 'No time added';
     // Untimed/all-day planner rows are commonly stored at midnight.
-    if (date.getHours() === 0 && date.getMinutes() === 0) return '';
+    if (date.getHours() === 0 && date.getMinutes() === 0) return 'No time added';
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 

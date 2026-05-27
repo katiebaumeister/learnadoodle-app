@@ -104,6 +104,82 @@ def _normalize_tutor_permission_profile(value: Optional[str]) -> Optional[str]:
     return normalized if normalized in TUTOR_PERMISSION_PROFILES else None
 
 
+def _apply_post_accept_profiles(
+    supabase,
+    invite_row: dict,
+    accepted_user_id: Optional[str],
+    fallback_family_id: Optional[str] = None,
+) -> None:
+    """
+    Apply role-specific profile adjustments after invite acceptance:
+    - Tutor invite: apply tutor_permission_profile onto the accepted tutor member row.
+    - Parent invite from self-managed student: downgrade inviter child permission_profile to independent.
+    """
+    role = str(invite_row.get("role") or "").strip().lower()
+    family_id = invite_row.get("family_id") or fallback_family_id
+
+    tutor_permission_profile = _normalize_tutor_permission_profile(invite_row.get("tutor_permission_profile"))
+    if role == "tutor" and tutor_permission_profile and family_id and accepted_user_id:
+        supabase.table("family_members").update(
+            {"tutor_permission_profile": tutor_permission_profile}
+        ).eq("family_id", family_id).eq("user_id", accepted_user_id).eq("member_role", "tutor").execute()
+
+    if role != "parent":
+        return
+
+    inviter_user_id = invite_row.get("invited_by")
+    if not inviter_user_id or not family_id:
+        return
+
+    prof_res = (
+        supabase.table("profiles")
+        .select("role, app_preferences")
+        .eq("id", inviter_user_id)
+        .maybe_single()
+        .execute()
+    )
+    prof = prof_res.data or {}
+    profile_role = str(prof.get("role") or "").strip().lower()
+    app_prefs = prof.get("app_preferences") or {}
+    if isinstance(app_prefs, str):
+        try:
+            app_prefs = json.loads(app_prefs)
+        except Exception:
+            app_prefs = {}
+    is_student_self_signup = (
+        isinstance(app_prefs, dict)
+        and app_prefs.get("student_self_signup") is True
+    )
+    if profile_role not in ("child", "student") or not is_student_self_signup:
+        return
+
+    member_res = (
+        supabase.table("family_members")
+        .select("member_role, child_id, child_scope")
+        .eq("family_id", family_id)
+        .eq("user_id", inviter_user_id)
+        .maybe_single()
+        .execute()
+    )
+    member = member_res.data or {}
+    member_role = str(member.get("member_role") or "").strip().lower()
+    if member_role not in ("child", "student"):
+        return
+
+    child_id = member.get("child_id")
+    if not child_id and isinstance(member.get("child_scope"), list) and len(member.get("child_scope")) > 0:
+        child_id = member.get("child_scope")[0]
+    if not child_id:
+        return
+
+    supabase.table("children").update(
+        {
+            "permission_profile": "independent",
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+    ).eq("id", str(child_id)).eq("family_id", family_id).execute()
+
+
 # ============================================================
 # Routes
 # ============================================================
@@ -248,62 +324,14 @@ async def accept_invite(
                 "role, family_id, tutor_permission_profile, invited_by"
             ).eq("token", body.token).maybe_single().execute()
             invite_row = invite_res.data or {}
-            if (invite_row.get("role") or "").strip().lower() == "tutor":
-                tutor_permission_profile = _normalize_tutor_permission_profile(invite_row.get("tutor_permission_profile"))
-                if tutor_permission_profile and rpc_result.get("family_id"):
-                    supabase.table("family_members").update(
-                        {"tutor_permission_profile": tutor_permission_profile}
-                    ).eq("family_id", rpc_result.get("family_id")).eq("user_id", user["id"]).eq("member_role", "tutor").execute()
-
-            # If a self-managed student invited a parent and the parent accepted,
-            # switch the student's child permission profile to independent.
-            if (invite_row.get("role") or "").strip().lower() == "parent":
-                inviter_user_id = invite_row.get("invited_by")
-                linked_family_id = invite_row.get("family_id") or rpc_result.get("family_id")
-                if inviter_user_id and linked_family_id:
-                    prof_res = (
-                        supabase.table("profiles")
-                        .select("role, app_preferences")
-                        .eq("id", inviter_user_id)
-                        .maybe_single()
-                        .execute()
-                    )
-                    prof = prof_res.data or {}
-                    profile_role = str(prof.get("role") or "").strip().lower()
-                    app_prefs = prof.get("app_preferences") or {}
-                    if isinstance(app_prefs, str):
-                        try:
-                            app_prefs = json.loads(app_prefs)
-                        except Exception:
-                            app_prefs = {}
-                    is_student_self_signup = (
-                        isinstance(app_prefs, dict)
-                        and app_prefs.get("student_self_signup") is True
-                    )
-                    if profile_role in ("child", "student") and is_student_self_signup:
-                        member_res = (
-                            supabase.table("family_members")
-                            .select("member_role, child_id, child_scope")
-                            .eq("family_id", linked_family_id)
-                            .eq("user_id", inviter_user_id)
-                            .maybe_single()
-                            .execute()
-                        )
-                        member = member_res.data or {}
-                        member_role = str(member.get("member_role") or "").strip().lower()
-                        if member_role in ("child", "student"):
-                            child_id = member.get("child_id")
-                            if not child_id and isinstance(member.get("child_scope"), list) and len(member.get("child_scope")) > 0:
-                                child_id = member.get("child_scope")[0]
-                            if child_id:
-                                supabase.table("children").update(
-                                    {
-                                        "permission_profile": "independent",
-                                        "updated_at": datetime.utcnow().isoformat(),
-                                    }
-                                ).eq("id", str(child_id)).eq("family_id", linked_family_id).execute()
+            _apply_post_accept_profiles(
+                supabase,
+                invite_row,
+                accepted_user_id=user["id"],
+                fallback_family_id=rpc_result.get("family_id"),
+            )
         except Exception as profile_apply_error:
-            log_event("invite.accept.tutor_permission_apply_error", user_id=user["id"], error=str(profile_apply_error))
+            log_event("invite.accept.post_profile_apply_error", user_id=user["id"], error=str(profile_apply_error))
         
         log_event("invite.accept.success", user_id=user["id"], family_id=rpc_result.get("family_id"), role=rpc_result.get("role"))
         
@@ -436,13 +464,14 @@ async def accept_invite_with_password(
             return AcceptInviteWithPasswordOut(success=False, error=result.get("error", "Failed to accept invite"))
 
         try:
-            tutor_permission_profile = _normalize_tutor_permission_profile(invite.get("tutor_permission_profile"))
-            if invite.get("role") == "tutor" and tutor_permission_profile and family_id:
-                supabase.table("family_members").update(
-                    {"tutor_permission_profile": tutor_permission_profile}
-                ).eq("family_id", family_id).eq("user_id", user_id).eq("member_role", "tutor").execute()
+            _apply_post_accept_profiles(
+                supabase,
+                invite,
+                accepted_user_id=user_id,
+                fallback_family_id=family_id,
+            )
         except Exception as profile_apply_error:
-            log_event("invite.accept_with_password.tutor_permission_apply_error", user_id=user_id, error=str(profile_apply_error))
+            log_event("invite.accept_with_password.post_profile_apply_error", user_id=user_id, error=str(profile_apply_error))
 
         log_event("invite.accept_with_password.success", user_id=user_id, role=invite.get("role"))
         return AcceptInviteWithPasswordOut(success=True)

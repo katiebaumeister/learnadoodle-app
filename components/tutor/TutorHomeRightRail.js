@@ -204,8 +204,9 @@ export default function TutorHomeRightRail({ familyId, onOpenEvent, onOpenPlanne
   };
 
   const formatEventWhen = (ts) => {
-    if (!ts) return '';
+    if (!ts) return 'No time added';
     const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return 'No time added';
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const day = new Date(d);
@@ -218,6 +219,8 @@ export default function TutorHomeRightRail({ familyId, onOpenEvent, onOpenPlanne
         : day.getTime() === tomorrow.getTime()
           ? 'Tomorrow'
           : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const isUntimed = d.getHours() === 0 && d.getMinutes() === 0;
+    if (isUntimed) return `${label} · No time added`;
     const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     return `${label} ${time}`;
   };

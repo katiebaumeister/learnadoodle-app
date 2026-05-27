@@ -242,7 +242,8 @@ export default function TodayScheduleCard({
             const startTime = isTimeless ? '' : formatTime(event.start_local || event.start_ts);
             const endTime = isTimeless ? null : (event.end_ts || event.end_local ? formatTime(event.end_ts || event.end_local) : null);
             const timeRange = startTime ? (endTime ? `${startTime} - ${endTime}` : startTime) : '';
-            const timeLabel = timeRange || (isTimeless ? 'No time saved' : '');
+            const hasTimeLabel = Boolean(timeRange);
+            const timeLabel = hasTimeLabel ? timeRange : 'No time added';
             const isAssignment = (event.event_type || event.type || '').toLowerCase() === 'assignment';
             const isHoliday = (event.event_type || event.type || '').toLowerCase() === 'holiday';
             const done = isEventDone(event);
@@ -299,7 +300,7 @@ export default function TodayScheduleCard({
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
                   <View style={styles.timeColumn}>
-                    <Text style={[styles.timeText, isTimeless && styles.timePlaceholderText]}>{timeLabel}</Text>
+                    <Text style={[styles.timeText, !hasTimeLabel && styles.timePlaceholderText]}>{timeLabel}</Text>
                   </View>
                   <View style={styles.contentColumn}>
                     <View style={styles.titleRow}>
