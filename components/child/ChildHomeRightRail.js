@@ -201,15 +201,39 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     return parseHelpLogEntries(assignment).length > 0;
   };
 
+  const isAssignmentLinkedEventActive = (assignment) => {
+    const raw = assignment?.linked_event_ids;
+    let linkedEventId = null;
+    if (Array.isArray(raw) && raw.length > 0) {
+      linkedEventId = String(raw[0]);
+    } else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          linkedEventId = String(parsed[0]);
+        }
+      } catch (_) {
+        linkedEventId = null;
+      }
+    }
+    if (!linkedEventId) return true;
+    const linkedEvent = linkedEventsById[String(linkedEventId)];
+    if (!linkedEvent) return false;
+    const status = String(linkedEvent?.status || '').trim().toLowerCase();
+    if (status === 'canceled' || status === 'cancelled' || status === 'deleted') return false;
+    return !linkedEvent?.deleted_at;
+  };
+
   const correspondenceAssignments = useMemo(() => {
     return (assignments || [])
       .filter((a) => hasCorrespondence(a))
+      .filter((a) => isAssignmentLinkedEventActive(a))
       .sort(
         (a, b) =>
           new Date(b.updated_at || b.created_at || 0).getTime() -
           new Date(a.updated_at || a.created_at || 0).getTime()
       );
-  }, [assignments]);
+  }, [assignments, linkedEventsById]);
 
   useEffect(() => {
     const loadLinkedEvents = async () => {
@@ -225,7 +249,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       try {
         const { data, error } = await supabase
           .from('events')
-          .select('id, event_type, start_ts')
+          .select('id, event_type, start_ts, status, deleted_at')
           .in('id', ids);
         if (error || !Array.isArray(data)) {
           setLinkedEventsById({});

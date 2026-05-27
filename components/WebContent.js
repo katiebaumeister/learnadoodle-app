@@ -14,6 +14,7 @@ import {
   Platform,
 } from 'react-native'
 import { getChildColorFromAvatar } from '../utils/avatarColors'
+import { AVATAR_ASSETS, AVATAR_KEYS } from '../assets/imageAssetMap';
 import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
 import { prefetchAllSubjectProgressPlans, prefetchSubjectProgressPlanEntry } from '../lib/prefetchSubjectProgressPlan'
 import { getHolidaysForRange, getEventForPlanSlot, invalidateHolidaysForRangeCache } from '../lib/services/academicYearClient'
@@ -332,7 +333,13 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // Intercept unhandled promise rejections
   const handleRejection = (e) => {
     const reason = e.reason?.toString() || e.reason?.message || '';
-    if (shouldSuppress(reason)) {
+    const lowerReason = String(reason || '').toLowerCase();
+    const isAbortLike =
+      lowerReason.includes('aborterror') ||
+      lowerReason.includes('the operation was aborted') ||
+      lowerReason.includes('operation was aborted') ||
+      lowerReason.includes('aborted');
+    if (isAbortLike || shouldSuppress(reason)) {
       e.preventDefault();
     }
   };
@@ -745,8 +752,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     }
     
     // If it's a known avatar key (like "prof1"), it's valid
-    const knownAvatarKeys = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
-    if (knownAvatarKeys.includes(trimmed.toLowerCase())) {
+    if (AVATAR_KEYS.includes(trimmed.toLowerCase())) {
       return trimmed;
     }
     
@@ -4337,7 +4343,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       // Intercept unhandled promise rejections
       const handleRejection = (e) => {
         const reason = e.reason?.toString() || e.reason?.message || '';
-        if (shouldSuppress(reason)) {
+        const lowerReason = String(reason || '').toLowerCase();
+        const isAbortLike =
+          lowerReason.includes('aborterror') ||
+          lowerReason.includes('the operation was aborted') ||
+          lowerReason.includes('operation was aborted') ||
+          lowerReason.includes('aborted');
+        if (isAbortLike || shouldSuppress(reason)) {
           e.preventDefault();
         }
       };
@@ -4357,18 +4369,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   }, []);
 
   // Avatar sources - static mapping for React Native
-  const avatarSources = {
-    prof1: require('../assets/prof1.png'),
-    prof2: require('../assets/prof2.png'),
-    prof3: require('../assets/prof3.png'),
-    prof4: require('../assets/prof4.png'),
-    prof5: require('../assets/prof5.png'),
-    prof6: require('../assets/prof6.png'),
-    prof7: require('../assets/prof7.png'),
-    prof8: require('../assets/prof8.png'),
-    prof9: require('../assets/prof9.png'),
-    prof10: require('../assets/prof10.png'),
-  }
+  const avatarSources = AVATAR_ASSETS;
 
   // Helper function to safely get avatar source
   const getAvatarSource = (avatarKey) => {

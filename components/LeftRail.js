@@ -5,41 +5,20 @@ import Dropdown, { DropdownItem } from './ui/Dropdown';
 import StableImage from './ui/StableImage';
 import { safeImageUri } from '../lib/safeImageUri';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
+import {
+  AVATAR_KEYS,
+  LEARNADOODLE_LOGO_ASSET,
+  SIDEBAR_ICON_ASSETS,
+  resolveBundledAvatarSource,
+} from '../assets/imageAssetMap';
 
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
 
-const avatarSources = {
-  prof1: require('../assets/prof1.png'),
-  prof2: require('../assets/prof2.png'),
-  prof3: require('../assets/prof3.png'),
-  prof4: require('../assets/prof4.png'),
-  prof5: require('../assets/prof5.png'),
-  prof6: require('../assets/prof6.png'),
-  prof7: require('../assets/prof7.png'),
-  prof8: require('../assets/prof8.png'),
-  prof9: require('../assets/prof9.png'),
-  prof10: require('../assets/prof10.png'),
-};
-
-const SIDEBAR_BRAND_LOGO = require('../assets/learnadoodle-logo.png');
-const SIDEBAR_ICON_SOURCES = {
-  home: require('../assets/home.png'),
-  planner: require('../assets/planner.png'),
-  family: require('../assets/family.png'),
-  library: require('../assets/library.png'),
-  subjects: require('../assets/subject.png'),
-  more: require('../assets/more.png'),
-};
+const SIDEBAR_BRAND_LOGO = LEARNADOODLE_LOGO_ASSET;
+const SIDEBAR_ICON_SOURCES = SIDEBAR_ICON_ASSETS;
 
 const resolveAvatarSource = (avatarKey) => {
-  if (!avatarKey) {
-    return avatarSources.prof1;
-  }
-  const normalized = String(avatarKey)
-    .toLowerCase()
-    .replace(/.*\//, '')
-    .replace(/\.(png|jpg|jpeg|webp|gif)$/i, '');
-  return avatarSources[normalized] || avatarSources.prof1;
+  return resolveBundledAvatarSource(avatarKey);
 };
 
 const SIDEBAR_COLORS = {
@@ -191,12 +170,13 @@ export default function LeftRail({
     // If it's just a UUID without http/https, it's invalid
     if (uuidPattern.test(url.trim())) return false;
     // Valid if it starts with http/https/data or is a known avatar key
-    return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || 
-           Object.keys(avatarSources).includes(url.toLowerCase().replace(/\.(png|jpg|jpeg|webp|gif)$/i, ''));
+    return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') ||
+           AVATAR_KEYS.includes(url.toLowerCase().replace(/\.(png|jpg|jpeg|webp|gif)$/i, ''));
   };
 
   const renderChildAvatar = (child) => {
-    const avatarUri = safeImageUri(child.avatar_url || child.avatar);
+    const avatarRef = child.avatar_key || child.avatar || child.avatar_url;
+    const avatarUri = safeImageUri(avatarRef);
     if (avatarUri) {
       return (
         <Image 
@@ -210,7 +190,7 @@ export default function LeftRail({
         />
       );
     }
-    const source = resolveAvatarSource(child.avatar);
+    const source = resolveAvatarSource(avatarRef);
     return <Image source={source} style={styles.childAvatar} />;
   };
 

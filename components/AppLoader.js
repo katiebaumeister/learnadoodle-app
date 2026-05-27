@@ -1,19 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, StyleSheet, Platform, Image, ActivityIndicator } from 'react-native';
-
-const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
-const AVATAR_SOURCES = {
-  prof1: require('../assets/prof1.png'),
-  prof2: require('../assets/prof2.png'),
-  prof3: require('../assets/prof3.png'),
-  prof4: require('../assets/prof4.png'),
-  prof5: require('../assets/prof5.png'),
-  prof6: require('../assets/prof6.png'),
-  prof7: require('../assets/prof7.png'),
-  prof8: require('../assets/prof8.png'),
-  prof9: require('../assets/prof9.png'),
-  prof10: require('../assets/prof10.png'),
-};
+import {
+  AVATAR_ASSETS,
+  AVATAR_KEYS,
+  LANDING_IMAGE_ASSETS,
+  LEARNADOODLE_LOGO_ASSET,
+  SIDEBAR_ICON_ASSETS,
+} from '../assets/imageAssetMap';
 
 const TOOLBAR_IDS = ['logo', 'home', 'planner', 'family', 'library', 'subject', 'more'];
 const CONNECTED_ACCOUNT_LOGO_IDS = ['googleLogo', 'dropboxLogo', 'notionLogo', 'youtubeLogo', 'quizletLogo', 'canvasLogo'];
@@ -21,14 +14,14 @@ const SHELL_IMAGE_IDS = ['icon', ...TOOLBAR_IDS, ...AVATAR_KEYS];
 
 const SHELL_SOURCES = {
   icon: require('../assets/icon.png'),
-  logo: require('../assets/learnadoodle-logo.png'),
-  home: require('../assets/home.png'),
-  planner: require('../assets/planner.png'),
-  family: require('../assets/family.png'),
-  library: require('../assets/library.png'),
-  subject: require('../assets/subject.png'),
-  more: require('../assets/more.png'),
-  ...AVATAR_SOURCES,
+  logo: LEARNADOODLE_LOGO_ASSET,
+  home: SIDEBAR_ICON_ASSETS.home,
+  planner: SIDEBAR_ICON_ASSETS.planner,
+  family: SIDEBAR_ICON_ASSETS.family,
+  library: SIDEBAR_ICON_ASSETS.library,
+  subject: SIDEBAR_ICON_ASSETS.subjects,
+  more: SIDEBAR_ICON_ASSETS.more,
+  ...AVATAR_ASSETS,
 };
 
 /** Marketing / landing page PNGs — same batch as shell so first paint never waits on them */
@@ -43,14 +36,14 @@ const LANDING_PAGE_IDS = [
   'landingSuperdoodle',
 ];
 const LANDING_PAGE_SOURCES = {
-  landingHero: require('../assets/landing.png'),
-  landingSchedule: require('../assets/schedule.png'),
-  landingCurriculum: require('../assets/curriculum.png'),
-  landingProgress: require('../assets/progress.png'),
-  landingSupport: require('../assets/support.png'),
-  landingTeach: require('../assets/teach.png'),
-  landingPrivacy: require('../assets/privacy.png'),
-  landingSuperdoodle: require('../assets/superdoodlesection.png'),
+  landingHero: LANDING_IMAGE_ASSETS.landing,
+  landingSchedule: LANDING_IMAGE_ASSETS.schedule,
+  landingCurriculum: LANDING_IMAGE_ASSETS.curriculum,
+  landingProgress: LANDING_IMAGE_ASSETS.progress,
+  landingSupport: LANDING_IMAGE_ASSETS.support,
+  landingTeach: LANDING_IMAGE_ASSETS.teach,
+  landingPrivacy: LANDING_IMAGE_ASSETS.privacy,
+  landingSuperdoodle: LANDING_IMAGE_ASSETS.superdoodlesection,
 };
 
 /** Connected accounts logos (Family -> Connected accounts) */

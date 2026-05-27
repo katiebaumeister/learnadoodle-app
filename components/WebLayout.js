@@ -71,6 +71,7 @@ import RebalanceModal from './year/RebalanceModal';
 import { preloadProviderConnectionLogos } from '../lib/preloadConnectedAccountAssets';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 import { cleanPlannerEventId } from '../lib/utils/recurringEventUtils';
+import { AVATAR_KEYS } from '../assets/imageAssetMap';
 
 /**
  * Parent-only post-onboarding explorer tour (spotlight copy).
@@ -149,8 +150,7 @@ function validateChildAvatarUrl(url) {
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
     return trimmed;
   }
-  const knownAvatarKeys = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
-  if (knownAvatarKeys.includes(trimmed.toLowerCase())) {
+  if (AVATAR_KEYS.includes(trimmed.toLowerCase())) {
     return trimmed;
   }
   return null;
