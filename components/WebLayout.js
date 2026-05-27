@@ -567,10 +567,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     !onboardingJustCompleted &&
     (initialOnboardingBlocked || (family && !family.onboarding_completed))
   );
-  const isParentLikeHomeViewer =
-    session?.role_flags?.isParent === true ||
-    (!session?.role_flags?.isChild && !session?.role_flags?.isTutor);
-  const homeNeedsInitialData = activeTab === 'home' && isParentLikeHomeViewer;
+  // Only parent home uses ParentHomeScreen's initial-data ready callback.
+  // Using resolvedShellUserRole avoids false "parent-like" matches during
+  // partial role_flags hydration on child/tutor sessions.
+  const homeNeedsInitialData = activeTab === 'home' && resolvedShellUserRole === 'parent';
   // Fullscreen loader: block on session + shell assets, and onboarding only when actually blocked.
   const showLoader = !!(
     user &&
