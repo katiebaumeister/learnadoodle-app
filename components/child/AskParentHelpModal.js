@@ -477,6 +477,8 @@ const styles = StyleSheet.create({
     }),
   },
   input: {
+    width: '100%',
+    alignSelf: 'stretch',
     minHeight: 96,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.35)',
@@ -487,6 +489,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+      outlineStyle: 'none',
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },

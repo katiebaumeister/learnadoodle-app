@@ -978,17 +978,17 @@ export default function MaterialsLibrary({
   /** Children / Subjects / Types filter rows — shared by empty library hero and file list. */
   const renderMaterialFilterChipRows = () => (
     <>
-      <View style={styles.childrenFilterRow}>
-        <Text style={styles.childrenLabelText}>Children</Text>
-        {effectiveChildren.length > 0 ? (
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.childrenFilterScroll}
-              contentContainerStyle={styles.childrenFilterScrollContent}
-            >
-              {!isChildViewer && (
+      {!isChildViewer ? (
+        <View style={styles.childrenFilterRow}>
+          <Text style={styles.childrenLabelText}>Children</Text>
+          {effectiveChildren.length > 0 ? (
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.childrenFilterScroll}
+                contentContainerStyle={styles.childrenFilterScrollContent}
+              >
                 <TouchableOpacity
                   style={[styles.childrenFilterChip, !selectedChildId && styles.childrenFilterChipActive]}
                   onPress={() => {
@@ -1001,41 +1001,39 @@ export default function MaterialsLibrary({
                     All Children
                   </Text>
                 </TouchableOpacity>
-              )}
-              {effectiveChildren.map((child) => {
-                if (isChildViewer && forcedChildId && child.id !== forcedChildId) return null;
-                const isActive = selectedChildId === child.id;
-                const label = child.first_name || child.name || 'Child';
-                const childColor = getChildDotColor(child.id);
-                return (
-                  <TouchableOpacity
-                    key={child.id}
-                    style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
-                    onPress={() => {
-                      if (isChildViewer) return;
-                      setSelectedChildId(isActive ? '' : child.id);
-                      setSelectedSubjectId(null);
-                      setRoleFilter('all');
-                    }}
-                  >
-                    <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
-                      {label}
-                    </Text>
-                    <View
-                      style={[
-                        styles.childDot,
-                        { backgroundColor: childColor, marginLeft: 6 },
-                      ]}
-                    />
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-        ) : (
-          <Text style={{ fontSize: 12, color: colors.muted, marginLeft: 12 }}>Loading children...</Text>
-        )}
-      </View>
+                {effectiveChildren.map((child) => {
+                  const isActive = selectedChildId === child.id;
+                  const label = child.first_name || child.name || 'Child';
+                  const childColor = getChildDotColor(child.id);
+                  return (
+                    <TouchableOpacity
+                      key={child.id}
+                      style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
+                      onPress={() => {
+                        setSelectedChildId(isActive ? '' : child.id);
+                        setSelectedSubjectId(null);
+                        setRoleFilter('all');
+                      }}
+                    >
+                      <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
+                        {label}
+                      </Text>
+                      <View
+                        style={[
+                          styles.childDot,
+                          { backgroundColor: childColor, marginLeft: 6 },
+                        ]}
+                      />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          ) : (
+            <Text style={{ fontSize: 12, color: colors.muted, marginLeft: 12 }}>Loading children...</Text>
+          )}
+        </View>
+      ) : null}
 
       <View style={styles.subjectsFilterRow}>
         <Text style={styles.subjectsLabelText}>Subjects</Text>

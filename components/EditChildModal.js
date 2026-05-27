@@ -747,7 +747,7 @@ export default function EditChildModal({
                   )}
                   {hasAttachedEmail ? (
                     <View style={styles.permissionFieldWrap}>
-                      <Text style={styles.inputLabel}>Permission level</Text>
+                      <Text style={styles.permissionLabel}>Permission level</Text>
                       <View style={styles.permissionPills}>
                         {CHILD_PROFILE_OPTIONS.map((option) => {
                           const selected = option.id === childPermissionProfile;
@@ -1096,22 +1096,26 @@ const styles = StyleSheet.create({
   permissionPill: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderColor: '#e5e7eb',
     paddingHorizontal: 10,
     paddingVertical: 6,
     backgroundColor: '#ffffff',
   },
   permissionPillSelected: {
-    borderColor: '#9ECFFB',
-    backgroundColor: 'rgba(158, 207, 251, 0.22)',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   permissionPillText: {
     fontSize: 12,
-    color: '#374151',
-    fontWeight: '600',
+    color: '#6b7280',
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   permissionPillTextSelected: {
-    color: '#1e5f8a',
+    color: '#6BB3E8',
+    fontWeight: '700',
   },
   permissionPillSummary: {
     marginTop: 8,
@@ -1210,6 +1214,16 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     marginBottom: 4,
     marginTop: 8,
+  },
+  permissionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginBottom: 4,
+    marginTop: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   dangerInput: {
     borderWidth: 1,

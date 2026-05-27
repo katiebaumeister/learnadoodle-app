@@ -10,7 +10,7 @@ import {
   TouchableOpacity,
   Platform,
 } from 'react-native';
-import { FileText, Calendar } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { getAssignments } from '../../lib/services/assignmentsClient';
@@ -580,26 +580,26 @@ export default function ChildHomeRightRail({ familyId, childId }) {
                   .filter(Boolean)
                   .join(' · ');
                 return (
-                  <TouchableOpacity
+                  <View
                     key={event.id}
-                    style={[styles.item, isNear ? styles.comingUpRowNear : styles.comingUpRowFar]}
-                    {...(Platform.OS === 'web' && { cursor: 'default' })}
+                    style={[
+                      styles.helpRow,
+                      !isNear && styles.comingUpRowFar,
+                    ]}
                   >
-                    <View style={styles.itemLeft}>
-                      <View style={[styles.itemIcon, { backgroundColor: colors.blueBold + '15' }]}>
-                        <Calendar size={14} color={colors.blueBold} />
-                      </View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text
-                          style={[styles.itemTitle, isNear ? styles.comingUpTitleNear : styles.comingUpTitleFar]}
-                          numberOfLines={2}
-                        >
-                          {event.title}
-                        </Text>
-                        <Text style={[styles.itemDate, isNear ? null : styles.comingUpMetaFar]}>{metaLine}</Text>
-                      </View>
+                    <View style={styles.helpRowMain}>
+                      <Text style={[styles.helpRowTitle, !isNear && styles.comingUpTitleFar]} numberOfLines={2}>
+                        {event.title}
+                      </Text>
+                      <Text
+                        style={[styles.helpRowMeta, !isNear && styles.comingUpMetaFar]}
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                      >
+                        {metaLine}
+                      </Text>
                     </View>
-                  </TouchableOpacity>
+                  </View>
                 );
               })}
             </View>
