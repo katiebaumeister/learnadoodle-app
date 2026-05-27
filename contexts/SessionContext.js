@@ -134,13 +134,17 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
               childId = myMember.child_id || null;
             }
             const myRole = String(myMember?.member_role || myMember?.role || '').trim().toLowerCase();
+            const hasOtherParentAccount = parentMembers.some((m) => {
+              const parentUid = m?.user_id ?? null;
+              return parentUid != null && String(parentUid) !== String(authUserId);
+            });
             const selfSignupChildWithParentLinked =
               studentSelfSignup
               && (myRole === 'child' || myRole === 'student')
-              && parentMembers.length > 0;
-            childLinkedViaAcceptedInvite =
-              selfSignupChildWithParentLinked
-              || data?.child_linked_via_accepted_invite === true;
+              && hasOtherParentAccount;
+            childLinkedViaAcceptedInvite = studentSelfSignup
+              ? selfSignupChildWithParentLinked
+              : data?.child_linked_via_accepted_invite === true;
             if (accessibleChildren.length === 0) {
               const childRows = Array.isArray(data?.children) ? data.children : [];
               if (memberRole === 'parent' || memberRole === 'tutor') {

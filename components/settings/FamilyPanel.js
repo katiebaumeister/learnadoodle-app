@@ -161,9 +161,17 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   
   // Profile state
   const [profile, setProfile] = useState(propProfile);
+  const hasLinkedParentAccount = useMemo(
+    () => (family?.members || []).some((m) => {
+      const role = String(m?.member_role || m?.role || '').trim().toLowerCase();
+      const parentUid = m?.user_id ?? null;
+      return role === 'parent' && parentUid != null && String(parentUid) !== String(user?.id || '');
+    }),
+    [family?.members, user?.id]
+  );
   const isSelfManagedStudent =
     profile?.app_preferences?.student_self_signup === true
-    && family?.child_linked_via_accepted_invite !== true;
+    && !hasLinkedParentAccount;
   const isChildRestrictedView = isChildMode && !isSelfManagedStudent;
   const canManageChildInvites = !isChildRestrictedView && !isSelfManagedStudent;
 
@@ -2796,7 +2804,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     </Text>
                   )}
                   <Text style={styles.profileEmailHint}>
-                    {isChildMode
+                    {isChildRestrictedView
                       ? "Your email and account is managed by your parent's account."
                       : 'Changing your email will send a verification link to the new address. Your email will only be updated after you verify it.'}
                   </Text>
