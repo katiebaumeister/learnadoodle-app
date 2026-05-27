@@ -82,6 +82,7 @@ class FamilyMembersOut(BaseModel):
     # children.id -> pending/accepted/none (admin client; fixes Family list when Supabase client cannot SELECT invites)
     child_invite_summaries: Dict[str, ChildInviteSummaryOut] = Field(default_factory=dict)
     pending_tutor_invites: List[PendingTutorInviteRow] = Field(default_factory=list)
+    pending_parent_invites: List[PendingTutorInviteRow] = Field(default_factory=list)
 
 class InviteTutorIn(BaseModel):
     email: EmailStr = Field(..., description="Email of the member to invite")
@@ -406,6 +407,66 @@ def _pending_tutor_invites(supabase, family_id: str) -> List[PendingTutorInviteR
                 latest_by_id[row.id] = row
     except Exception:
         return []
+    pending = list(latest_by_email.values()) + list(latest_by_id.values())
+    pending.sort(key=lambda item: item.sent_at or "", reverse=True)
+    return pending
+
+
+def _pending_parent_invites(supabase, family_id: str) -> List[PendingTutorInviteRow]:
+    latest_by_email: Dict[str, PendingTutorInviteRow] = {}
+    latest_by_id: Dict[str, PendingTutorInviteRow] = {}
+    try:
+        try:
+            invites_res = (
+                supabase.table("invites")
+                .select("id, email, invited_name, created_at, accepted_at, expires_at")
+                .eq("family_id", family_id)
+                .eq("role", "parent")
+                .order("created_at", desc=True)
+                .execute()
+            )
+        except Exception:
+            invites_res = (
+                supabase.table("invites")
+                .select("id, email, created_at, accepted_at, expires_at")
+                .eq("family_id", family_id)
+                .eq("role", "parent")
+                .order("created_at", desc=True)
+                .execute()
+            )
+        for invite in invites_res.data or []:
+            if invite.get("accepted_at"):
+                continue
+            expires_at = invite.get("expires_at")
+            if expires_at:
+                try:
+                    exp_dt = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+                    if exp_dt.tzinfo is None:
+                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                    if exp_dt < datetime.now(timezone.utc):
+                        continue
+                except Exception:
+                    pass
+
+            row = PendingTutorInviteRow(
+                id=str(invite.get("id") or ""),
+                name=str(invite.get("invited_name") or "").strip() or None,
+                email=str(invite.get("email") or "").strip() or None,
+                sent_at=_iso_or_none(invite.get("created_at")),
+                child_scope=[],
+            )
+            if row.email:
+                existing = latest_by_email.get(row.email)
+                if not existing or (row.sent_at or "") > (existing.sent_at or ""):
+                    latest_by_email[row.email] = row
+            elif row.id:
+                existing = latest_by_id.get(row.id)
+                if not existing or (row.sent_at or "") > (existing.sent_at or ""):
+                    latest_by_id[row.id] = row
+    except Exception as e:
+        log_event("family.get_members.pending_parent_invites_error", family_id=family_id, error=str(e))
+        return []
+
     pending = list(latest_by_email.values()) + list(latest_by_id.values())
     pending.sort(key=lambda item: item.sent_at or "", reverse=True)
     return pending
@@ -1036,6 +1097,11 @@ async def get_family_members(
             pending_tutor_invites = _pending_tutor_invites(supabase, family_id)
         except Exception as e:
             log_event("family.get_members.pending_tutor_invites_error", user_id=user["id"], error=str(e))
+        pending_parent_invites: List[PendingTutorInviteRow] = []
+        try:
+            pending_parent_invites = _pending_parent_invites(supabase, family_id)
+        except Exception as e:
+            log_event("family.get_members.pending_parent_invites_error", user_id=user["id"], error=str(e))
 
         return FamilyMembersOut(
             id=family_id,
@@ -1048,6 +1114,7 @@ async def get_family_members(
             child_linked_via_accepted_invite=child_linked_via_accepted_invite,
             child_invite_summaries=invite_summaries,
             pending_tutor_invites=pending_tutor_invites,
+            pending_parent_invites=pending_parent_invites,
         )
     except HTTPException:
         raise
@@ -1065,6 +1132,7 @@ async def get_family_members(
             child_linked_via_accepted_invite=None,
             child_invite_summaries={},
             pending_tutor_invites=[],
+            pending_parent_invites=[],
         )
 
 

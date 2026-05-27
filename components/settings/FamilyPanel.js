@@ -135,6 +135,40 @@ function getOnboardingGoalLabel(goalId) {
   return ONBOARDING_GOAL_OPTIONS.find((opt) => opt.id === goalId)?.label || '—';
 }
 
+function getFriendlyParentInviteError(err) {
+  const raw = String(err?.message || err?.detail || '').trim();
+  if (!raw) return 'Could not send parent request. Please try again.';
+  if (/body\.email/i.test(raw) || /valid email/i.test(raw) || /@-sign/i.test(raw)) {
+    return 'Please enter a valid email address (example: name@example.com).';
+  }
+  if (/already invited|already pending|pending invite/i.test(raw)) {
+    return 'A parent request is already pending for this email. You can resend it if needed.';
+  }
+  return raw;
+}
+
+function normalizeInviteEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function confirmParentReinvite(email) {
+  const msg = `A parent request has already been sent to ${email}. Do you want to send it again?`;
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    return Promise.resolve(window.confirm(msg));
+  }
+  return new Promise((resolve) => {
+    Alert.alert(
+      'Request already sent',
+      msg,
+      [
+        { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Send Again', onPress: () => resolve(true) },
+      ],
+      { cancelable: true }
+    );
+  });
+}
+
 export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
   const currentChildId = propCurrentChildId ?? null;
@@ -1256,7 +1290,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   };
 
   const handleInviteParent = async () => {
-    if (!parentInviteEmail.trim()) {
+    const parentEmail = parentInviteEmail.trim();
+    if (!parentEmail) {
       setError('Please enter an email for the parent.');
       return;
     }
@@ -1275,14 +1310,39 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     setError(null);
     setParentInviteResultUrl(null);
     try {
+      const existingPending = pendingParentInvites.find(
+        (invite) => normalizeInviteEmail(invite?.email) === normalizeInviteEmail(parentEmail)
+      );
+      if (existingPending) {
+        const shouldResend = await confirmParentReinvite(parentEmail);
+        if (!shouldResend) {
+          setError(`A request is already pending for ${parentEmail}.`);
+          return;
+        }
+      }
       const { data, error: err } = await inviteTutor({
-        email: parentInviteEmail.trim(),
+        email: parentEmail,
         role: 'parent',
         child_ids: [], // Parents can see all children
       });
       if (err) throw err;
       setParentInviteResultUrl(data.invite_url);
       setParentInviteEmail('');
+      setFamily((prev) => {
+        if (!prev) return prev;
+        const nowIso = new Date().toISOString();
+        const existing = Array.isArray(prev.pending_parent_invites) ? prev.pending_parent_invites : [];
+        const deduped = existing.filter(
+          (invite) => normalizeInviteEmail(invite?.email) !== normalizeInviteEmail(parentEmail)
+        );
+        return {
+          ...prev,
+          pending_parent_invites: [
+            { id: `local-${Date.now()}`, email: parentEmail, sent_at: nowIso, child_scope: [] },
+            ...deduped,
+          ],
+        };
+      });
       toast.push(isSelfManagedStudent ? 'Parent request sent successfully!' : 'Parent invite sent successfully!', 'success');
       if (data.invite_url) {
         showInviteSuccessModal(data.invite_url, 'parent');
@@ -1290,8 +1350,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setShowParentInviteModal(false);
       if (onFamilyUpdate) onFamilyUpdate();
     } catch (err) {
-      setError(err.message || 'Failed to invite parent');
-      toast.push('Failed to invite parent', 'error');
+      const friendlyMessage = getFriendlyParentInviteError(err);
+      setError(friendlyMessage);
+      toast.push(friendlyMessage, 'error');
     } finally {
       setInvitingParent(false);
     }
@@ -1574,6 +1635,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         }))
         .filter((invite) => invite.id)
     : [];
+  const pendingParentInvites = Array.isArray(family?.pending_parent_invites)
+    ? family.pending_parent_invites
+        .map((invite) => ({
+          id: String(invite?.id || '').trim(),
+          name: invite?.name ? String(invite.name).trim() : null,
+          email: invite?.email ? String(invite.email).trim() : null,
+          sent_at: invite?.sent_at || null,
+          child_scope: Array.isArray(invite?.child_scope)
+            ? invite.child_scope.map((id) => String(id || '').trim()).filter(Boolean)
+            : [],
+        }))
+        .filter((invite) => invite.id || invite.email)
+    : [];
+  const latestPendingParentInvite = pendingParentInvites[0] || null;
   const children = (childrenFromDb != null ? childrenFromDb : family?.children || []);
 
   const openIdCardModal = (role, candidates) => {
@@ -3208,6 +3283,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 {isSelfManagedStudent ? 'No parents yet' : (profile?.role === 'parent' ? 'No other parents yet' : 'No parents found')}
               </Text>
             )}
+            {isSelfManagedStudent && latestPendingParentInvite?.email ? (
+              <Text style={styles.memberRowChildPendingMeta}>
+                Parent request pending: {latestPendingParentInvite.email}
+                {latestPendingParentInvite?.sent_at
+                  ? ` · Last sent ${formatInviteLastSent(latestPendingParentInvite.sent_at)}`
+                  : ''}
+              </Text>
+            ) : null}
             
             {/* Children Section */}
             <View style={[styles.membersSectionRow, { marginTop: 32 }]}>
@@ -5626,6 +5709,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 ? "Enter your parent's email to request they link as your parent account:"
                 : "Enter the email address of the parent you'd like to invite:"}
             </Text>
+            {isSelfManagedStudent && latestPendingParentInvite?.email ? (
+              <Text style={styles.memberRowChildPendingMeta}>
+                Current pending request: {latestPendingParentInvite.email}
+              </Text>
+            ) : null}
             <TextInput
               style={styles.childInviteEmailInput}
               placeholder="email@example.com"
