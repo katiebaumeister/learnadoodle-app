@@ -7,18 +7,18 @@
 
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { FileText, HelpCircle, ChevronRight } from 'lucide-react';
+import { FileText, HelpCircle } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
 import { getFamilyMembers } from '../../lib/apiClient';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
 import RespondToHelpRequestModal from './RespondToHelpRequestModal';
-import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { colors } from '../../theme/colors';
 import {
   collectParentAssignedLinkedEventIds,
   filterEventsForComingUpRail,
+  formatSchoolEventTypeLabel,
 } from '../child/childHomeRailHelpers';
 
 const RAIL_CACHE_TTL_MS = 3 * 60 * 1000;
@@ -144,6 +144,8 @@ export default function EmbeddedNotificationCenter({
   const [openModal, setOpenModal] = useState(null);
   const [activeLoadCycle, setActiveLoadCycle] = useState(0);
   const [committedPrimaryCardMode, setCommittedPrimaryCardMode] = useState(null);
+  const [linkedEventsById, setLinkedEventsById] = useState({});
+  const isParentViewer = session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
 
   /** Re-read cache when family changes (same mount). */
   useLayoutEffect(() => {
@@ -391,7 +393,7 @@ export default function EmbeddedNotificationCenter({
         .select('linked_event_ids, assigned_by')
         .eq('family_id', familyId)
         .not('assigned_by', 'is', null);
-      if (viewerChildId) {
+      if (viewerChildId && !isParentViewer) {
         assignQ = assignQ.eq('child_id', viewerChildId);
       }
       const { data: assignRows, error: assignErr } = await assignQ;
@@ -424,7 +426,7 @@ export default function EmbeddedNotificationCenter({
         .is('deleted_at', null)
         .order('start_ts', { ascending: true })
         .limit(80);
-      if (viewerChildId) {
+      if (viewerChildId && !isParentViewer) {
         eventsQ = eventsQ.eq('child_id', viewerChildId);
       }
       const { data, error } = await eventsQ;
@@ -625,13 +627,13 @@ export default function EmbeddedNotificationCenter({
   const filterItems = () => {
     switch (selectedSection) {
       case 'submissions':
-        return assignments.filter(a => 
-          a.status === 'submitted' && 
-          a.review_status !== 'needs_revision' &&
-          !a.need_help
-        ).slice(0, limit);
+        return assignments
+          .filter((a) => String(a.status || '').toLowerCase() === 'submitted' && !a.need_help)
+          .slice(0, limit);
       case 'help_requests':
-        return assignments.filter(a => a.need_help === true).slice(0, limit);
+        return assignments
+          .filter((a) => a.need_help === true || a.assigned_by != null)
+          .slice(0, limit);
       case 'needs_revision':
         return upcomingEvents.slice(0, limit);
       default:
@@ -640,6 +642,50 @@ export default function EmbeddedNotificationCenter({
   };
 
   const filteredItems = filterItems();
+
+  useEffect(() => {
+    const loadLinkedEvents = async () => {
+      const ids = [...new Set(
+        (assignments || [])
+          .map((assignment) => {
+            const raw = assignment?.linked_event_ids;
+            if (Array.isArray(raw) && raw.length > 0) return String(raw[0]);
+            if (typeof raw === 'string') {
+              try {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed) && parsed.length > 0) return String(parsed[0]);
+              } catch (_) {
+                return null;
+              }
+            }
+            return null;
+          })
+          .filter(Boolean)
+      )];
+      if (ids.length === 0) {
+        setLinkedEventsById({});
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('events')
+          .select('id, event_type, start_ts')
+          .in('id', ids);
+        if (error || !Array.isArray(data)) {
+          setLinkedEventsById({});
+          return;
+        }
+        const next = {};
+        data.forEach((row) => {
+          if (row?.id) next[String(row.id)] = row;
+        });
+        setLinkedEventsById(next);
+      } catch (_) {
+        setLinkedEventsById({});
+      }
+    };
+    loadLinkedEvents();
+  }, [assignments]);
 
   /** Inbox-only: calendar “Coming up” does not dismiss the planner CTA. */
   const hasInboxActivity =
@@ -701,20 +747,8 @@ export default function EmbeddedNotificationCenter({
 
   const formatEventDate = (dateString) => {
     const date = new Date(dateString);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const eventDate = new Date(date);
-    eventDate.setHours(0, 0, 0, 0);
-
-    if (eventDate.getTime() === today.getTime()) {
-      return 'Today';
-    } else if (eventDate.getTime() === tomorrow.getTime()) {
-      return 'Tomorrow';
-    } else {
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    }
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
   const formatEventTime = (dateString) => {
@@ -722,17 +756,22 @@ export default function EmbeddedNotificationCenter({
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
-  const getChildName = (childId) => {
-    const child = children.find(c => c.id === childId) || 
-                 assignments.find(a => a.child_id === childId)?.child;
-    return child?.first_name || 'Unknown';
-  };
-
-  const getChildColor = (childId) => {
-    const child = children.find(c => c.id === childId) || 
-                 assignments.find(a => a.child_id === childId)?.child;
-    if (!child) return colors.muted;
-    return getChildColorFromAvatar(child.avatar);
+  const assignmentEventMetaLine = (assignment) => {
+    const raw = assignment?.linked_event_ids;
+    let linkedEventId = null;
+    if (Array.isArray(raw) && raw.length > 0) linkedEventId = String(raw[0]);
+    else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) linkedEventId = String(parsed[0]);
+      } catch (_) {
+        linkedEventId = null;
+      }
+    }
+    const linkedEvent = linkedEventId ? linkedEventsById[String(linkedEventId)] : null;
+    const eventType = formatSchoolEventTypeLabel(linkedEvent?.event_type || 'Lesson');
+    const ts = linkedEvent?.start_ts || assignment?.updated_at || assignment?.created_at;
+    return [eventType, formatEventDate(ts), formatEventTime(ts)].filter(Boolean).join(' · ');
   };
 
   const handleReview = (assignment) => {
@@ -767,6 +806,38 @@ export default function EmbeddedNotificationCenter({
     }
     setSelectedAssignment(assignment);
     setOpenModal('submission');
+  };
+
+  const handleHelpAction = (assignment) => {
+    if (assignment?.need_help) {
+      setSelectedAssignment(assignment);
+      setOpenModal('help');
+      return;
+    }
+    const raw = assignment?.linked_event_ids;
+    let linkedEventId = null;
+    if (Array.isArray(raw) && raw.length > 0) linkedEventId = String(raw[0]);
+    else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) linkedEventId = String(parsed[0]);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && linkedEventId) {
+      window.dispatchEvent(
+        new CustomEvent('openEventModal', {
+          detail: {
+            eventId: linkedEventId,
+            initialEvent: null,
+            parentEventFocus: 'send',
+          },
+        })
+      );
+      return;
+    }
+    handleReview(assignment);
   };
 
   const closeModals = () => {
@@ -901,9 +972,6 @@ export default function EmbeddedNotificationCenter({
                 {filteredItems.map((item) => {
                   if (selectedSection === 'needs_revision') {
                     const event = item;
-                    const childName = getChildName(event.child_id);
-                    const childColor = getChildColor(event.child_id);
-                    const subjectName = event.subject?.name || null;
                     const eventDate = formatEventDate(event.start_ts);
                     const eventTime = formatEventTime(event.start_ts);
 
@@ -924,17 +992,10 @@ export default function EmbeddedNotificationCenter({
                       >
                         <View style={styles.itemLeft}>
                           <View style={styles.itemContent}>
-                            <View style={styles.itemHeader}>
-                              <View style={[styles.childDot, { backgroundColor: childColor }]} />
-                              <Text style={styles.childName} numberOfLines={1}>{childName}</Text>
-                              {subjectName && (
-                                <Text style={styles.subjectName} numberOfLines={1}>· {subjectName}</Text>
-                              )}
-                            </View>
                             <Text style={styles.itemTitle} numberOfLines={2}>{event.title}</Text>
                             <View style={styles.itemFooter}>
                               <Text style={styles.itemDate}>
-                                {eventDate} · {eventTime}
+                                {formatSchoolEventTypeLabel(event.event_type)} · {eventDate} · {eventTime}
                               </Text>
                             </View>
                           </View>
@@ -943,9 +1004,6 @@ export default function EmbeddedNotificationCenter({
                     );
                   } else {
                     const assignment = item;
-                    const childName = getChildName(assignment.child_id);
-                    const childColor = getChildColor(assignment.child_id);
-                    const subjectName = assignment.subject?.name || null;
 
                     let IconComponent = FileText;
                     let iconColor = colors.blueBold;
@@ -958,7 +1016,11 @@ export default function EmbeddedNotificationCenter({
                       <TouchableOpacity
                         key={assignment.id}
                         style={styles.item}
-                        onPress={() => handleReview(assignment)}
+                        onPress={() => (
+                          selectedSection === 'help_requests'
+                            ? handleHelpAction(assignment)
+                            : handleReview(assignment)
+                        )}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
                         <View style={styles.itemLeft}>
@@ -966,24 +1028,29 @@ export default function EmbeddedNotificationCenter({
                             <IconComponent size={14} color={iconColor} />
                           </View>
                           <View style={styles.itemContent}>
-                            <View style={styles.itemHeader}>
-                              <View style={[styles.childDot, { backgroundColor: childColor }]} />
-                              <Text style={styles.childName} numberOfLines={1}>{childName}</Text>
-                              {subjectName && (
-                                <Text style={styles.subjectName} numberOfLines={1}>· {subjectName}</Text>
-                              )}
-                            </View>
                             <Text style={styles.itemTitle} numberOfLines={2}>{assignment.title}</Text>
                             <View style={styles.itemFooter}>
                               <Text style={styles.itemDate}>
-                                {assignment.updated_at
-                                  ? new Date(assignment.updated_at).toLocaleDateString()
-                                  : 'Recently'}
+                                {assignmentEventMetaLine(assignment)}
                               </Text>
                             </View>
                           </View>
                         </View>
-                        <ChevronRight size={14} color={colors.textSecondary} />
+                        <TouchableOpacity
+                          style={styles.rowActionButton}
+                          onPress={() => (
+                            selectedSection === 'help_requests'
+                              ? handleHelpAction(assignment)
+                              : handleReview(assignment)
+                          )}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.rowActionButtonText}>
+                            {selectedSection === 'help_requests'
+                              ? (assignment.need_help ? 'Respond' : 'Open send')
+                              : (assignment.need_help ? 'Respond' : 'Review')}
+                          </Text>
+                        </TouchableOpacity>
                       </TouchableOpacity>
                     );
                   }
@@ -1371,6 +1438,23 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  rowActionButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#F8FAFC',
+    flexShrink: 0,
+  },
+  rowActionButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
 });

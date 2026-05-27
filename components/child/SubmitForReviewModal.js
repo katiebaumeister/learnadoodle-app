@@ -315,7 +315,7 @@ export default function SubmitForReviewModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.35)',
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -323,7 +323,7 @@ const styles = StyleSheet.create({
   sheet: {
     width: '100%',
     maxWidth: 620,
-    backgroundColor: '#F9FAFC',
+    backgroundColor: '#FFFFFF',
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#E5E7EB',

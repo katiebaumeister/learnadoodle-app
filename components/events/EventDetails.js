@@ -2084,11 +2084,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     };
   }, [parentLinkedAssignments, familyMembers, assigneeIds]);
 
-  const sendModalLatestHistoryLine = useMemo(() => {
-    const lines = Array.isArray(sendTrackingSummary.historyLines) ? sendTrackingSummary.historyLines : [];
-    return lines.length > 0 ? lines[lines.length - 1] : null;
-  }, [sendTrackingSummary.historyLines]);
-
   const sendEntryCtaLabel = useMemo(() => {
     if (hasInvitedAssignee || sendBlockedAssigneeIds.length === 0) {
       return sendTrackingSummary.ctaLabel || 'Send to student';
@@ -8621,9 +8616,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                           : `This will notify ${sendToStudentTargetLabel} that the assignment needs their attention.`
                       )}
                   </Text>
-                  {sendModalLatestHistoryLine ? (
+                  {Array.isArray(sendTrackingSummary.historyLines) && sendTrackingSummary.historyLines.length > 0 ? (
                     <View style={[styles.workflowHistoryList, { marginTop: 0, marginBottom: 12 }]}>
-                      <Text style={styles.workflowSentLine}>{sendModalLatestHistoryLine}</Text>
+                      {sendTrackingSummary.historyLines.map((line, index) => (
+                        <Text key={`send-modal-history-line-${index}`} style={styles.workflowSentLine}>
+                          {line}
+                        </Text>
+                      ))}
                     </View>
                   ) : null}
                   <Text

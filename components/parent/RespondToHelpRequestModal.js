@@ -141,6 +141,58 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
     if (fb) quotedNotes = [fb];
   }
 
+  const threadLines = useMemo(() => {
+    const raw = assignment?.help_message_log;
+    let log = [];
+    if (Array.isArray(raw)) {
+      log = raw;
+    } else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) log = parsed;
+      } catch (_) {
+        log = [];
+      }
+    }
+    if (!Array.isArray(log) || log.length === 0) return [];
+    const formatWhen = (value) => {
+      if (!value) return 'recently';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return 'recently';
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      if (day.getTime() === today.getTime()) return `today at ${time}`;
+      return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} at ${time}`;
+    };
+    return log
+      .map((entry) => {
+        const senderRole = String(entry?.sender_role || '').trim().toLowerCase();
+        const reason = String(entry?.reason || '').trim().toLowerCase();
+        const body = String(entry?.body || entry?.message || entry?.note || '').trim();
+        const tsRaw = entry?.created_at || entry?.timestamp || null;
+        const ts = new Date(tsRaw || 0).getTime();
+        if (!Number.isFinite(ts) || ts <= 0) return null;
+        let actor = 'Update';
+        if (senderRole === 'parent') actor = 'You';
+        if (senderRole === 'child' || senderRole === 'student') actor = childName || 'Student';
+        if (senderRole === 'parent' && reason === 'sent_assignment') {
+          return {
+            ts,
+            line: `${actor} sent assignment ${formatWhen(tsRaw)}${body && body !== '[Sent assignment]' ? ` — "${body}"` : ''}`,
+          };
+        }
+        return {
+          ts,
+          line: `${actor} ${senderRole === 'parent' ? 'replied' : 'wrote'} ${formatWhen(tsRaw)}${body ? ` — "${body}"` : ''}`,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.ts - b.ts)
+      .map((entry) => entry.line);
+  }, [assignment?.help_message_log, childName]);
+
   const newDueDateLabel = useMemo(() => {
     if (!giveMoreTime || !assignment?.due_date) return null;
     const d = new Date(assignment.due_date);
@@ -263,6 +315,16 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
                     {quotedNotes.map((line, i) => (
                       <Text key={i} style={styles.quote}>
                         “{line}”
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
+                {threadLines.length > 0 ? (
+                  <View style={styles.threadBlock}>
+                    <Text style={styles.threadLabel}>Conversation history</Text>
+                    {threadLines.map((line, i) => (
+                      <Text key={`thread-${i}`} style={styles.threadLine}>
+                        {line}
                       </Text>
                     ))}
                   </View>
@@ -427,6 +489,24 @@ const styles = StyleSheet.create({
     color: LD.muted,
     lineHeight: 21,
     marginBottom: 4,
+  },
+  threadBlock: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: LD.border,
+    gap: 6,
+  },
+  threadLabel: {
+    fontSize: 12,
+    color: LD.muted,
+    ...fontDisplay('600'),
+  },
+  threadLine: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: LD.muted,
+    ...fontDisplay('400'),
   },
   signOff: {
     fontSize: 13,

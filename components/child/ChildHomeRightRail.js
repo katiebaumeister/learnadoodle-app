@@ -10,26 +10,15 @@ import {
   TouchableOpacity,
   Platform,
 } from 'react-native';
-import { FileText } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { getAssignments } from '../../lib/services/assignmentsClient';
 import AskParentHelpModal from './AskParentHelpModal';
 import StudentHelpHistoryModal from './StudentHelpHistoryModal';
 import {
-  categorizeAssignmentsForChildHelp,
-  filterPlannerEventsForHelp,
-  formatAssignmentDueLine,
-  formatAssignmentStatus,
   formatSchoolEventTypeLabel,
   isSchoolWorkEventType,
-  linkedEventIdsFromAssignments,
   assignmentNeedsUrgentSubmissionsAttention,
-  secondaryAttentionContextLine,
-  primaryCompletedStatusLabel,
-  partitionComingUpEvents,
-  collectParentAssignedLinkedEventIds,
-  filterEventsForComingUpRail,
 } from './childHomeRailHelpers';
 import { colors } from '../../theme/colors';
 import { useToast } from '../Toast';
@@ -52,14 +41,14 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [helpModalAssignment, setHelpModalAssignment] = useState(null);
   const [helpModalEvent, setHelpModalEvent] = useState(null);
-  const [plannerEventsForRail, setPlannerEventsForRail] = useState([]);
   const [helpHistoryVisible, setHelpHistoryVisible] = useState(false);
   const [helpHistoryAssignment, setHelpHistoryAssignment] = useState(null);
+  const [linkedEventsById, setLinkedEventsById] = useState({});
 
   const loadData = async () => {
     if (!familyId || !childId) return;
     try {
-      await Promise.all([loadAssignments(), loadUpcomingEvents(), loadPlannerEventsForHelp()]);
+      await Promise.all([loadAssignments(), loadUpcomingEvents()]);
     } catch (e) {
       console.error('[ChildHomeRightRail]', e);
     } finally {
@@ -105,17 +94,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       horizon.setDate(horizon.getDate() + 30);
       horizon.setHours(23, 59, 59, 999);
 
-      const { data: assignRows, error: assignErr } = await supabase
-        .from('assignments')
-        .select('linked_event_ids, assigned_by')
-        .eq('family_id', familyId)
-        .eq('child_id', childId)
-        .not('assigned_by', 'is', null);
-      if (assignErr && assignErr.code !== '42P01' && assignErr.code !== 'PGRST200') {
-        console.error('[ChildHomeRightRail] linked assignments:', assignErr);
-      }
-      const parentAssignedEventIds = collectParentAssignedLinkedEventIds(assignRows || []);
-
       let q = supabase
         .from('events')
         .select(`
@@ -145,7 +123,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       }
 
       const raw = data || [];
-      const filtered = filterEventsForComingUpRail(raw, parentAssignedEventIds);
+      const filtered = raw.filter((event) => isSchoolWorkEventType(event?.event_type));
 
       const subjectIds = [...new Set(filtered.map((e) => e.subject_id).filter(Boolean))];
       let subjectsMap = {};
@@ -170,114 +148,88 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     }
   };
 
-  /** Planner schoolwork in a window around “today” for Help (lessons w/o assignment rows, etc.). */
-  const loadPlannerEventsForHelp = async () => {
-    try {
-      const from = new Date();
-      from.setDate(from.getDate() - 14);
-      from.setHours(0, 0, 0, 0);
-      const to = new Date();
-      to.setDate(to.getDate() + 42);
-      to.setHours(23, 59, 59, 999);
-
-      const { data, error } = await supabase
-        .from('events')
-        .select(
-          `
-          id,
-          title,
-          start_ts,
-          end_ts,
-          child_id,
-          subject_id,
-          status,
-          event_type,
-          child:child_id (id, first_name, avatar)
-        `
-        )
-        .eq('family_id', familyId)
-        .eq('child_id', childId)
-        .gte('start_ts', from.toISOString())
-        .lte('start_ts', to.toISOString())
-        .in('status', ['scheduled', 'in_progress', 'done'])
-        .is('deleted_at', null)
-        .order('start_ts', { ascending: false })
-        .limit(80);
-
-      if (error) {
-        setPlannerEventsForRail([]);
-        return;
+  const parseHelpLogEntries = (assignment) => {
+    const raw = assignment?.help_message_log;
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (_) {
+        return [];
       }
-
-      const raw = data || [];
-      const schoolOnly = raw.filter((e) => isSchoolWorkEventType(e.event_type));
-
-      const subjectIds = [...new Set(schoolOnly.map((e) => e.subject_id).filter(Boolean))];
-      let subjectsMap = {};
-      if (subjectIds.length > 0) {
-        const { data: subjectsData } = await supabase.from('subject').select('id, name').in('id', subjectIds);
-        if (subjectsData) {
-          subjectsMap = subjectsData.reduce((acc, sub) => {
-            acc[sub.id] = sub;
-            return acc;
-          }, {});
-        }
-      }
-
-      setPlannerEventsForRail(
-        schoolOnly.map((event) => ({
-          ...event,
-          subject: event.subject_id ? subjectsMap[event.subject_id] : null,
-        }))
-      );
-    } catch (e) {
-      setPlannerEventsForRail([]);
     }
+    return [];
   };
 
-  const submissionsUrgent = useMemo(() => {
+  const hasCorrespondence = (assignment) => {
+    const status = String(assignment?.status || '').trim().toLowerCase();
+    const reviewStatus = String(assignment?.review_status || '').trim().toLowerCase();
+    if (assignment?.need_help) return true;
+    if (['submitted', 'accepted', 'reviewed'].includes(status)) return true;
+    if (['needs_revision', 'reviewed', 'approved'].includes(reviewStatus)) return true;
+    return parseHelpLogEntries(assignment).length > 0;
+  };
+
+  const correspondenceAssignments = useMemo(() => {
     return (assignments || [])
-      .filter((a) => assignmentNeedsUrgentSubmissionsAttention(a))
+      .filter((a) => hasCorrespondence(a))
       .sort(
         (a, b) =>
           new Date(b.updated_at || b.created_at || 0).getTime() -
           new Date(a.updated_at || a.created_at || 0).getTime()
-      )
-      .slice(0, LIMIT);
+      );
   }, [assignments]);
+
+  useEffect(() => {
+    const loadLinkedEvents = async () => {
+      const ids = [...new Set(
+        (assignments || [])
+          .map((a) => linkedEventIdForAssignment(a))
+          .filter(Boolean)
+      )];
+      if (ids.length === 0) {
+        setLinkedEventsById({});
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('events')
+          .select('id, event_type, start_ts')
+          .in('id', ids);
+        if (error || !Array.isArray(data)) {
+          setLinkedEventsById({});
+          return;
+        }
+        const next = {};
+        data.forEach((row) => {
+          if (row?.id) next[String(row.id)] = row;
+        });
+        setLinkedEventsById(next);
+      } catch (_) {
+        setLinkedEventsById({});
+      }
+    };
+    loadLinkedEvents();
+  }, [assignments]);
+
+  const submissionsUrgent = useMemo(() => {
+    return correspondenceAssignments
+      .filter((a) => assignmentNeedsUrgentSubmissionsAttention(a))
+      .slice(0, LIMIT);
+  }, [correspondenceAssignments]);
 
   const submissionsUrgentBadgeCount = submissionsUrgent.length;
 
   const submissionsCompleted = useMemo(() => {
-    return (assignments || [])
+    return correspondenceAssignments
       .filter((a) => {
         const s = (a.status || '').toLowerCase();
         if (assignmentNeedsUrgentSubmissionsAttention(a)) return false;
         return ['submitted', 'accepted', 'reviewed'].includes(s);
       })
-      .sort(
-        (a, b) =>
-          new Date(b.updated_at || b.created_at || 0).getTime() -
-          new Date(a.updated_at || a.created_at || 0).getTime()
-      )
       .slice(0, LIMIT);
-  }, [assignments]);
-
-  const comingUpBuckets = useMemo(() => partitionComingUpEvents(upcomingEvents), [upcomingEvents]);
-
-  const helpBuckets = useMemo(
-    () => categorizeAssignmentsForChildHelp(assignments),
-    [assignments]
-  );
-
-  const linkedEventIds = useMemo(() => linkedEventIdsFromAssignments(assignments), [assignments]);
-
-  const plannerEventsHelpList = useMemo(
-    () => filterPlannerEventsForHelp(plannerEventsForRail, linkedEventIds),
-    [plannerEventsForRail, linkedEventIds]
-  );
-
-  const subjectName = (a) => a?.subject?.name || a?.related_subject?.name || null;
+  }, [correspondenceAssignments]);
 
   const openHelpForAssignment = (a) => {
     setHelpModalEvent(null);
@@ -285,33 +237,56 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     setHelpModalOpen(true);
   };
 
-  const openHelpForPlannerEvent = (ev) => {
-    setHelpModalAssignment(null);
-    setHelpModalEvent({
-      id: ev.id,
-      title: ev.title,
-      start_ts: ev.start_ts,
-      end_ts: ev.end_ts,
-    });
-    setHelpModalOpen(true);
+  const linkedEventIdForAssignment = (assignment) => {
+    const raw = assignment?.linked_event_ids;
+    if (Array.isArray(raw) && raw.length > 0) return String(raw[0]);
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return String(parsed[0]);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  };
+
+  const openSubmitForAssignment = (assignment) => {
+    const linkedEventId = linkedEventIdForAssignment(assignment);
+    if (!linkedEventId || Platform.OS !== 'web' || typeof window === 'undefined') {
+      toast.push('This assignment is not linked to an event yet.', 'info');
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent('openEventModal', {
+        detail: {
+          eventId: linkedEventId,
+          initialEvent: null,
+          childEventFocus: 'submission',
+        },
+      })
+    );
   };
 
   const formatEventDate = (dateString) => {
     const date = new Date(dateString);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const eventDate = new Date(date);
-    eventDate.setHours(0, 0, 0, 0);
-    if (eventDate.getTime() === today.getTime()) return 'Today';
-    if (eventDate.getTime() === tomorrow.getTime()) return 'Tomorrow';
+    if (Number.isNaN(date.getTime())) return '';
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
   const formatEventTime = (dateString) => {
     const date = new Date(dateString);
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  };
+
+  const assignmentEventMetaLine = (assignment) => {
+    const linkedEventId = linkedEventIdForAssignment(assignment);
+    const linkedEvent = linkedEventId ? linkedEventsById[String(linkedEventId)] : null;
+    const eventType = formatSchoolEventTypeLabel(linkedEvent?.event_type || 'Lesson');
+    const ts = linkedEvent?.start_ts || assignment?.due_date || assignment?.updated_at || assignment?.created_at;
+    const datePart = formatEventDate(ts);
+    const timePart = formatEventTime(ts);
+    return [eventType, datePart, timePart].filter(Boolean).join(' · ');
   };
 
   const renderUnifiedHelpRow = ({
@@ -376,21 +351,8 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     </View>
   );
 
-  const renderPlannerEventHelpRow = (ev) => {
-    const et = formatSchoolEventTypeLabel(ev.event_type);
-    const sn = ev.subject?.name;
-    const metaLine = [et, formatEventDate(ev.start_ts), formatEventTime(ev.start_ts), sn].filter(Boolean).join(' · ');
-    return renderUnifiedHelpRow({
-      rowKey: `ev-${ev.id}`,
-      title: ev.title || 'Schoolwork',
-      metaLine,
-      onCta: () => openHelpForPlannerEvent(ev),
-    });
-  };
-
   const renderAssignmentHelpRow = (a, ctaLabel = 'Ask for help') => {
-    const sn = subjectName(a);
-    const metaLine = [formatAssignmentDueLine(a), formatAssignmentStatus(a), sn].filter(Boolean).join(' · ');
+    const metaLine = assignmentEventMetaLine(a);
     return renderUnifiedHelpRow({
       rowKey: a.id,
       title: a.title || 'Schoolwork',
@@ -425,7 +387,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
             <View style={styles.emptyBlock}>
               <Text style={styles.emptyTitle}>Nothing here yet</Text>
               <Text style={styles.emptyHint}>
-                When your parent sends you assignments or you submit work, it will show up here.
+                This stays empty until a submission or help correspondence starts.
               </Text>
             </View>
           </View>
@@ -437,17 +399,13 @@ export default function ChildHomeRightRail({ familyId, childId }) {
             <View style={styles.submissionsSection}>
               <Text style={styles.helpSectionLabel}>Needs your attention</Text>
               {submissionsUrgent.map((a) => {
-                const secondary = secondaryAttentionContextLine(a, subjectName(a) || '');
-                return (
-                  <View key={a.id} style={styles.helpRow}>
-                    <View style={styles.helpRowMain}>
-                      <Text style={styles.helpRowTitle} numberOfLines={2}>
-                        {a.title || 'Schoolwork'}
-                      </Text>
-                      {secondary ? <Text style={styles.helpRowMeta}>{secondary}</Text> : null}
-                    </View>
-                  </View>
-                );
+                return renderUnifiedHelpRow({
+                  rowKey: `needs-attention-${a.id}`,
+                  title: a.title || 'Schoolwork',
+                  metaLine: assignmentEventMetaLine(a),
+                  onCta: () => openSubmitForAssignment(a),
+                  ctaLabel: 'Submit',
+                });
               })}
             </View>
           ) : null}
@@ -455,27 +413,15 @@ export default function ChildHomeRightRail({ familyId, childId }) {
             <View style={[styles.submissionsSection, hasUrgent && { marginTop: 4 }]}>
               <Text style={styles.helpSectionLabel}>Submitted</Text>
               {submissionsCompleted.map((a) => {
-                const doneLabel = primaryCompletedStatusLabel(a);
                 return (
-                  <View key={a.id} style={styles.item}>
-                    <View style={styles.itemLeft}>
-                      <View style={[styles.itemIcon, { backgroundColor: colors.blueBold + '15' }]}>
-                        <FileText size={14} color={colors.blueBold} />
-                      </View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.itemTitle} numberOfLines={2}>
-                          {a.title || 'Submitted work'}
-                        </Text>
-                        <View style={[styles.primaryStatusPill, styles.primaryStatusPillNeutral]}>
-                          <Text style={styles.primaryStatusPillTextNeutral}>{doneLabel}</Text>
-                        </View>
-                        <Text style={styles.metaSecondaryLine}>
-                          {a.updated_at
-                            ? new Date(a.updated_at).toLocaleDateString()
-                            : 'Recently'}
-                          {subjectName(a) ? ` · ${subjectName(a)}` : ''}
-                        </Text>
-                      </View>
+                  <View key={a.id} style={styles.helpRow}>
+                    <View style={styles.helpRowMain}>
+                      <Text style={styles.helpRowTitle} numberOfLines={2}>
+                        {a.title || 'Schoolwork'}
+                      </Text>
+                      <Text style={styles.helpRowMeta} numberOfLines={1} ellipsizeMode="tail">
+                        {assignmentEventMetaLine(a)}
+                      </Text>
                     </View>
                   </View>
                 );
@@ -487,51 +433,25 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     }
 
     if (selectedSection === 'help') {
-      const { upcomingWork, gradedQuestions, recent } = helpBuckets;
-      const hasAny =
-        upcomingWork.length +
-          gradedQuestions.length +
-          recent.length +
-          plannerEventsHelpList.length >
-        0;
+      const helpRows = correspondenceAssignments.slice(0, LIMIT);
+      const hasAny = helpRows.length > 0;
 
       return (
         <View style={styles.helpColumn}>
           {!hasAny ? (
             <View style={[styles.bodyFill, styles.emptyCenter]}>
               <View style={styles.emptyBlock}>
-                <Text style={styles.emptyTitle}>No schoolwork to ask about yet</Text>
+                <Text style={styles.emptyTitle}>No correspondence yet</Text>
                 <Text style={styles.emptyHint}>
-                  Lessons, projects, exams, and assignments from your planner show up here so you can ask
-                  for help.
+                  Start a message from an assignment and your conversation history will show here.
                 </Text>
               </View>
             </View>
           ) : (
             <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
-              {plannerEventsHelpList.length > 0 ? (
-                <View style={styles.helpSection}>
-                  <Text style={styles.helpSectionLabel}>Schoolwork</Text>
-                  {plannerEventsHelpList.map((ev) => renderPlannerEventHelpRow(ev))}
-                </View>
-              ) : null}
-              {upcomingWork.length > 0 ? (
-                <View style={styles.helpSection}>
-                  {upcomingWork.map((a) => renderAssignmentHelpRow(a))}
-                </View>
-              ) : null}
-              {gradedQuestions.length > 0 ? (
-                <View style={styles.helpSection}>
-                  <Text style={styles.helpSectionLabel}>Questions about graded work</Text>
-                  {gradedQuestions.map((a) => renderAssignmentHelpRow(a, 'Send question'))}
-                </View>
-              ) : null}
-              {recent.length > 0 ? (
-                <View style={styles.helpSection}>
-                  <Text style={styles.helpSectionLabel}>Recent assignments</Text>
-                  {recent.map((a) => renderAssignmentHelpRow(a))}
-                </View>
-              ) : null}
+              <View style={styles.helpSection}>
+                {helpRows.map((a) => renderAssignmentHelpRow(a))}
+              </View>
             </ScrollView>
           )}
         </View>
@@ -552,59 +472,32 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       );
     }
 
-    const comingOrder = [
-      { key: 'today', label: 'Today' },
-      { key: 'this_week', label: 'This week' },
-      { key: 'later', label: 'Later' },
-    ];
-    let comingUpNearIndex = 0;
-
     return (
       <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
-        {comingOrder.map(({ key, label }) => {
-          const list = comingUpBuckets[key] || [];
-          if (!list.length) return null;
-          return (
-            <View key={key} style={styles.comingUpSection}>
-              <Text style={styles.comingUpSectionLabel}>{label}</Text>
-              {list.map((event) => {
-                const isNear = comingUpNearIndex < 3;
-                comingUpNearIndex += 1;
-                const sn = event.subject?.name;
-                const metaLine = [
-                  formatSchoolEventTypeLabel(event.event_type),
-                  formatEventDate(event.start_ts),
-                  formatEventTime(event.start_ts),
-                  sn,
-                ]
-                  .filter(Boolean)
-                  .join(' · ');
-                return (
-                  <View
-                    key={event.id}
-                    style={[
-                      styles.helpRow,
-                      !isNear && styles.comingUpRowFar,
-                    ]}
-                  >
-                    <View style={styles.helpRowMain}>
-                      <Text style={[styles.helpRowTitle, !isNear && styles.comingUpTitleFar]} numberOfLines={2}>
-                        {event.title}
-                      </Text>
-                      <Text
-                        style={[styles.helpRowMeta, !isNear && styles.comingUpMetaFar]}
-                        numberOfLines={1}
-                        ellipsizeMode="tail"
-                      >
-                        {metaLine}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          );
-        })}
+        <View style={styles.comingUpSection}>
+          <Text style={styles.helpSectionLabel}>Schoolwork</Text>
+          {upcomingEvents.map((event) => {
+            const metaLine = [
+              formatSchoolEventTypeLabel(event.event_type),
+              formatEventDate(event.start_ts),
+              formatEventTime(event.start_ts),
+            ]
+              .filter(Boolean)
+              .join(' · ');
+            return (
+              <View key={event.id} style={styles.helpRow}>
+                <View style={styles.helpRowMain}>
+                  <Text style={styles.helpRowTitle} numberOfLines={2}>
+                    {event.title}
+                  </Text>
+                  <Text style={styles.helpRowMeta} numberOfLines={1} ellipsizeMode="tail">
+                    {metaLine}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
       </ScrollView>
     );
   };

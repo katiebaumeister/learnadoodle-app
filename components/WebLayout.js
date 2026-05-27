@@ -28,6 +28,8 @@ import AddChildModal from './AddChildModal';
 import InviteChildModal from './InviteChildModal';
 import AddSubjectModal from './AddSubjectModal';
 import EditChildModal from './EditChildModal';
+import AskParentHelpModal from './child/AskParentHelpModal';
+import SubmitForReviewModal from './child/SubmitForReviewModal';
 import { linkedSummariesFromFamilyApiMembers } from '../lib/services/childInviteStatus';
 import PlanYearWizard from './year/PlanYearWizard';
 import PlanYearModal from './planner/PlanYearModal';
@@ -220,6 +222,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [addSubjectPrefill, setAddSubjectPrefill] = useState({ schoolYear: null, schoolTerm: null, childIds: [] });
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
+  const [showDirectAskParentHelpModal, setShowDirectAskParentHelpModal] = useState(false);
+  const [directHelpAssignment, setDirectHelpAssignment] = useState(null);
+  const [directHelpEventContext, setDirectHelpEventContext] = useState(null);
+  const [directHelpChildId, setDirectHelpChildId] = useState(null);
+  const [showDirectSubmitForReviewModal, setShowDirectSubmitForReviewModal] = useState(false);
+  const [directSubmitAssignment, setDirectSubmitAssignment] = useState(null);
+  const [directSubmitEventContext, setDirectSubmitEventContext] = useState(null);
+  const [directSubmitChildId, setDirectSubmitChildId] = useState(null);
   const [eventModalEventId, setEventModalEventId] = useState(null);
   const [eventModalInitialEvent, setEventModalInitialEvent] = useState(null);
   /** null | 'help' | 'submission' — parent review inbox opens event details + matching modal */
@@ -483,6 +493,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const childDoodleBotDisabled =
     session?.role_flags?.isChild === true &&
     familyUserControls.effectivePermissions?.canUseDoodleBot === false;
+  const hidePlannerNewForRestrictedChild =
+    session?.role_flags?.isChild === true && denyFamilyEventEdit;
+  const canShowPlannerNewButton = !isTutorUser && !hidePlannerNewForRestrictedChild;
   const learnerQuickStartSections = useMemo(() => {
     const isChild = session?.role_flags?.isChild === true;
     const isTutor = session?.role_flags?.isTutor === true;
@@ -2594,6 +2607,53 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         return;
       }
 
+      if (childEventFocus === 'submission' || childEventFocus === 'help') {
+        const openDirectChildModal = async () => {
+          let eventRow = initialEvent && String(initialEvent.id || '') === String(eventId) ? initialEvent : null;
+          if (!eventRow) {
+            try {
+              const { data } = await supabase
+                .from('events')
+                .select('id, title, start_ts, end_ts, subject_id, child_id')
+                .eq('id', eventId)
+                .maybeSingle();
+              if (data) eventRow = data;
+            } catch (_) {
+              /* noop */
+            }
+          }
+          const resolvedChildId =
+            detail.childId ||
+            eventRow?.child_id ||
+            sessionRef.current?.child_id ||
+            activeChildId ||
+            null;
+
+          const eventContext = eventRow ? {
+            id: eventRow.id,
+            title: eventRow.title,
+            start_ts: eventRow.start_ts,
+            end_ts: eventRow.end_ts,
+            subject_id: eventRow.subject_id || null,
+          } : { id: eventId };
+
+          if (childEventFocus === 'help') {
+            setDirectHelpAssignment(detail.assignment || null);
+            setDirectHelpEventContext(eventContext);
+            setDirectHelpChildId(resolvedChildId);
+            setShowDirectAskParentHelpModal(true);
+            return;
+          }
+
+          setDirectSubmitAssignment(detail.assignment || null);
+          setDirectSubmitEventContext(eventContext);
+          setDirectSubmitChildId(resolvedChildId);
+          setShowDirectSubmitForReviewModal(true);
+        };
+        openDirectChildModal();
+        return;
+      }
+
       // Open the event modal
       setEventModalEventId(eventId);
       setEventModalInitialEvent(initialEvent);
@@ -4528,7 +4588,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   </View>
 
                   {/* New Event Button — parents only; tutors use read-first planner */}
-                  {!isTutorUser && (
+                  {canShowPlannerNewButton && (
                   <TouchableOpacity
                     {...(Platform.OS === 'web' ? { nativeID: 'explorer-tour-planner-new' } : {})}
                     style={{
@@ -5183,6 +5243,53 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             }
           }}
       />
+      ) : null}
+
+      {showDirectSubmitForReviewModal ? (
+        <SubmitForReviewModal
+          visible
+          onClose={() => {
+            setShowDirectSubmitForReviewModal(false);
+            setDirectSubmitAssignment(null);
+            setDirectSubmitEventContext(null);
+            setDirectSubmitChildId(null);
+          }}
+          onSubmitted={() => {
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+              window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+              window.dispatchEvent(new CustomEvent('refreshRightRail'));
+              window.dispatchEvent(new CustomEvent('refreshCalendar'));
+            }
+          }}
+          familyId={familyId}
+          childId={directSubmitChildId || session?.child_id || activeChildId || null}
+          assignment={directSubmitAssignment}
+          eventContext={directSubmitEventContext}
+        />
+      ) : null}
+
+      {showDirectAskParentHelpModal ? (
+        <AskParentHelpModal
+          visible
+          onClose={() => {
+            setShowDirectAskParentHelpModal(false);
+            setDirectHelpAssignment(null);
+            setDirectHelpEventContext(null);
+            setDirectHelpChildId(null);
+          }}
+          onSent={() => {
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+              window.dispatchEvent(new CustomEvent('refreshRightRail'));
+              window.dispatchEvent(new CustomEvent('refreshCalendar'));
+            }
+          }}
+          familyId={familyId}
+          childId={directHelpChildId || session?.child_id || activeChildId || null}
+          assignment={directHelpAssignment}
+          eventContext={directHelpEventContext}
+        />
       ) : null}
 
       {/* Global Event Modal - available from any screen (family, planner, etc.) */}
