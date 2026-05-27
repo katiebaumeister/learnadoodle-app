@@ -82,6 +82,8 @@ export default function MaterialsLibrary({
   const familyUserControls = useOptionalFamilyUserControls();
   const isChildViewer =
     session?.role_flags?.isChild === true || viewerRole === 'child' || viewerRole === 'student';
+  const isSelfManagedStudentViewer =
+    isChildViewer && familyUserControls?.isSelfManagedStudent === true;
   const forcedChildId = useMemo(() => {
     if (!isChildViewer) return null;
     if (currentChildId) return currentChildId;
@@ -1035,7 +1037,12 @@ export default function MaterialsLibrary({
         </View>
       ) : null}
 
-      <View style={styles.subjectsFilterRow}>
+      <View
+        style={[
+          styles.subjectsFilterRow,
+          isSelfManagedStudentViewer && styles.subjectsFilterRowSelfManaged,
+        ]}
+      >
         <Text style={styles.subjectsLabelText}>Subjects</Text>
         <ScrollView
           horizontal
@@ -2834,6 +2841,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       boxSizing: 'border-box',
     }),
+  },
+  subjectsFilterRowSelfManaged: {
+    marginTop: 8,
+    paddingTop: 4,
+    paddingBottom: 4,
   },
   subjectsFilterScroll: {
     flexGrow: 0,

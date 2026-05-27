@@ -203,6 +203,8 @@ export default function SubjectsPage({
   
   // Determine if this is a child/student view
   const isChildView = userRole === 'child' || userRole === 'student';
+  const isSelfManagedStudentViewer =
+    isChildView && familyUserControls?.isSelfManagedStudent === true;
   const effectivePermissions = familyUserControls.effectivePermissions;
   const childPermissionsResolved = !isChildView || !familyUserControls.isRestrictedViewer || !!effectivePermissions;
   const canShowChildProgressTab = !isChildView
@@ -232,7 +234,8 @@ export default function SubjectsPage({
       : false;
   const canShowEditChildButton = !isChildView;
   const canShowEditSubjectButton = !isChildView;
-  const showChildModeToggle = isChildView && (canShowChildProgressTab || canShowChildScheduleTab);
+  const showChildModeToggle =
+    isChildView && !isSelfManagedStudentViewer && (canShowChildProgressTab || canShowChildScheduleTab);
   const childId = isChildView && safeAccessibleChildren.length > 0 ? (safeAccessibleChildren[0]?.id ?? safeAccessibleChildren[0]) : null;
   const modeStorageKey = useMemo(
     () => `${SUBJECTS_MODE_STORAGE_PREFIX}:${familyId || 'unknown'}:${isChildView ? 'child' : 'family'}`,
@@ -2246,7 +2249,7 @@ export default function SubjectsPage({
             <Text style={styles.headerTitle}>{subjectsHeaderTitle}</Text>
           )}
         </View>
-        {!isChildView && (
+        {(!isChildView || isSelfManagedStudentViewer) && (
           <View style={styles.headerModeWrap}>
             <View style={styles.headerModeControls}>
               <View style={styles.modeSegmentedControl}>

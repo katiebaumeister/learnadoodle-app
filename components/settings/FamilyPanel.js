@@ -588,7 +588,26 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           prevSum && typeof prevSum === 'object' && Object.keys(prevSum).length > 0
             ? { ...(propSum && typeof propSum === 'object' ? propSum : {}), ...prevSum }
             : propSum;
-        return { ...propFamily, child_invite_summaries: mergedSummaries };
+        const propPendingParents = Array.isArray(propFamily?.pending_parent_invites)
+          ? propFamily.pending_parent_invites
+          : [];
+        const prevPendingParents = Array.isArray(prev?.pending_parent_invites)
+          ? prev.pending_parent_invites
+          : [];
+        const pendingByEmail = new Map();
+        [...propPendingParents, ...prevPendingParents].forEach((invite) => {
+          const emailKey = String(invite?.email || '').trim().toLowerCase();
+          const idKey = String(invite?.id || '').trim();
+          const dedupeKey = emailKey || idKey;
+          if (!dedupeKey) return;
+          pendingByEmail.set(dedupeKey, invite);
+        });
+        const mergedPendingParents = Array.from(pendingByEmail.values());
+        return {
+          ...propFamily,
+          child_invite_summaries: mergedSummaries,
+          pending_parent_invites: mergedPendingParents,
+        };
       });
     } else if (!propFamily && user) {
       // Fallback: load family data if not provided as prop (e.g., in SettingsModal)

@@ -523,6 +523,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const familyUserControls = useOptionalFamilyUserControls();
   const allowedRef = useRef(familyUserControls.allowed);
   allowedRef.current = familyUserControls.allowed;
+  const isSelfManagedStudent = familyUserControls?.isSelfManagedStudent === true;
+  const showPlannerHeaderQuickActions =
+    session?.role_flags?.isChild !== true || isSelfManagedStudent;
   const sessionRestricted = !!(session?.role_flags?.isChild || session?.role_flags?.isTutor);
   const denyFamilyEventEdit = sessionRestricted && !familyUserControls.allowed('events');
   const childDoodleBotDisabled =
@@ -4283,7 +4286,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   </View>
                   
                   {/* Help + Export icons - right of Filters (hidden for learner child accounts) */}
-                  {session?.role_flags?.isChild !== true ? (
+                  {showPlannerHeaderQuickActions ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0, position: 'relative' }}>
                     <TouchableOpacity
                       ref={helpButtonRef}
