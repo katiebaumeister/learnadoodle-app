@@ -758,8 +758,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   );
   const hideChildHomeRightRail =
     isSelfManagedStudentMode
-    && !hasLinkedParentAccount
-    && !hasPendingParentRequest;
+    && !hasLinkedParentAccount;
+  const hideChildHelpAndSubmissionActions =
+    isSelfManagedStudentMode
+    && !hasLinkedParentAccount;
 
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
@@ -5783,16 +5785,28 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const isSeriesGroup = isDeletableSeriesGroup(ev);
       if (isChildViewer && isRestrictedChild) {
         if (schoolworkEvent) {
-          menuItems.push({
-            text: 'Ask for help',
-            iconKey: 'send',
-            action: () => openChildEventModal('help'),
-          });
-          menuItems.push({
-            text: 'Submit for review',
-            iconKey: 'send',
-            action: () => openChildEventModal('submission'),
-          });
+          if (!hideChildHelpAndSubmissionActions) {
+            menuItems.push({
+              text: 'Ask for help',
+              iconKey: 'send',
+              action: () => openChildEventModal('help'),
+            });
+            menuItems.push({
+              text: 'Submit for review',
+              iconKey: 'send',
+              action: () => openChildEventModal('submission'),
+            });
+          } else {
+            menuItems.push({
+              text: 'View',
+              iconKey: 'calendar',
+              action: () => {
+                window.dispatchEvent(
+                  new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev, schedulingMode: false } })
+                );
+              },
+            });
+          }
         } else {
           menuItems.push({
             text: 'View',
@@ -5831,16 +5845,28 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         }
 
         if (isChildViewer && schoolworkEvent) {
-          menuItems.push({
-            text: 'Ask for help',
-            iconKey: 'send',
-            action: () => openChildEventModal('help'),
-          });
-          menuItems.push({
-            text: 'Submit for review',
-            iconKey: 'send',
-            action: () => openChildEventModal('submission'),
-          });
+          if (!hideChildHelpAndSubmissionActions) {
+            menuItems.push({
+              text: 'Ask for help',
+              iconKey: 'send',
+              action: () => openChildEventModal('help'),
+            });
+            menuItems.push({
+              text: 'Submit for review',
+              iconKey: 'send',
+              action: () => openChildEventModal('submission'),
+            });
+          } else {
+            menuItems.push({
+              text: 'View',
+              iconKey: 'calendar',
+              action: () => {
+                window.dispatchEvent(
+                  new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev, schedulingMode: false } })
+                );
+              },
+            });
+          }
         } else {
           menuItems.push({
             text: 'Send to student',
@@ -6089,7 +6115,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
     window.addEventListener('plannerEventContextMenu', handlePlannerEventContextMenu);
     return () => window.removeEventListener('plannerEventContextMenu', handlePlannerEventContextMenu);
-  }, [familyId, propChildren]);
+  }, [familyId, propChildren, hideChildHelpAndSubmissionActions]);
 
   // Load month data when showing planner tab so grid and events show on first open or after login.
   // Also prefetch adjacent months because month grid includes spillover days from previous/next month.
