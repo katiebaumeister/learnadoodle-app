@@ -1794,15 +1794,17 @@ export default function ProgressTab({
               <View style={styles.gradesSectionHeader}>
                 <View style={styles.gradesSectionTitleRow}>
                   <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>{gradesSectionTitle}</Text>
-                  <TouchableOpacity
-                    style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
-                    onPress={() => openSubjectPicker('grades_add')}
-                    activeOpacity={0.7}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Plus size={16} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
-                  </TouchableOpacity>
+                  {!isChildView ? (
+                    <TouchableOpacity
+                      style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
+                      onPress={() => openSubjectPicker('grades_add')}
+                      activeOpacity={0.7}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Plus size={16} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               </View>
               <View style={styles.progressSectionBody}>

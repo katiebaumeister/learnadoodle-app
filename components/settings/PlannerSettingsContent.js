@@ -1767,9 +1767,50 @@ export default function PlannerSettingsContent({
     paddingTop: 0,
     paddingBottom: 0,
     paddingHorizontal: 0,
-    marginBottom: SettingsLayout.sectionSpacing,
+    marginBottom: 0,
     borderBottomWidth: 0,
     borderBottomColor: 'transparent',
+  };
+  const planningSectionStyle = {
+    ...sectionStyle,
+    marginTop: 32,
+  };
+  const planningSectionFirstStyle = {
+    marginTop: 18,
+  };
+  const planningSectionHeaderStyle = {
+    paddingBottom: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 16,
+  };
+  const planningSectionBodyStyle = {
+    paddingTop: 24,
+  };
+  const planningGridStyle = {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    columnGap: 64,
+    rowGap: 22,
+    justifyContent: 'flex-start',
+  };
+  const planningFieldGroupStyle = {
+    marginBottom: 20,
+  };
+  const subjectPacingRowStyle = {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18,
+    flexWrap: 'nowrap',
+  };
+  const daysOffRowStyle = {
+    paddingTop: 8,
+    paddingBottom: 18,
   };
   const sectionTitleStyle = {
     ...SettingsTypography.sectionTitle,
@@ -2099,14 +2140,15 @@ export default function PlannerSettingsContent({
           </View>
         ) : null}
         {/* Learning defaults */}
-        <View style={sectionStyle}>
-          <View style={{ alignSelf: 'flex-start' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={learningDefaultsFieldTitleStyle}>Learning defaults • </Text>
-              <View>
+        <View style={[planningSectionStyle, planningSectionFirstStyle]}>
+          <View style={planningSectionHeaderStyle}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>Learning defaults</Text>
+              <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>•</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 {isSchoolYearLocked ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={learningDefaultsFieldTitleStyle}>
+                    <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>
                       {selectedSchoolYearLabel ? `${selectedSchoolYearLabel} School Year` : 'School Year'}
                     </Text>
                   </View>
@@ -2132,7 +2174,7 @@ export default function PlannerSettingsContent({
                     style={{ flexDirection: 'row', alignItems: 'center' }}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Text style={learningDefaultsFieldTitleStyle}>
+                    <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>
                       {selectedSchoolYearLabel ? `${selectedSchoolYearLabel} School Year` : 'School Year'}
                     </Text>
                     <View
@@ -2151,10 +2193,10 @@ export default function PlannerSettingsContent({
               </View>
             </View>
           </View>
-          <View style={sectionDividerStyle} />
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', flexWrap: 'wrap', columnGap: 8, rowGap: 16, justifyContent: 'flex-start' }}>
+          <View style={planningSectionBodyStyle}>
+          <View style={planningGridStyle}>
             <View style={{ width: 360, flexGrow: 0, flexShrink: 0 }}>
-              <View style={{ marginBottom: 12 }}>
+              <View style={planningFieldGroupStyle}>
                 <Text style={learningDefaultsFieldTitleStyle}>School year</Text>
                 <View style={[compactGroupedControlContainerStyle, { alignSelf: 'flex-start' }]}>
                   <View style={[compactRangeControlStyle, { width: 'auto', maxWidth: undefined }]}>
@@ -2190,7 +2232,7 @@ export default function PlannerSettingsContent({
                   </View>
                 </View>
               </View>
-              <View style={{ marginBottom: 12 }}>
+              <View style={planningFieldGroupStyle}>
                 <Text style={learningDefaultsFieldTitleStyle}>Fall term</Text>
                 <View style={[compactGroupedControlContainerStyle, { alignSelf: 'flex-start' }]}>
                   <View style={[compactRangeControlStyle, { width: 'auto', maxWidth: undefined }]}>
@@ -2264,7 +2306,7 @@ export default function PlannerSettingsContent({
               </View>
             </View>
             <View style={{ width: 320, flexGrow: 0, flexShrink: 0 }}>
-              <View style={{ marginBottom: 12 }}>
+              <View style={planningFieldGroupStyle}>
                 <Text style={learningDefaultsFieldTitleStyle}>Usual learning days</Text>
                 <View style={{ marginTop: 4 }}>
                   <View style={{ flexDirection: 'row', flexWrap: 'nowrap', gap: 8, marginBottom: 2, justifyContent: 'flex-start' }}>
@@ -2284,7 +2326,7 @@ export default function PlannerSettingsContent({
                   </View>
                 </View>
               </View>
-              <View style={{ marginTop: 4, marginBottom: 12 }}>
+              <View style={[planningFieldGroupStyle, { marginTop: 4 }]}>
                 <Text style={learningDefaultsFieldTitleStyle}>Usual learning hours</Text>
                 <View style={[compactGroupedControlContainerStyle, { marginTop: 6, alignSelf: 'flex-start', paddingRight: 6 }]}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start' }}>
@@ -2362,7 +2404,7 @@ export default function PlannerSettingsContent({
                   </View>
                 </View>
               </View>
-              <View style={{ marginTop: 4, marginBottom: 12 }}>
+              <View style={{ marginTop: 4 }}>
                 <Text style={learningDefaultsFieldTitleStyle}>Attendance tracking</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
                   <TouchableOpacity
@@ -2383,15 +2425,18 @@ export default function PlannerSettingsContent({
               </View>
             </View>
           </View>
+          </View>
         </View>
 
         {(attendanceTrackingMode === 'class_day' || targetScope === 'per_subject') && (
-          <View style={sectionStyle}>
-            <Text style={learningDefaultsFieldTitleStyle}>Subject pacing</Text>
-            <View style={sectionDividerStyle} />
+          <View style={planningSectionStyle}>
+            <View style={planningSectionHeaderStyle}>
+              <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>Subject pacing</Text>
+            </View>
+            <View style={planningSectionBodyStyle}>
             {attendanceTrackingMode === 'class_day' ? (
-              <View style={{ marginBottom: 12 }}>
-                <View style={[settingRowControlStyle, { minWidth: 220, gap: 6, justifyContent: 'flex-start', marginTop: 2 }]}>
+              <View style={subjectPacingRowStyle}>
+                <View style={[settingRowControlStyle, { minWidth: 220, gap: 6, justifyContent: 'flex-start', marginTop: 0 }]}>
                   <Text style={mutedMetaTextStyle}>Total attendance goal:</Text>
                   {goalMode === 'days' && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -2443,13 +2488,7 @@ export default function PlannerSettingsContent({
                   return (
                     <View
                       key={subj.id}
-                      style={{
-                        marginBottom: 12,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 8,
-                        flexWrap: 'nowrap',
-                      }}
+                      style={subjectPacingRowStyle}
                     >
                       <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0, minWidth: 92 }]}>
                         {subj.name || 'Subject'}
@@ -2523,22 +2562,28 @@ export default function PlannerSettingsContent({
                 })}
               </View>
             )}
+            </View>
           </View>
         )}
 
         {/* Public holidays */}
-        <View style={[sectionStyle, { marginBottom: 12 }]}>
-          <Text style={sectionTitleStyle}>Days off</Text>
-          <View style={sectionDividerStyle} />
-          <View style={{ marginBottom: 8, minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 8 }}>
-            <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>U.S. Public Holidays</Text>
-            <Switch
-              style={{ alignSelf: 'center' }}
-              value={followGlobalHolidays}
-              onValueChange={handleFollowChange}
-              trackColor={{ false: BORDER, true: '#AECBFA' }}
-              thumbColor={followGlobalHolidays ? '#45A29E' : '#f9fafb'}
-            />
+        <View style={planningSectionStyle}>
+          <View style={planningSectionHeaderStyle}>
+            <Text style={[sectionTitleStyle, { marginBottom: 0 }]}>Days off</Text>
+          </View>
+          <View style={planningSectionBodyStyle}>
+            <View style={daysOffRowStyle}>
+              <View style={{ minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 8 }}>
+                <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>U.S. Public Holidays</Text>
+                <Switch
+                  style={{ alignSelf: 'center' }}
+                  value={followGlobalHolidays}
+                  onValueChange={handleFollowChange}
+                  trackColor={{ false: BORDER, true: '#AECBFA' }}
+                  thumbColor={followGlobalHolidays ? '#45A29E' : '#f9fafb'}
+                />
+              </View>
+            </View>
           </View>
         </View>
 
@@ -2926,7 +2971,7 @@ export default function PlannerSettingsContent({
         )}
 
         {/* Custom days (single-date exclusions) */}
-        <View style={{ marginTop: 12 }}>
+        <View style={[daysOffRowStyle, { marginTop: 0 }]}>
           <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 2 }]}>Custom days off</Text>
           <View>
               {visibleCustomHolidays.length === 0 && !addingHoliday ? (
@@ -3024,7 +3069,7 @@ export default function PlannerSettingsContent({
         </View>
 
         {/* Ranges (date-span exclusions) */}
-        <View style={{ marginTop: 12 }}>
+        <View style={[daysOffRowStyle, { marginTop: 0 }]}>
           <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 2 }]}>Custom breaks</Text>
           <View>
               {visibleCustomBreaks.length === 0 && !addingBreak ? (
