@@ -40,6 +40,10 @@ export default function ChildHomeScreen({
   const safeFamilyId = familyId != null && String(familyId).trim() ? String(familyId).trim() : null;
 
   const sessionLoading = session?.loading;
+  const isSelfManagedStudent =
+    session?.role_flags?.isChild === true
+    && session?.student_self_signup === true
+    && session?.child_linked_via_accepted_invite !== true;
   useEffect(() => {
     if (!safeFamilyId || !safeChildId) return;
     if (isParentViewingChild) {
@@ -290,6 +294,7 @@ export default function ChildHomeScreen({
           onAddSuggestedRhythm={() => {}}
           noCard
           showEmptyAddButton={false}
+          hideSubjectDot={isSelfManagedStudent}
         />
       </View>
     </View>

@@ -5757,15 +5757,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             });
           },
         });
-      } else if (isHoliday) {
-        menuItems.push({
-          text: 'View',
-          iconKey: 'calendar',
-          action: () => {
-            window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev } }));
-          },
-        });
-      } else {
+      } else if (!isHoliday) {
       let eventId = ev._originalId || ev.originalId || ev.id;
       eventId = cleanPlannerEventId(eventId);
       const openChildEventModal = (focus) => {
@@ -5796,27 +5788,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               iconKey: 'send',
               action: () => openChildEventModal('submission'),
             });
-          } else {
-            menuItems.push({
-              text: 'View',
-              iconKey: 'calendar',
-              action: () => {
-                window.dispatchEvent(
-                  new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev, schedulingMode: false } })
-                );
-              },
-            });
           }
-        } else {
-          menuItems.push({
-            text: 'View',
-            iconKey: 'calendar',
-            action: () => {
-              window.dispatchEvent(
-                new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev, schedulingMode: false } })
-              );
-            },
-          });
         }
       } else {
         if (isSeriesGroup) {
@@ -5855,16 +5827,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               text: 'Submit for review',
               iconKey: 'send',
               action: () => openChildEventModal('submission'),
-            });
-          } else {
-            menuItems.push({
-              text: 'View',
-              iconKey: 'calendar',
-              action: () => {
-                window.dispatchEvent(
-                  new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev, schedulingMode: false } })
-                );
-              },
             });
           }
         } else {
@@ -6011,6 +5973,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         }
       }
       }
+      if (menuItems.length === 0) return;
       const estimatedMenuHeight = menuItems.length * 48 + 16;
       const windowHeight = window.innerHeight;
       const estimatedMenuWidth = 240;

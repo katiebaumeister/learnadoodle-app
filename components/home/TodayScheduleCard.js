@@ -20,6 +20,7 @@ export default function TodayScheduleCard({
   onTabChange, // Optional: for direct tab navigation
   /** When true, show attendance checkboxes (same backend as planner). */
   showAttendanceToggle = true,
+  hideSubjectDot = false,
 }) {
   /** Optimistic done state by event id until server props catch up */
   const [attendanceOptimistic, setAttendanceOptimistic] = useState({});
@@ -306,7 +307,7 @@ export default function TodayScheduleCard({
                     <View style={styles.titleRow}>
                       {(event.subject_id || isAssignment) ? (
                         <View style={styles.eventHeader}>
-                          {event.subject_id && (
+                          {event.subject_id && !hideSubjectDot && (
                             <View style={[styles.subjectDot, { backgroundColor: getSubjectColor(event.subject_id) }]} />
                           )}
                           {isAssignment && (

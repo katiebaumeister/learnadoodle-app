@@ -80,6 +80,14 @@ export default function SubjectOverviewCard({
     const e = item?.endTs ? new Date(item.endTs) : null;
     const hasValidStart = !!s && !Number.isNaN(s.getTime());
     const hasValidEnd = !!e && !Number.isNaN(e.getTime());
+    const rawStart = String(item?.startTs || '').trim();
+    const rawEnd = String(item?.endTs || '').trim();
+    const isRawMidnight = (raw) => /T00:00(?::00(?:\.000)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i.test(raw);
+    const isRawEndOfDay = (raw) => /T23:59(?::59(?:\.999)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i.test(raw);
+    const isRawMidnightBounded =
+      !!rawStart &&
+      isRawMidnight(rawStart) &&
+      (!!rawEnd ? (isRawMidnight(rawEnd) || isRawEndOfDay(rawEnd)) : true);
     const isMidnightBounded =
       hasValidStart &&
       hasValidEnd &&
@@ -90,7 +98,7 @@ export default function SubjectOverviewCard({
     const isTimeless =
       item?.is_flexible === true ||
       item?.isFlexible === true ||
-      (!isIntrinsicAllDayType && isMidnightBounded);
+      (!isIntrinsicAllDayType && (isMidnightBounded || isRawMidnightBounded));
     let timeStr = '';
     if (!isTimeless && hasValidStart) {
       timeStr = hasValidEnd && s.getTime() !== e.getTime()
