@@ -374,15 +374,19 @@ export default function ProgressTab({
   }, [familyId, selectedAcademicYearLabel]);
   useEffect(() => {
     let cancelled = false;
-    if (!familyId || !selectedAcademicYearLabel) {
+    if (!familyId || !Number.isFinite(selectedAcademicYearStart)) {
       setYearSubjectTargetsById({});
       return () => { cancelled = true; };
     }
+    const schoolYearStart = `${selectedAcademicYearStart}-01-01`;
+    const schoolYearEnd = `${selectedAcademicYearStart + 1}-12-31`;
     supabase
       .from('academic_years')
       .select('subject_targets, subject_targets_override')
       .eq('family_id', familyId)
-      .eq('school_year_label', selectedAcademicYearLabel)
+      .gte('start_date', schoolYearStart)
+      .lte('start_date', schoolYearEnd)
+      .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle()
       .then(({ data }) => {
@@ -400,7 +404,7 @@ export default function ProgressTab({
         if (!cancelled) setYearSubjectTargetsById({});
       });
     return () => { cancelled = true; };
-  }, [familyId, selectedAcademicYearLabel]);
+  }, [familyId, selectedAcademicYearStart]);
   const subjectPickerCopy = useMemo(() => {
     const byAction = {
       attendance_edit: {

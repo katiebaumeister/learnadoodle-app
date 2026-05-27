@@ -851,26 +851,8 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
           const endDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
           const daysDiff = Math.round((endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 60 * 60 * 24));
           
-          console.log('[MonthGrid] Project event found:', {
-            id: ev.id,
-            title: ev.title,
-            start_ts: ev.start_ts,
-            end_ts: ev.end_ts,
-            startDate: startDate.toISOString(),
-            endDate: endDate.toISOString(),
-            startDateOnly: startDateOnly.toISOString(),
-            endDateOnly: endDateOnly.toISOString(),
-            daysDiff,
-            startDateOnlyTime: startDateOnly.getTime(),
-            endDateOnlyTime: endDateOnly.getTime(),
-            timeDifference: endDateOnly.getTime() - startDateOnly.getTime(),
-            timeDifferenceDays: (endDateOnly.getTime() - startDateOnly.getTime()) / (1000 * 60 * 60 * 24)
-          });
-          
           // If project spans within a week (7 days or less), expand it
           if (daysDiff >= 0 && daysDiff <= 7) {
-            const totalDays = daysDiff + 1; // Include both start and end days
-            console.log('[MonthGrid] Expanding project across', totalDays, 'days (from day 0 to day', daysDiff, ')');
             // Create a copy for each day from start to end (inclusive)
             for (let i = 0; i <= daysDiff; i++) {
               const dayDate = new Date(startDateOnly);
@@ -882,8 +864,6 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
               const day = String(dayDate.getDate()).padStart(2, '0');
               const dateLocal = `${year}-${month}-${day}`;
               
-              console.log('[MonthGrid] Creating expanded event for day', i, ':', dateLocal);
-              
               const expandedEvent = {
                 ...ev,
                 id: `${ev.id}-day-${i}`, // Unique ID for each day instance
@@ -893,10 +873,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
               };
               expanded.push(expandedEvent);
             }
-            console.log('[MonthGrid] Created', expanded.length, 'expanded events for project');
             continue; // Skip adding the original event
-          } else if (daysDiff > 7) {
-            console.log('[MonthGrid] Project spans more than 7 days (', daysDiff + 1, 'days), not expanding');
           }
         }
       }
@@ -1009,17 +986,6 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
     if (!byDay.has(key)) byDay.set(key, []);
     byDay.get(key).push(ev);
     
-    // Debug logging for Project events
-    if (ev.event_type === 'Project' || ev._originalId) {
-      console.log('[MonthGrid] Adding event to day bucket:', {
-        eventId: ev.id,
-        originalId: ev._originalId,
-        title: ev.title,
-        date_local: ev.date_local,
-        dayKey: key,
-        dayDate: d.toISOString()
-      });
-    }
   }
 
   return (

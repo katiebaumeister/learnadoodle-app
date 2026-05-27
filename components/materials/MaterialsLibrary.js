@@ -1781,7 +1781,8 @@ export default function MaterialsLibrary({
           }
         }}
         familyId={familyId}
-        children={children}
+        children={effectiveChildren}
+        defaultChildId={isChildViewer ? forcedChildId : null}
         allSubjects={allSubjectsForModal}
         defaultRole={addModalDefaultRole}
         connectedProviderIds={resolvedConnectedAccountProviders}

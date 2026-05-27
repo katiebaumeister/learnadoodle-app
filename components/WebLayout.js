@@ -200,6 +200,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   } catch (e) {
     // SessionContext not available or not in provider, use prop only
   }
+  const hasSession = !!session;
+  const sessionFamilyId = session?.family_id ?? null;
+  const sessionIsParent = session?.role_flags?.isParent === true;
+  const sessionIsChild = session?.role_flags?.isChild === true;
+  const sessionIsTutor = session?.role_flags?.isTutor === true;
   const { openSearch } = useGlobalSearch();
   const [activeTab, setActiveTab] = useState('home');
   const activeTabRef = useRef(activeTab);
@@ -396,6 +401,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
   const [shellImagesReady, setShellImagesReady] = useState(Platform.OS !== 'web');
   const [homeInitialDataReady, setHomeInitialDataReady] = useState(false);
+  const handleHomeInitialDataReady = useCallback(() => {
+    setHomeInitialDataReady(true);
+  }, []);
 
   /** Post-onboarding explorer tour (parents: 3-step; child/tutor: one modal). Persisted in profiles.app_preferences. */
   const [explorerParentTourOpen, setExplorerParentTourOpen] = useState(false);
@@ -916,9 +924,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [googleCalendarConnected, currentMonth]);
 
   useEffect(() => {
-    if (!session || !familyId) return;
+    if (!hasSession || !familyId) return;
     refreshGoogleCalendarConnection();
-  }, [session, familyId, refreshGoogleCalendarConnection]);
+  }, [hasSession, familyId, refreshGoogleCalendarConnection]);
 
   useEffect(() => {
     if (activeTab !== 'planner' && activeTab !== 'calendar') return;
@@ -2098,9 +2106,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [authUserId, user?.email]);
 
   const fetchFamilyMembers = useCallback(async () => {
-    if (!authUserId || !session) return;
+    if (!authUserId || (!sessionFamilyId && !familyId)) return;
     try {
-      let resolvedFamilyId = session?.family_id || familyId || null;
+      let resolvedFamilyId = sessionFamilyId || familyId || null;
       if (!resolvedFamilyId && Platform.OS !== 'web') {
         const { data: profileData } = await supabase
           .from('profiles')
@@ -2192,10 +2200,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       console.error('[WebLayout] Unable to load family children', error);
       setChildren([]);
     }
-  }, [authUserId, session, familyId, subjectsLoaded, fullSubjectsLoaded]);
+  }, [authUserId, sessionFamilyId, familyId, subjectsLoaded, fullSubjectsLoaded]);
 
   const fetchFamilyData = useCallback(async () => {
-    if (!authUserId || !session) return;
+    if (!authUserId) return;
     try {
       const { data, error } = await getFamilyMembers();
       if (!error && data) {
@@ -2207,19 +2215,32 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } catch (error) {
       console.error('[WebLayout] Unable to load family data', error);
     }
-  }, [authUserId, session]);
+  }, [authUserId]);
 
   useEffect(() => {
-    if (!authUserId || !session) return;
-    if (!isUuidLike(session.family_id)) return;
+    if (!authUserId || !sessionFamilyId) return;
+    if (!isUuidLike(sessionFamilyId)) return;
     let mounted = true;
     const fetchAcademicYears = async () => {
-      const { data, error } = await supabase
+      let result = await supabase
         .from('academic_years')
         .select('id, start_date, end_date, year_name')
-        .eq('family_id', session.family_id)
+        .eq('family_id', sessionFamilyId)
         .order('updated_at', { ascending: false })
         .limit(24);
+      if (
+        result?.error
+        && String(result.error?.message || result.error?.details || '').toLowerCase().includes('year_name')
+      ) {
+        // Older DBs may not have year_name yet; fall back to core columns.
+        result = await supabase
+          .from('academic_years')
+          .select('id, start_date, end_date')
+          .eq('family_id', sessionFamilyId)
+          .order('updated_at', { ascending: false })
+          .limit(24);
+      }
+      const { data, error } = result;
       if (!mounted) return;
       if (error) {
         setPreloadedAcademicYears([]);
@@ -2242,7 +2263,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         .select(
           '*, child:child_id (id, first_name, avatar), subject:related_subject (id, name)'
         )
-        .eq('family_id', session.family_id)
+        .eq('family_id', sessionFamilyId)
         .order('updated_at', { ascending: false })
         .limit(200);
       if (!mounted) return;
@@ -2263,14 +2284,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       fetchFamilyAssignments().catch(() => {
         if (mounted) setPreloadedFamilyAssignments([]);
       }),
-      prefetchPlanEditListForFamily(session.family_id).catch(() => {}),
+      prefetchPlanEditListForFamily(sessionFamilyId).catch(() => {}),
     ]).catch(() => {});
     return () => { mounted = false; };
-  }, [fetchFamilyData, fetchFamilyMembers, authUserId, session]);
+  }, [fetchFamilyData, fetchFamilyMembers, authUserId, sessionFamilyId]);
 
   // Resolve onboarding status before showing main content so we never flash landing without modal
   useEffect(() => {
-    if (!authUserId || !session) {
+    if (!authUserId || !hasSession) {
       setOnboardingCheckDone(true);
       setInitialOnboardingBlocked(false);
       return;
@@ -2291,7 +2312,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
     })();
     return () => { cancelled = true; };
-  }, [authUserId, session]);
+  }, [authUserId, hasSession]);
 
   // Onboarding path: brief delay so modal can mount under loader. Skipped when not blocked (faster shell).
   useEffect(() => {
@@ -2341,11 +2362,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [fetchFamilyData, fetchFamilyMembers]);
 
   useEffect(() => {
-    if (!authUserId || !session?.role_flags?.isParent || familyId) return;
+    if (!authUserId || !sessionIsParent || familyId) return;
     let cancelled = false;
     ensureFamilyAndSet().then(() => { if (!cancelled) {} });
     return () => { cancelled = true; };
-  }, [authUserId, session?.role_flags?.isParent, familyId, ensureFamilyAndSet]);
+  }, [authUserId, sessionIsParent, familyId, ensureFamilyAndSet]);
 
   // Listen for children refresh events
   useEffect(() => {
@@ -3317,12 +3338,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     if (!onboardingCheckDone || onboardingBlocked) return;
-    if (!authUserId || !session) return;
+    if (!authUserId || !hasSession) return;
     if (profile == null) return;
 
     const tour = parseExplorerTourFromPrefs(profile.app_preferences);
-    const isParent = session.role_flags?.isParent === true;
-    const isLearner = !!(session.role_flags?.isChild || session.role_flags?.isTutor);
+    const isParent = sessionIsParent;
+    const isLearner = !!(sessionIsChild || sessionIsTutor);
 
     if (isParent && !tour.parent.done && !tour.parent.skipped) {
       // Migrate: replace spotlight tour with Doodle setup guide (chatbot checklist). Do not open overlay.
@@ -3338,7 +3359,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setExplorerParentTourOpen(false);
       setLearnerQuickStartOpen(false);
     }
-  }, [onboardingCheckDone, onboardingBlocked, authUserId, session, profile, profile?.app_preferences]);
+  }, [
+    onboardingCheckDone,
+    onboardingBlocked,
+    authUserId,
+    hasSession,
+    profile,
+    profile?.app_preferences,
+    sessionIsParent,
+    sessionIsChild,
+    sessionIsTutor,
+  ]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -4825,7 +4856,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 session={session}
                 profile={profile}
                 preloadedPlanHealth={preloadedPlanHealth}
-                onHomeInitialDataReady={() => setHomeInitialDataReady(true)}
+                onHomeInitialDataReady={handleHomeInitialDataReady}
               />
               </View>
               {isPlanYearInline ? (

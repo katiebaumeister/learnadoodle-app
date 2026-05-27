@@ -10223,6 +10223,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         defaultSubjectId={addMaterialModalDefaultSubjectId}
         defaultSubjectName={addMaterialModalDefaultSubjectName}
         defaultChildIds={addMaterialModalDefaultChildIds}
+        defaultChildId={propSession?.child_id || null}
         defaultProviderUrl={addMaterialModalDefaultProviderUrl}
       />
       <Modal

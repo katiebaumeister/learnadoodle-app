@@ -603,11 +603,31 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           pendingByEmail.set(dedupeKey, invite);
         });
         const mergedPendingParents = Array.from(pendingByEmail.values());
-        return {
+        const next = {
           ...propFamily,
           child_invite_summaries: mergedSummaries,
           pending_parent_invites: mergedPendingParents,
         };
+        try {
+          const prevFingerprint = JSON.stringify({
+            id: prev?.id || null,
+            child_invite_summaries: prev?.child_invite_summaries || null,
+            pending_parent_invites: prev?.pending_parent_invites || [],
+            role: prev?.role || null,
+            members: Array.isArray(prev?.members) ? prev.members : [],
+          });
+          const nextFingerprint = JSON.stringify({
+            id: next?.id || null,
+            child_invite_summaries: next?.child_invite_summaries || null,
+            pending_parent_invites: next?.pending_parent_invites || [],
+            role: next?.role || null,
+            members: Array.isArray(next?.members) ? next.members : [],
+          });
+          if (prevFingerprint === nextFingerprint) return prev;
+        } catch (_) {
+          // Fall through to returning next when fingerprinting fails.
+        }
+        return next;
       });
     } else if (!propFamily && user) {
       // Fallback: load family data if not provided as prop (e.g., in SettingsModal)
@@ -626,7 +646,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       };
       loadFamily();
     }
-  }, [propFamily, user]);
+  }, [propFamily, user?.id]);
 
   useEffect(() => {
     if (propFamilyId) {
@@ -694,11 +714,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         lastProfileSaveRef.current = 0;
       }
 
-      setProfile(propProfile);
-      setProfileName(incomingName);
-      setProfileEmail(incomingEmail);
-      setProfilePhone(incomingPhone);
-    } else if (!propProfile && user) {
+      setProfile((prev) => {
+        if (!prev) return propProfile;
+        const sameId = String(prev?.id || '') === String(propProfile?.id || '');
+        const sameCore =
+          String(prev?.name || prev?.first_name || '') === String(propProfile?.name || propProfile?.first_name || '')
+          && String(prev?.email || '') === String(propProfile?.email || '')
+          && String(prev?.phone || '') === String(propProfile?.phone || '')
+          && String(prev?.role || '') === String(propProfile?.role || '');
+        return sameId && sameCore ? prev : propProfile;
+      });
+      setProfileName((prev) => (prev === incomingName ? prev : incomingName));
+      setProfileEmail((prev) => (prev === incomingEmail ? prev : incomingEmail));
+      setProfilePhone((prev) => (prev === incomingPhone ? prev : incomingPhone));
+    } else if (!propProfile && user?.id) {
       // Fallback: load profile data if not provided as prop (e.g., in SettingsModal)
       const loadProfile = async () => {
         try {
@@ -716,14 +745,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       };
       loadProfile();
     }
-  }, [propProfile, user, editingProfile]);
+  }, [propProfile, user?.id, user?.email, editingProfile]);
 
   // Initialize family name when family data loads
   useEffect(() => {
     if (family?.family_name) {
-      setFamilyName(family.family_name);
+      setFamilyName((prev) => (prev === family.family_name ? prev : family.family_name));
     }
-  }, [family]);
+  }, [family?.family_name]);
 
   // When parent is "viewing as" a child, load that child's linked account email for Profile
   useEffect(() => {
@@ -1946,17 +1975,17 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   // Load connection status on mount (use cache first, no loading state; skip in child mode to avoid 403)
   useEffect(() => {
-    if (user && familyId && !isChildMode) {
+    if (user?.id && familyId && !isChildMode) {
       loadConnectionStatus(true);
     }
-  }, [user, familyId, isChildMode]);
+  }, [user?.id, familyId, isChildMode]);
 
   // Refresh connection status when connections section becomes active (if needed)
   useEffect(() => {
-    if (activeSection === 'connections' && user && familyId && !isChildMode) {
+    if (activeSection === 'connections' && user?.id && familyId && !isChildMode) {
       loadConnectionStatus(false);
     }
-  }, [activeSection, user, familyId, isChildMode]);
+  }, [activeSection, user?.id, familyId, isChildMode]);
 
   // Listen for OAuth callback messages (for Google)
   useEffect(() => {
@@ -3046,9 +3075,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       • Your family and all family members{'\n'}
                       • All learners (children) and their profiles, courses, and progress{'\n'}
                       • Any linked child or tutor accounts in this family
-                    </Text>
-                    <Text style={styles.dangerZoneAccountWarning}>
-                      This cannot be undone. You (and all linked accounts - both children and tutors) will need to sign up again and re-add all plans.
                     </Text>
                     <Text style={styles.dangerZoneAccountConfirmLabel}>
                       Type DELETE to confirm
@@ -8782,11 +8808,12 @@ function createStyles(tokens) {
     dangerZoneAccountButton: {
       backgroundColor: colors.redBold || '#dc2626',
       paddingVertical: 12,
-      paddingHorizontal: 20,
+      paddingHorizontal: 14,
       borderRadius: 8,
       alignItems: 'center',
       justifyContent: 'center',
       minHeight: 44,
+      alignSelf: 'center',
       ...(Platform.OS === 'web' && { cursor: 'pointer' }),
     },
     dangerZoneAccountButtonDisabled: {
@@ -8796,9 +8823,11 @@ function createStyles(tokens) {
     dangerZoneAccountButtonText: {
       fontSize: 14,
       lineHeight: 20,
+      fontWeight: '700',
+      textTransform: 'uppercase',
       color: '#ffffff',
       ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     dangerSection: {

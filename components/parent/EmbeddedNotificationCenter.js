@@ -98,6 +98,17 @@ const SECTIONS = [
   { id: 'submissions', label: 'Submissions' },
   { id: 'needs_revision', label: 'Coming up' },
 ];
+const DISABLE_EMBEDDED_NOTIFICATION_CENTER = true;
+
+const stringArrayEqual = (a, b) => {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (String(a[i] || '') !== String(b[i] || '')) return false;
+  }
+  return true;
+};
 
 export default function EmbeddedNotificationCenter({
   familyId,
@@ -111,6 +122,7 @@ export default function EmbeddedNotificationCenter({
   /** When set, scope assignments and upcoming events to this child (viewer is that learner). */
   viewerChildId = null,
 }) {
+  if (DISABLE_EMBEDDED_NOTIFICATION_CENTER) return null;
   const initialBootstrap = readRailBootstrap(familyId);
   const session = useSession();
   const loadCycleRef = useRef(0);
@@ -140,8 +152,8 @@ export default function EmbeddedNotificationCenter({
   /** null | 'submission' (review submitted work) | 'help' (respond to help request) */
   const [openModal, setOpenModal] = useState(null);
   const [activeLoadCycle, setActiveLoadCycle] = useState(0);
-  const [committedPrimaryCardMode, setCommittedPrimaryCardMode] = useState(null);
   const [linkedEventsById, setLinkedEventsById] = useState({});
+  const loadInFlightRef = useRef(false);
   const isParentViewer = session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
 
   /** Re-read cache when family changes (same mount). */
@@ -200,6 +212,11 @@ export default function EmbeddedNotificationCenter({
   // Primitives only — full `session` from context was a new object whenever SessionProvider re-rendered (before useMemo).
   const sessionLoading = session?.loading;
   const sessionFamilyId = session?.family_id;
+  const shouldRunLiveRail = useMemo(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return true;
+    const path = (window.location?.pathname || '/').replace(/\/$/, '') || '/';
+    return path === '/' || path === '/home';
+  }, [sessionFamilyId]);
   const summaryKnown =
     childInviteSummariesFromApi != null && typeof childInviteSummariesFromApi === 'object';
   const logRail = (...args) => {
@@ -209,6 +226,7 @@ export default function EmbeddedNotificationCenter({
   };
 
   useEffect(() => {
+    if (!shouldRunLiveRail) return;
     if (session && !session.loading && familyId) {
       // Load data in background without showing loading state
       loadData();
@@ -226,7 +244,7 @@ export default function EmbeddedNotificationCenter({
         window.removeEventListener('refreshRightRail', onParentRefresh);
       };
     }
-  }, [sessionLoading, sessionFamilyId, familyId, hideOnboardingCards, viewerChildId]);
+  }, [sessionLoading, sessionFamilyId, familyId, hideOnboardingCards, viewerChildId, shouldRunLiveRail]);
 
   useEffect(() => {
     if (hideOnboardingCards) return;
@@ -254,13 +272,11 @@ export default function EmbeddedNotificationCenter({
 
     // Promote-only from parent summaries: never downgrade on transient empty/stale payloads.
     if (pendingIds.length > 0) {
-      setHasPendingChildInvite(true);
+      setHasPendingChildInvite((prev) => (prev ? prev : true));
+      setPendingInviteChildNames((prev) => (stringArrayEqual(prev, pendingNames) ? prev : pendingNames));
     }
     if (connectedFromSummary) {
-      setHasLinkedChildAccount(true);
-    }
-    if (pendingIds.length > 0) {
-      setPendingInviteChildNames(pendingNames);
+      setHasLinkedChildAccount((prev) => (prev ? prev : true));
     }
   }, [hideOnboardingCards, summaryKnown, childInviteSummariesFromApi, children]);
 
@@ -278,11 +294,13 @@ export default function EmbeddedNotificationCenter({
 
   const loadData = async () => {
     if (!familyId) return;
+    if (!shouldRunLiveRail) return;
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
 
     const cycleId = loadCycleRef.current + 1;
     loadCycleRef.current = cycleId;
     setActiveLoadCycle(cycleId);
-    setCommittedPrimaryCardMode(null);
     if (!hideOnboardingCards && !railBootstrapped) {
       setOnboardingStatusReady(false);
     }
@@ -315,6 +333,7 @@ export default function EmbeddedNotificationCenter({
         onboardingStatusReady,
       });
       setDataReady(true);
+      loadInFlightRef.current = false;
     }
   };
 
@@ -789,7 +808,7 @@ export default function EmbeddedNotificationCenter({
           .filter(Boolean)
       )];
       if (ids.length === 0) {
-        setLinkedEventsById({});
+        setLinkedEventsById((prev) => (Object.keys(prev || {}).length === 0 ? prev : {}));
         return;
       }
       try {
@@ -798,7 +817,7 @@ export default function EmbeddedNotificationCenter({
           .select('id, event_type, start_ts, status, deleted_at')
           .in('id', ids);
         if (error || !Array.isArray(data)) {
-          setLinkedEventsById({});
+          setLinkedEventsById((prev) => (Object.keys(prev || {}).length === 0 ? prev : {}));
           return;
         }
         const next = {};
@@ -859,32 +878,7 @@ export default function EmbeddedNotificationCenter({
     : !hasLinkedChildAccount
       ? 'invite'
       : 'none';
-  const primaryCardMode = railReady
-    ? committedPrimaryCardMode || primaryCardCandidateMode
-    : 'none';
-
-  useEffect(() => {
-    if (!railReady) return;
-    if (committedPrimaryCardMode) return;
-    setCommittedPrimaryCardMode(primaryCardCandidateMode);
-    logRail('mode committed', {
-      cycleId: activeLoadCycle,
-      mode: primaryCardCandidateMode,
-      hasLinkedChildAccount,
-      hasPendingChildInvite,
-      hasInboxActivity,
-      summaryKnown,
-    });
-  }, [
-    railReady,
-    committedPrimaryCardMode,
-    primaryCardCandidateMode,
-    activeLoadCycle,
-    hasLinkedChildAccount,
-    hasPendingChildInvite,
-    hasInboxActivity,
-    summaryKnown,
-  ]);
+  const primaryCardMode = railReady ? primaryCardCandidateMode : 'none';
   /** Inbox chrome when we’re past loading placeholder and not showing invite/assign primary card. */
   const showInboxTabs = hideOnboardingCards || (railReady && primaryCardMode === 'none');
 

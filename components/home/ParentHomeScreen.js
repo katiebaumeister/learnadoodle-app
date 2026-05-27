@@ -121,12 +121,14 @@ export default function ParentHomeScreen({
   const [error, setError] = useState(null);
   const [showParentDigest, setShowParentDigest] = useState(false);
   const initialDataReadyFiredRef = useRef(false);
+  const onInitialDataReadyRef = useRef(onInitialDataReady);
+  onInitialDataReadyRef.current = onInitialDataReady;
 
   const markInitialDataReady = useCallback(() => {
     if (initialDataReadyFiredRef.current) return;
     initialDataReadyFiredRef.current = true;
-    onInitialDataReady?.();
-  }, [onInitialDataReady]);
+    onInitialDataReadyRef.current?.();
+  }, []);
 
   // Get familyId from session if not provided as prop
   const familyId = propFamilyId || session?.family_id;

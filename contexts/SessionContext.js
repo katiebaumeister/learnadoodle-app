@@ -22,6 +22,39 @@ import { useAuth } from './AuthContext';
 
 const SessionContext = createContext(null);
 
+const primitiveArrayEqual = (a, b) => {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (String(a[i] ?? '') !== String(b[i] ?? '')) return false;
+  }
+  return true;
+};
+
+const roleFlagsEqual = (a, b) => (
+  !!a?.isParent === !!b?.isParent
+  && !!a?.isTutor === !!b?.isTutor
+  && !!a?.isChild === !!b?.isChild
+);
+
+const sessionSnapshotEqual = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    String(a.family_id ?? '') === String(b.family_id ?? '')
+    && String(a.member_role ?? '') === String(b.member_role ?? '')
+    && String(a.child_id ?? '') === String(b.child_id ?? '')
+    && primitiveArrayEqual(a.child_scope || [], b.child_scope || [])
+    && primitiveArrayEqual(a.accessible_children || [], b.accessible_children || [])
+    && a.student_self_signup === b.student_self_signup
+    && a.child_linked_via_accepted_invite === b.child_linked_via_accepted_invite
+    && String(a.effective_role ?? '') === String(b.effective_role ?? '')
+    && roleFlagsEqual(a.role_flags, b.role_flags)
+    && !!a.legacyMode === !!b.legacyMode
+  );
+};
+
 export const useSession = () => {
   const context = useContext(SessionContext);
   if (!context) {
@@ -37,6 +70,9 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [legacyMode, setLegacyMode] = useState(false);
+  const commitSession = useCallback((nextSession) => {
+    setSession((prev) => (sessionSnapshotEqual(prev, nextSession) ? prev : nextSession));
+  }, []);
 
   // Load session context
   const loadSession = useCallback(async (familyIdToUse) => {
@@ -94,7 +130,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
         if ((memberRole || 'parent') !== 'parent') {
           console.warn('[SessionContext] No family_id found');
         }
-        setSession({
+        commitSession({
           family_id: null,
           member_role: memberRole || 'parent',
           child_id: null,
@@ -227,7 +263,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
       }
 
       setLegacyMode(isLegacy);
-      setSession({
+      commitSession({
         family_id: activeFamilyId,
         member_role: memberRole,
         child_id: childId,
@@ -257,7 +293,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
       }
     } catch (error) {
       console.error('[SessionContext] Error loading session:', error);
-      setSession({
+      commitSession({
         family_id: null,
         member_role: null,
         child_id: null,
@@ -276,7 +312,7 @@ export const SessionProvider = ({ children, familyId: propFamilyId = null }) => 
     } finally {
       setLoading(false);
     }
-  }, [authUserId, propFamilyId]);
+  }, [authUserId, propFamilyId, commitSession]);
 
   // Preload home data in background
   const preloadHomeData = useCallback(async (familyId) => {
