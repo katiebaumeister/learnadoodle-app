@@ -18,7 +18,7 @@ import {
 import { X, Mail } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { updateAssignment } from '../../lib/services/assignmentsClient';
-import { getChildHelpMessageHistory } from '../../lib/assignmentHelpHistory';
+import { getChildHelpMessageHistory, inferHelpSenderRole } from '../../lib/assignmentHelpHistory';
 import { extractStudentHelpReason } from '../tutor/tutorHelpUtils';
 import { useToast } from '../Toast';
 import { LD, shellShadow, fontDisplay } from './parentModalTheme';
@@ -180,7 +180,7 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
     };
     return log
       .map((entry) => {
-        const senderRole = String(entry?.sender_role || '').trim().toLowerCase();
+        const senderRole = inferHelpSenderRole(entry);
         const reason = String(entry?.reason || '').trim().toLowerCase();
         const body = String(entry?.body || entry?.message || entry?.note || '').trim();
         const tsRaw = entry?.created_at || entry?.timestamp || null;

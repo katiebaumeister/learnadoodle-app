@@ -738,11 +738,20 @@ export default function EmbeddedNotificationCenter({
       });
     };
 
+    const isSubmissionInboxRow = (assignment) => {
+      const status = String(assignment?.status || '').trim().toLowerCase();
+      const reviewStatus = String(assignment?.review_status || '').trim().toLowerCase();
+      if (assignment?.reviewed_at) return true;
+      if (status === 'submitted' || status === 'reviewed' || status === 'accepted') return true;
+      if (reviewStatus === 'reviewed' || reviewStatus === 'approved') return true;
+      return false;
+    };
+
     switch (selectedSection) {
       case 'submissions':
         return dedupeByEvent(
           assignments
-            .filter((a) => String(a.status || '').toLowerCase() === 'submitted' && !a.need_help)
+            .filter((a) => isSubmissionInboxRow(a) && !a.need_help)
             .filter((a) => isAssignmentLinkedEventActive(a))
         ).slice(0, limit);
       case 'help_requests':
@@ -808,7 +817,14 @@ export default function EmbeddedNotificationCenter({
   const hasInboxActivity =
     assignments.some(
       (a) =>
-        a.status === 'submitted' &&
+        (
+          String(a.status || '').trim().toLowerCase() === 'submitted' ||
+          String(a.status || '').trim().toLowerCase() === 'reviewed' ||
+          String(a.status || '').trim().toLowerCase() === 'accepted' ||
+          String(a.review_status || '').trim().toLowerCase() === 'reviewed' ||
+          String(a.review_status || '').trim().toLowerCase() === 'approved' ||
+          !!a.reviewed_at
+        ) &&
         a.review_status !== 'needs_revision' &&
         !a.need_help &&
         isAssignmentLinkedEventActive(a)

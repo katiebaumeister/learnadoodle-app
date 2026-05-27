@@ -18,6 +18,7 @@ import { supabase } from '../../lib/supabase';
 import { createAssignment, updateAssignment } from '../../lib/services/assignmentsClient';
 import { colors } from '../../theme/colors';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
+import { inferHelpSenderRole } from '../../lib/assignmentHelpHistory';
 
 /** Structured log for per-message timestamps (best-effort; ignores RPC errors). */
 async function appendHelpLogQuiet(assignmentId, body, reasonLabelForLog) {
@@ -83,6 +84,7 @@ export default function AskParentHelpModal({
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
+  const [childDisplayName, setChildDisplayName] = useState('Student');
 
   useEffect(() => {
     if (visible) {
@@ -91,6 +93,35 @@ export default function AskParentHelpModal({
       setError(null);
     }
   }, [visible, assignment?.id, eventContext?.id]);
+
+  useEffect(() => {
+    let mounted = true;
+    if (!visible || !childId) return () => { mounted = false; };
+
+    const fallback =
+      String(assignment?.child_name || eventContext?.child_name || '').trim() || 'Student';
+    setChildDisplayName(fallback);
+
+    const loadChildName = async () => {
+      try {
+        const { data, error: childErr } = await supabase
+          .from('children')
+          .select('first_name')
+          .eq('id', childId)
+          .maybeSingle();
+        if (!mounted || childErr) return;
+        const first = String(data?.first_name || '').trim();
+        if (first) setChildDisplayName(first);
+      } catch (_) {
+        // Best effort only; keep fallback label.
+      }
+    };
+
+    loadChildName();
+    return () => {
+      mounted = false;
+    };
+  }, [visible, childId, assignment?.child_name, eventContext?.child_name]);
 
   const reasonLabel = REASONS.find((r) => r.id === reasonId)?.label || 'Something else';
 
@@ -152,16 +183,17 @@ export default function AskParentHelpModal({
 
     if (normalized.length === 0) return [];
     return normalized.map((entry) => {
-      const actor = entry.senderRole === 'parent' ? 'Parent' : 'You';
+      const normalizedRole = inferHelpSenderRole(entry);
+      const actor = normalizedRole === 'parent' ? 'Parent' : childDisplayName;
       const verb =
-        entry.senderRole === 'parent'
+        normalizedRole === 'parent'
           ? 'replied'
-          : (entry.reason === 'sent_assignment' ? 'sent assignment' : 'sent to parent');
+          : (entry.reason === 'sent_assignment' ? 'sent assignment' : 'replied');
       return entry.body
         ? `${actor} ${verb} ${formatWhen(entry.tsRaw)} — "${entry.body}"`
         : `${actor} ${verb} ${formatWhen(entry.tsRaw)}`;
     });
-  }, [assignment?.help_message_log, assignment?.updated_at, assignment?.created_at]);
+  }, [assignment?.help_message_log, assignment?.updated_at, assignment?.created_at, childDisplayName]);
 
   const handleSend = async () => {
     if (!familyId || !childId) {
@@ -255,22 +287,20 @@ export default function AskParentHelpModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <TouchableOpacity
-        style={styles.overlay}
-        activeOpacity={1}
-        onPress={onClose}
-        accessibilityRole="button"
-        accessibilityLabel="Dismiss"
-      >
+      <View style={styles.overlay}>
         <TouchableOpacity
+          style={styles.backdrop}
           activeOpacity={1}
-          onPress={(e) => {
-            e?.stopPropagation?.();
-          }}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss"
+          {...(Platform.OS === 'web' && { cursor: 'default' })}
+        />
+        <View
+          style={styles.sheet}
           onKeyDown={(e) => {
             e?.stopPropagation?.();
           }}
-          style={styles.sheet}
         >
           <TouchableOpacity
             onPress={onClose}
@@ -358,8 +388,8 @@ export default function AskParentHelpModal({
               </TouchableOpacity>
             </View>
           </ScrollView>
-        </TouchableOpacity>
-      </TouchableOpacity>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -370,6 +400,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'center',
     padding: 24,
+  },
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
   },
   sheet: {
     backgroundColor: '#fff',
