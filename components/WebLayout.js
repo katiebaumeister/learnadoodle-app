@@ -1992,11 +1992,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
         }
         
-        // Always fallback to profile table (works even if backend is down)
-        if (profileData) {
-          setUserRole(profileData.role || 'parent');
-          // If we don't have profile from API, create a minimal profile object
-          if (!meData) {
+        // Fallback to profile table only when /me is unavailable.
+        if (!meData) {
+          if (profileData) {
+            setUserRole(profileData.role || 'parent');
             setProfile({
               role: profileData.role || 'parent',
               email: user.email || profileData.email,
@@ -2007,10 +2006,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               app_preferences: profileData.app_preferences ?? null,
               family_id: profileData.family_id ?? null,
             });
-          }
-        } else {
-          setUserRole('parent'); // Default fallback
-          if (!meData) {
+          } else {
+            setUserRole('parent'); // Default fallback
             setProfile({
               role: 'parent',
               email: user.email
@@ -2070,7 +2067,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           return;
         }
 
-        if (profileData) {
+        if (!meData && profileData) {
           setUserRole(profileData.role || 'parent');
           setProfile({
             role: profileData.role || 'parent',

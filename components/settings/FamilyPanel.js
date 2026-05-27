@@ -170,8 +170,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     [family?.members, user?.id]
   );
   const isSelfManagedStudent =
-    profile?.app_preferences?.student_self_signup === true
-    && !hasLinkedParentAccount;
+    familyUserControls?.isSelfManagedStudent === true
+    || (
+      profile?.app_preferences?.student_self_signup === true
+      && !hasLinkedParentAccount
+    );
   const isChildRestrictedView = isChildMode && !isSelfManagedStudent;
   const canManageChildInvites = !isChildRestrictedView && !isSelfManagedStudent;
 

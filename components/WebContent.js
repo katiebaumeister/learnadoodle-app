@@ -3875,11 +3875,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           console.warn('[WebContent] getMe error (non-critical):', meError);
         }
 
-        // Profile table (authoritative when present; matches prior sequential behavior)
-        if (profileData) {
-          setUserRole(profileData.role || 'parent');
-        } else {
-          setUserRole('parent');
+        // Only fall back to profile role when /me is unavailable.
+        if (meError || !meData) {
+          if (profileData) {
+            setUserRole(profileData.role || 'parent');
+          } else {
+            setUserRole('parent');
+          }
         }
 
         // Set empty accessible children if we couldn't get them from API
