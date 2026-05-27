@@ -1000,10 +1000,8 @@ export default function SubjectsPage({
 
   const registeredTerms = useMemo(() => {
     const order = ['full_year', 'fall_term', 'spring_term'];
-    if (!subjects || subjects.length === 0) return order;
-    const present = new Set(subjects.map((s) => normalizeSubjectTerm(s?.school_term)).filter(Boolean));
-    return order.filter((term) => present.has(term) || term === 'fall_term');
-  }, [subjects]);
+    return order;
+  }, []);
 
   const showInlineChildrenFilters = !isChildView && safeChildren.length > 0;
   const effectiveSubjectPrefillTerm = useMemo(() => {
