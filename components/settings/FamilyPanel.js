@@ -162,8 +162,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Profile state
   const [profile, setProfile] = useState(propProfile);
   const isSelfManagedStudent =
-    isChildMode
-    && profile?.app_preferences?.student_self_signup === true
+    profile?.app_preferences?.student_self_signup === true
     && family?.child_linked_via_accepted_invite !== true;
   const isChildRestrictedView = isChildMode && !isSelfManagedStudent;
   const canManageChildInvites = !isChildRestrictedView && !isSelfManagedStudent;
@@ -1542,9 +1541,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     );
   }
 
-  const parents = (family?.members || []).filter(
+  const allParents = (family?.members || []).filter(
     (m) => (m.member_role || m.role) === 'parent'
   );
+  const parents = isSelfManagedStudent
+    ? allParents.filter((m) => String(m?.user_id || '') !== String(user?.id || ''))
+    : allParents;
   const tutors = (family?.members || []).filter(
     (m) => (m.member_role || m.role) === 'tutor'
   );
@@ -3104,91 +3106,92 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
             </View>
             <View style={styles.subsectionDivider} />
             
-            {/* Family name row: always show so it's editable */}
-            <View
-              style={styles.memberRow}
-              {...(Platform.OS === 'web' && !isEditingFamilyName && {
-                onMouseEnter: () => setFamilyNameRowHovered(true),
-                onMouseLeave: () => setFamilyNameRowHovered(false),
-              })}
-            >
-              {isEditingFamilyName ? (
-                <>
-                  <TextInput
-                    style={styles.familyNameEditInput}
-                    value={editingFamilyNameValue}
-                    onChangeText={setEditingFamilyNameValue}
-                    placeholder="Family name"
-                    placeholderTextColor="#9ca3af"
-                    autoFocus
-                    editable={!savingFamilyName}
-                  />
-                  <View style={styles.memberRowActions}>
-                    <TouchableOpacity
-                      style={styles.memberRowActionButton}
-                      onPress={() => {
-                        setIsEditingFamilyName(false);
-                        setEditingFamilyNameValue('');
-                      }}
-                      disabled={savingFamilyName}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <X size={18} color="#374151" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.memberRowActionButton, savingFamilyName && { opacity: 0.6 }]}
-                      onPress={async () => {
-                        const trimmed = editingFamilyNameValue.trim();
-                        if (savingFamilyName || !familyId) return;
-                        setSavingFamilyName(true);
-                        try {
-                          const { data, error: err } = await updateFamilyName(trimmed || null);
-                          if (err) throw err;
-                          setFamily((prev) => (prev ? { ...prev, family_name: trimmed || undefined } : prev));
-                          if (onFamilyUpdate) onFamilyUpdate({ ...family, family_name: trimmed || undefined });
-                          setFamilyName(trimmed || '');
-                          setIsEditingFamilyName(false);
-                          setEditingFamilyNameValue('');
-                          toast.push('Family name saved', 'success');
-                        } catch (e) {
-                          console.warn('[FamilyPanel] Error saving family name:', e);
-                          toast.push(e?.message || e?.detail || 'Could not save family name', 'error');
-                        } finally {
-                          setSavingFamilyName(false);
-                        }
-                      }}
-                      disabled={savingFamilyName}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Check size={18} color="#16a34a" />
-                    </TouchableOpacity>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.memberRowName}>
-                    {getFamilyRowDisplayName(family?.family_name, { isParentViewer: showFamilyRowYouCue })}
-                  </Text>
-                  {!isChildRestrictedView && (
+            {!isSelfManagedStudent ? (
+              <View
+                style={styles.memberRow}
+                {...(Platform.OS === 'web' && !isEditingFamilyName && {
+                  onMouseEnter: () => setFamilyNameRowHovered(true),
+                  onMouseLeave: () => setFamilyNameRowHovered(false),
+                })}
+              >
+                {isEditingFamilyName ? (
+                  <>
+                    <TextInput
+                      style={styles.familyNameEditInput}
+                      value={editingFamilyNameValue}
+                      onChangeText={setEditingFamilyNameValue}
+                      placeholder="Family name"
+                      placeholderTextColor="#9ca3af"
+                      autoFocus
+                      editable={!savingFamilyName}
+                    />
                     <View style={styles.memberRowActions}>
                       <TouchableOpacity
-                        style={[
-                          styles.memberRowActionButton,
-                          familyNameRowHovered && styles.memberRowActionButtonHovered,
-                        ]}
+                        style={styles.memberRowActionButton}
                         onPress={() => {
-                          setEditingFamilyNameValue(getFamilyRowEditValue(family?.family_name));
-                          setIsEditingFamilyName(true);
+                          setIsEditingFamilyName(false);
+                          setEditingFamilyNameValue('');
                         }}
+                        disabled={savingFamilyName}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Pencil size={16} color="#374151" />
+                        <X size={18} color="#374151" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.memberRowActionButton, savingFamilyName && { opacity: 0.6 }]}
+                        onPress={async () => {
+                          const trimmed = editingFamilyNameValue.trim();
+                          if (savingFamilyName || !familyId) return;
+                          setSavingFamilyName(true);
+                          try {
+                            const { data, error: err } = await updateFamilyName(trimmed || null);
+                            if (err) throw err;
+                            setFamily((prev) => (prev ? { ...prev, family_name: trimmed || undefined } : prev));
+                            if (onFamilyUpdate) onFamilyUpdate({ ...family, family_name: trimmed || undefined });
+                            setFamilyName(trimmed || '');
+                            setIsEditingFamilyName(false);
+                            setEditingFamilyNameValue('');
+                            toast.push('Family name saved', 'success');
+                          } catch (e) {
+                            console.warn('[FamilyPanel] Error saving family name:', e);
+                            toast.push(e?.message || e?.detail || 'Could not save family name', 'error');
+                          } finally {
+                            setSavingFamilyName(false);
+                          }
+                        }}
+                        disabled={savingFamilyName}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Check size={18} color="#16a34a" />
                       </TouchableOpacity>
                     </View>
-                  )}
-                </>
-              )}
-            </View>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.memberRowName}>
+                      {getFamilyRowDisplayName(family?.family_name, { isParentViewer: showFamilyRowYouCue })}
+                    </Text>
+                    {!isChildRestrictedView && (
+                      <View style={styles.memberRowActions}>
+                        <TouchableOpacity
+                          style={[
+                            styles.memberRowActionButton,
+                            familyNameRowHovered && styles.memberRowActionButtonHovered,
+                          ]}
+                          onPress={() => {
+                            setEditingFamilyNameValue(getFamilyRowEditValue(family?.family_name));
+                            setIsEditingFamilyName(true);
+                          }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Pencil size={16} color="#374151" />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </>
+                )}
+              </View>
+            ) : null}
             {parents.length === 0 && (
               <Text style={[styles.membersEmptyText, { marginTop: 8 }]}>
                 {isSelfManagedStudent ? 'No parents yet' : (profile?.role === 'parent' ? 'No other parents yet' : 'No parents found')}

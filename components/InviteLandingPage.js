@@ -129,8 +129,11 @@ export default function InviteLandingPage({ token }) {
           onPress={() => {
             const appBase = getAppBase() || '';
             const base = appBase.replace(/\/$/, '');
-            const emailParam = inviteData?.email ? `?email=${encodeURIComponent(inviteData.email)}` : '';
-            window.location.href = `${base}/${emailParam}`;
+            const params = new URLSearchParams();
+            if (token) params.set('invite', token);
+            if (inviteData?.email) params.set('email', inviteData.email);
+            const query = params.toString();
+            window.location.href = `${base}/${query ? `?${query}` : ''}`;
           }}
         >
           <Text style={styles.signInLinkText}>Already have an account? Sign in</Text>

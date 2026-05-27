@@ -216,8 +216,11 @@ export default function InviteAcceptPasswordPage({ token }) {
                   <TouchableOpacity
                     style={styles.signInLink}
                     onPress={() => {
-                      const params = inviteData?.email ? `?email=${encodeURIComponent(inviteData.email)}` : '';
-                      window.location.href = `/${params}`;
+                      const params = new URLSearchParams();
+                      if (token) params.set('invite', token);
+                      if (inviteData?.email) params.set('email', inviteData.email);
+                      const query = params.toString();
+                      window.location.href = query ? `/?${query}` : '/';
                     }}
                   >
                     <Text style={styles.signInLinkText}>Sign in to your account</Text>
