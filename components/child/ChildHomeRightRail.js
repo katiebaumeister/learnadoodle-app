@@ -24,8 +24,8 @@ import { colors } from '../../theme/colors';
 import { useToast } from '../Toast';
 
 const TABS = [
+  { id: 'help', label: 'Discussions' },
   { id: 'submissions', label: 'Submissions' },
-  { id: 'help', label: 'Help' },
   { id: 'coming_up', label: 'Coming up' },
 ];
 
@@ -34,7 +34,7 @@ const LIMIT = 8;
 export default function ChildHomeRightRail({ familyId, childId }) {
   const toast = useToast();
   const session = useSession();
-  const [selectedSection, setSelectedSection] = useState('submissions');
+  const [selectedSection, setSelectedSection] = useState('help');
   const [assignments, setAssignments] = useState([]);
   const [upcomingEvents, setUpcomingEvents] = useState([]);
   const [dataReady, setDataReady] = useState(false);
@@ -276,6 +276,9 @@ export default function ChildHomeRightRail({ familyId, childId }) {
 
   const formatEventTime = (dateString) => {
     const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
+    // Untimed/all-day planner rows are commonly stored at midnight.
+    if (date.getHours() === 0 && date.getMinutes() === 0) return '';
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
@@ -829,10 +832,10 @@ const styles = StyleSheet.create({
   },
   helpRowTitle: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.text,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   helpRowMeta: {

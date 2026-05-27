@@ -7,7 +7,6 @@
 
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { FileText, HelpCircle } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
@@ -16,8 +15,6 @@ import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
 import RespondToHelpRequestModal from './RespondToHelpRequestModal';
 import { colors } from '../../theme/colors';
 import {
-  collectParentAssignedLinkedEventIds,
-  filterEventsForComingUpRail,
   formatSchoolEventTypeLabel,
 } from '../child/childHomeRailHelpers';
 
@@ -97,8 +94,8 @@ function hasPositiveOnboardingSignal(snapshot) {
 }
 
 const SECTIONS = [
+  { id: 'help_requests', label: 'Discussions' },
   { id: 'submissions', label: 'Submissions' },
-  { id: 'help_requests', label: 'Help' },
   { id: 'needs_revision', label: 'Coming up' },
 ];
 
@@ -138,7 +135,7 @@ export default function EmbeddedNotificationCenter({
     () => hideOnboardingCards || (initialBootstrap.fromCache && hasPositiveOnboardingSignal(initialBootstrap))
   );
   const [dataReady, setDataReady] = useState(false);
-  const [selectedSection, setSelectedSection] = useState('submissions');
+  const [selectedSection, setSelectedSection] = useState('help_requests');
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   /** null | 'submission' (review submitted work) | 'help' (respond to help request) */
   const [openModal, setOpenModal] = useState(null);
@@ -365,7 +362,27 @@ export default function EmbeddedNotificationCenter({
         }
       }
 
-      const allAssignments = [...(data || []), ...(helpData || [])];
+      let sentQ = supabase
+        .from('assignments')
+        .select(`
+          *,
+          child:child_id (id, first_name, avatar),
+          subject:related_subject (id, name)
+        `)
+        .eq('family_id', familyId)
+        .not('assigned_by', 'is', null)
+        .order('updated_at', { ascending: false });
+      if (viewerChildId) {
+        sentQ = sentQ.eq('child_id', viewerChildId);
+      }
+      const { data: sentData, error: sentError } = await sentQ;
+      if (sentError && sentError.code !== '42P01' && sentError.code !== 'PGRST200') {
+        if (!isAbortLikeError(sentError)) {
+          console.error('[EmbeddedNotificationCenter] Error loading sent assignments:', sentError);
+        }
+      }
+
+      const allAssignments = [...(data || []), ...(helpData || []), ...(sentData || [])];
       const uniqueAssignments = Array.from(
         new Map(allAssignments.map(a => [a.id, a])).values()
       );
@@ -387,22 +404,6 @@ export default function EmbeddedNotificationCenter({
       const horizon = new Date(now);
       horizon.setDate(horizon.getDate() + 30);
       horizon.setHours(23, 59, 59, 999);
-
-      let assignQ = supabase
-        .from('assignments')
-        .select('linked_event_ids, assigned_by')
-        .eq('family_id', familyId)
-        .not('assigned_by', 'is', null);
-      if (viewerChildId && !isParentViewer) {
-        assignQ = assignQ.eq('child_id', viewerChildId);
-      }
-      const { data: assignRows, error: assignErr } = await assignQ;
-      if (assignErr && assignErr.code !== '42P01' && assignErr.code !== 'PGRST200') {
-        if (!isAbortLikeError(assignErr)) {
-          console.error('[EmbeddedNotificationCenter] Error loading linked assignments:', assignErr);
-        }
-      }
-      const parentAssignedEventIds = collectParentAssignedLinkedEventIds(assignRows || []);
 
       let eventsQ = supabase
         .from('events')
@@ -460,9 +461,7 @@ export default function EmbeddedNotificationCenter({
         ...event,
         subject: event.subject_id ? subjectsMap[event.subject_id] : null,
       }));
-
-      const comingUpOnly = filterEventsForComingUpRail(eventsWithSubjects, parentAssignedEventIds);
-      setUpcomingEvents(comingUpOnly);
+      setUpcomingEvents(eventsWithSubjects);
     } catch (error) {
       if (!isAbortLikeError(error)) {
         console.error('[EmbeddedNotificationCenter] Error loading upcoming events:', error);
@@ -624,16 +623,129 @@ export default function EmbeddedNotificationCenter({
     }
   };
 
+  const linkedEventIdForAssignment = (assignment) => {
+    const raw = assignment?.linked_event_ids;
+    if (Array.isArray(raw) && raw.length > 0) return String(raw[0]);
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return String(parsed[0]);
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  };
+
+  const isAssignmentLinkedEventActive = (assignment) => {
+    const linkedEventId = linkedEventIdForAssignment(assignment);
+    if (!linkedEventId) return true;
+    const linkedEvent = linkedEventsById[String(linkedEventId)];
+    if (!linkedEvent) return false;
+    const status = String(linkedEvent?.status || '').trim().toLowerCase();
+    if (status === 'canceled' || status === 'cancelled' || status === 'deleted') return false;
+    return !linkedEvent?.deleted_at;
+  };
+
   const filterItems = () => {
+    const parseHelpLog = (assignment) => {
+      const raw = assignment?.help_message_log;
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+          return [];
+        }
+      }
+      return [];
+    };
+
+    const latestActionForAssignment = (assignment) => {
+      const log = parseHelpLog(assignment);
+      let latestSentTs = 0;
+      let latestChildTs = 0;
+      for (const entry of log) {
+        const senderRole = String(entry?.sender_role || '').trim().toLowerCase();
+        const reason = String(entry?.reason || '').trim().toLowerCase();
+        const tsRaw = entry?.created_at || entry?.timestamp || null;
+        const ts = new Date(tsRaw || 0).getTime();
+        if (!Number.isFinite(ts) || ts <= 0) continue;
+        if (senderRole === 'parent' && reason === 'sent_assignment') {
+          if (ts > latestSentTs) latestSentTs = ts;
+        }
+        if (senderRole === 'child' || senderRole === 'student') {
+          if (ts > latestChildTs) latestChildTs = ts;
+        }
+      }
+      if (assignment?.need_help === true && latestChildTs <= 0) {
+        const fallbackChildTs = new Date(assignment?.updated_at || assignment?.created_at || 0).getTime();
+        if (Number.isFinite(fallbackChildTs) && fallbackChildTs > 0) latestChildTs = fallbackChildTs;
+      }
+      if (latestChildTs > 0 && latestChildTs >= latestSentTs) {
+        return { type: 'needs_response', ts: latestChildTs };
+      }
+      if (latestSentTs > 0) {
+        return { type: 'sent', ts: latestSentTs };
+      }
+      const fallbackTs = new Date(assignment?.updated_at || assignment?.created_at || 0).getTime();
+      return { type: 'send', ts: Number.isFinite(fallbackTs) ? fallbackTs : 0 };
+    };
+
+    const dedupeByEvent = (rows) => {
+      const grouped = new Map();
+      (rows || []).forEach((assignment) => {
+        const key = linkedEventIdForAssignment(assignment) || `assignment:${assignment?.id || Math.random()}`;
+        const action = latestActionForAssignment(assignment);
+        const prev = grouped.get(key);
+        if (!prev || action.ts >= prev.action.ts) {
+          grouped.set(key, { assignment, action });
+        }
+      });
+      return [...grouped.values()]
+        .map(({ assignment, action }) => ({
+          ...assignment,
+          need_help: action.type === 'needs_response' || assignment?.need_help === true,
+          __actionType: action.type,
+          __actionTs: action.ts,
+        }))
+        .sort((a, b) => Number(b.__actionTs || 0) - Number(a.__actionTs || 0));
+    };
+
+    const hasParentSentCorrespondence = (assignment) => {
+      const raw = assignment?.help_message_log;
+      let log = [];
+      if (Array.isArray(raw)) {
+        log = raw;
+      } else if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) log = parsed;
+        } catch (_) {
+          log = [];
+        }
+      }
+      return (log || []).some((entry) => {
+        const senderRole = String(entry?.sender_role || '').trim().toLowerCase();
+        const reason = String(entry?.reason || '').trim().toLowerCase();
+        return senderRole === 'parent' && reason === 'sent_assignment';
+      });
+    };
+
     switch (selectedSection) {
       case 'submissions':
-        return assignments
-          .filter((a) => String(a.status || '').toLowerCase() === 'submitted' && !a.need_help)
-          .slice(0, limit);
+        return dedupeByEvent(
+          assignments
+            .filter((a) => String(a.status || '').toLowerCase() === 'submitted' && !a.need_help)
+            .filter((a) => isAssignmentLinkedEventActive(a))
+        ).slice(0, limit);
       case 'help_requests':
-        return assignments
-          .filter((a) => a.need_help === true || a.assigned_by != null)
-          .slice(0, limit);
+        return dedupeByEvent(
+          assignments
+            .filter((a) => a.need_help === true || a.assigned_by != null || hasParentSentCorrespondence(a))
+            .filter((a) => isAssignmentLinkedEventActive(a))
+        ).slice(0, limit);
       case 'needs_revision':
         return upcomingEvents.slice(0, limit);
       default:
@@ -669,7 +781,7 @@ export default function EmbeddedNotificationCenter({
       try {
         const { data, error } = await supabase
           .from('events')
-          .select('id, event_type, start_ts')
+          .select('id, event_type, start_ts, status, deleted_at')
           .in('id', ids);
         if (error || !Array.isArray(data)) {
           setLinkedEventsById({});
@@ -693,8 +805,28 @@ export default function EmbeddedNotificationCenter({
       (a) =>
         a.status === 'submitted' &&
         a.review_status !== 'needs_revision' &&
-        !a.need_help
-    ) || assignments.some((a) => a.need_help === true);
+        !a.need_help &&
+        isAssignmentLinkedEventActive(a)
+    ) || assignments.some((a) => {
+      if (!isAssignmentLinkedEventActive(a)) return false;
+      if (a.need_help === true) return true;
+      const raw = a?.help_message_log;
+      let log = [];
+      if (Array.isArray(raw)) {
+        log = raw;
+      } else if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) log = parsed;
+        } catch (_) {
+          log = [];
+        }
+      }
+      return (log || []).some((entry) => (
+        String(entry?.sender_role || '').trim().toLowerCase() === 'parent' &&
+        String(entry?.reason || '').trim().toLowerCase() === 'sent_assignment'
+      ));
+    });
 
   /** Ready once fresh content + onboarding status are both resolved (no cache-to-live mode flips). */
   const railReady = dataReady && (hideOnboardingCards || onboardingStatusReady);
@@ -753,6 +885,9 @@ export default function EmbeddedNotificationCenter({
 
   const formatEventTime = (dateString) => {
     const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
+    // Planner rows with no explicit time are commonly stored at midnight.
+    if (date.getHours() === 0 && date.getMinutes() === 0) return '';
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
@@ -772,6 +907,46 @@ export default function EmbeddedNotificationCenter({
     const eventType = formatSchoolEventTypeLabel(linkedEvent?.event_type || 'Lesson');
     const ts = linkedEvent?.start_ts || assignment?.updated_at || assignment?.created_at;
     return [eventType, formatEventDate(ts), formatEventTime(ts)].filter(Boolean).join(' · ');
+  };
+
+  const sentOnLabel = (assignment) => {
+    if (assignment?.__actionType === 'sent' && Number.isFinite(assignment?.__actionTs) && assignment.__actionTs > 0) {
+      const sentDate = formatEventDate(new Date(assignment.__actionTs).toISOString());
+      return sentDate ? `Sent on ${sentDate}` : 'Sent';
+    }
+    const raw = assignment?.help_message_log;
+    let log = [];
+    if (Array.isArray(raw)) {
+      log = raw;
+    } else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) log = parsed;
+      } catch (_) {
+        log = [];
+      }
+    }
+    const sentEntries = (log || [])
+      .map((entry) => {
+        const senderRole = String(entry?.sender_role || '').trim().toLowerCase();
+        const reason = String(entry?.reason || '').trim().toLowerCase();
+        const tsRaw = entry?.created_at || entry?.timestamp || null;
+        const ts = new Date(tsRaw || 0).getTime();
+        if (senderRole !== 'parent' || reason !== 'sent_assignment' || !Number.isFinite(ts) || ts <= 0) return null;
+        return { ts, tsRaw };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.ts - a.ts);
+    const sentTs = sentEntries[0]?.tsRaw || assignment?.updated_at || assignment?.created_at;
+    const sentDate = sentTs ? formatEventDate(sentTs) : '';
+    return sentDate ? `Sent on ${sentDate}` : 'Sent';
+  };
+
+  const helpActionLabel = (assignment) => {
+    const actionType = assignment?.__actionType || (assignment?.need_help ? 'needs_response' : null);
+    if (actionType === 'needs_response') return 'Needs response';
+    if (actionType === 'sent') return sentOnLabel(assignment);
+    return 'Send to student';
   };
 
   const handleReview = (assignment) => {
@@ -832,12 +1007,38 @@ export default function EmbeddedNotificationCenter({
             eventId: linkedEventId,
             initialEvent: null,
             parentEventFocus: 'send',
+            sendOnlyMode: true,
           },
         })
       );
       return;
     }
     handleReview(assignment);
+  };
+
+  const openPlannerContextMenu = async (nativeEvent, eventId, fallbackEvent = null) => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    nativeEvent?.preventDefault?.();
+    nativeEvent?.stopPropagation?.();
+    const x = nativeEvent?.clientX ?? 0;
+    const y = nativeEvent?.clientY ?? 0;
+    if (!eventId) return;
+
+    let eventPayload = fallbackEvent;
+    try {
+      const { data } = await supabase
+        .from('events')
+        .select('*')
+        .eq('id', eventId)
+        .maybeSingle();
+      if (data) eventPayload = data;
+    } catch (_) {
+      /* best effort */
+    }
+    if (!eventPayload) return;
+    window.dispatchEvent(new CustomEvent('plannerEventContextMenu', {
+      detail: { event: eventPayload, position: { x, y } },
+    }));
   };
 
   const closeModals = () => {
@@ -988,6 +1189,9 @@ export default function EmbeddedNotificationCenter({
                             );
                           }
                         }}
+                        {...(Platform.OS === 'web' && {
+                          onContextMenu: (e) => openPlannerContextMenu(e, String(event.id), event),
+                        })}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
                         <View style={styles.itemLeft}>
@@ -995,7 +1199,7 @@ export default function EmbeddedNotificationCenter({
                             <Text style={styles.itemTitle} numberOfLines={2}>{event.title}</Text>
                             <View style={styles.itemFooter}>
                               <Text style={styles.itemDate}>
-                                {formatSchoolEventTypeLabel(event.event_type)} · {eventDate} · {eventTime}
+                                {[formatSchoolEventTypeLabel(event.event_type), eventDate, eventTime].filter(Boolean).join(' · ')}
                               </Text>
                             </View>
                           </View>
@@ -1004,13 +1208,6 @@ export default function EmbeddedNotificationCenter({
                     );
                   } else {
                     const assignment = item;
-
-                    let IconComponent = FileText;
-                    let iconColor = colors.blueBold;
-                    if (assignment.need_help) {
-                      IconComponent = HelpCircle;
-                      iconColor = colors.orangeBold;
-                    }
 
                     return (
                       <TouchableOpacity
@@ -1021,12 +1218,16 @@ export default function EmbeddedNotificationCenter({
                             ? handleHelpAction(assignment)
                             : handleReview(assignment)
                         )}
+                        {...(Platform.OS === 'web' && {
+                          onContextMenu: (e) => {
+                            const linkedEventId = linkedEventIdForAssignment(assignment);
+                            if (!linkedEventId) return;
+                            openPlannerContextMenu(e, linkedEventId, null);
+                          },
+                        })}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
                         <View style={styles.itemLeft}>
-                          <View style={[styles.itemIconContainer, { backgroundColor: iconColor + '15' }]}>
-                            <IconComponent size={14} color={iconColor} />
-                          </View>
                           <View style={styles.itemContent}>
                             <Text style={styles.itemTitle} numberOfLines={2}>{assignment.title}</Text>
                             <View style={styles.itemFooter}>
@@ -1045,9 +1246,14 @@ export default function EmbeddedNotificationCenter({
                           )}
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
-                          <Text style={styles.rowActionButtonText}>
+                          <Text
+                            style={[
+                              styles.rowActionButtonText,
+                              selectedSection === 'help_requests' && !assignment.need_help && styles.rowActionButtonTextItalic,
+                            ]}
+                          >
                             {selectedSection === 'help_requests'
-                              ? (assignment.need_help ? 'Respond' : 'Open send')
+                              ? helpActionLabel(assignment)
                               : (assignment.need_help ? 'Respond' : 'Review')}
                           </Text>
                         </TouchableOpacity>
@@ -1381,14 +1587,6 @@ const styles = StyleSheet.create({
     gap: 10,
     flex: 1,
   },
-  itemIconContainer: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
   itemContent: {
     flex: 1,
     minWidth: 0,
@@ -1421,11 +1619,11 @@ const styles = StyleSheet.create({
   },
   itemTitle: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
     color: colors.text,
     marginBottom: 4,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   itemFooter: {
@@ -1456,5 +1654,8 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  rowActionButtonTextItalic: {
+    fontStyle: 'italic',
   },
 });

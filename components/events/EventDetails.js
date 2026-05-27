@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated, ActivityIndicator, Image, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, StyleSheet, ScrollView, Alert, TextInput, Switch, Platform, Modal, Animated, ActivityIndicator, Image, useWindowDimensions } from 'react-native';
 import {
   LearnerPill,
   resolveLearnerChild,
@@ -8539,7 +8539,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             animationType="fade"
             onRequestClose={closeSendToStudentModal}
           >
-            <TouchableOpacity
+            <Pressable
               style={{
                 flex: 1,
                 backgroundColor: 'rgba(15, 23, 42, 0.4)',
@@ -8547,17 +8547,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 alignItems: 'center',
                 padding: 16,
               }}
-              activeOpacity={1}
               onPress={closeSendToStudentModal}
-              accessibilityRole="button"
-              accessibilityLabel="Dismiss"
             >
-              <TouchableOpacity
-                activeOpacity={1}
-                onPress={(e) => {
-                  e?.stopPropagation?.();
-                }}
-                onKeyDown={(e) => {
+              <View
+                onStartShouldSetResponder={() => true}
+                onResponderRelease={(e) => {
                   e?.stopPropagation?.();
                 }}
                 style={{
@@ -8696,8 +8690,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     </TouchableOpacity>
                   </View>
                 </View>
-              </TouchableOpacity>
-            </TouchableOpacity>
+              </View>
+            </Pressable>
           </Modal>
           ) : null}
 
