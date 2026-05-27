@@ -8,7 +8,7 @@ import {
   mapChildrenForConflict,
   sharedConflictBannerStyles as cb,
 } from '../planner/conflictBannerShared';
-import { Clock, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2, Send } from 'lucide-react';
+import { Clock, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2, Send, Mail } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { formatDate, apiRequest, pushEventToGoogleCalendar, getFamilyMembers } from '../../lib/apiClient';
@@ -28,6 +28,7 @@ import { getAcademicYear } from '../../lib/services/academicYearClient';
 import { dropPlanYearFullDataCacheEntry, dropPlanEditListTimesCacheEntry } from '../../lib/planEditListCache';
 import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import AskParentHelpModal from '../child/AskParentHelpModal';
+import SubmitForReviewModal from '../child/SubmitForReviewModal';
 import StudentHelpHistoryModal from '../child/StudentHelpHistoryModal';
 import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
@@ -936,7 +937,7 @@ function ChipRow({ children, style }) {
   return <View style={style}>{safeChildren}</View>;
 }
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, editScope = 'single', readOnly = false, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed, openConflictResolution = false, conflictResolutionContext = null, onOpenConflictResolutionConsumed, sendOnlyMode = false }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, editScope = 'single', readOnly = false, readOnlyReason = null, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed, childEventFocus = null, onChildEventFocusConsumed, openConflictResolution = false, conflictResolutionContext = null, onOpenConflictResolutionConsumed, sendOnlyMode = false }) {
   const { width: viewportWidth } = useWindowDimensions();
   const session = useSession();
   const { user: authUser } = useAuth();
@@ -947,9 +948,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const isSeriesGroupEvent = isDeletableSeriesGroup(event);
   const isSeriesEditScope = editScope === 'series' && isSeriesGroupEvent;
   const isSingleSeriesOccurrenceEdit = isSeriesGroupEvent && !isSeriesEditScope;
-  const [editing, setEditing] = useState(initialSchedulingMode); // Start in edit mode if scheduling
+  const [editing, setEditing] = useState(readOnly ? false : initialSchedulingMode); // Start in edit mode only when editable
   const [saving, setSaving] = useState(false);
-  const [schedulingBacklog, setSchedulingBacklog] = useState(initialSchedulingMode); // State for "Add to schedule" mode
+  const [schedulingBacklog, setSchedulingBacklog] = useState(readOnly ? false : initialSchedulingMode); // State for "Add to schedule" mode
 
   const [draftTitle, setDraftTitle] = useState('');
   const [draftDate, setDraftDate] = useState('');
@@ -1310,6 +1311,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [loadingStandards, setLoadingStandards] = useState(false);
   const [standardsMastery, setStandardsMastery] = useState({}); // Map of standard_id -> mastery_level
   const [showAskParentHelpModal, setShowAskParentHelpModal] = useState(false);
+  const [showSubmitForReviewModal, setShowSubmitForReviewModal] = useState(false);
   /** Assignment row linked to this event (if any), for child "Asked" / ask-another flow */
   const [eventLinkedHelpAssignment, setEventLinkedHelpAssignment] = useState(null);
   /** False until the first linked-assignment fetch finishes for this event+child (avoids Ask → Asked flash). Refresh keeps prior row until the new fetch completes. */
@@ -1317,6 +1319,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const linkedHelpFetchSeq = useRef(0);
   /** When set, modal uses assignment path (follow-up); when null, uses eventContext (first ask) */
   const [askHelpModalAssignment, setAskHelpModalAssignment] = useState(null);
+  const [submitModalAssignment, setSubmitModalAssignment] = useState(null);
   const [showStudentHelpHistoryModal, setShowStudentHelpHistoryModal] = useState(false);
   const [parentLinkedAssignments, setParentLinkedAssignments] = useState([]);
   const [parentLinkedReady, setParentLinkedReady] = useState(false);
@@ -1331,6 +1334,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [sendToStudentSubmitting, setSendToStudentSubmitting] = useState(false);
   const [sendToStudentInlineError, setSendToStudentInlineError] = useState('');
   const [invitedAssigneeIds, setInvitedAssigneeIds] = useState([]);
+  const [childInviteSummaries, setChildInviteSummaries] = useState({});
+  const [inviteEligibilityReady, setInviteEligibilityReady] = useState(false);
   const [showSendInviteClarification, setShowSendInviteClarification] = useState(false);
 
   const applySubjectSelection = useCallback((nextSubjectIds) => {
@@ -1485,6 +1490,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     () => session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true,
     [session?.role_flags?.isParent, session?.role_flags?.isChild]
   );
+  const showPermissionViewOnlyPill =
+    readOnly &&
+    readOnlyReason === 'permissions' &&
+    session?.role_flags?.isChild === true;
 
   const helpChildId = useMemo(
     () => event?.child_id || (assigneeIds.length > 0 ? assigneeIds[0] : null) || session?.child_id,
@@ -1541,6 +1550,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   useEffect(() => {
     if (!isParentView || !familyId || assigneeIds.length === 0) {
       setInvitedAssigneeIds([]);
+      setChildInviteSummaries({});
+      setInviteEligibilityReady(true);
       return;
     }
     if (acceptedInvitedAssigneeIdsFromMembers.length > 0) {
@@ -1549,21 +1560,27 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         const nextKey = [...new Set(acceptedInvitedAssigneeIdsFromMembers.map(String))].sort().join('|');
         return prevKey === nextKey ? prev : acceptedInvitedAssigneeIdsFromMembers;
       });
+      setChildInviteSummaries({});
+      setInviteEligibilityReady(true);
       return;
     }
+    setInviteEligibilityReady(false);
     let cancelled = false;
     (async () => {
       try {
         let rows = [];
+        let inviteSummaries = {};
         if (Platform.OS === 'web') {
           const { data, error } = await getFamilyMembers();
           if (!cancelled && !error) {
+            inviteSummaries =
+              data?.child_invite_summaries && typeof data.child_invite_summaries === 'object'
+                ? data.child_invite_summaries
+                : {};
             rows = Array.isArray(data?.members)
               ? data.members.filter((m) => {
                   const role = String(m?.member_role || m?.role || '').toLowerCase();
-                  const statusRaw = String(m?.invite_status || '').toLowerCase();
-                  const status = statusRaw === 'connected' ? 'accepted' : statusRaw;
-                  return (role === 'child' || role === 'student') && status === 'accepted';
+                  return role === 'child' || role === 'student';
                 })
               : [];
           }
@@ -1572,15 +1589,22 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             .from('family_members')
             .select('child_id, child_scope, member_role, invite_status')
             .eq('family_id', familyId)
-            .in('member_role', ['child', 'student'])
             .in('invite_status', ['accepted', 'connected']);
           if (!cancelled && !error) rows = Array.isArray(data) ? data : [];
         }
         if (cancelled) return;
         const wanted = new Set(assigneeIds.map(String));
         const invited = new Set();
+        Object.entries(inviteSummaries || {}).forEach(([childId, summary]) => {
+          const sid = String(childId || '').trim();
+          if (!sid || !wanted.has(sid)) return;
+          const raw = String(summary?.invite_status || '').trim().toLowerCase();
+          const status = raw === 'connected' ? 'accepted' : raw;
+          if (status === 'accepted') invited.add(sid);
+        });
         (rows || []).forEach((m) => {
           if (m?.child_id != null && wanted.has(String(m.child_id))) invited.add(String(m.child_id));
+          if (m?.id != null && wanted.has(String(m.id))) invited.add(String(m.id));
           let scope = m?.child_scope;
           if (typeof scope === 'string') {
             try { scope = JSON.parse(scope); } catch (_) { scope = []; }
@@ -1599,9 +1623,19 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             const nextKey = [...new Set(nextIds.map(String))].sort().join('|');
             return prevKey === nextKey ? prev : nextIds;
           });
+          setChildInviteSummaries((prev) => {
+            const prevKey = JSON.stringify(prev || {});
+            const nextKey = JSON.stringify(inviteSummaries || {});
+            return prevKey === nextKey ? prev : (inviteSummaries || {});
+          });
+          setInviteEligibilityReady(true);
         }
       } catch (_) {
-        if (!cancelled) setInvitedAssigneeIds([]);
+        if (!cancelled) {
+          setInvitedAssigneeIds([]);
+          setChildInviteSummaries({});
+          setInviteEligibilityReady(true);
+        }
       }
     })();
     return () => {
@@ -1621,6 +1655,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   const assigneeInviteStatusMap = useMemo(() => {
     const statusById = new Map();
+    Object.entries(childInviteSummaries || {}).forEach(([childId, summary]) => {
+      const sid = String(childId || '').trim();
+      if (!sid) return;
+      const rawBase = String(summary?.invite_status || '').trim().toLowerCase();
+      const raw = rawBase === 'connected' ? 'accepted' : rawBase;
+      const status = raw === 'accepted' || raw === 'pending' ? raw : 'none';
+      statusById.set(sid, status);
+    });
     (familyMembers || []).forEach((m) => {
       const statusRawBase = String(m?.invite_status || '').trim().toLowerCase();
       const statusRaw = statusRawBase === 'connected' ? 'accepted' : statusRawBase;
@@ -1644,7 +1686,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       if (Array.isArray(scope)) scope.forEach((id) => applyStatus(id));
     });
     return statusById;
-  }, [familyMembers]);
+  }, [familyMembers, childInviteSummaries]);
 
   const sendPendingAssigneeIds = useMemo(
     () => sendBlockedAssigneeIds.filter((id) => assigneeInviteStatusMap.get(String(id)) === 'pending'),
@@ -1671,6 +1713,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   }, [familyMembers]);
 
   const sendInviteClarificationText = useMemo(() => {
+    if (!inviteEligibilityReady) return '';
     const invitedCount = sendEligibleAssigneeIds.length;
     const blockedCount = sendBlockedAssigneeIds.length;
     if (invitedCount <= 0 && blockedCount > 0) {
@@ -1717,7 +1760,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       return 'Some assigned students still need an invite before they can receive this assignment';
     }
     return '';
-  }, [sendEligibleAssigneeIds, sendBlockedAssigneeIds, sendPendingAssigneeIds, sendNeedsInviteAssigneeIds, formatAssigneeNameList]);
+  }, [inviteEligibilityReady, sendEligibleAssigneeIds, sendBlockedAssigneeIds, sendPendingAssigneeIds, sendNeedsInviteAssigneeIds, formatAssigneeNameList]);
 
   const openInviteChildModalForSend = useCallback(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -2041,6 +2084,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     };
   }, [parentLinkedAssignments, familyMembers, assigneeIds]);
 
+  const sendModalLatestHistoryLine = useMemo(() => {
+    const lines = Array.isArray(sendTrackingSummary.historyLines) ? sendTrackingSummary.historyLines : [];
+    return lines.length > 0 ? lines[lines.length - 1] : null;
+  }, [sendTrackingSummary.historyLines]);
+
   const sendEntryCtaLabel = useMemo(() => {
     if (hasInvitedAssignee || sendBlockedAssigneeIds.length === 0) {
       return sendTrackingSummary.ctaLabel || 'Send to student';
@@ -2115,6 +2163,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       onParentEventFocusConsumed?.();
     }
   }, [parentLinkedReady, parentEventFocus, parentLinkedAssignments, onParentEventFocusConsumed]);
+
+  useEffect(() => {
+    if (!childEventFocus) return;
+    if (childEventFocus === 'help') {
+      setAskHelpModalAssignment(eventLinkedHelpAssignment || null);
+      setShowAskParentHelpModal(true);
+      onChildEventFocusConsumed?.();
+      return;
+    }
+    if (childEventFocus === 'submission') {
+      setSubmitModalAssignment(eventLinkedHelpAssignment || null);
+      setShowSubmitForReviewModal(true);
+      onChildEventFocusConsumed?.();
+    }
+  }, [childEventFocus, eventLinkedHelpAssignment, onChildEventFocusConsumed]);
 
   // Validation
   const [validationErrors, setValidationErrors] = useState({});
@@ -2235,6 +2298,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const sendWorkToStudents = useCallback(
     async (note) => {
       setSendToStudentInlineError('');
+      if (!inviteEligibilityReady) {
+        setSendToStudentInlineError('Checking invite status…');
+        return;
+      }
       const targetAssigneeIds = (sendEligibleAssigneeIds || []).map(String).filter(Boolean);
       if (!familyId || !event?.id || assigneeIds.length === 0) {
         setSendToStudentInlineError('Choose at least one student and save the event first.');
@@ -2329,6 +2396,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
           window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+          window.dispatchEvent(new CustomEvent('refreshRightRail'));
+          window.dispatchEvent(new CustomEvent('refreshCalendar'));
         }
         await loadEventLinkedParentAssignments();
       } catch (e) {
@@ -2338,7 +2407,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         setSendToStudentSubmitting(false);
       }
     },
-    [familyId, event, assigneeIds, sendEligibleAssigneeIds, sendInviteClarificationText, authUser?.id, draftTitle, eventType, subjectId, toast, sendOnlyMode, onClose, appendAssignmentSendLogQuiet, loadEventLinkedParentAssignments]
+    [inviteEligibilityReady, familyId, event, assigneeIds, sendEligibleAssigneeIds, sendInviteClarificationText, authUser?.id, draftTitle, eventType, subjectId, toast, sendOnlyMode, onClose, appendAssignmentSendLogQuiet, loadEventLinkedParentAssignments]
   );
 
   const startPeriod = useMemo(() => {
@@ -2569,7 +2638,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   // set editing and schedulingBacklog states and placement to 'calendar'
   // Also check for _openInEditMode flag on the event itself
   useEffect(() => {
-    if (readOnly) return;
+    if (readOnly) {
+      setEditing(false);
+      setSchedulingBacklog(false);
+      onEditingChangeRef.current?.(false);
+      return;
+    }
     const shouldOpenInEditMode = initialSchedulingMode || event?._openInEditMode;
     if (shouldOpenInEditMode) {
       setEditing(true);
@@ -5736,6 +5810,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               <View style={styles.headerBadge}>
                 <Text style={styles.headerBadgeText}>EVENT DETAILS</Text>
               </View>
+              {showPermissionViewOnlyPill ? (
+                <View style={styles.headerViewOnlyChip}>
+                  <Text style={styles.headerViewOnlyChipText}>VIEW ONLY</Text>
+                </View>
+              ) : null}
               <Text style={styles.headerTitleLarge}>
                 {draftTitle || event?.title || 'Untitled Event'}
               </Text>
@@ -6282,40 +6361,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     </>
                   ) : (
                     <>
-                      <Text style={{ color: FG, fontSize: 14, marginTop: 6, lineHeight: 20 }}>
-                        Get help from your parent on this assignment.
-                      </Text>
                       <TouchableOpacity
                         onPress={() => {
                           setAskHelpModalAssignment(null);
                           setShowAskParentHelpModal(true);
                         }}
-                        style={{
-                          marginTop: 16,
-                          alignSelf: 'flex-start',
-                          paddingVertical: 12,
-                          paddingHorizontal: 20,
-                          borderRadius: 10,
-                          backgroundColor: '#85C4F2',
-                          ...(Platform.OS === 'web' && {
-                            boxShadow: '0 2px 6px rgba(133, 196, 242, 0.35)',
-                            cursor: 'pointer',
-                          }),
-                        }}
+                        style={[styles.workflowActionButton, { marginTop: 16, alignSelf: 'flex-start' }]}
                         activeOpacity={0.9}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Text
-                          style={{
-                            color: '#fff',
-                            fontWeight: '500',
-                            fontSize: 15,
-                            ...(Platform.OS === 'web' && {
-                              fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                            }),
-                          }}
-                        >
-                          Ask for help
-                        </Text>
+                        <View style={styles.workflowActionButtonRow}>
+                          <View style={styles.workflowActionIconWrap}>
+                            <Mail size={12} color="#5B6880" />
+                          </View>
+                          <Text style={styles.workflowActionButtonText}>Ask for help</Text>
+                        </View>
                       </TouchableOpacity>
                     </>
                   )}
@@ -7863,18 +7923,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               </>
             ) : (
               <>
-                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4, lineHeight: 16 }}>
-                  Get help from your parent on this assignment.
-                </Text>
                 <TouchableOpacity
                   onPress={() => {
                     setAskHelpModalAssignment(null);
                     setShowAskParentHelpModal(true);
                   }}
-                  style={{ marginTop: 10, alignSelf: 'flex-start' }}
+                  style={[styles.workflowActionButton, { marginTop: 10, alignSelf: 'flex-start' }]}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#89B5E4' }}>Ask for help</Text>
+                  <View style={styles.workflowActionButtonRow}>
+                    <View style={styles.workflowActionIconWrap}>
+                      <Mail size={12} color="#5B6880" />
+                    </View>
+                    <Text style={styles.workflowActionButtonText}>Ask for help</Text>
+                  </View>
                 </TouchableOpacity>
               </>
             )}
@@ -8438,6 +8500,43 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             />
           ) : null}
 
+          {showSubmitForReviewModal ? (
+            <SubmitForReviewModal
+              visible
+              onClose={() => {
+                setShowSubmitForReviewModal(false);
+                setSubmitModalAssignment(null);
+              }}
+              onSubmitted={() => {
+                toast.push('Submitted for review', 'success');
+                loadEventLinkedHelpAssignment();
+                loadEventLinkedParentAssignments();
+                setSubmitModalAssignment(null);
+                onEventUpdated?.();
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+                  window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+                  window.dispatchEvent(new CustomEvent('refreshRightRail'));
+                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
+                }
+              }}
+              familyId={familyId}
+              childId={event?.child_id || (assigneeIds.length > 0 ? assigneeIds[0] : null) || session?.child_id}
+              assignment={submitModalAssignment}
+              eventContext={
+                event?.id
+                  ? {
+                      id: event.id,
+                      title: event.title || draftTitle,
+                      start_ts: event.start_ts,
+                      end_ts: event.end_ts,
+                      subject_id: event.subject_id || subjectId || null,
+                    }
+                  : null
+              }
+            />
+          ) : null}
+
           {showSendToStudentModal ? (
           <Modal
             visible
@@ -8512,7 +8611,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ...fontDisplay('400'),
                     }}
                   >
-                    {sendInviteClarificationText
+                    {!inviteEligibilityReady
+                      ? 'Checking invite status…'
+                      : sendInviteClarificationText
                       ? sendInviteClarificationText
                       : (
                         sendTrackingSummary.hasShared
@@ -8520,6 +8621,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                           : `This will notify ${sendToStudentTargetLabel} that the assignment needs their attention.`
                       )}
                   </Text>
+                  {sendModalLatestHistoryLine ? (
+                    <View style={[styles.workflowHistoryList, { marginTop: 0, marginBottom: 12 }]}>
+                      <Text style={styles.workflowSentLine}>{sendModalLatestHistoryLine}</Text>
+                    </View>
+                  ) : null}
                   <Text
                     style={{
                       fontSize: 14,
@@ -8563,6 +8669,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
                     }}
                   />
+                  {sendToStudentInlineError ? (
+                    <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>
+                      {sendToStudentInlineError}
+                    </Text>
+                  ) : null}
 
                   <View style={{ marginTop: 24 }}>
                     <TouchableOpacity
@@ -8584,11 +8695,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         </Text>
                       </View>
                     </TouchableOpacity>
-                    {sendToStudentInlineError ? (
-                      <Text style={[styles.errorTextSmall, { marginTop: 8, textAlign: 'center' }]}>
-                        {sendToStudentInlineError}
-                      </Text>
-                    ) : null}
                   </View>
                 </View>
               </TouchableOpacity>
@@ -10019,6 +10125,25 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.4,
     color: '#85C4F2',
+  },
+  headerViewOnlyChip: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+    marginBottom: 8,
+  },
+  headerViewOnlyChipText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    color: '#4F46E5',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", "Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   headerBadgeRow: {
     flexDirection: 'row',

@@ -224,6 +224,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [eventModalInitialEvent, setEventModalInitialEvent] = useState(null);
   /** null | 'help' | 'submission' — parent review inbox opens event details + matching modal */
   const [eventModalParentFocus, setEventModalParentFocus] = useState(null);
+  const [eventModalChildFocus, setEventModalChildFocus] = useState(null);
   /** Plan "Dates with events" row edit → open EventModal in edit form, not read-only details */
   const [eventModalSchedulingMode, setEventModalSchedulingMode] = useState(false);
   /** 'single' | 'series' */
@@ -2561,8 +2562,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       const eventId = detail.eventId;
       const initialEvent = detail.initialEvent || null;
       const parentEventFocus = detail.parentEventFocus ?? null;
-      // Force direct edit mode for all event opens.
-      const schedulingMode = true;
+      const childEventFocus = detail.childEventFocus ?? null;
+      const requestedSchedulingMode = detail.schedulingMode;
+      const schedulingMode = denyFamilyEventEdit
+        ? false
+        : (typeof requestedSchedulingMode === 'boolean' ? requestedSchedulingMode : true);
       const editScope = detail.editScope === 'series' ? 'series' : 'single';
       const sendOnlyMode = !!detail.sendOnlyMode;
       const openConflictResolution = !!detail.openConflictResolution;
@@ -2603,6 +2607,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           ? parentEventFocus
           : null
       );
+      setEventModalChildFocus(
+        childEventFocus === 'help' || childEventFocus === 'submission'
+          ? childEventFocus
+          : null
+      );
       setShowEventModal(true);
     };
     
@@ -2611,7 +2620,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => {
       window.removeEventListener('openEventModal', handleOpenEventModal);
     };
-  }, [activeTab]);
+  }, [activeTab, denyFamilyEventEdit]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -5204,11 +5213,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }))}
         parentEventFocus={eventModalParentFocus}
         onParentEventFocusConsumed={() => setEventModalParentFocus(null)}
+        childEventFocus={eventModalChildFocus}
+        onChildEventFocusConsumed={() => setEventModalChildFocus(null)}
         onClose={() => {
           setShowEventModal(false);
           setEventModalEventId(null);
           setEventModalInitialEvent(null);
           setEventModalParentFocus(null);
+          setEventModalChildFocus(null);
           setEventModalSchedulingMode(false);
           setEventModalEditScope('single');
           setEventModalSendOnlyMode(false);

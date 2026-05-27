@@ -29,6 +29,9 @@ export default function EventModal({
   /** null | 'help' | 'submission' | 'send' — parent opens matching assignment/send flow once data loads */
   parentEventFocus = null,
   onParentEventFocusConsumed,
+  /** null | 'help' | 'submission' — child opens ask/submit flow once data loads */
+  childEventFocus = null,
+  onChildEventFocusConsumed,
   /** From planner chip conflict icon — show top banner with Auto reschedule / Ignore */
   openConflictResolution = false,
   conflictResolutionContext = null,
@@ -62,6 +65,8 @@ export default function EventModal({
     const t = (initial?.event_type || initial?.type || '').toLowerCase();
     return t === 'holiday';
   };
+  const eventReadOnly = isHolidayEvent(eventId, event) || viewerRole === 'tutor' || denyFamilyEventEdit;
+  const readOnlyReason = denyFamilyEventEdit ? 'permissions' : null;
 
   const initialEventSignature = [
     String(initialEvent?.id || ''),
@@ -413,13 +418,16 @@ export default function EventModal({
                   onClose={onClose}
                   initialSchedulingMode={schedulingMode}
                   editScope={editScope}
-                  readOnly={isHolidayEvent(eventId, event) || viewerRole === 'tutor' || denyFamilyEventEdit}
+                  readOnly={eventReadOnly}
+                  readOnlyReason={readOnlyReason}
                   viewerRole={viewerRole}
                   preloadedAcademicYears={preloadedAcademicYears}
                   preloadedSubjects={preloadedSubjects}
                   preloadedFamilyAssignments={preloadedFamilyAssignments}
                   parentEventFocus={parentEventFocus}
                   onParentEventFocusConsumed={onParentEventFocusConsumed}
+                  childEventFocus={childEventFocus}
+                  onChildEventFocusConsumed={onChildEventFocusConsumed}
                   openConflictResolution={openConflictResolution}
                   conflictResolutionContext={conflictResolutionContext}
                   onOpenConflictResolutionConsumed={onOpenConflictResolutionConsumed}

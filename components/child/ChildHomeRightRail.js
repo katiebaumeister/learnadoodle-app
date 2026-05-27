@@ -9,7 +9,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   Platform,
-  TextInput,
 } from 'react-native';
 import { FileText, Calendar } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
@@ -26,7 +25,6 @@ import {
   isSchoolWorkEventType,
   linkedEventIdsFromAssignments,
   assignmentNeedsUrgentSubmissionsAttention,
-  primaryAttentionStatusLabel,
   secondaryAttentionContextLine,
   primaryCompletedStatusLabel,
   partitionComingUpEvents,
@@ -51,7 +49,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   const [assignments, setAssignments] = useState([]);
   const [upcomingEvents, setUpcomingEvents] = useState([]);
   const [dataReady, setDataReady] = useState(false);
-  const [helpSearch, setHelpSearch] = useState('');
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [helpModalAssignment, setHelpModalAssignment] = useState(null);
   const [helpModalEvent, setHelpModalEvent] = useState(null);
@@ -84,9 +81,11 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     const handler = () => loadDataRef.current();
     window.addEventListener('childAssignmentsNeedRefresh', handler);
     window.addEventListener('refreshCalendar', handler);
+    window.addEventListener('refreshRightRail', handler);
     return () => {
       window.removeEventListener('childAssignmentsNeedRefresh', handler);
       window.removeEventListener('refreshCalendar', handler);
+      window.removeEventListener('refreshRightRail', handler);
     };
   }, []);
 
@@ -267,15 +266,15 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   const comingUpBuckets = useMemo(() => partitionComingUpEvents(upcomingEvents), [upcomingEvents]);
 
   const helpBuckets = useMemo(
-    () => categorizeAssignmentsForChildHelp(assignments, { search: helpSearch }),
-    [assignments, helpSearch]
+    () => categorizeAssignmentsForChildHelp(assignments),
+    [assignments]
   );
 
   const linkedEventIds = useMemo(() => linkedEventIdsFromAssignments(assignments), [assignments]);
 
   const plannerEventsHelpList = useMemo(
-    () => filterPlannerEventsForHelp(plannerEventsForRail, linkedEventIds, { search: helpSearch }),
-    [plannerEventsForRail, linkedEventIds, helpSearch]
+    () => filterPlannerEventsForHelp(plannerEventsForRail, linkedEventIds),
+    [plannerEventsForRail, linkedEventIds]
   );
 
   const subjectName = (a) => a?.subject?.name || a?.related_subject?.name || null;
@@ -332,7 +331,9 @@ export default function ChildHomeRightRail({ familyId, childId }) {
         <Text style={styles.helpRowTitle} numberOfLines={2}>
           {title}
         </Text>
-        <Text style={styles.helpRowMeta}>{metaLine}</Text>
+        <Text style={styles.helpRowMeta} numberOfLines={1} ellipsizeMode="tail">
+          {metaLine}
+        </Text>
         {sourceTag ? <Text style={styles.helpRowSource}>{sourceTag}</Text> : null}
       </View>
       {ctaDone ? (
@@ -436,36 +437,14 @@ export default function ChildHomeRightRail({ familyId, childId }) {
             <View style={styles.submissionsSection}>
               <Text style={styles.helpSectionLabel}>Needs your attention</Text>
               {submissionsUrgent.map((a) => {
-                const primary = primaryAttentionStatusLabel(a);
-                const isRevision = (a.review_status || '').toLowerCase() === 'needs_revision';
                 const secondary = secondaryAttentionContextLine(a, subjectName(a) || '');
                 return (
-                  <View key={a.id} style={styles.item}>
-                    <View style={styles.itemLeft}>
-                      <View style={[styles.itemIcon, { backgroundColor: colors.orangeSoft }]}>
-                        <FileText size={14} color={colors.orangeBold} />
-                      </View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.itemTitle} numberOfLines={2}>
-                          {a.title || 'Schoolwork'}
-                        </Text>
-                        <View
-                          style={[
-                            styles.primaryStatusPill,
-                            isRevision ? styles.primaryStatusPillRevision : styles.primaryStatusPillAction,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.primaryStatusPillText,
-                              isRevision ? styles.primaryStatusPillTextRevision : null,
-                            ]}
-                          >
-                            {primary}
-                          </Text>
-                        </View>
-                        {secondary ? <Text style={styles.metaSecondaryLine}>{secondary}</Text> : null}
-                      </View>
+                  <View key={a.id} style={styles.helpRow}>
+                    <View style={styles.helpRowMain}>
+                      <Text style={styles.helpRowTitle} numberOfLines={2}>
+                        {a.title || 'Schoolwork'}
+                      </Text>
+                      {secondary ? <Text style={styles.helpRowMeta}>{secondary}</Text> : null}
                     </View>
                   </View>
                 );
@@ -518,13 +497,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
 
       return (
         <View style={styles.helpColumn}>
-          <TextInput
-            style={styles.search}
-            placeholder="Search schoolwork"
-            placeholderTextColor={colors.muted}
-            value={helpSearch}
-            onChangeText={setHelpSearch}
-          />
           {!hasAny ? (
             <View style={[styles.bodyFill, styles.emptyCenter]}>
               <View style={styles.emptyBlock}>
@@ -644,8 +616,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
           <View style={styles.tabs}>
             {TABS.map((tab) => {
               const active = selectedSection === tab.id;
-              const badgeCount =
-                tab.id === 'submissions' ? submissionsUrgentBadgeCount : 0;
               return (
                 <TouchableOpacity
                   key={tab.id}
@@ -655,11 +625,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
                 >
                   <View style={styles.tabInner}>
                     <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab.label}</Text>
-                    {badgeCount > 0 ? (
-                      <View style={styles.tabBadge}>
-                        <Text style={styles.tabBadgeText}>{badgeCount > 9 ? '9+' : badgeCount}</Text>
-                      </View>
-                    ) : null}
                   </View>
                 </TouchableOpacity>
               );
@@ -775,23 +740,6 @@ const styles = StyleSheet.create({
     gap: 5,
     flexWrap: 'nowrap',
   },
-  tabBadge: {
-    minWidth: 18,
-    height: 18,
-    paddingHorizontal: 5,
-    borderRadius: 9,
-    backgroundColor: 'rgba(249, 115, 22, 0.95)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#fff',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   tabActive: {
     borderColor: 'rgba(139, 92, 246, 0.5)',
     backgroundColor: 'rgba(139, 92, 246, 0.15)',
@@ -807,19 +755,6 @@ const styles = StyleSheet.create({
   tabTextActive: {
     color: 'rgba(99, 102, 241, 1)',
     fontWeight: '700',
-  },
-  search: {
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 13,
-    marginBottom: 10,
-    color: colors.text,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   list: {
     flex: 1,

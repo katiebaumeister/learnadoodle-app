@@ -19,6 +19,7 @@ import { prefetchAllSubjectProgressPlans, prefetchSubjectProgressPlanEntry } fro
 import { getHolidaysForRange, getEventForPlanSlot, invalidateHolidaysForRangeCache } from '../lib/services/academicYearClient'
 import { completeEvent, updateEventStatus } from '../lib/services/attendanceClient'
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext'
+import { isSchoolWorkEventType } from './child/childHomeRailHelpers'
 import {
   isDeletableSeriesGroup,
   isPlanYearBlockSeries,
@@ -5573,6 +5574,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     const handlePlannerEventContextMenu = async (e) => {
       const { event: rawEvent, position } = e.detail || {};
       if (!rawEvent || !position || !familyId) return;
+      const isChildViewer = sessionRef.current?.role_flags?.isChild === true;
+      const isRestrictedChild = isChildViewer && !allowedRef.current('events');
       let ev = rawEvent;
       // Hydrate with canonical DB row so non-planner surfaces (Home/Subjects)
       // get the same series-aware context menu options as Planner.
@@ -5726,169 +5729,223 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       } else {
       let eventId = ev._originalId || ev.originalId || ev.id;
       eventId = cleanPlannerEventId(eventId);
-      const isSeriesGroup = isDeletableSeriesGroup(ev);
-      if (isSeriesGroup) {
-        menuItems.push({
-          text: 'Edit This Event',
-          iconKey: 'edit2',
-          action: () => {
-            dispatchOpenEventModal(ev, { editScope: 'single' });
-          },
-        });
-        menuItems.push({
-          text: 'Edit Series',
-          iconKey: 'edit2',
-          action: () => {
-            dispatchOpenEventModal(ev, { editScope: 'series' });
-          },
-        });
-      } else {
-        menuItems.push({
-          text: 'Edit Event',
-          iconKey: 'edit2',
-          action: () => {
-            dispatchOpenEventModal(ev, { editScope: 'single' });
-          },
-        });
-      }
-      menuItems.push({
-        text: 'Send to student',
-        iconKey: 'send',
-        action: () => {
-          window.dispatchEvent(new CustomEvent('openEventModal', {
+      const openChildEventModal = (focus) => {
+        window.dispatchEvent(
+          new CustomEvent('openEventModal', {
             detail: {
               eventId: ev?.id,
               initialEvent: ev,
-              parentEventFocus: 'send',
-              sendOnlyMode: true,
+              schedulingMode: false,
+              editScope: 'single',
+              childEventFocus: focus,
             },
-          }));
-        },
-      });
-      if (isSeriesGroup) {
-        menuItems.push({
-          text: 'Delete This Event',
-          isDelete: true,
-          iconKey: 'trash2',
-          action: () => {
-            const setConfirm = setConfirmDialogRef.current;
-            if (!setConfirm) return;
-            const cleanId = cleanPlannerEventId(eventId || '');
-            setConfirm({
-              visible: true,
-              title: 'Delete this occurrence?',
-              message: 'Are you sure you want to delete only this occurrence?',
-              confirmLabel: 'Delete',
-              cancelLabel: 'Cancel',
-              destructive: true,
-              onConfirm: async () => {
-                const optimisticDetail = { eventId: cleanId };
-                window.dispatchEvent(new CustomEvent('eventDeleted', { detail: optimisticDetail }));
-                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
-                try {
-                  const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
-                  if (rpcError) {
-                    const result = await deletePlannerEvent(cleanId, familyId);
-                    if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
-                  } else if (!rpcData?.success) {
-                    const result = await deletePlannerEvent(cleanId, familyId);
-                    if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
-                  }
-                } catch (err) {
-                  // Re-sync planner state if optimistic delete fails.
-                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-                  Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
-                } finally {
-                  setConfirm((prev) => ({ ...prev, visible: false }));
-                }
-              },
-              onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
-            });
-          },
-        });
-        menuItems.push({
-          text: 'Delete Series',
-          isDelete: true,
-          iconKey: 'trash2',
-          action: () => {
-            const setConfirm = setConfirmDialogRef.current;
-            if (!setConfirm) return;
-            const cleanId = cleanPlannerEventId(eventId || '');
-            setConfirm({
-              visible: true,
-              title: 'Delete all in series?',
-              message: 'Are you sure you want to delete all occurrences in this series?',
-              confirmLabel: 'Delete series',
-              cancelLabel: 'Cancel',
-              destructive: true,
-              onConfirm: async () => {
-                try {
-                  if (!familyId) throw new Error('Missing family');
-                  const { error: seriesError, logEventId } = await softDeleteEventSeries(supabase, familyId, ev, cleanId);
-                  if (seriesError) throw seriesError;
-                  const idForHooks = logEventId ?? cleanId;
-                  const seriesDeleteDetail = isPlanYearBlockSeries(ev) && ev?.source_block_id && ev?.academic_year_id
-                    ? {
-                        sourceBlockId: String(ev.source_block_id),
-                        seriesAcademicYearId: String(ev.academic_year_id),
-                      }
-                    : {
-                        seriesMasterEventId: resolveSeriesMasterEventId(ev, cleanId),
-                        seriesLinkIds: resolveSeriesLinkIds(ev, cleanId),
-                      };
-                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: idForHooks, ...seriesDeleteDetail } }));
-                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-                } catch (err) {
-                  Alert.alert('Error', `Failed to delete series: ${err?.message || err}`);
-                } finally {
-                  setConfirm((prev) => ({ ...prev, visible: false }));
-                }
-              },
-              onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
-            });
-          },
-        });
+          })
+        );
+      };
+      const schoolworkEvent = isSchoolWorkEventType(ev?.event_type || ev?.type || '');
+      const isSeriesGroup = isDeletableSeriesGroup(ev);
+      if (isChildViewer && isRestrictedChild) {
+        if (schoolworkEvent) {
+          menuItems.push({
+            text: 'Ask for help',
+            iconKey: 'send',
+            action: () => openChildEventModal('help'),
+          });
+          menuItems.push({
+            text: 'Submit for review',
+            iconKey: 'send',
+            action: () => openChildEventModal('submission'),
+          });
+        } else {
+          menuItems.push({
+            text: 'View',
+            iconKey: 'calendar',
+            action: () => {
+              window.dispatchEvent(
+                new CustomEvent('openEventModal', { detail: { eventId: ev?.id, initialEvent: ev, schedulingMode: false } })
+              );
+            },
+          });
+        }
       } else {
-        menuItems.push({
-          text: 'Delete Event',
-          isDelete: true,
-          iconKey: 'trash2',
-          action: () => {
-            const setConfirm = setConfirmDialogRef.current;
-            if (!setConfirm) return;
-            const cleanId = cleanPlannerEventId(eventId || '');
-            setConfirm({
-              visible: true,
-              title: 'Delete event?',
-              message: 'Are you sure you want to delete this event?',
-              confirmLabel: 'Delete',
-              cancelLabel: 'Cancel',
-              destructive: true,
-              onConfirm: async () => {
-                const optimisticDetail = { eventId: cleanId };
-                window.dispatchEvent(new CustomEvent('eventDeleted', { detail: optimisticDetail }));
-                window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
-                try {
-                  const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
-                  if (rpcError) {
-                    const result = await deletePlannerEvent(cleanId, familyId);
-                    if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
-                  } else if (!rpcData?.success) {
-                    const result = await deletePlannerEvent(cleanId, familyId);
-                    if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
+        if (isSeriesGroup) {
+          menuItems.push({
+            text: 'Edit This Event',
+            iconKey: 'edit2',
+            action: () => {
+              dispatchOpenEventModal(ev, { editScope: 'single' });
+            },
+          });
+          menuItems.push({
+            text: 'Edit Series',
+            iconKey: 'edit2',
+            action: () => {
+              dispatchOpenEventModal(ev, { editScope: 'series' });
+            },
+          });
+        } else {
+          menuItems.push({
+            text: 'Edit Event',
+            iconKey: 'edit2',
+            action: () => {
+              dispatchOpenEventModal(ev, { editScope: 'single' });
+            },
+          });
+        }
+
+        if (isChildViewer && schoolworkEvent) {
+          menuItems.push({
+            text: 'Ask for help',
+            iconKey: 'send',
+            action: () => openChildEventModal('help'),
+          });
+          menuItems.push({
+            text: 'Submit for review',
+            iconKey: 'send',
+            action: () => openChildEventModal('submission'),
+          });
+        } else {
+          menuItems.push({
+            text: 'Send to student',
+            iconKey: 'send',
+            action: () => {
+              window.dispatchEvent(new CustomEvent('openEventModal', {
+                detail: {
+                  eventId: ev?.id,
+                  initialEvent: ev,
+                  parentEventFocus: 'send',
+                  sendOnlyMode: true,
+                },
+              }));
+            },
+          });
+        }
+
+        if (isSeriesGroup) {
+          menuItems.push({
+            text: 'Delete This Event',
+            isDelete: true,
+            iconKey: 'trash2',
+            action: () => {
+              const setConfirm = setConfirmDialogRef.current;
+              if (!setConfirm) return;
+              const cleanId = cleanPlannerEventId(eventId || '');
+              setConfirm({
+                visible: true,
+                title: 'Delete this occurrence?',
+                message: 'Are you sure you want to delete only this occurrence?',
+                confirmLabel: 'Delete',
+                cancelLabel: 'Cancel',
+                destructive: true,
+                onConfirm: async () => {
+                  const optimisticDetail = { eventId: cleanId };
+                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: optimisticDetail }));
+                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+                  try {
+                    const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
+                    if (rpcError) {
+                      const result = await deletePlannerEvent(cleanId, familyId);
+                      if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
+                    } else if (!rpcData?.success) {
+                      const result = await deletePlannerEvent(cleanId, familyId);
+                      if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
+                    }
+                  } catch (err) {
+                    // Re-sync planner state if optimistic delete fails.
+                    window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+                    Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
+                  } finally {
+                    setConfirm((prev) => ({ ...prev, visible: false }));
                   }
-                } catch (err) {
-                  // Re-sync planner state if optimistic delete fails.
-                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
-                  Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
-                } finally {
-                  setConfirm((prev) => ({ ...prev, visible: false }));
-                }
-              },
-              onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
-            });
-          },
-        });
+                },
+                onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
+              });
+            },
+          });
+          menuItems.push({
+            text: 'Delete Series',
+            isDelete: true,
+            iconKey: 'trash2',
+            action: () => {
+              const setConfirm = setConfirmDialogRef.current;
+              if (!setConfirm) return;
+              const cleanId = cleanPlannerEventId(eventId || '');
+              setConfirm({
+                visible: true,
+                title: 'Delete all in series?',
+                message: 'Are you sure you want to delete all occurrences in this series?',
+                confirmLabel: 'Delete series',
+                cancelLabel: 'Cancel',
+                destructive: true,
+                onConfirm: async () => {
+                  try {
+                    if (!familyId) throw new Error('Missing family');
+                    const { error: seriesError, logEventId } = await softDeleteEventSeries(supabase, familyId, ev, cleanId);
+                    if (seriesError) throw seriesError;
+                    const idForHooks = logEventId ?? cleanId;
+                    const seriesDeleteDetail = isPlanYearBlockSeries(ev) && ev?.source_block_id && ev?.academic_year_id
+                      ? {
+                          sourceBlockId: String(ev.source_block_id),
+                          seriesAcademicYearId: String(ev.academic_year_id),
+                        }
+                      : {
+                          seriesMasterEventId: resolveSeriesMasterEventId(ev, cleanId),
+                          seriesLinkIds: resolveSeriesLinkIds(ev, cleanId),
+                        };
+                    window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: idForHooks, ...seriesDeleteDetail } }));
+                    window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+                  } catch (err) {
+                    Alert.alert('Error', `Failed to delete series: ${err?.message || err}`);
+                  } finally {
+                    setConfirm((prev) => ({ ...prev, visible: false }));
+                  }
+                },
+                onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
+              });
+            },
+          });
+        } else {
+          menuItems.push({
+            text: 'Delete Event',
+            isDelete: true,
+            iconKey: 'trash2',
+            action: () => {
+              const setConfirm = setConfirmDialogRef.current;
+              if (!setConfirm) return;
+              const cleanId = cleanPlannerEventId(eventId || '');
+              setConfirm({
+                visible: true,
+                title: 'Delete event?',
+                message: 'Are you sure you want to delete this event?',
+                confirmLabel: 'Delete',
+                cancelLabel: 'Cancel',
+                destructive: true,
+                onConfirm: async () => {
+                  const optimisticDetail = { eventId: cleanId };
+                  window.dispatchEvent(new CustomEvent('eventDeleted', { detail: optimisticDetail }));
+                  window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+                  try {
+                    const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
+                    if (rpcError) {
+                      const result = await deletePlannerEvent(cleanId, familyId);
+                      if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
+                    } else if (!rpcData?.success) {
+                      const result = await deletePlannerEvent(cleanId, familyId);
+                      if (result?.error) throw new Error(result.error.message || 'Failed to delete event');
+                    }
+                  } catch (err) {
+                    // Re-sync planner state if optimistic delete fails.
+                    window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+                    Alert.alert('Error', `Failed to delete event: ${err?.message || err}`);
+                  } finally {
+                    setConfirm((prev) => ({ ...prev, visible: false }));
+                  }
+                },
+                onCancel: () => setConfirm((prev) => ({ ...prev, visible: false })),
+              });
+            },
+          });
+        }
       }
       }
       const estimatedMenuHeight = menuItems.length * 48 + 16;

@@ -99,6 +99,54 @@ export default function AskParentHelpModal({
     return null;
   }, [eventContext?.start_ts, eventContext?.end_ts, assignment?.due_date]);
 
+  const latestHistoryLine = useMemo(() => {
+    const formatWhen = (value) => {
+      if (!value) return 'recently';
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return 'recently';
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const target = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+      const diffDays = Math.round((today.getTime() - target.getTime()) / (24 * 60 * 60 * 1000));
+      const time = parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      if (diffDays === 0) return `today at ${time}`;
+      if (diffDays === 1) return `yesterday at ${time}`;
+      const date = parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return `${date} at ${time}`;
+    };
+
+    const parseLog = (raw) => {
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === 'string') {
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+          return [];
+        }
+      }
+      return [];
+    };
+
+    const log = parseLog(assignment?.help_message_log);
+    const normalized = log
+      .map((entry) => {
+        const body = String(entry?.body || entry?.message || entry?.note || '').trim();
+        const tsRaw = entry?.created_at || entry?.timestamp || assignment?.updated_at || assignment?.created_at || null;
+        const ts = new Date(tsRaw || 0).getTime();
+        if (!Number.isFinite(ts) || ts <= 0) return null;
+        return { body, ts, tsRaw };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.ts - a.ts);
+
+    const latest = normalized[0];
+    if (!latest) return null;
+    return latest.body
+      ? `Sent to parent ${formatWhen(latest.tsRaw)} — "${latest.body}"`
+      : `Sent to parent ${formatWhen(latest.tsRaw)}`;
+  }, [assignment?.help_message_log, assignment?.updated_at, assignment?.created_at]);
+
   const handleSend = async () => {
     if (!familyId || !childId) {
       setError('Missing account context.');
@@ -188,8 +236,23 @@ export default function AskParentHelpModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.sheet}>
+      <TouchableOpacity
+        style={styles.overlay}
+        activeOpacity={1}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss"
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={(e) => {
+            e?.stopPropagation?.();
+          }}
+          onKeyDown={(e) => {
+            e?.stopPropagation?.();
+          }}
+          style={styles.sheet}
+        >
           <TouchableOpacity
             onPress={onClose}
             style={styles.closeButton}
@@ -238,6 +301,11 @@ export default function AskParentHelpModal({
 
             {/* Zone 3 — expression (breathing room) */}
             <Text style={[styles.sectionLabel, styles.sectionLabelNote]}>Add a message</Text>
+            {latestHistoryLine ? (
+              <View style={styles.historyBox}>
+                <Text style={styles.historyText}>{latestHistoryLine}</Text>
+              </View>
+            ) : null}
             <TextInput
               style={styles.input}
               placeholder="Explain what you need help with…"
@@ -270,8 +338,8 @@ export default function AskParentHelpModal({
               </TouchableOpacity>
             </View>
           </ScrollView>
-        </View>
-      </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
     </Modal>
   );
 }
@@ -286,7 +354,8 @@ const styles = StyleSheet.create({
   sheet: {
     backgroundColor: '#fff',
     borderRadius: 16,
-    padding: 20,
+    paddingVertical: 20,
+    paddingHorizontal: 24,
     maxWidth: 440,
     width: '100%',
     alignSelf: 'center',
@@ -347,6 +416,23 @@ const styles = StyleSheet.create({
     marginTop: 22,
     marginBottom: 10,
   },
+  historyBox: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  historyText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   chips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -399,7 +485,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text,
     marginBottom: 16,
-    backgroundColor: '#fafafa',
+    backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

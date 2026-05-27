@@ -69,10 +69,41 @@ export default function AssignmentReviewModal({
   const [rubric, setRubric] = useState(null);
   const [showRubricScoring, setShowRubricScoring] = useState(false);
   const [feedbackFocused, setFeedbackFocused] = useState(false);
+  const [submissionAttachments, setSubmissionAttachments] = useState([]);
 
   useEffect(() => {
     loadRubric();
   }, [assignment]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadSubmissionAttachments = async () => {
+      const rawIds = assignment?.linked_evidence_ids;
+      const ids = Array.isArray(rawIds)
+        ? rawIds.map((id) => String(id)).filter(Boolean)
+        : [];
+      if (ids.length === 0) {
+        setSubmissionAttachments([]);
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('materials')
+          .select('id, title, provider_url, url, storage_path')
+          .in('id', ids);
+        if (cancelled || error) return;
+        const byId = new Map((data || []).map((row) => [String(row.id), row]));
+        const ordered = ids.map((id) => byId.get(String(id))).filter(Boolean);
+        setSubmissionAttachments(ordered);
+      } catch (_) {
+        if (!cancelled) setSubmissionAttachments([]);
+      }
+    };
+    loadSubmissionAttachments();
+    return () => {
+      cancelled = true;
+    };
+  }, [assignment?.id, assignment?.linked_evidence_ids]);
 
   const loadRubric = async () => {
     if (!assignment?.rubric_id) {
@@ -216,6 +247,32 @@ export default function AssignmentReviewModal({
                         No written notes were included with this submission.
                       </Text>
                     )}
+                    {submissionAttachments.length > 0 ? (
+                      <View style={styles.submissionAttachmentList}>
+                        {submissionAttachments.map((item) => {
+                          const href = item?.provider_url || item?.url || null;
+                          const label = item?.title || 'Attachment';
+                          return (
+                            <TouchableOpacity
+                              key={item.id}
+                              style={styles.submissionAttachmentRow}
+                              onPress={() => {
+                                if (Platform.OS === 'web' && href) {
+                                  window.open(href, '_blank', 'noopener,noreferrer');
+                                }
+                              }}
+                              disabled={!href}
+                              {...(Platform.OS === 'web' && { cursor: href ? 'pointer' : 'default' })}
+                            >
+                              <FileText size={14} color={LD.blueMuted} />
+                              <Text style={styles.submissionAttachmentText} numberOfLines={1}>
+                                {label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    ) : null}
                   </>
                 ) : (
                   assignment?.description ? (
@@ -458,6 +515,27 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: LD.muted,
     lineHeight: 21,
+  },
+  submissionAttachmentList: {
+    marginTop: 10,
+    gap: 8,
+  },
+  submissionAttachmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: LD.border,
+    backgroundColor: '#FFFFFF',
+  },
+  submissionAttachmentText: {
+    flex: 1,
+    fontSize: 13,
+    color: LD.blueMuted,
+    lineHeight: 16,
   },
   sectionDecision: {
     marginBottom: 20,

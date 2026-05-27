@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { FileText, HelpCircle, Calendar, ChevronRight } from 'lucide-react';
+import { FileText, HelpCircle, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
@@ -214,9 +214,11 @@ export default function EmbeddedNotificationCenter({
       };
       window.addEventListener('parentAssignmentsNeedRefresh', onParentRefresh);
       window.addEventListener('refreshCalendar', onParentRefresh);
+      window.addEventListener('refreshRightRail', onParentRefresh);
       return () => {
         window.removeEventListener('parentAssignmentsNeedRefresh', onParentRefresh);
         window.removeEventListener('refreshCalendar', onParentRefresh);
+        window.removeEventListener('refreshRightRail', onParentRefresh);
       };
     }
   }, [sessionLoading, sessionFamilyId, familyId, hideOnboardingCards, viewerChildId]);
@@ -378,6 +380,8 @@ export default function EmbeddedNotificationCenter({
   const loadUpcomingEvents = async () => {
     try {
       const now = new Date();
+      const dayStart = new Date(now);
+      dayStart.setHours(0, 0, 0, 0);
       const horizon = new Date(now);
       horizon.setDate(horizon.getDate() + 30);
       horizon.setHours(23, 59, 59, 999);
@@ -413,7 +417,8 @@ export default function EmbeddedNotificationCenter({
           child:child_id (id, first_name, avatar)
         `)
         .eq('family_id', familyId)
-        .gte('start_ts', now.toISOString())
+        // Include all of "today" so all-day / no-time events (often 00:00) still appear in Coming up after send.
+        .gte('start_ts', dayStart.toISOString())
         .lte('start_ts', horizon.toISOString())
         .in('status', ['scheduled', 'in_progress'])
         .is('deleted_at', null)
@@ -694,23 +699,6 @@ export default function EmbeddedNotificationCenter({
         ? 'Next step'
         : 'Needs attention';
 
-  const getSectionCount = (sectionId) => {
-    switch (sectionId) {
-      case 'submissions':
-        return assignments.filter(a => 
-          a.status === 'submitted' && 
-          a.review_status !== 'needs_revision' &&
-          !a.need_help
-        ).length;
-      case 'help_requests':
-        return assignments.filter(a => a.need_help === true).length;
-      case 'needs_revision':
-        return upcomingEvents.length;
-      default:
-        return 0;
-    }
-  };
-
   const formatEventDate = (dateString) => {
     const date = new Date(dateString);
     const today = new Date();
@@ -859,7 +847,6 @@ export default function EmbeddedNotificationCenter({
             <View style={styles.tabs}>
               {SECTIONS.map(section => {
                 const isActive = selectedSection === section.id;
-                const count = getSectionCount(section.id);
 
                 const webProps = Platform.OS === 'web' ? {
                   cursor: 'pointer',
@@ -877,13 +864,6 @@ export default function EmbeddedNotificationCenter({
                     <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
                       {section.label}
                     </Text>
-                    {count > 0 && (
-                      <View style={[styles.countBadge, isActive && styles.countBadgeActive]}>
-                        <Text style={[styles.countText, !isActive && styles.countTextInactive]}>
-                          {count > 99 ? '99+' : count}
-                        </Text>
-                      </View>
-                    )}
                   </TouchableOpacity>
                 );
               })}
@@ -943,9 +923,6 @@ export default function EmbeddedNotificationCenter({
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
                         <View style={styles.itemLeft}>
-                          <View style={[styles.itemIconContainer, { backgroundColor: colors.blueBold + '15' }]}>
-                            <Calendar size={14} color={colors.blueBold} />
-                          </View>
                           <View style={styles.itemContent}>
                             <View style={styles.itemHeader}>
                               <View style={[styles.childDot, { backgroundColor: childColor }]} />
@@ -962,7 +939,6 @@ export default function EmbeddedNotificationCenter({
                             </View>
                           </View>
                         </View>
-                        <ChevronRight size={14} color={colors.textSecondary} />
                       </TouchableOpacity>
                     );
                   } else {
@@ -1236,30 +1212,6 @@ const styles = StyleSheet.create({
   tabTextActive: {
     color: 'rgba(99, 102, 241, 1)',
     fontWeight: '700',
-  },
-  countBadge: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: 'rgba(226, 232, 240, 0.95)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  countBadgeActive: {
-    backgroundColor: 'rgba(99, 102, 241, 0.78)',
-  },
-  countText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: colors.white,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  countTextInactive: {
-    color: '#64748b',
-    fontWeight: '500',
   },
   emptyState: {
     flex: 1,
