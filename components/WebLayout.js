@@ -1293,29 +1293,26 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setPlannerSearchResults([]);
           setShowSearchDropdown(true);
         } else if (eventsResult.data) {
-          // Deduplicate: group by title and keep only the most recent event for each title
-          const eventMap = new Map();
-          eventsResult.data.forEach(event => {
-            const title = (event.title || 'Untitled Event').toLowerCase().trim();
-            const eventDate = event.start_ts ? new Date(event.start_ts) : new Date();
-            const isBacklog = event.is_backlog === true || (event.start_ts && new Date(event.start_ts).getFullYear() >= 2099);
-            
-            // If we haven't seen this title, or this event is more recent, use it
-            if (!eventMap.has(title) || eventMap.get(title).date < eventDate) {
-              eventMap.set(title, {
+          // Keep all matching events (do not deduplicate by title).
+          const results = (eventsResult.data || [])
+            .map((event) => {
+              const eventDate = event.start_ts ? new Date(event.start_ts) : null;
+              const hasValidDate = eventDate && Number.isFinite(eventDate.getTime());
+              const isBacklog = event.is_backlog === true || (hasValidDate && eventDate.getFullYear() >= 2099);
+              return {
                 id: event.id,
                 title: event.title || 'Untitled Event',
-                date: eventDate,
-                dateStr: isBacklog ? 'Backlog' : eventDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-                isBacklog: isBacklog,
-              });
-            }
-          });
-          
-          // Convert map to array and limit to 10 most recent
-          const results = Array.from(eventMap.values())
+                date: hasValidDate ? eventDate : new Date(0),
+                dateStr: isBacklog
+                  ? 'Backlog'
+                  : hasValidDate
+                    ? eventDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : 'No date',
+                isBacklog,
+              };
+            })
             .sort((a, b) => b.date - a.date)
-            .slice(0, 10);
+            .slice(0, 20);
           
           console.log('[PlannerSearch] Mapped results:', results.length);
           setPlannerSearchResults(results);
@@ -4347,11 +4344,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           overflow: 'hidden',
                         }}
                       >
-                        {isSearchingPlanner ? (
-                          <View style={{ padding: 16, alignItems: 'center' }}>
-                            <Text style={{ fontSize: 14, color: '#6b7280' }}>Searching...</Text>
-                          </View>
-                        ) : plannerSearchResults.length > 0 ? (
+                        {plannerSearchResults.length > 0 ? (
                           <ScrollView style={{ maxHeight: 300 }}>
                             {plannerSearchResults.map((result) => (
                               <TouchableOpacity
@@ -4401,6 +4394,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                               </TouchableOpacity>
                             ))}
                           </ScrollView>
+                        ) : isSearchingPlanner ? (
+                          <View style={{ padding: 16, alignItems: 'center' }}>
+                            <Text style={{ fontSize: 14, color: '#6b7280' }}>Searching...</Text>
+                          </View>
                         ) : (
                           <View style={{ padding: 16, alignItems: 'center' }}>
                             <Text style={{ fontSize: 14, color: '#6b7280' }}>None found</Text>
