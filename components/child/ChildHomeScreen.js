@@ -23,6 +23,7 @@ export default function ChildHomeScreen({
   overrideFamilyId = null,
   overrideChildName = null,
   overrideChildren = null,
+  showRightRail = true,
 }) {
   const session = useSession();
   const [todayEvents, setTodayEvents] = useState([]);
@@ -294,7 +295,7 @@ export default function ChildHomeScreen({
     </View>
   );
 
-  const railContent = (
+  const railContent = showRightRail ? (
     <View style={styles.railContent}>
       {safeFamilyId ? (
         <ChildHomeRightRail familyId={safeFamilyId} childId={safeChildId} />
@@ -302,7 +303,7 @@ export default function ChildHomeScreen({
         <View style={{ minHeight: 120 }} />
       )}
     </View>
-  );
+  ) : null;
 
   return (
     <View style={styles.homeRoot}>

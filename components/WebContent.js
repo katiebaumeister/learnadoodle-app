@@ -731,6 +731,35 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   allowedRef.current = familyUserControls.allowed;
   const sessionRef = useRef(propSession);
   sessionRef.current = propSession;
+  const hasLinkedParentAccount = useMemo(
+    () => (propFamily?.members || []).some((m) => {
+      const role = String(m?.member_role || m?.role || '').trim().toLowerCase();
+      const parentUid = m?.user_id ?? null;
+      return role === 'parent' && parentUid != null && String(parentUid) !== String(user?.id || '');
+    }),
+    [propFamily?.members, user?.id]
+  );
+  const hasPendingParentRequest = useMemo(
+    () =>
+      Array.isArray(propFamily?.pending_parent_invites)
+      && propFamily.pending_parent_invites.some((invite) => {
+        const id = String(invite?.id || '').trim();
+        const email = String(invite?.email || '').trim();
+        return Boolean(id || email);
+      }),
+    [propFamily?.pending_parent_invites]
+  );
+  const isSelfManagedStudentMode = (
+    propSession?.role_flags?.isChild === true
+    && (
+      familyUserControls?.isSelfManagedStudent === true
+      || (propSession?.student_self_signup === true && !hasLinkedParentAccount)
+    )
+  );
+  const hideChildHomeRightRail =
+    isSelfManagedStudentMode
+    && !hasLinkedParentAccount
+    && !hasPendingParentRequest;
 
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
@@ -9828,6 +9857,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               overrideFamilyId={familyId}
               overrideChildName={child.first_name || child.name}
               overrideChildren={[child]}
+              showRightRail
             />
           </View>
         );
@@ -9890,6 +9920,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               <ChildHomeScreen
                 familyId={familyId}
                 onNavigate={onTabChange}
+                showRightRail={!hideChildHomeRightRail}
               />
             );
           }
@@ -9902,6 +9933,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             <ChildHomeScreen
               familyId={familyId}
               onNavigate={onTabChange}
+              showRightRail={!hideChildHomeRightRail}
             />
           );
         }
@@ -10143,8 +10175,14 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     flex: 1,
     ...(Platform.OS === 'web' ? { minHeight: 360 } : { minHeight: 0 }),
   };
+  const isFamilyScreen =
+    activeTab === 'profile' ||
+    activeTab === 'settings' ||
+    (activeTab && typeof activeTab === 'string' && activeTab.startsWith('child-')) ||
+    (activeTab && typeof activeTab === 'string' && activeTab.startsWith('notes-pages-')) ||
+    activeTab === 'children-list';
   const persistPlannerWeb =
-    Platform.OS === 'web' && !!(familyId || propSession?.family_id);
+    Platform.OS === 'web' && !!(familyId || propSession?.family_id) && !isFamilyScreen;
   const isPlannerShellTab =
     activeTab === 'planner' || activeTab === 'calendar' || activeTab === 'ai-planner';
   const innerContent = renderContent(persistPlannerWeb);

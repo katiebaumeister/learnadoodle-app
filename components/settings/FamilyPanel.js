@@ -944,7 +944,25 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Sync preloaded subjects when prop changes
   useEffect(() => {
     if (propPreloadedSubjects && Array.isArray(propPreloadedSubjects)) {
-      setSubjects(propPreloadedSubjects);
+      setSubjects((prev) => {
+        const prevList = Array.isArray(prev) ? prev : [];
+        const nextList = propPreloadedSubjects;
+        if (prevList.length !== nextList.length) return nextList;
+        for (let i = 0; i < nextList.length; i += 1) {
+          const prevRow = prevList[i] || {};
+          const nextRow = nextList[i] || {};
+          if (
+            String(prevRow.id || '') !== String(nextRow.id || '')
+            || String(prevRow.name || '') !== String(nextRow.name || '')
+            || String(prevRow.child_id || '') !== String(nextRow.child_id || '')
+            || String(prevRow.updated_at || '') !== String(nextRow.updated_at || '')
+            || String(prevRow.school_year || '') !== String(nextRow.school_year || '')
+          ) {
+            return nextList;
+          }
+        }
+        return prev;
+      });
     }
   }, [propPreloadedSubjects]);
 
