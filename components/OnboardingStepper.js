@@ -85,7 +85,7 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
   const [selectedChildIndexForSubject, setSelectedChildIndexForSubject] = useState(null);
   const [isFieldFocused, setIsFieldFocused] = useState(false);
 
-  const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8'];
+  const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
   const avatarSources = {
     prof1: require('../assets/prof1.png'),
     prof2: require('../assets/prof2.png'),
@@ -95,6 +95,8 @@ export default function OnboardingStepper({ onComplete, startAtStep = 1 }) {
     prof6: require('../assets/prof6.png'),
     prof7: require('../assets/prof7.png'),
     prof8: require('../assets/prof8.png'),
+    prof9: require('../assets/prof9.png'),
+    prof10: require('../assets/prof10.png'),
   };
 
   const validateStep1 = () => {

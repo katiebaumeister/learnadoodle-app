@@ -10,7 +10,7 @@ const AVATAR_PREVIEW_SIZE = 72;
 const GRADES = ['Pre-K', 'K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 const STATES = ['None', 'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DC', 'DE', 'FL', 'GA', 'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY'];
 const INTERESTS = ['STEM', 'Reading', 'Writing', 'Arts', 'Music', 'Sports', 'Outdoors', 'Languages', 'History', 'Coding', 'Woodworking', 'Other'];
-const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8'];
+const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
 
 const DIAGNOSES = [
   'Attention regulation (e.g., focus shifts quickly)',
@@ -55,6 +55,8 @@ const avatarSources = {
   prof6: require('../../assets/prof6.png'),
   prof7: require('../../assets/prof7.png'),
   prof8: require('../../assets/prof8.png'),
+  prof9: require('../../assets/prof9.png'),
+  prof10: require('../../assets/prof10.png'),
 };
 
 export default function AddChildStep({ createdChildren = [], onAddChild, onContinueWithNewChild, onRemoveChild, onContinue, isSaving, isStudentOnboarding = false }) {

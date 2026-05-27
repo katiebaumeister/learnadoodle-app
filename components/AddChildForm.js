@@ -38,8 +38,7 @@ const EXECUTIVE_FUNCTION = [
   'Difficulty planning tasks'
 ];
 
-// Limit to 8 avatars as per spec
-const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8'];
+const AVATAR_KEYS = ['prof1', 'prof2', 'prof3', 'prof4', 'prof5', 'prof6', 'prof7', 'prof8', 'prof9', 'prof10'];
 
 // Date picker chip style (match Add Event / TaskCreateModal)
 const FG = '#111827';
@@ -217,6 +216,8 @@ const AddChildForm = forwardRef(
     prof6: require('../assets/prof6.png'),
     prof7: require('../assets/prof7.png'),
     prof8: require('../assets/prof8.png'),
+    prof9: require('../assets/prof9.png'),
+    prof10: require('../assets/prof10.png'),
   };
 
   const toggleFromList = (value, list, setList) => {
