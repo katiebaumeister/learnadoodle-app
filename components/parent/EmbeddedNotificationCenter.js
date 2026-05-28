@@ -1057,19 +1057,21 @@ export default function EmbeddedNotificationCenter({
   return (
     <>
       <View style={styles.container}>
-        <View style={styles.header}>
-          <Text
-            style={
-              showRailLoadingPlaceholder
-                ? styles.titleOnboarding
-                : primaryCardMode === 'none'
-                  ? styles.titleInbox
-                  : styles.titleOnboarding
-            }
-          >
-            {showRailLoadingPlaceholder ? 'Next step' : sectionLabel}
-          </Text>
-        </View>
+        {!showInboxTabs && !showRailLoadingPlaceholder ? (
+          <View style={styles.header}>
+            <Text
+              style={
+                showRailLoadingPlaceholder
+                  ? styles.titleOnboarding
+                  : primaryCardMode === 'none'
+                    ? styles.titleInbox
+                    : styles.titleOnboarding
+              }
+            >
+              {showRailLoadingPlaceholder ? 'Next step' : sectionLabel}
+            </Text>
+          </View>
+        ) : null}
 
         {showRailLoadingPlaceholder ? (
           <View style={styles.railSkeletonWrap} accessibilityLabel="Loading">
