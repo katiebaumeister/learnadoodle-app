@@ -36,7 +36,9 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   const [selectedSection, setSelectedSection] = useState('help');
   const [assignments, setAssignments] = useState([]);
   const [upcomingEvents, setUpcomingEvents] = useState([]);
-  const [dataReady, setDataReady] = useState(false);
+  const [loadingAssignments, setLoadingAssignments] = useState(true);
+  const [loadingUpcomingEvents, setLoadingUpcomingEvents] = useState(true);
+  const [linkedEventsLoading, setLinkedEventsLoading] = useState(false);
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [helpModalAssignment, setHelpModalAssignment] = useState(null);
   const [helpModalEvent, setHelpModalEvent] = useState(null);
@@ -48,8 +50,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       await Promise.all([loadAssignments(), loadUpcomingEvents()]);
     } catch (e) {
       console.error('[ChildHomeRightRail]', e);
-    } finally {
-      setDataReady(true);
     }
   };
 
@@ -78,20 +78,24 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   }, []);
 
   const loadAssignments = async () => {
+    setLoadingAssignments(true);
     const { data, error } = await getAssignments(childId);
     if (error) {
       setAssignments([]);
+      setLoadingAssignments(false);
       return;
     }
     const baseRows = Array.isArray(data) ? data : [];
     if (baseRows.length === 0) {
       setAssignments([]);
+      setLoadingAssignments(false);
       return;
     }
     try {
       const ids = baseRows.map((row) => row?.id).filter(Boolean);
       if (ids.length === 0) {
         setAssignments(baseRows);
+        setLoadingAssignments(false);
         return;
       }
       const { data: reviewRows, error: reviewErr } = await supabase
@@ -100,6 +104,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
         .in('id', ids);
       if (reviewErr || !Array.isArray(reviewRows)) {
         setAssignments(baseRows);
+        setLoadingAssignments(false);
         return;
       }
       const reviewById = new Map(reviewRows.map((row) => [String(row.id), row]));
@@ -116,10 +121,13 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       setAssignments(merged);
     } catch (_) {
       setAssignments(baseRows);
+    } finally {
+      setLoadingAssignments(false);
     }
   };
 
   const loadUpcomingEvents = async () => {
+    setLoadingUpcomingEvents(true);
     try {
       const now = new Date();
       const horizon = new Date(now);
@@ -137,7 +145,8 @@ export default function ChildHomeRightRail({ familyId, childId }) {
           subject_id,
           status,
           event_type,
-          child:child_id (id, first_name, avatar)
+          child:child_id (id, first_name, avatar),
+          subject:subject_id (id, name)
         `)
         .eq('family_id', familyId)
         .eq('child_id', childId)
@@ -156,27 +165,11 @@ export default function ChildHomeRightRail({ familyId, childId }) {
 
       const raw = data || [];
       const filtered = raw.filter((event) => isSchoolWorkEventType(event?.event_type));
-
-      const subjectIds = [...new Set(filtered.map((e) => e.subject_id).filter(Boolean))];
-      let subjectsMap = {};
-      if (subjectIds.length > 0) {
-        const { data: subjectsData } = await supabase.from('subject').select('id, name').in('id', subjectIds);
-        if (subjectsData) {
-          subjectsMap = subjectsData.reduce((acc, sub) => {
-            acc[sub.id] = sub;
-            return acc;
-          }, {});
-        }
-      }
-
-      setUpcomingEvents(
-        filtered.map((event) => ({
-          ...event,
-          subject: event.subject_id ? subjectsMap[event.subject_id] : null,
-        }))
-      );
+      setUpcomingEvents(filtered);
     } catch (e) {
       setUpcomingEvents([]);
+    } finally {
+      setLoadingUpcomingEvents(false);
     }
   };
 
@@ -220,7 +213,11 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     }
     if (!linkedEventId) return true;
     const linkedEvent = linkedEventsById[String(linkedEventId)];
-    if (!linkedEvent) return false;
+    if (!linkedEvent) {
+      // Don't block initial paint while linked-event metadata is still loading.
+      if (linkedEventsLoading) return true;
+      return true;
+    }
     const status = String(linkedEvent?.status || '').trim().toLowerCase();
     if (status === 'canceled' || status === 'cancelled' || status === 'deleted') return false;
     return !linkedEvent?.deleted_at;
@@ -246,9 +243,11 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       )];
       if (ids.length === 0) {
         setLinkedEventsById({});
+        setLinkedEventsLoading(false);
         return;
       }
       try {
+        setLinkedEventsLoading(true);
         const { data, error } = await supabase
           .from('events')
           .select('id, event_type, start_ts, status, deleted_at')
@@ -264,6 +263,8 @@ export default function ChildHomeRightRail({ familyId, childId }) {
         setLinkedEventsById(next);
       } catch (_) {
         setLinkedEventsById({});
+      } finally {
+        setLinkedEventsLoading(false);
       }
     };
     loadLinkedEvents();
@@ -444,15 +445,14 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   };
 
   const renderBody = () => {
-    if (!dataReady) {
-      return (
-        <View style={styles.bodyFill}>
-          <Text style={styles.mutedSmall}>Loading…</Text>
-        </View>
-      );
-    }
-
     if (selectedSection === 'submissions') {
+      if (loadingAssignments) {
+        return (
+          <View style={styles.bodyFill}>
+            <Text style={styles.mutedSmall}>Loading…</Text>
+          </View>
+        );
+      }
       const hasUrgent = submissionsUrgent.length > 0;
       const hasCompleted = submissionsCompleted.length > 0;
       if (!hasUrgent && !hasCompleted) {
@@ -516,6 +516,13 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     }
 
     if (selectedSection === 'help') {
+      if (loadingAssignments) {
+        return (
+          <View style={styles.bodyFill}>
+            <Text style={styles.mutedSmall}>Loading…</Text>
+          </View>
+        );
+      }
       const helpRows = correspondenceAssignments.slice(0, LIMIT);
       const hasAny = helpRows.length > 0;
 
@@ -542,6 +549,14 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     }
 
     /* coming up */
+    if (loadingUpcomingEvents) {
+      return (
+        <View style={styles.bodyFill}>
+          <Text style={styles.mutedSmall}>Loading…</Text>
+        </View>
+      );
+    }
+
     if (upcomingEvents.length === 0) {
       return (
         <View style={[styles.bodyFill, styles.emptyCenter]}>

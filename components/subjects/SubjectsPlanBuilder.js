@@ -6596,21 +6596,12 @@ export default function SubjectsPlanBuilder({
                                   <View style={[styles.subjectRowActions, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay]}>
                                     <TouchableOpacity
                                       style={styles.subjectRowActionLink}
-                                      onPress={openPlanningPreferences}
-                                      accessibilityLabel={`Edit planning preferences for ${row.name || 'subject'}`}
-                                      activeOpacity={0.8}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      <Text style={styles.subjectRowActionLinkText}>Edit Planning Preferences</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                      style={styles.subjectRowActionLink}
                                       onPress={() => openAttendanceBulkActionsModal(row)}
-                                      accessibilityLabel={`Edit attendance for ${row.name || 'subject'}`}
+                                      accessibilityLabel={`Add attendance for ${row.name || 'subject'}`}
                                       activeOpacity={0.8}
                                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                     >
-                                      <Text style={styles.subjectRowActionLinkText}>Edit Attendance</Text>
+                                      <Text style={styles.subjectRowActionLinkText}>Add attendance</Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity
                                       style={styles.subjectRowActionLink}
@@ -6619,7 +6610,7 @@ export default function SubjectsPlanBuilder({
                                       activeOpacity={0.8}
                                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                     >
-                                      <Text style={styles.subjectRowActionLinkText}>Add Event</Text>
+                                      <Text style={styles.subjectRowActionLinkText}>Add event</Text>
                                     </TouchableOpacity>
                                   </View>
 
@@ -7446,7 +7437,7 @@ export default function SubjectsPlanBuilder({
                                 <Text style={styles.yearTargetsSavedTargetText}>
                                   {isOverallRow
                                     ? `Gap is based on saved overall planning preferences: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`
-                                    : `Gap is based on saved ${String(row?.name || 'subject')} attendance goal of ${toOneDecimal(rowTargetValue)} days`}
+                                    : `Gap is based on saved ${String(row?.name || 'subject')} attendance goal of ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`}
                                 </Text>
                                 <TouchableOpacity
                                   onPress={openPlanningPreferences}
