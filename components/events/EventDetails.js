@@ -315,13 +315,20 @@ function initialAcademicStringsFromEvent(ev) {
 }
 
 const getTimestamp = (event, keys = []) => {
+  const isTimeOnlyString = (raw) => {
+    if (typeof raw !== 'string') return false;
+    const trimmed = raw.trim();
+    if (!trimmed) return false;
+    // Time-only forms should never be treated as full timestamps.
+    return (
+      /^\d{1,2}:\d{2}(?::\d{2})?$/.test(trimmed)
+      || /^\d{1,2}:\d{2}(?::\d{2})?\s*(AM|PM)$/i.test(trimmed)
+    );
+  };
   for (const key of keys) {
     const value = event[key];
     if (value) {
-      // If it's a time string like "09:00", return null (not a valid timestamp)
-      if (typeof value === 'string' && /^\d{2}:\d{2}$/.test(value)) {
-        continue; // Skip time strings, look for actual timestamps
-      }
+      if (isTimeOnlyString(value)) continue;
       return value;
     }
   }
@@ -450,9 +457,11 @@ const timeStringToDisplay = (str) => {
   if (!str || typeof str !== 'string') return '';
   const trimmed = str.trim();
   // Already 12h with AM/PM
-  if (/\d{1,2}:\d{2}\s*(AM|PM)/i.test(trimmed)) return trimmed;
-  // 24h HH:MM or H:MM
-  const m24 = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (/^\d{1,2}:\d{2}(?::\d{2})?\s*(AM|PM)$/i.test(trimmed)) {
+    return trimmed.replace(/^(\d{1,2}:\d{2})(?::\d{2})(\s*(AM|PM))$/i, '$1$2');
+  }
+  // 24h HH:MM(:SS) or H:MM(:SS)
+  const m24 = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (m24) {
     let h = parseInt(m24[1], 10);
     const min = parseInt(m24[2], 10);
@@ -658,7 +667,39 @@ const EVENT_TYPES = [
   'Assignment',
   'Activity',
   'Appointment',
+  'Day Off',
+  'Break',
 ];
+const EVENT_TYPE_FILTER_COLORS = {
+  lesson: '#E3F0FF',
+  assignment: '#DFF7E3',
+  activity: '#EDE6FF',
+  appointment: '#F2F4F7',
+  project: '#D6F0ED',
+  exam: '#FCE7F3',
+  'day off': '#FFEDE2',
+  break: '#FFF7D6',
+};
+const EVENT_TYPE_FILTER_OUTLINE_COLORS = {
+  lesson: '#BFDFFF',
+  assignment: '#BEE8C8',
+  activity: '#D9C9FF',
+  appointment: '#D3D9E3',
+  project: '#AEE2DB',
+  exam: '#F6C8DE',
+  'day off': '#F7D1BD',
+  break: '#F2E39A',
+};
+const getEventTypeActiveChipStyle = (type) => {
+  const key = String(type || '').trim().toLowerCase();
+  const fill = EVENT_TYPE_FILTER_COLORS[key] || 'rgba(133,196,242,0.2)';
+  const outline = EVENT_TYPE_FILTER_OUTLINE_COLORS[key] || '#6BB3E8';
+  return {
+    backgroundColor: fill,
+    borderColor: outline,
+    borderWidth: 1.5,
+  };
+};
 
 const normalizeEventTypeForDisplay = (type) => {
   const raw = String(type || '').trim();
@@ -966,6 +1007,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const isSeriesGroupEvent = isDeletableSeriesGroup(event);
   const isSeriesEditScope = editScope === 'series' && isSeriesGroupEvent;
+  const hasPersistedEventId = Boolean(event?.id);
   const isSingleSeriesOccurrenceEdit = isSeriesGroupEvent && !isSeriesEditScope;
   const [editing, setEditing] = useState(initialSchedulingMode);
   const [saving, setSaving] = useState(false);
@@ -2427,6 +2469,22 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
     return { label: 'UNATTENDED', dotStyle: styles.headerStatusDotUnattended };
   }, [draftStatus, event?.status, draftDate, draftStartTime, event?.start_ts, event?.start, event?.start_local]);
+  const currentHolidayType = useMemo(
+    () => String(event?.holiday_type || event?.holidayType || '').toUpperCase(),
+    [event?.holiday_type, event?.holidayType]
+  );
+  const isDaysOffOrBreakEvent = useMemo(() => {
+    const normalizedEventType = String(eventType || '').trim().toLowerCase();
+    return (
+      currentHolidayType === 'CUSTOM_HOLIDAY' ||
+      currentHolidayType === 'CUSTOM_BREAK' ||
+      normalizedEventType === 'day off' ||
+      normalizedEventType === 'break'
+    );
+  }, [currentHolidayType, eventType]);
+  const shouldHideAttendanceChip = isDaysOffOrBreakEvent || currentHolidayType === 'GLOBAL_HOLIDAY';
+  const hideScheduleTimeControls = isDaysOffOrBreakEvent;
+  const hideLearningDetailsSection = isDaysOffOrBreakEvent;
   const isClassDayEventType = useMemo(
     () => normalizeEventTypeForDisplay(eventType) === 'Class Day',
     [eventType]
@@ -6579,13 +6637,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               <View style={[styles.headerBadge, styles.headerBadgeTight]}>
                 <Text style={styles.headerBadgeText}>{isSeriesEditScope ? 'EDIT SERIES' : 'EDIT EVENT'}</Text>
               </View>
-              <View style={styles.headerStatusChip}>
-                <View style={[styles.headerStatusDot, headerAttendanceChip.dotStyle]} />
-                <Text style={styles.headerStatusChipText}>{headerAttendanceChip.label}</Text>
-              </View>
+              {!shouldHideAttendanceChip && (
+                <View style={styles.headerStatusChip}>
+                  <View style={[styles.headerStatusDot, headerAttendanceChip.dotStyle]} />
+                  <Text style={styles.headerStatusChipText}>{headerAttendanceChip.label}</Text>
+                </View>
+              )}
             </View>
             <Text style={styles.headerTitleLarge}>
-              {draftTitle?.trim() || event?.title || 'Edit Event'}
+              {isSeriesEditScope ? 'Edit series' : (hasPersistedEventId ? 'Edit event' : 'New event')}
             </Text>
           </View>
           <TouchableOpacity
@@ -6721,7 +6781,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             styles.dropdownContainer,
             validationErrors.eventType && styles.dropdownContainerError,
           ]}>
-            <ChipRow style={styles.dropdownRow}>{EVENT_TYPES.map((type) => (
+            <ChipRow style={styles.dropdownRow}>{EVENT_TYPES.map((type) => {
+              const isSelected = eventType === type;
+              return (
               <TouchableOpacity
                 key={type}
                 onPress={() => {
@@ -6732,19 +6794,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 }}
                 style={[
                   styles.dropdownOption,
-                  eventType === type && styles.dropdownOptionActive,
+                  isSelected && styles.dropdownOptionActive,
+                  isSelected && getEventTypeActiveChipStyle(type),
                 ]}
               >
                 <Text
                   style={[
                     styles.dropdownOptionText,
-                    eventType === type && styles.dropdownOptionTextActive,
+                    isSelected && styles.dropdownOptionTextActive,
                   ]}
                 >
                   {type}
                 </Text>
               </TouchableOpacity>
-            ))}</ChipRow>
+            );})}</ChipRow>
           </SafeView>
           {validationErrors.eventType && (
             <Text style={styles.errorTextSmall}>{validationErrors.eventType}</Text>
@@ -6852,6 +6915,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 </View>
                 {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
               </View>
+              {!hideScheduleTimeControls && (
               <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
                 <View style={[styles.timeField, styles.timeFieldCompact]}>
                   <Text style={styles.timeLabel}>Start</Text>
@@ -7136,8 +7200,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   </View>
                 </View>
               </View>
+              )}
             </View>
-            {isRecurring && !isSingleSeriesOccurrenceEdit && (
+            {!hideScheduleTimeControls && isRecurring && !isSingleSeriesOccurrenceEdit && (
               <View style={styles.recurringSectionContent}>
                 <View style={[styles.repeatGrid, useCompactRepeatGrid && styles.repeatGridCompact]}>
                   <View style={[styles.repeatGroup, styles.repeatGroupPattern]}>
@@ -7386,6 +7451,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         )}
       </SafeView>
         {/* Academic details section */}
+        {!hideLearningDetailsSection && (
         <ModalSectionCard
           Icon={GraduationCap}
           title={academicSectionTitle}
@@ -7862,6 +7928,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </View>
           ) : null}
         </ModalSectionCard>
+        )}
 
         {/* Notes and attachments section */}
         <ModalSectionCard
@@ -8167,10 +8234,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       conflictResolutionContext?.suggestedChange
     );
 
+  const resolveSuggestedConflictBounds = useCallback((suggestion) => {
+    if (!suggestion) return null;
+    const rawStart = suggestion.newStart || suggestion.new_start || suggestion.start || null;
+    const rawEnd = suggestion.newEnd || suggestion.new_end || suggestion.end || null;
+    if (!rawStart || !rawEnd) return null;
+    const nextStart = rawStart instanceof Date ? rawStart : new Date(rawStart);
+    const nextEnd = rawEnd instanceof Date ? rawEnd : new Date(rawEnd);
+    if (Number.isNaN(nextStart.getTime()) || Number.isNaN(nextEnd.getTime())) return null;
+    return { nextStart, nextEnd };
+  }, []);
+
   const applySuggestedConflictChange = useCallback((suggestion) => {
-    if (!suggestion?.newStart || !suggestion?.newEnd) return false;
-    const nextStart = suggestion.newStart instanceof Date ? suggestion.newStart : new Date(suggestion.newStart);
-    const nextEnd = suggestion.newEnd instanceof Date ? suggestion.newEnd : new Date(suggestion.newEnd);
+    const bounds = resolveSuggestedConflictBounds(suggestion);
+    if (!bounds) return false;
+    const { nextStart, nextEnd } = bounds;
     if (Number.isNaN(nextStart.getTime()) || Number.isNaN(nextEnd.getTime())) return false;
 
     setDueDate(nextStart);
@@ -8184,13 +8262,13 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setShouldAutoAdjust(true);
     onOpenConflictResolutionConsumed?.();
     return true;
-  }, [onOpenConflictResolutionConsumed]);
+  }, [onOpenConflictResolutionConsumed, resolveSuggestedConflictBounds]);
 
   const persistSuggestedConflictChange = useCallback(async (suggestion) => {
-    if (!event?.id || !suggestion?.newStart || !suggestion?.newEnd) return false;
-    const nextStart = suggestion.newStart instanceof Date ? suggestion.newStart : new Date(suggestion.newStart);
-    const nextEnd = suggestion.newEnd instanceof Date ? suggestion.newEnd : new Date(suggestion.newEnd);
-    if (Number.isNaN(nextStart.getTime()) || Number.isNaN(nextEnd.getTime())) return false;
+    if (!event?.id) return false;
+    const bounds = resolveSuggestedConflictBounds(suggestion);
+    if (!bounds) return false;
+    const { nextStart, nextEnd } = bounds;
 
     const optimisticPatch = {
       id: event.id,
@@ -8226,7 +8304,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       onEventUpdated?.();
       return false;
     }
-  }, [applySuggestedConflictChange, event?.id, event?.start_ts, onEventPatched, onEventUpdated]);
+  }, [applySuggestedConflictChange, event?.id, event?.start_ts, onEventPatched, onEventUpdated, resolveSuggestedConflictBounds]);
 
   const openPersistentConflictResolution = useCallback(() => {
     const suggestion = chipConflictSuggestion || conflictResolutionContext?.suggestedChange || null;

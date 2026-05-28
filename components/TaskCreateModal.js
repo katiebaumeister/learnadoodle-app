@@ -26,7 +26,12 @@ import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
 import { ATTENDANCE_MODES, getAttendanceMode } from '../lib/attendanceMode';
 import { trackEvent } from '../lib/analytics';
-import { getFamilyExclusions, getFamilyPlannerSettings } from '../lib/services/plannerSettingsClient';
+import {
+  addExclusion,
+  getFamilyExclusions,
+  getFamilyPlannerSettings,
+  updateExclusion,
+} from '../lib/services/plannerSettingsClient';
 import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
 
 const BG = '#ffffff';
@@ -168,7 +173,44 @@ const EVENT_TYPES = [
   'Assignment',
   'Activity',
   'Appointment',
+  'Day Off',
+  'Break',
 ];
+const EVENT_TYPE_FILTER_COLORS = {
+  lesson: '#E3F0FF',
+  assignment: '#DFF7E3',
+  activity: '#EDE6FF',
+  appointment: '#F2F4F7',
+  project: '#D6F0ED',
+  exam: '#FCE7F3',
+  'day off': '#FFEDE2',
+  break: '#FFF7D6',
+};
+const EVENT_TYPE_FILTER_OUTLINE_COLORS = {
+  lesson: '#BFDFFF',
+  assignment: '#BEE8C8',
+  activity: '#D9C9FF',
+  appointment: '#D3D9E3',
+  project: '#AEE2DB',
+  exam: '#F6C8DE',
+  'day off': '#F7D1BD',
+  break: '#F2E39A',
+};
+const getEventTypeActiveChipStyle = (type) => {
+  const key = String(type || '').trim().toLowerCase();
+  const fill = EVENT_TYPE_FILTER_COLORS[key] || 'rgba(133,196,242,0.2)';
+  const outline = EVENT_TYPE_FILTER_OUTLINE_COLORS[key] || '#6BB3E8';
+  return {
+    backgroundColor: fill,
+    borderColor: outline,
+    borderWidth: 1.5,
+  };
+};
+const MULTI_DAY_EVENT_TYPES = ['Project', 'Trip', 'Holiday', 'Other', 'Break'];
+const EXCLUSION_EVENT_TYPE_TO_KIND = {
+  'Day Off': 'holiday',
+  Break: 'break',
+};
 const WEEKDAY_OPTIONS = [
   { value: 0, label: 'Sun', rrule: 'SU' },
   { value: 1, label: 'Mon', rrule: 'MO' },
@@ -195,6 +237,11 @@ const normalizeEventTypeForPersistence = (type) => {
   if (type === 'Scheduled Class Day') return 'Schedule Block';
   if (type === 'Class Day') return 'ClassDay';
   return type || 'Lesson';
+};
+
+const normalizeExclusionTypeForEvent = (type) => {
+  const raw = String(type || '').trim();
+  return EXCLUSION_EVENT_TYPE_TO_KIND[raw] || null;
 };
 
 const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
@@ -342,6 +389,7 @@ export default function TaskCreateModal({
   const [validationBanner, setValidationBanner] = useState('');
   const [placement, setPlacement] = useState(defaultPlacement || 'calendar');
   const [showCalendarPicker, setShowCalendarPicker] = useState(false);
+  const [activeDatePickerField, setActiveDatePickerField] = useState('start');
   const [calendarViewMonth, setCalendarViewMonth] = useState(defaultDate ?? new Date());
   const [showEndDateCalendarPicker, setShowEndDateCalendarPicker] = useState(false);
   const [endDateCalendarViewMonth, setEndDateCalendarViewMonth] = useState(() => {
@@ -706,6 +754,12 @@ export default function TaskCreateModal({
       setConflictWarningSafely(null);
       return;
     }
+    const isExclusionEventType = eventType === 'Day Off' || eventType === 'Break';
+    if (isExclusionEventType) {
+      lastConflictCheckKeyRef.current = '';
+      setConflictWarningSafely(null);
+      return;
+    }
     const dueDateMs = dueDate instanceof Date ? dueDate.getTime() : NaN;
     const eventEndDateMs = eventEndDate instanceof Date ? eventEndDate.getTime() : NaN;
     const normalizedStartTime = normalizeTimeValue(startTime);
@@ -755,8 +809,8 @@ export default function TaskCreateModal({
           return;
         }
 
-        // For multi-day events (Project, Trip, Holiday, Other), use eventEndDate
-        const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
+        // For multi-day events, use eventEndDate
+        const isMultiDayEventType = eventType && MULTI_DAY_EVENT_TYPES.includes(eventType);
         let resolvedEnd;
         
         if (isMultiDayEventType && eventEndDate) {
@@ -968,7 +1022,7 @@ export default function TaskCreateModal({
 
   // Auto-set end date when multi-day event type is selected
   useEffect(() => {
-    const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
+    const isMultiDayEventType = eventType && MULTI_DAY_EVENT_TYPES.includes(eventType);
     if (isMultiDayEventType && placement === 'calendar' && !eventEndDate) {
       // Set end date to one day after start date by default
       const defaultEnd = new Date(dueDate);
@@ -1678,6 +1732,14 @@ export default function TaskCreateModal({
       return new Date(subjectTermEnd);
     });
   }, [visible, eventType, subjectId, subjects, resolveSubjectTermEndDate]);
+
+  useEffect(() => {
+    const isDaysOffOrBreakSelection = eventType === 'Day Off' || eventType === 'Break';
+    if (!isDaysOffOrBreakSelection) return;
+    if (!isRecurring && !showRecurringSection) return;
+    setIsRecurring(false);
+    setShowRecurringSection(false);
+  }, [eventType, isRecurring, showRecurringSection]);
 
   const fetchSubjects = async () => {
     if (!familyId) return;
@@ -2468,6 +2530,10 @@ export default function TaskCreateModal({
   const showLocationFields = () => {
     return eventType && ['Appointment', 'Travel', 'Activity', 'Sport'].includes(eventType);
   };
+  const isDaysOffOrBreakEvent = eventType === 'Day Off' || eventType === 'Break';
+  const hideScheduleTimeControls = placement === 'calendar' && isDaysOffOrBreakEvent;
+  const hideLearningDetailsSection = isDaysOffOrBreakEvent;
+  const showBreakEndDateField = placement === 'calendar' && eventType === 'Break';
 
   /** Single source of truth for required-field validation (inline errors + Add button state). */
   const buildValidationBannerMessage = useCallback((errors) => {
@@ -2705,6 +2771,110 @@ export default function TaskCreateModal({
       }
 
       const userFamilyId = profile.family_id;
+      const plannerExclusionType = normalizeExclusionTypeForEvent(eventType);
+      if (plannerExclusionType) {
+        // Day Off / Break are planning exclusions and should never be blocked by event overlap checks.
+        setConflictWarningSafely(null);
+        const schoolYearLabel = resolveSchoolYearLabelForDate(dueDate instanceof Date ? dueDate : new Date());
+        const exclusionStartDate = toYmd(dueDate) || toYmd(new Date());
+        const exclusionEndDate = plannerExclusionType === 'break'
+          ? (toYmd(eventEndDate) || exclusionStartDate)
+          : exclusionStartDate;
+        const normalizedStart = parseYmdDate(exclusionStartDate);
+        const normalizedEnd = parseYmdDate(exclusionEndDate);
+        if (normalizedStart && normalizedEnd && normalizedEnd < normalizedStart) {
+          setValidationErrors((prev) => ({
+            ...prev,
+            endDate: 'End date must be on or after start date',
+          }));
+          setSubmitting(false);
+          return;
+        }
+
+        const exclusionLabel = title.trim()
+          || (plannerExclusionType === 'break' ? 'Break' : 'Day off');
+        const { data: currentExclusions, error: exclusionsError } = await getFamilyExclusions(
+          userFamilyId,
+          'family_default',
+          schoolYearLabel
+        );
+        if (exclusionsError) {
+          toast.push(exclusionsError?.message || 'Failed to load planning exclusions', 'error');
+          setSubmitting(false);
+          return;
+        }
+
+        const existingMatch = (currentExclusions || []).find((row) => {
+          const rowType = String(row?.exclusion_type || '').trim();
+          const rowStart = toYmd(row?.start_date);
+          const rowEnd = toYmd(row?.end_date) || rowStart;
+          return (
+            rowType === plannerExclusionType
+            && rowStart === exclusionStartDate
+            && rowEnd === exclusionEndDate
+          );
+        });
+
+        if (existingMatch?.id) {
+          const { error: updateError } = await updateExclusion(existingMatch.id, {
+            label: exclusionLabel,
+            is_active: true,
+          });
+          if (updateError) {
+            toast.push(updateError?.message || 'Failed to update planning exclusion', 'error');
+            setSubmitting(false);
+            return;
+          }
+        } else {
+          const exclusionPayloadBase = {
+            family_id: userFamilyId,
+            scope_type: 'family_default',
+            school_year_label: schoolYearLabel,
+            exclusion_type: plannerExclusionType,
+            start_date: exclusionStartDate,
+            end_date: exclusionEndDate,
+            label: exclusionLabel,
+            is_active: true,
+          };
+          // Compatibility with older DB constraints that may allow different source enums.
+          const sourceFallbacks = ['settings', 'manual', null];
+          let addError = null;
+          for (const candidateSource of sourceFallbacks) {
+            const payload = candidateSource == null
+              ? { ...exclusionPayloadBase }
+              : { ...exclusionPayloadBase, source: candidateSource };
+            const result = await addExclusion(payload);
+            if (!result?.error) {
+              addError = null;
+              break;
+            }
+            addError = result.error;
+            const message = String(result.error?.message || '').toLowerCase();
+            const isSourceConstraint = message.includes('planner_exclusions_source_check');
+            if (!isSourceConstraint) break;
+          }
+          if (addError) {
+            toast.push(addError?.message || 'Failed to save planning exclusion', 'error');
+            setSubmitting(false);
+            return;
+          }
+        }
+
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+        }
+        toast.push(
+          plannerExclusionType === 'break'
+            ? 'Break saved to planning preferences'
+            : 'Day off saved to planning preferences',
+          'success'
+        );
+        handleDismiss();
+        setSubmitting(false);
+        return;
+      }
       const isMultiDayEventType = false;
 
       // Parse list_id to extract child_id if it's a child list
@@ -3549,7 +3719,7 @@ export default function TaskCreateModal({
         >
           <AppModalShell
             mode="add"
-            title={title || 'New event'}
+            title="New event"
             eyebrow="EVENT"
             accent="#9ECFFB"
             accentSoft="#F0F8FF"
@@ -3636,7 +3806,9 @@ export default function TaskCreateModal({
                 styles.dropdownContainer,
                 validationErrors.eventType && styles.dropdownContainerError,
               ]}>
-                <ChipRow style={styles.dropdownRow}>{EVENT_TYPES.map((type) => (
+                <ChipRow style={styles.dropdownRow}>{EVENT_TYPES.map((type) => {
+                  const isSelected = eventType === type;
+                  return (
                   <TouchableOpacity
                     key={type}
                     onPress={() => {
@@ -3647,19 +3819,20 @@ export default function TaskCreateModal({
                     }}
                     style={[
                       styles.dropdownOption,
-                      eventType === type && styles.dropdownOptionActive,
+                      isSelected && styles.dropdownOptionActive,
+                      isSelected && getEventTypeActiveChipStyle(type),
                     ]}
                   >
                     <Text
                       style={[
                         styles.dropdownOptionText,
-                        eventType === type && styles.dropdownOptionTextActive,
+                        isSelected && styles.dropdownOptionTextActive,
                       ]}
                     >
                       {type}
                     </Text>
                   </TouchableOpacity>
-                ))}</ChipRow>
+                );})}</ChipRow>
               </SafeView>
               {validationErrors.eventType && (
                 <Text style={styles.errorTextSmall}>{validationErrors.eventType}</Text>
@@ -3744,6 +3917,7 @@ export default function TaskCreateModal({
                       <TouchableOpacity
                         onPress={() => {
                           if (validationErrors.date) setValidationErrors((prev) => ({ ...prev, date: null }));
+                          setActiveDatePickerField('start');
                           setCalendarViewMonth(dueDate);
                           setShowCalendarPicker(true);
                         }}
@@ -3762,7 +3936,55 @@ export default function TaskCreateModal({
                     </View>
                     {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
                   </View>
-                  <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
+                  {showBreakEndDateField ? (
+                    <View style={[styles.timeField, styles.dateFieldInline]}>
+                      <Text style={styles.timeLabel}>End date</Text>
+                      <View style={[styles.chip, validationErrors.endDate && styles.chipError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>
+                        <TouchableOpacity
+                          onPress={() => {
+                            const next = new Date(eventEndDate || dueDate || new Date());
+                            next.setDate(next.getDate() - 1);
+                            setEventEndDate(next);
+                            if (validationErrors.endDate) setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                          }}
+                        >
+                          <ChevronLeft size={16} color={FG} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (validationErrors.endDate) setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                            setActiveDatePickerField('end');
+                            setCalendarViewMonth(eventEndDate || dueDate || new Date());
+                            setShowCalendarPicker(true);
+                          }}
+                          style={{ flex: 1, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={[styles.chipText, !eventEndDate && { color: MUTED }]}>
+                            {eventEndDate ? fmt(eventEndDate) : 'Optional'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => {
+                            const next = new Date(eventEndDate || dueDate || new Date());
+                            next.setDate(next.getDate() + 1);
+                            setEventEndDate(next);
+                            if (validationErrors.endDate) setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                          }}
+                        >
+                          <ChevronRight size={16} color={FG} />
+                        </TouchableOpacity>
+                      </View>
+                      {validationErrors.endDate ? <Text style={styles.errorTextSmall}>{validationErrors.endDate}</Text> : null}
+                    </View>
+                  ) : null}
+                  <View
+                    style={[
+                      styles.timeInputsRow,
+                      Platform.OS === 'web' && styles.timeInputsRowInline,
+                      hideScheduleTimeControls && { display: 'none' },
+                    ]}
+                  >
                       <View style={[styles.timeField, styles.timeFieldCompact]}>
                         <Text style={styles.timeLabel}>Start</Text>
                       {Platform.OS === 'web' ? (
@@ -4555,7 +4777,7 @@ export default function TaskCreateModal({
                     </View>
                   </View>
                 ) : null}
-                {isRecurring && showRecurringSection && (
+                {!hideScheduleTimeControls && isRecurring && showRecurringSection && (
                   <View style={styles.recurringSectionContent}>
                     <View style={styles.repeatGrid}>
                       <View style={[styles.repeatGroup, styles.repeatGroupPattern]}>
@@ -4794,6 +5016,7 @@ export default function TaskCreateModal({
           </SafeView>
 
             {/* Academic Details Section - after Schedule time */}
+            {!hideLearningDetailsSection ? (
             <ModalSectionCard
               Icon={GraduationCap}
               title={academicSectionTitle}
@@ -5264,6 +5487,7 @@ export default function TaskCreateModal({
               ) : null}
                 </SafeView>
             </ModalSectionCard>
+            ) : null}
 
             {/* Additional notes — collapsible, same pattern as Add Subject modal */}
             <ModalSectionCard
@@ -5686,14 +5910,21 @@ export default function TaskCreateModal({
                         <View key={week} style={{ flexDirection: 'row', marginBottom: 4 }}>
                           {days.slice(week * 7, (week + 1) * 7).map((day, idx) => {
                             const isCurrentMonth = day.getMonth() === month;
-                            const isSelected = day.toDateString() === dueDate.toDateString();
+                            const selectedDate = activeDatePickerField === 'end'
+                              ? (eventEndDate || dueDate)
+                              : dueDate;
+                            const isSelected = selectedDate ? day.toDateString() === selectedDate.toDateString() : false;
                             const isToday = day.toDateString() === new Date().toDateString();
                             
                             return (
                               <TouchableOpacity
                                 key={idx}
                                 onPress={() => {
-                                  setDueDate(day);
+                                  if (activeDatePickerField === 'end') {
+                                    setEventEndDate(day);
+                                  } else {
+                                    setDueDate(day);
+                                  }
                                   setShowCalendarPicker(false);
                                 }}
                                 style={{

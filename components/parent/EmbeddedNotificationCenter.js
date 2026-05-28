@@ -444,13 +444,12 @@ export default function EmbeddedNotificationCenter({
           child:child_id (id, first_name, avatar)
         `)
         .eq('family_id', familyId)
-        // Include all of "today" so all-day / no-time events (often 00:00) still appear in Coming up after send.
+        // Include all of "today" so all-day / no-time events (often 00:00) still appear in Coming up.
         .gte('start_ts', dayStart.toISOString())
         .lte('start_ts', horizon.toISOString())
         .in('status', ['scheduled', 'in_progress'])
         .is('deleted_at', null)
-        .order('start_ts', { ascending: true })
-        .limit(80);
+        .order('start_ts', { ascending: true });
       if (viewerChildId && !isParentViewer) {
         eventsQ = eventsQ.eq('child_id', viewerChildId);
       }
@@ -780,7 +779,8 @@ export default function EmbeddedNotificationCenter({
             .filter((a) => isAssignmentLinkedEventActive(a))
         ).slice(0, limit);
       case 'needs_revision':
-        return upcomingEvents.slice(0, limit);
+        // "Coming up" should show the full upcoming stream; list scroll handles long sets.
+        return upcomingEvents;
       default:
         return [];
     }

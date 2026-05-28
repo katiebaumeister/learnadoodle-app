@@ -5645,7 +5645,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const clientY = position.y ?? 0;
       const existingMenu = document.getElementById('planner-event-context-menu');
       if (existingMenu) existingMenu.remove();
-      const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
+      const holidayType = String(ev?.holiday_type || ev?.holidayType || '').toUpperCase();
+      const isPublicHoliday = holidayType === 'GLOBAL_HOLIDAY';
       const isFromTrash = ev._activeSection === 'trash';
       let menuItems = [];
 
@@ -5764,7 +5765,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             });
           },
         });
-      } else if (!isHoliday) {
+      } else if (!isPublicHoliday) {
       let eventId = ev._originalId || ev.originalId || ev.id;
       eventId = cleanPlannerEventId(eventId);
       const openChildEventModal = (focus) => {
@@ -9542,6 +9543,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           title: h.name,
           type: 'holiday',
           event_type: 'holiday',
+          holiday_type: String(h?.type || '').toUpperCase() || null,
           status: null,
         }));
     });
@@ -9606,6 +9608,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           eventTypes: propSelectedEventTypes && propSelectedEventTypes.length > 0 ? propSelectedEventTypes : null,
         }}
         onEventSelect={(event) => {
+          const isPublicHoliday = String(event?.holiday_type || '').toUpperCase() === 'GLOBAL_HOLIDAY';
+          if (isPublicHoliday) return;
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             const hasActiveConflictContext =
               conflictBanner.visible &&

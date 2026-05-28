@@ -11,16 +11,26 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     const normalized = String(statusValue || '').trim().toLowerCase();
     return normalized === 'done' || normalized === 'completed';
   };
-  // Holidays should not be clickable, movable, or show time
-  const isHoliday = ev?.type === 'holiday' || ev?.event_type === 'holiday';
-  const effectiveHideTime = hideTime || isHoliday;
-  const effectiveOnPress = isHoliday ? undefined : onPress;
-  const effectiveDisableTouchable = disableTouchable || isHoliday;
+  // Only US public holidays are forced read-only/non-clickable.
+  const holidayType = String(ev?.holiday_type || ev?.holidayType || '').toUpperCase();
+  const isPublicHoliday = holidayType === 'GLOBAL_HOLIDAY';
+  const isPlannerDayOffOrBreak =
+    holidayType === 'CUSTOM_HOLIDAY' ||
+    holidayType === 'CUSTOM_BREAK' ||
+    ['day off', 'break'].includes(String(ev?.event_type || ev?.type || '').trim().toLowerCase());
+  const shouldHideCompletionControl = isPublicHoliday || isPlannerDayOffOrBreak;
+  const hideChildDots = isPublicHoliday || ev?.hide_child_dots === true;
+  const effectiveHideTime = hideTime || isPublicHoliday;
+  const effectiveOnPress = isPublicHoliday ? undefined : onPress;
+  const effectiveDisableTouchable = disableTouchable || isPublicHoliday;
   
   // Get color based on event type, fallback to ev.color, then default to gray
   const getEventTypeColor = () => {
     const eventType = ev.event_type || ev.type || '';
     const eventTypeLower = eventType.toLowerCase();
+    if (holidayType === 'CUSTOM_HOLIDAY' || eventTypeLower === 'day off') return 'day_off';
+    if (holidayType === 'CUSTOM_BREAK' || eventTypeLower === 'break') return 'break';
+    if (holidayType === 'GLOBAL_HOLIDAY') return 'holiday';
     
     // Map event types to color names
     if (eventTypeLower === 'lesson') return 'lesson';
@@ -71,6 +81,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#D6F0ED'; // Soft Teal
       case 'exam':
         return '#FCE7F3'; // Soft Pink
+      case 'day_off':
+        return '#FFEDE2'; // Match planner filter color
+      case 'break':
+        return '#FFF7D6'; // Match planner filter color
       case 'holiday':
         return 'transparent'; // No fill; text uses Learnadoodle blue
       default:
@@ -93,6 +107,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         return '#B8E6E0'; // More saturated Soft Teal
       case 'exam':
         return '#F9D5E8'; // More saturated Soft Pink
+      case 'day_off':
+        return '#FFE2D2'; // Slightly deeper Day Off hover
+      case 'break':
+        return '#FDEFB4'; // Slightly deeper Break hover
       case 'holiday':
         return 'transparent';
       default:
@@ -631,7 +649,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           </View>
         )}
         {/* Attendance Checkmark - Progressive Completion Ring - Hidden for holidays */}
-        {showCheckmark && onComplete && (ev.event_type?.toLowerCase() !== 'holiday') && (ev.type?.toLowerCase() !== 'holiday') && (
+        {showCheckmark && onComplete && !shouldHideCompletionControl && (
           <View
             {...(Platform.OS === 'web' && typeof window !== 'undefined' && {
               onClick: (e) => {
@@ -704,7 +722,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
-                {displayTime && !hideTime && !isHoliday && (
+                {displayTime && !hideTime && !isPublicHoliday && (
                   <Text style={{ 
                     opacity: 1,
                     fontWeight: '400', // Lighter than title
@@ -721,7 +739,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 )}
               </View>
               {/* Child participation dots - right after time */}
-              {participatingChildIds.length > 0 && (
+              {!hideChildDots && participatingChildIds.length > 0 && (
                 <ChildDotCluster
                   childIds={participatingChildIds}
                   familyChildren={children}
@@ -774,7 +792,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 >
                   {ev.title || 'Untitled Event'}
                 </Text>
-                {displayTime && !hideTime && !isHoliday && (
+                {displayTime && !hideTime && !isPublicHoliday && (
                   <Text style={{ 
                     opacity: 1,
                     fontWeight: '400', // Lighter than title
@@ -791,7 +809,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 )}
               </View>
               {/* Child participation dots - Right-aligned */}
-              {participatingChildIds.length > 0 && (
+              {!hideChildDots && participatingChildIds.length > 0 && (
                 <ChildDotCluster
                   childIds={participatingChildIds}
                   familyChildren={children}
@@ -891,7 +909,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           </View>
         )}
         {/* Attendance Checkmark - Progressive Completion Ring - Hidden for holidays */}
-        {showCheckmark && onComplete && (ev.event_type?.toLowerCase() !== 'holiday') && (ev.type?.toLowerCase() !== 'holiday') && (
+        {showCheckmark && onComplete && !shouldHideCompletionControl && (
           <View
             {...(Platform.OS === 'web' && typeof window !== 'undefined' && {
               onClick: (e) => {
@@ -978,7 +996,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
           )}
         </View>
         {/* Child participation dots - Cluster Glyph (month compact) */}
-        {participatingChildIds.length > 0 && (
+        {!hideChildDots && participatingChildIds.length > 0 && (
           <ChildDotCluster
             childIds={participatingChildIds}
             familyChildren={children}
@@ -1110,7 +1128,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         </View>
       )}
       {/* Attendance Checkmark - Minimal Checkbox - Hidden for holidays */}
-      {showCheckmark && onComplete && (ev.event_type?.toLowerCase() !== 'holiday') && (ev.type?.toLowerCase() !== 'holiday') && (
+      {showCheckmark && onComplete && !shouldHideCompletionControl && (
         <View
           {...(Platform.OS === 'web' && typeof window !== 'undefined' && {
             onClick: (e) => {
@@ -1221,7 +1239,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         )}
       </View>
       {/* Child participation dots - Cluster Glyph */}
-      {participatingChildIds.length > 0 && (
+      {!hideChildDots && participatingChildIds.length > 0 && (
         <ChildDotCluster
           childIds={participatingChildIds}
           familyChildren={children}

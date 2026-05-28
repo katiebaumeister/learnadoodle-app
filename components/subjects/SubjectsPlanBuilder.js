@@ -263,6 +263,14 @@ function formatFixGapHistorySlotLabel(slot = {}) {
   return subjectLabel ? `${dayLabel} · ${timeLabel} · ${subjectLabel}` : `${dayLabel} · ${timeLabel}`;
 }
 
+function formatFixGapHistorySlotVerb(slot = {}, fallbackVerb = 'Added') {
+  const action = String(slot?.action || '').trim().toLowerCase();
+  if (action === 'extended') return 'Extended';
+  if (action === 'removed') return 'Removed';
+  if (action === 'added') return 'Added';
+  return fallbackVerb;
+}
+
 function listDatesForWeekdaysInRange(startYmd, endYmd, weekdays = []) {
   if (!startYmd || !endYmd) return [];
   const daySet = new Set(
@@ -2812,7 +2820,7 @@ export default function SubjectsPlanBuilder({
         projectedUniqueDays,
         projectedHours: toOneDecimal(projectedHours),
         gapDays: targetDays != null ? (targetDays - projectedDays) : null,
-        gapHours: targetHours != null ? toOneDecimal(projectedHours - targetHours) : null,
+        gapHours: targetHours != null ? toOneDecimal(targetHours - projectedHours) : null,
         eventsCount: yearEventItems.length,
       });
       const targetProgressStatus = resolveTargetStatusFromPlanned({
@@ -3272,6 +3280,18 @@ export default function SubjectsPlanBuilder({
             completedDays + upcomingDays,
             Number(row?.projectedDays || 0)
           );
+          const completedHours = Math.max(0, Number(
+            Number.isFinite(Number(row?.completedHours)) ? row.completedHours : completedDays
+          ) || 0);
+          const upcomingHours = Math.max(0, Number(
+            Number.isFinite(Number(row?.upcomingHours)) ? row.upcomingHours : upcomingDays
+          ) || 0);
+          const projectedHours = Math.max(
+            completedHours + upcomingHours,
+            Number.isFinite(Number(row?.projectedHours)) ? Number(row.projectedHours) : 0
+          );
+          const resolvedProjectedValue = targetUnit === 'hours' ? projectedHours : projectedDays;
+          const resolvedGapValue = targetValue - resolvedProjectedValue;
           return {
             id: String(row?.id || (row?.isClassDayAggregate ? 'overall' : '')).trim() || `provisional-${rowIndex}`,
             name: String(row?.name || (row?.isClassDayAggregate ? 'Class days' : 'Subject')).trim(),
@@ -3283,8 +3303,12 @@ export default function SubjectsPlanBuilder({
             completedDays,
             upcomingDays,
             projectedDays,
-            gapDays: targetValue - projectedDays,
-            shortDays: Math.max(0, targetValue - projectedDays),
+            completedHours,
+            upcomingHours,
+            projectedHours,
+            gapDays: targetUnit === 'hours' ? null : resolvedGapValue,
+            gapHours: targetUnit === 'hours' ? resolvedGapValue : null,
+            shortDays: targetUnit === 'hours' ? Math.max(0, resolvedGapValue) : Math.max(0, targetValue - projectedDays),
             schoolTermId: String(row?.schoolTermId || 'full_year').trim() || 'full_year',
             hasPlan: row?.hasPlan === true,
             isOverall: row?.isClassDayAggregate === true || String(row?.id || '').trim() === 'overall',
@@ -4458,11 +4482,11 @@ export default function SubjectsPlanBuilder({
         )
         : [
           targetKind === 'hours'
-            ? `Your target is ${toOneDecimal(Number(targetDays || 0))} hours, and your current planning window can schedule ${toOneDecimal(assignedCount)} more hours.`
-            : `Your target is ${Math.round(Number(targetDays || 0))} days, and your current planning window can schedule ${Math.round(assignedCount)} more days.`,
+            ? `Your goal is ${toOneDecimal(Number(targetDays || 0))} hours, and your current planning window can schedule ${toOneDecimal(assignedCount)} more hours.`
+            : `Your goal is ${Math.round(Number(targetDays || 0))} days, and your current planning window can schedule ${Math.round(assignedCount)} more days.`,
           targetKind === 'hours'
-            ? `Right now, you are ${toOneDecimal(Math.max(0, requestedGap))} hours short of your target.`
-            : `Right now, you are ${Math.round(Math.max(0, requestedGap))} days short of your target.`,
+            ? `Right now, you are ${toOneDecimal(Math.max(0, requestedGap))} hours short of your goal.`
+            : `Right now, you are ${Math.round(Math.max(0, requestedGap))} days short of your goal.`,
           ...(partialFixPossible
             ? [
               targetKind === 'hours'
@@ -4473,8 +4497,8 @@ export default function SubjectsPlanBuilder({
                 : `After adding these, you'll still be ${remainingUnfixableGap} day${remainingUnfixableGap === 1 ? '' : 's'} short.`,
               '1. Extend planning window (end date / weekdays).',
               targetKind === 'days'
-                ? `2. Adjust target to ${Math.round(projectedAfterApply)} days.`
-                : '2. Adjust target to max achievable.',
+                ? `2. Adjust goal to ${Math.round(projectedAfterApply)} days.`
+                : '2. Adjust goal to max achievable.',
               '3. Increase daily capacity (allow multiple sessions per day).',
             ]
             : []),
@@ -5193,6 +5217,7 @@ export default function SubjectsPlanBuilder({
             assigned_count: Number(fixResult?.assignedCount ?? normalizedSlots.length) || normalizedSlots.length,
             successful_insert_count: Number(fixResult?.successfulInsertCount ?? fixResult?.insertedCount ?? normalizedSlots.length) || normalizedSlots.length,
             failed_insert_count: Number(fixResult?.failedInsertCount ?? 0) || 0,
+            message: String(fixResult?.message || '').trim() || null,
           };
           applyLocalFixGapHistoryEntry(historyKey, localHistoryEntry);
         }
@@ -6386,7 +6411,7 @@ export default function SubjectsPlanBuilder({
                               </Text>
                             ) : null}
                             <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusStudentsCol, isClassDayAggregateTable && styles.cadenceStatusStudentsColClassDay]}>Students</Text>
-                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusProgressCol, isClassDayAggregateTable && styles.cadenceStatusProgressColClassDay]}>Progress vs. Target</Text>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusProgressCol, isClassDayAggregateTable && styles.cadenceStatusProgressColClassDay]}>Scheduled Learning</Text>
                             <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay, styles.cadenceStatusActionsHeaderText]}>Actions</Text>
                           </View>
                         </View>
@@ -6572,11 +6597,11 @@ export default function SubjectsPlanBuilder({
                                     <TouchableOpacity
                                       style={styles.subjectRowActionLink}
                                       onPress={openPlanningPreferences}
-                                      accessibilityLabel={`Edit target for ${row.name || 'subject'}`}
+                                      accessibilityLabel={`Edit planning preferences for ${row.name || 'subject'}`}
                                       activeOpacity={0.8}
                                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                     >
-                                      <Text style={styles.subjectRowActionLinkText}>Edit Target</Text>
+                                      <Text style={styles.subjectRowActionLinkText}>Edit Planning Preferences</Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity
                                       style={styles.subjectRowActionLink}
@@ -6594,7 +6619,7 @@ export default function SubjectsPlanBuilder({
                                       activeOpacity={0.8}
                                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                     >
-                                      <Text style={styles.subjectRowActionLinkText}>Add event</Text>
+                                      <Text style={styles.subjectRowActionLinkText}>Add Event</Text>
                                     </TouchableOpacity>
                                   </View>
 
@@ -6646,7 +6671,7 @@ export default function SubjectsPlanBuilder({
                           <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Projected (Attended + Upcoming)</Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsTargetCol]}>
-                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Target</Text>
+                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Goal</Text>
                         </View>
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsBalanceCol, styles.yearTargetsHeaderGapCellWrap]}>
                           <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Gap</Text>
@@ -7290,7 +7315,14 @@ export default function SubjectsPlanBuilder({
                             const removedCount = Math.max(0, Number(run?.removed_events ?? 0));
                             const actionVerb = removedCount > 0 ? 'Removed' : 'Added';
                             const slotLines = (Array.isArray(run?.assignment_slots) ? run.assignment_slots : [])
-                              .map((slot) => formatFixGapHistorySlotLabel(slot))
+                              .map((slot) => {
+                                const line = formatFixGapHistorySlotLabel(slot);
+                                if (!line) return null;
+                                return {
+                                  line,
+                                  verb: formatFixGapHistorySlotVerb(slot, actionVerb),
+                                };
+                              })
                               .filter(Boolean);
                             return {
                               key: String(run?.id || '').trim() || `run-${rowId}-${idx}`,
@@ -7299,6 +7331,7 @@ export default function SubjectsPlanBuilder({
                               createdCount,
                               removedCount,
                               slotLines,
+                              message: String(run?.message || '').trim() || '',
                               isUndone: isFixGapHistoryUndone(run),
                             };
                           })
@@ -7420,10 +7453,10 @@ export default function SubjectsPlanBuilder({
                                   style={styles.yearTargetsSavedTargetButton}
                                   activeOpacity={0.85}
                                   accessibilityRole="button"
-                                  accessibilityLabel="Change saved target"
+                                  accessibilityLabel="Change saved goal"
                                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                                 >
-                                  <Text style={styles.yearTargetsSavedTargetButtonText}>Change saved target</Text>
+                                  <Text style={styles.yearTargetsSavedTargetButtonText}>Change saved goal</Text>
                                 </TouchableOpacity>
                               </View>
                               {fixGapActionRecommendation ? (
@@ -7493,14 +7526,16 @@ export default function SubjectsPlanBuilder({
                                         {run.slotLines.length > 0 ? (
                                           run.slotLines.map((line, idx) => (
                                             <Text key={`${run.key}-line-${idx}`} style={styles.yearTargetsFixGapHistoryLine}>
-                                              {`${run.actionVerb} ${line}`}
+                                              {`${line.verb} ${line.line}`}
                                             </Text>
                                           ))
                                         ) : (
                                           <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                            {run.removedCount > 0
-                                              ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}.`
-                                              : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}.`}
+                                            {run.message || (
+                                              run.removedCount > 0
+                                                ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}.`
+                                                : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}.`
+                                            )}
                                           </Text>
                                         )}
                                       </View>

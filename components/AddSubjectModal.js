@@ -947,11 +947,7 @@ export default function AddSubjectModal({
         <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalWrap}>
           <AppModalShell
             mode={subject ? 'edit' : 'add'}
-            title={
-              subject
-                ? (subjectName?.trim() || 'Edit subject')
-                : (subjectName?.trim() || 'New subject')
-            }
+            title={subject ? 'Edit subject' : 'New subject'}
             eyebrow="SUBJECT"
             accent="#9ECFFB"
             accentSoft="#F0F8FF"

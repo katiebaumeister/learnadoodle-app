@@ -145,6 +145,7 @@ export default function CenterPane({
         const selected = filters.eventTypes || [];
         const selectedLower = selected.map(t => String(t || '').toLowerCase());
         const eventType = e.event_type || e.data?.event_type || e.type;
+        const holidayType = String(e.holiday_type || e.data?.holiday_type || '').toUpperCase();
         const generatedByPlan = String(e.generated_by || e.data?.generated_by || '').toLowerCase() === 'plan_year';
         const hasAcademicYear = !!(e.academic_year_id || e.data?.academic_year_id);
         const looksLikePlanSlot = generatedByPlan || hasAcademicYear;
@@ -168,6 +169,14 @@ export default function CenterPane({
 
         // Class Day filter should include explicit ClassDay events and plan-generated class-day blocks.
         if (isSelectedClassDay && (isClassDayLikeType || (looksLikePlanSlot && !eventType))) {
+          return true;
+        }
+
+        // Holiday-family filters: distinguish planner exclusions from public holidays.
+        if (selectedLower.includes('day off') && typeLower === 'holiday' && holidayType === 'CUSTOM_HOLIDAY') {
+          return true;
+        }
+        if (selectedLower.includes('break') && typeLower === 'holiday' && holidayType === 'CUSTOM_BREAK') {
           return true;
         }
 

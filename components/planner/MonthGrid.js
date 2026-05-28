@@ -988,6 +988,9 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
     
   }
 
+  const isPublicHolidayEvent = (ev) =>
+    String(ev?.holiday_type || ev?.holidayType || '').toUpperCase() === 'GLOBAL_HOLIDAY';
+
   return (
     <View style={{ 
       flex: 1,
@@ -1105,6 +1108,14 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                       ? normalizedTitle
                       : 'Lesson',
                   };
+                })
+                .sort((a, b) => {
+                  const aPublicHoliday = isPublicHolidayEvent(a);
+                  const bPublicHoliday = isPublicHolidayEvent(b);
+                  if (aPublicHoliday !== bPublicHoliday) return aPublicHoliday ? -1 : 1;
+                  const aTime = String(a.start_local || a.time || a.start_ts || '');
+                  const bTime = String(b.start_local || b.time || b.start_ts || '');
+                  return aTime.localeCompare(bTime);
                 });
               const eventCount = validEvents.length;
               
@@ -1299,6 +1310,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                         .map((ev, index) => {
                         const isDragging = draggedEventId === ev.id;
                         const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
+                        const isPublicHoliday = isPublicHolidayEvent(ev);
                         const canDrag = !readOnly && ev.status !== 'done' && !isBlackout && !isHoliday;
                         
                         if (Platform.OS === 'web') {
@@ -1315,6 +1327,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                                   }
                                 },
                                 onClick: (e) => {
+                                  if (isPublicHoliday) return;
                                   // Handle click directly - check if it was a drag first
                                   const dragState = dragStateRef.current.get(ev.id);
                                   if (!dragState || !dragState.wasDragged) {
@@ -1348,7 +1361,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                                 opacity: isDragging ? 0.5 : 1,
                                 transform: isDragging ? [{ scale: 1.05 }] : [{ scale: 1 }],
                                 ...(Platform.OS === 'web' && {
-                                  cursor: isDragging ? 'grabbing' : 'pointer',
+                                  cursor: isPublicHoliday ? 'default' : (isDragging ? 'grabbing' : 'pointer'),
                                   zIndex: isDragging ? 1000 : 1,
                                   userSelect: 'none', // Prevent text selection during drag
                                   WebkitUserSelect: 'none',
@@ -1386,7 +1399,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                               ev={ev} 
                               compact={true}
                               fullWidth={true}
-                              onPress={onEventPress ? () => onEventPress(ev) : undefined}
+                              onPress={onEventPress && !isPublicHoliday ? () => onEventPress(ev) : undefined}
                               onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
                               onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
                               showCheckmark={true}

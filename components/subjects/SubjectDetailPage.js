@@ -1905,10 +1905,10 @@ export default function SubjectDetailPage({
           style={styles.attendanceTargetApplyButton}
           activeOpacity={0.85}
           accessibilityRole="button"
-          accessibilityLabel="Change saved target"
+          accessibilityLabel="Change saved goal"
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
-          <Text style={styles.attendanceTargetApplyButtonText}>Change saved target</Text>
+          <Text style={styles.attendanceTargetApplyButtonText}>Change saved goal</Text>
         </TouchableOpacity>
       </View>
       <Text style={styles.attendanceTargetSuggestionLine}>

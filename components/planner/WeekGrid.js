@@ -4,6 +4,8 @@ import { startOfWeek, addDays, isSameDay, format, isSameMonth, isToday } from '.
 import EventChip from '../calendar/EventChip';
 
 export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEventPress, onEventRightClick, onEventComplete, children = [], onSwitchToBoardView, busyIntervals = [], suggestedSlots = [], onSlotSelect }) {
+  const isPublicHolidayEvent = (ev) =>
+    String(ev?.holiday_type || ev?.holidayType || '').toUpperCase() === 'GLOBAL_HOLIDAY';
   const scrollViewRef = useRef(null);
   const weekStart = startOfWeek(anchorDate); // Sunday start
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -777,7 +779,7 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                             height: `${ev.heightPx}px`,
                             minHeight: 24,
                             zIndex: 1,
-                            cursor: 'pointer',
+                            cursor: isPublicHolidayEvent(ev) ? 'default' : 'pointer',
                             boxSizing: 'border-box',
                             overflow: 'visible',
                             margin: 0,
@@ -790,6 +792,7 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                             }),
                           }}
                           onClick={(e) => {
+                            if (isPublicHolidayEvent(ev)) return;
                             if (onEventPress) {
                               e.stopPropagation();
                               onEventPress(ev);

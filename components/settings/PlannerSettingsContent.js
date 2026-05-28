@@ -1215,6 +1215,7 @@ export default function PlannerSettingsContent({
           window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
           window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
         }
         return true;
       } catch (err) {
@@ -1730,6 +1731,7 @@ export default function PlannerSettingsContent({
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
         }
       } catch (err) {
         toast.push(err?.message || 'Failed to save', 'error');
@@ -2651,6 +2653,7 @@ export default function PlannerSettingsContent({
                       if (typeof window !== 'undefined') {
                         window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
                         window.dispatchEvent(new CustomEvent('refreshSubjects'));
+                        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
                       }
                     }
                     setShowPublicHolidaysPicker(false);
