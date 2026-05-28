@@ -33,26 +33,26 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   
   // Get color based on event type, fallback to ev.color, then default to gray
   const getEventTypeColor = () => {
-    const eventType = ev.event_type || ev.type || '';
-    const eventTypeLower = eventType.toLowerCase();
-    if (holidayType === 'CUSTOM_HOLIDAY' || eventTypeLower === 'day off') return 'day_off';
-    if (holidayType === 'CUSTOM_BREAK' || eventTypeLower === 'break') return 'break';
+    if (holidayType === 'CUSTOM_HOLIDAY' || normalizedEventType === 'day off') return 'day_off';
+    if (holidayType === 'CUSTOM_BREAK' || normalizedEventType === 'break') return 'break';
+    // Legacy rows persisted as Holiday without holiday_type should still look like planner day-off chips.
+    if (isLegacyHolidayWithoutSubtype) return 'day_off';
     if (holidayType === 'GLOBAL_HOLIDAY') return 'holiday';
     
     // Map event types to color names
-    if (eventTypeLower === 'lesson') return 'lesson';
-    if (eventTypeLower === 'activity') return 'activity';
-    if (eventTypeLower === 'assignment') return 'assignment';
+    if (normalizedEventType === 'lesson') return 'lesson';
+    if (normalizedEventType === 'activity') return 'activity';
+    if (normalizedEventType === 'assignment') return 'assignment';
     if (
-      eventTypeLower === 'schedule block' ||
-      eventTypeLower === 'scheduled class day' ||
-      eventTypeLower === 'classday' ||
-      eventTypeLower === 'class day'
+      normalizedEventType === 'schedule block' ||
+      normalizedEventType === 'scheduled class day' ||
+      normalizedEventType === 'classday' ||
+      normalizedEventType === 'class day'
     ) return 'lesson';
-    if (eventTypeLower === 'appointment') return 'appointment';
-    if (eventTypeLower === 'project') return 'project';
-    if (eventTypeLower === 'exam' || eventTypeLower === 'assessment') return 'exam';
-    if (eventTypeLower === 'holiday') return 'holiday';
+    if (normalizedEventType === 'appointment') return 'appointment';
+    if (normalizedEventType === 'project') return 'project';
+    if (normalizedEventType === 'exam' || normalizedEventType === 'assessment') return 'exam';
+    if (normalizedEventType === 'holiday') return 'holiday';
     
     // Fallback to ev.color if set, otherwise default to appointment (gray)
     return ev.color ?? 'appointment';

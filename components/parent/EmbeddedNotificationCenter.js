@@ -1158,9 +1158,9 @@ export default function EmbeddedNotificationCenter({
                 ) : null}
                 {selectedSection === 'help_requests' ? (
                   <View style={styles.emptyCaughtUp}>
-                    <Text style={styles.emptyCaughtUpTitle}>No help requests</Text>
+                    <Text style={styles.emptyCaughtUpTitle}>No discussions</Text>
                     <Text style={styles.emptyCaughtUpHint}>
-                      When a child asks for help on their work, it will show here.
+                      When you send to student, or student asks for help on their work, it will show here.
                     </Text>
                   </View>
                 ) : null}
