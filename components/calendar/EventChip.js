@@ -11,13 +11,20 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
     const normalized = String(statusValue || '').trim().toLowerCase();
     return normalized === 'done' || normalized === 'completed';
   };
+  // Prefer snake_case when present (even when null) so "clear holiday" patches
+  // correctly override any stale camelCase holidayType field in optimistic state.
+  const hasSnakeHolidayType = Object.prototype.hasOwnProperty.call(ev || {}, 'holiday_type');
+  const holidayTypeRaw = hasSnakeHolidayType ? ev?.holiday_type : (ev?.holidayType ?? '');
   // Only US public holidays are forced read-only/non-clickable.
-  const holidayType = String(ev?.holiday_type || ev?.holidayType || '').toUpperCase();
+  const holidayType = String(holidayTypeRaw || '').toUpperCase();
   const isPublicHoliday = holidayType === 'GLOBAL_HOLIDAY';
+  const normalizedEventType = String(ev?.event_type || ev?.type || '').trim().toLowerCase();
+  const isLegacyHolidayWithoutSubtype = !holidayType && normalizedEventType === 'holiday';
   const isPlannerDayOffOrBreak =
     holidayType === 'CUSTOM_HOLIDAY' ||
     holidayType === 'CUSTOM_BREAK' ||
-    ['day off', 'break'].includes(String(ev?.event_type || ev?.type || '').trim().toLowerCase());
+    ['day off', 'break'].includes(normalizedEventType) ||
+    isLegacyHolidayWithoutSubtype;
   const shouldHideCompletionControl = isPublicHoliday || isPlannerDayOffOrBreak;
   const hideChildDots = isPublicHoliday || ev?.hide_child_dots === true;
   const effectiveHideTime = hideTime || isPublicHoliday;
