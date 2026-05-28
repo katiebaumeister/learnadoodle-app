@@ -749,6 +749,13 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       }),
     [propFamily?.pending_parent_invites]
   );
+  const hasLinkedFamily =
+    Boolean(
+      propFamilyId
+      || propSession?.family_id
+      || propProfile?.family_id
+      || propFamily?.id
+    );
   const isSelfManagedStudentMode = (
     propSession?.role_flags?.isChild === true
     && (
@@ -758,10 +765,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   );
   const hideChildHomeRightRail =
     isSelfManagedStudentMode
-    && !hasLinkedParentAccount;
+    && !hasLinkedFamily;
   const hideChildHelpAndSubmissionActions =
     isSelfManagedStudentMode
-    && !hasLinkedParentAccount;
+    && !hasLinkedFamily;
 
   // Helper function to validate and clean avatar URLs
   // Filters out UUIDs that aren't valid URLs to prevent 404 errors
@@ -3845,8 +3852,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const roleForHome = useMemo(() => {
     const roleFlags = propSession?.role_flags || {};
     if (roleFlags.isTutor === true) return propSession?.effective_role || 'tutor';
-    if (roleFlags.isChild === true) return propSession?.effective_role || 'child';
     if (roleFlags.isParent === true) return 'parent';
+    if (roleFlags.isChild === true) return propSession?.effective_role || 'child';
     return propSession?.effective_role ?? userRole;
   }, [
     propSession?.role_flags?.isTutor,
@@ -9846,7 +9853,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               overrideFamilyId={familyId}
               overrideChildName={child.first_name || child.name}
               overrideChildren={[child]}
-              showRightRail
+              showRightRail={!hideChildHomeRightRail}
             />
           </View>
         );

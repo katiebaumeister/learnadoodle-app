@@ -98,7 +98,7 @@ const SECTIONS = [
   { id: 'submissions', label: 'Submissions' },
   { id: 'needs_revision', label: 'Coming up' },
 ];
-const DISABLE_EMBEDDED_NOTIFICATION_CENTER = true;
+const DISABLE_EMBEDDED_NOTIFICATION_CENTER = false;
 
 const stringArrayEqual = (a, b) => {
   if (a === b) return true;
