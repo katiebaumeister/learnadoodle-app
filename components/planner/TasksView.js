@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Platform, StyleSheet, Alert } from 'react-native';
 import { Calendar, CalendarDays, List, Archive, Trash2, Plus, CheckCircle2, Circle } from 'lucide-react';
-import { format, addDays, isToday, isSameDay, startOfToday } from './utils/date';
+import { addDays, isSameDay, startOfToday } from './utils/date';
 import EventChip from '../calendar/EventChip';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { supabase } from '../../lib/supabase';
@@ -29,6 +29,49 @@ export default function TasksView({
     preloadedTrashEvents != null ? preloadedTrashEvents : [],
   );
   const [sectionEvents, setSectionEvents] = useState([]);
+  const sectionBaseDate = useMemo(() => {
+    const candidate = monthDate ? new Date(monthDate) : new Date();
+    if (Number.isNaN(candidate.getTime())) return startOfToday();
+    candidate.setHours(0, 0, 0, 0);
+    return candidate;
+  }, [monthDate]);
+  const sectionTomorrowDate = useMemo(() => addDays(sectionBaseDate, 1), [sectionBaseDate]);
+  const sectionThisMonthStart = useMemo(
+    () => new Date(sectionBaseDate.getFullYear(), sectionBaseDate.getMonth(), 1, 0, 0, 0, 0),
+    [sectionBaseDate]
+  );
+  const sectionThisMonthEnd = useMemo(
+    () => new Date(sectionBaseDate.getFullYear(), sectionBaseDate.getMonth() + 1, 0, 23, 59, 59, 999),
+    [sectionBaseDate]
+  );
+  const sectionNextMonthStart = useMemo(
+    () => new Date(sectionBaseDate.getFullYear(), sectionBaseDate.getMonth() + 1, 1, 0, 0, 0, 0),
+    [sectionBaseDate]
+  );
+  const sectionNextMonthEnd = useMemo(
+    () => new Date(sectionBaseDate.getFullYear(), sectionBaseDate.getMonth() + 2, 0, 23, 59, 59, 999),
+    [sectionBaseDate]
+  );
+  const formatDayLabel = useCallback(
+    (dateValue) => dateValue.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    []
+  );
+  const formatMonthLabel = useCallback(
+    (dateValue) => dateValue.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+    []
+  );
+  const sectionTitles = useMemo(
+    () => ({
+      today: `Today - ${formatDayLabel(sectionBaseDate)}`,
+      tomorrow: `Tomorrow - ${formatDayLabel(sectionTomorrowDate)}`,
+      thismonth: `This month - ${formatMonthLabel(sectionBaseDate)}`,
+      nextmonth: `Next month - ${formatMonthLabel(sectionNextMonthStart)}`,
+      backlog: 'Backlog',
+      completed: 'Completed',
+      trash: 'Trash',
+    }),
+    [sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart, formatDayLabel, formatMonthLabel]
+  );
 
   const prevFamilyIdRef = useRef(undefined);
   useEffect(() => {
@@ -176,7 +219,7 @@ export default function TasksView({
   }, [familyIdProp, events]);
 
   const fetchSectionEvents = useCallback(async (section) => {
-    if (!['today', 'tomorrow', 'thismonth', 'completed'].includes(section)) {
+    if (!['today', 'tomorrow', 'thismonth', 'nextmonth', 'completed'].includes(section)) {
       setSectionEvents([]);
       return;
     }
@@ -200,8 +243,8 @@ export default function TasksView({
           .eq('status', 'done')
           .order('start_ts', { ascending: false, nullsFirst: false })
           .limit(300);
-      } else if (section === 'thismonth') {
-        const anchor = monthDate ? new Date(monthDate) : new Date();
+      } else if (section === 'thismonth' || section === 'nextmonth') {
+        const anchor = section === 'nextmonth' ? sectionNextMonthStart : sectionBaseDate;
         const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 0, 0, 0, 0);
         const monthEnd = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0, 23, 59, 59, 999);
         query = query
@@ -211,10 +254,10 @@ export default function TasksView({
           .order('start_ts', { ascending: true })
           .limit(1000);
       } else {
-        const today = startOfToday();
-        const start = new Date(today);
+        const targetDate = section === 'tomorrow' ? sectionTomorrowDate : sectionBaseDate;
+        const start = new Date(targetDate);
         start.setHours(0, 0, 0, 0);
-        const end = addDays(today, 14);
+        const end = new Date(targetDate);
         end.setHours(23, 59, 59, 999);
         query = query
           .or('is_backlog.is.false,is_backlog.is.null')
@@ -233,7 +276,7 @@ export default function TasksView({
     } catch (error) {
       console.error(`[TasksView] Error fetching ${section} events:`, error);
     }
-  }, [familyIdProp, events, monthDate]);
+  }, [familyIdProp, events, sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart]);
 
   useEffect(() => {
     if (preloadedBacklogEvents != null) {
@@ -384,7 +427,7 @@ export default function TasksView({
       // Check URL parameter for section on mount
       const urlParams = new URLSearchParams(window.location.search);
       const sectionParam = urlParams.get('section');
-      if (sectionParam && ['today', 'tomorrow', 'thismonth', 'backlog', 'completed', 'trash'].includes(sectionParam)) {
+      if (sectionParam && ['today', 'tomorrow', 'thismonth', 'nextmonth', 'backlog', 'completed', 'trash'].includes(sectionParam)) {
         setActiveSection(sectionParam);
         setSelectedList(null);
       }
@@ -392,7 +435,7 @@ export default function TasksView({
       // Listen for custom event to change section
       const handleSectionChange = (event) => {
         const section = event.detail?.section;
-        if (section && ['today', 'tomorrow', 'thismonth', 'backlog', 'completed', 'trash'].includes(section)) {
+        if (section && ['today', 'tomorrow', 'thismonth', 'nextmonth', 'backlog', 'completed', 'trash'].includes(section)) {
           setActiveSection(section);
           setSelectedList(null);
         }
@@ -494,9 +537,8 @@ export default function TasksView({
   // Filter events by section
   // Note: events are already expanded in nonDeletedEvents, so we filter based on the expanded event's start_ts
   const getFilteredEvents = (section) => {
-    const today = startOfToday();
-    const tomorrow = addDays(today, 1);
-    const twoWeeksFromNow = addDays(today, 14);
+    const sectionToday = sectionBaseDate;
+    const sectionTomorrow = sectionTomorrowDate;
     // Use nonDeletedEvents instead of events (nonDeletedEvents already includes expanded Project events)
     const eventsToFilter = nonDeletedEvents || events;
     const combinedEvents = [...eventsToFilter, ...(Array.isArray(sectionEvents) ? sectionEvents : [])]
@@ -514,7 +556,7 @@ export default function TasksView({
           if (!evDate) return false;
           const d = new Date(evDate);
           // For expanded events, the start_ts is already set to the specific day, so we just check if it's today
-          return isToday(d);
+          return isSameDay(d, sectionToday);
         });
       
       case 'tomorrow':
@@ -527,7 +569,7 @@ export default function TasksView({
           if (!evDate) return false;
           const d = new Date(evDate);
           // For expanded events, the start_ts is already set to the specific day, so we just check if it's tomorrow
-          return isSameDay(d, tomorrow);
+          return isSameDay(d, sectionTomorrow);
         });
       
       case 'thismonth':
@@ -539,10 +581,18 @@ export default function TasksView({
           const evDate = ev.start || ev.start_ts || ev.start_local;
           if (!evDate) return false;
           const d = new Date(evDate);
-          const anchor = monthDate ? new Date(monthDate) : new Date();
-          const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 0, 0, 0, 0);
-          const monthEnd = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0, 23, 59, 59, 999);
-          return d >= monthStart && d <= monthEnd;
+          return d >= sectionThisMonthStart && d <= sectionThisMonthEnd;
+        });
+
+      case 'nextmonth':
+        return combinedEvents.filter(ev => {
+          if (ev.is_backlog === true) return false;
+          if (ev.deleted || ev.deleted_at) return false;
+          if (ev.status === 'done') return false;
+          const evDate = ev.start || ev.start_ts || ev.start_local;
+          if (!evDate) return false;
+          const d = new Date(evDate);
+          return d >= sectionNextMonthStart && d <= sectionNextMonthEnd;
         });
       
       case 'backlog':
@@ -614,7 +664,20 @@ export default function TasksView({
     }
     // For other views, filter out any deleted events that might have slipped through
     return filtered.filter(ev => !ev.deleted && !ev.deleted_at);
-  }, [activeSection, nonDeletedEvents, selectedList, backlogEvents, trashEvents, sectionEvents]);
+  }, [
+    activeSection,
+    nonDeletedEvents,
+    selectedList,
+    backlogEvents,
+    trashEvents,
+    sectionEvents,
+    sectionBaseDate,
+    sectionTomorrowDate,
+    sectionThisMonthStart,
+    sectionThisMonthEnd,
+    sectionNextMonthStart,
+    sectionNextMonthEnd,
+  ]);
 
   // Trash display: group plan placeholder events into one row per plan; other events stay as single rows
   const trashDisplayItems = useMemo(() => {
@@ -764,7 +827,7 @@ export default function TasksView({
                 styles.sidebarItemText,
                 activeSection === 'today' && styles.sidebarItemTextActive
               ]}>
-                Today
+                {sectionTitles.today}
               </Text>
             </TouchableOpacity>
 
@@ -779,7 +842,7 @@ export default function TasksView({
                 styles.sidebarItemText,
                 activeSection === 'tomorrow' && styles.sidebarItemTextActive
               ]}>
-                Tomorrow
+                {sectionTitles.tomorrow}
               </Text>
             </TouchableOpacity>
 
@@ -794,7 +857,22 @@ export default function TasksView({
                 styles.sidebarItemText,
                 activeSection === 'thismonth' && styles.sidebarItemTextActive
               ]}>
-                This month
+                {sectionTitles.thismonth}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.sidebarItem, activeSection === 'nextmonth' && styles.sidebarItemActive]}
+              onPress={() => {
+                setActiveSection('nextmonth');
+                setSelectedList(null);
+              }}
+            >
+              <Text style={[
+                styles.sidebarItemText,
+                activeSection === 'nextmonth' && styles.sidebarItemTextActive
+              ]}>
+                {sectionTitles.nextmonth}
               </Text>
             </TouchableOpacity>
 
@@ -837,12 +915,13 @@ export default function TasksView({
       <View style={styles.mainContent}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>
-            {activeSection === 'today' && 'Today'}
-            {activeSection === 'tomorrow' && 'Tomorrow'}
-            {activeSection === 'thismonth' && 'This month'}
-            {activeSection === 'backlog' && 'Backlog'}
-            {activeSection === 'completed' && 'Completed'}
-            {activeSection === 'trash' && 'Trash'}
+            {activeSection === 'today' && sectionTitles.today}
+            {activeSection === 'tomorrow' && sectionTitles.tomorrow}
+            {activeSection === 'thismonth' && sectionTitles.thismonth}
+            {activeSection === 'nextmonth' && sectionTitles.nextmonth}
+            {activeSection === 'backlog' && sectionTitles.backlog}
+            {activeSection === 'completed' && sectionTitles.completed}
+            {activeSection === 'trash' && sectionTitles.trash}
             {selectedList && selectedList.name}
           </Text>
           {activeSection === 'backlog' && (
