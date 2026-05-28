@@ -428,6 +428,8 @@ export default function TaskCreateModal({
   const endTimeInputRef = useRef(null);
   const startTimeJustFocusedRef = useRef(false);
   const endTimeJustFocusedRef = useRef(false);
+  const bodyScrollRef = useRef(null);
+  const bodyScrollOffsetYRef = useRef(0);
 
   function normalizeTimeValue(rawValue) {
     const value = String(rawValue || '').replace(/_/g, '').trim();
@@ -639,6 +641,22 @@ export default function TaskCreateModal({
   const isClassDayEvent = eventType === 'Class Day';
   const canSendToStudentForEvent = useMemo(() => isSchoolWorkEventType(eventType), [eventType]);
   const academicSectionTitle = 'Learning details';
+  const handleBodyScroll = useCallback((evt) => {
+    const nextY = Number(evt?.nativeEvent?.contentOffset?.y || 0);
+    bodyScrollOffsetYRef.current = Number.isFinite(nextY) ? nextY : 0;
+  }, []);
+  const handleModalWheelCapture = useCallback((evt) => {
+    if (Platform.OS !== 'web') return;
+    const nativeEvt = evt?.nativeEvent || evt;
+    const deltaY = Number(nativeEvt?.deltaY || 0);
+    if (!Number.isFinite(deltaY) || deltaY === 0) return;
+    const scrollRef = bodyScrollRef.current;
+    if (!scrollRef || typeof scrollRef.scrollTo !== 'function') return;
+    const nextY = Math.max(0, bodyScrollOffsetYRef.current + deltaY);
+    bodyScrollOffsetYRef.current = nextY;
+    scrollRef.scrollTo({ y: nextY, animated: false });
+    if (typeof evt?.preventDefault === 'function') evt.preventDefault();
+  }, []);
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes
   useEffect(() => {
     const checkPercentSum = async () => {
@@ -3748,11 +3766,18 @@ export default function TaskCreateModal({
               />
             )}
           >
+          <View
+            style={styles.bodyScrollWrap}
+            {...(Platform.OS === 'web' ? { onWheelCapture: handleModalWheelCapture } : {})}
+          >
           <ScrollView
+            ref={bodyScrollRef}
             style={styles.bodyScroll}
             contentContainerStyle={styles.bodyScrollContent}
             showsVerticalScrollIndicator={true}
             nestedScrollEnabled={true}
+            onScroll={handleBodyScroll}
+            scrollEventThrottle={16}
             {...(Platform.OS === 'web' && {
               style: {
                 ...styles.bodyScroll,
@@ -5730,6 +5755,7 @@ export default function TaskCreateModal({
             </ModalSectionCard>
 
           </ScrollView>
+          </View>
           </AppModalShell>
         </Animated.View>
       </Animated.View>
@@ -6727,6 +6753,10 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     maxHeight: Platform.OS === 'web' ? 'min(60vh, calc(100vh - 300px))' : undefined,
+  },
+  bodyScrollWrap: {
+    flex: 1,
+    minHeight: 0,
   },
   bodyScrollContent: {
     paddingBottom: 6,

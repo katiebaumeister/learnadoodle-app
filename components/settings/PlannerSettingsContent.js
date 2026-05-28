@@ -2490,12 +2490,12 @@ export default function PlannerSettingsContent({
                   return (
                     <View
                       key={subj.id}
-                      style={subjectPacingRowStyle}
+                      style={[subjectPacingRowStyle, { flexDirection: 'column', alignItems: 'flex-start', gap: 6, minHeight: 0 }]}
                     >
-                      <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0, minWidth: 92 }]}>
+                      <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>
                         {subj.name || 'Subject'}
                       </Text>
-                      <View style={[settingRowControlStyle, { gap: 6, justifyContent: 'flex-start', marginTop: 0 }]}>
+                      <View style={[settingRowControlStyle, { gap: 6, justifyContent: 'flex-start', marginTop: 0, width: '100%' }]}>
                         <Text style={mutedMetaTextStyle}>Total attendance goal:</Text>
                         {mode === 'days' ? (
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
