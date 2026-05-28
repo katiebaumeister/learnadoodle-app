@@ -3094,6 +3094,25 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       event?.holiday_type || event?.holidayType
     );
     const isIntrinsicAllDayType = MULTI_DAY_EVENT_TYPES.includes(eventTypeRaw);
+    const startFromLocal = timeStringToDisplay(event.start_local);
+    const endFromLocal = timeStringToDisplay(event.end_local);
+    const hasExplicitLocalTime = Boolean(startFromLocal || endFromLocal);
+    const hasExplicitTimestampTime =
+      !!startTs &&
+      (() => {
+        try {
+          const startDate = new Date(startTs);
+          if (Number.isNaN(startDate.getTime())) return false;
+          const startHasClockTime = startDate.getHours() !== 0 || startDate.getMinutes() !== 0;
+          if (startHasClockTime) return true;
+          if (!endTs) return false;
+          const endDate = new Date(endTs);
+          if (Number.isNaN(endDate.getTime())) return false;
+          return endDate.getHours() !== 0 || endDate.getMinutes() !== 0;
+        } catch {
+          return false;
+        }
+      })();
     const inferredAllDayFromBounds =
       !!startTs &&
       (() => {
@@ -3128,7 +3147,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         return false;
       })();
     const shouldTreatAsUntimed =
-      isFlexibleTimeless || (inferredAllDayFromBounds && !isIntrinsicAllDayType);
+      (isFlexibleTimeless && !hasExplicitLocalTime && !hasExplicitTimestampTime) ||
+      (inferredAllDayFromBounds && !isIntrinsicAllDayType);
     const inferredAllDay = inferredAllDayFromBounds && !shouldTreatAsUntimed;
 
     setDraftAllDay(inferredAllDay);
@@ -3141,8 +3161,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       setStartTime('');
       setEndTime('');
     } else {
-      const startFromLocal = timeStringToDisplay(event.start_local);
-      const endFromLocal = timeStringToDisplay(event.end_local);
       const startTimeStr = startFromLocal || toTimeInput(startTs);
       const endTimeStr = endFromLocal || toTimeInput(endTs);
       setDraftStartTime(startTimeStr);

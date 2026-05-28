@@ -720,7 +720,7 @@ import { processDoodleMessage, executeTool, getDisplayMessage, getToolName, getT
 import { CHAT_COMMIT_KINDS, getPendingCommit, buildChatbotAuditPayload } from '../lib/assistant/chatCommit.js'
 import { getDisambiguation } from '../lib/assistant/responseContract.js'
 import { useOfflineSync } from '../lib/hooks/useOfflineSync'
-import { detectConflicts } from '../lib/utils/conflictDetection'
+import { detectConflicts, findFirstConflictEvent } from '../lib/utils/conflictDetection'
 import DragDropConflictBanner from './planner/DragDropConflictBanner'
 
 /** Display name(s) for calendar conflict copy (drag-drop banner). */
@@ -1450,7 +1450,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     if (Platform.OS !== 'web') return;
     
     const handleEventRescheduled = async (event) => {
-      const { eventId, updatedEvent, apiError, dropStartTime, fromApi, previousDateLocal } = event.detail || {};
+      const { eventId, updatedEvent, apiError, dropStartTime, fromApi, previousDateLocal, localConflictCount } = event.detail || {};
       if (!eventId || !updatedEvent) return;
 
       const localDateKeyFromTs = (ts) => {
@@ -1506,15 +1506,15 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           if (!isNaN(st.getTime())) {
             const hh = String(st.getHours()).padStart(2, '0');
             const mm = String(st.getMinutes()).padStart(2, '0');
-            patched.start_local = patched.start_local || `${hh}:${mm}`;
-            patched.time = patched.time || patched.start_local;
+            const derivedStartLocal = `${hh}:${mm}`;
+            // Prefer local time derived from start_ts so drag time never regresses on partial API payloads.
+            patched.start_local = derivedStartLocal;
+            patched.time = derivedStartLocal;
           }
           if (patched.end_ts) {
             const en = new Date(patched.end_ts);
             if (!isNaN(en.getTime())) {
-              patched.end_local =
-                patched.end_local ||
-                `${String(en.getHours()).padStart(2, '0')}:${String(en.getMinutes()).padStart(2, '0')}`;
+              patched.end_local = `${String(en.getHours()).padStart(2, '0')}:${String(en.getMinutes()).padStart(2, '0')}`;
             }
           }
           if (!newEvents[newDateKey]) newEvents[newDateKey] = [];
@@ -1799,7 +1799,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           }
           
           // Detect conflicts
-          const conflictCount = detectConflicts(movedEvent, eventsForConflictDetection);
+          const dbConflictCount = detectConflicts(movedEvent, eventsForConflictDetection);
+          const optimisticConflictCount = Number(localConflictCount || 0);
+          const conflictCount = Math.max(dbConflictCount, optimisticConflictCount);
           
           if (conflictCount > 0) {
             // Find the first conflicting event for the banner
@@ -1833,6 +1835,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                 firstConflictEvent = event;
                 break;
               }
+            }
+            if (!firstConflictEvent && optimisticConflictCount > 0) {
+              const fallbackEvents = Object.values(calendarEventsRef.current || {})
+                .flatMap((list) => (Array.isArray(list) ? list : []))
+                .filter(Boolean);
+              firstConflictEvent = findFirstConflictEvent(movedEvent, fallbackEvents, { excludeEventId: eventId });
             }
             
             // Conflicts detected - keep the pending optimistic update flag
@@ -2248,8 +2256,19 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             
             // Check if banner was already dismissed for this specific move
             setConflictBanner(prev => {
+              const currentMoveSignature = [
+                String(eventId || ''),
+                String(movedEvent?.start_ts || movedEvent?.start || movedEvent?.start_local || ''),
+                String(movedEvent?.end_ts || movedEvent?.end || movedEvent?.end_local || ''),
+              ].join('|');
+              const previousMoveSignature = [
+                String(prev.eventId || ''),
+                String(prev.movedEvent?.start_ts || prev.movedEvent?.start || prev.movedEvent?.start_local || ''),
+                String(prev.movedEvent?.end_ts || prev.movedEvent?.end || prev.movedEvent?.end_local || ''),
+              ].join('|');
               const wasDismissed = prev.dismissed && 
                                    prev.eventId === eventId &&
+                                   previousMoveSignature === currentMoveSignature &&
                                    prev.timestamp > Date.now() - 60000; // Within last minute
               
               if (!wasDismissed) {

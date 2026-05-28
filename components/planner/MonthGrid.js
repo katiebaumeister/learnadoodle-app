@@ -631,17 +631,13 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
             
             // Notify parent and start API so calendar state stays in sync; ghost already snapped to target cell for instant visual
             if (typeof window !== 'undefined') {
+              const localConflictCount = detectConflicts(updatedEvent, events || []);
               console.log('[MonthGrid] [drag-timing] t+' + (typeof performance !== 'undefined' ? (performance.now() - dropStart).toFixed(0) : '?') + 'ms dispatching eventRescheduled');
               window.dispatchEvent(new CustomEvent('eventRescheduled', {
-                detail: { eventId: sourceEventId, updatedEvent, dropStartTime: dropStart, previousDateLocal }
+                detail: { eventId: sourceEventId, updatedEvent, dropStartTime: dropStart, previousDateLocal, localConflictCount }
               }));
-              const localConflictCount = detectConflicts(updatedEvent, events || []);
               if (localConflictCount > 0) {
-                console.log('[MonthGrid] Local conflict detected after drop - persisting move immediately as flexible');
-                window.dispatchEvent(new CustomEvent('persistConflictDragMove', {
-                  detail: { eventId: sourceEventId, movedEvent: updatedEvent }
-                }));
-                return;
+                console.log('[MonthGrid] Local conflict detected after drop - deferring to conflict banner flow');
               }
               rescheduleEvent(
               sourceEventId,
@@ -767,7 +763,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                 // Sync completed successfully - trigger conflict detection
                 // Even though the save succeeded, there might be conflicts that need to be shown
                 console.log('[MonthGrid] Reschedule SUCCESS - event saved:', {
-                  eventId,
+                  eventId: sourceEventId,
                   targetDate: targetDateIso,
                   hasData: !!result?.data,
                   data: result?.data
