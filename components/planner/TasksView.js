@@ -6,6 +6,7 @@ import EventChip from '../calendar/EventChip';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { supabase } from '../../lib/supabase';
 import { permanentlyDeleteAllTrashEvents } from '../../lib/services/plannerClientWithOffline';
+import { getHolidaysForRange } from '../../lib/services/academicYearClient';
 
 export default function TasksView({ 
   events = [], 
@@ -19,6 +20,36 @@ export default function TasksView({
   preloadedBacklogEvents = null,
   preloadedTrashEvents = null,
 }) {
+  const toYmd = useCallback((dateValue) => {
+    if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime())) return '';
+    const y = dateValue.getFullYear();
+    const m = String(dateValue.getMonth() + 1).padStart(2, '0');
+    const d = String(dateValue.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }, []);
+
+  const mapHolidayToTaskEvent = useCallback((holiday) => {
+    const dateYmd = String(holiday?.date || '').slice(0, 10);
+    if (!dateYmd) return null;
+    const holidayType = String(holiday?.type || '').toUpperCase();
+    const safeName = String(holiday?.name || '').trim();
+    return {
+      id: `holiday-${dateYmd}-${safeName.replace(/\s+/g, '-').slice(0, 30)}`,
+      date_local: dateYmd,
+      title: safeName || (holidayType === 'CUSTOM_BREAK' ? 'Break' : 'Day off'),
+      type: 'holiday',
+      event_type: 'holiday',
+      holiday_type: holidayType || null,
+      status: null,
+      start_ts: `${dateYmd}T12:00:00.000Z`,
+      end_ts: `${dateYmd}T12:30:00.000Z`,
+      start: `${dateYmd}T12:00:00.000Z`,
+      end: `${dateYmd}T12:30:00.000Z`,
+      start_local: `${dateYmd}T12:00:00.000Z`,
+      end_local: `${dateYmd}T12:30:00.000Z`,
+    };
+  }, []);
+
   const [activeSection, setActiveSection] = useState('today');
   const [userLists, setUserLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
@@ -238,6 +269,8 @@ export default function TasksView({
         .is('canceled_at', null)
         .neq('status', 'canceled');
 
+      let rangeStartYmd = '';
+      let rangeEndYmd = '';
       if (section === 'completed') {
         query = query
           .eq('status', 'done')
@@ -247,6 +280,8 @@ export default function TasksView({
         const anchor = section === 'nextmonth' ? sectionNextMonthStart : sectionBaseDate;
         const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 0, 0, 0, 0);
         const monthEnd = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0, 23, 59, 59, 999);
+        rangeStartYmd = toYmd(monthStart);
+        rangeEndYmd = toYmd(monthEnd);
         query = query
           .or('is_backlog.is.false,is_backlog.is.null')
           .gte('start_ts', monthStart.toISOString())
@@ -259,6 +294,8 @@ export default function TasksView({
         start.setHours(0, 0, 0, 0);
         const end = new Date(targetDate);
         end.setHours(23, 59, 59, 999);
+        rangeStartYmd = toYmd(start);
+        rangeEndYmd = toYmd(end);
         query = query
           .or('is_backlog.is.false,is_backlog.is.null')
           .gte('start_ts', start.toISOString())
@@ -272,11 +309,19 @@ export default function TasksView({
         console.error(`[TasksView] Error fetching ${section} events:`, error);
         return;
       }
-      setSectionEvents(data || []);
+      let merged = Array.isArray(data) ? [...data] : [];
+      if (section !== 'completed' && rangeStartYmd && rangeEndYmd) {
+        const holidayRes = await getHolidaysForRange(familyIdFromEvents, rangeStartYmd, rangeEndYmd);
+        const holidayRows = Array.isArray(holidayRes?.data?.holidays)
+          ? holidayRes.data.holidays.map(mapHolidayToTaskEvent).filter(Boolean)
+          : [];
+        if (holidayRows.length > 0) merged = merged.concat(holidayRows);
+      }
+      setSectionEvents(merged);
     } catch (error) {
       console.error(`[TasksView] Error fetching ${section} events:`, error);
     }
-  }, [familyIdProp, events, sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart]);
+  }, [familyIdProp, events, sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart, mapHolidayToTaskEvent, toYmd]);
 
   useEffect(() => {
     if (preloadedBacklogEvents != null) {
