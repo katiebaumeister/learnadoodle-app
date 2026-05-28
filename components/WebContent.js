@@ -42,6 +42,51 @@ const PLANNER_CTX_ICON_PATHS = {
     'M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M3 21v-5h5',
 }
 
+function isReadOnlyPublicHolidayEvent(eventLike) {
+  if (!eventLike || typeof eventLike !== 'object') return false;
+  const holidayType = String(eventLike.holiday_type || eventLike.holidayType || '').toUpperCase();
+  if (holidayType === 'GLOBAL_HOLIDAY') return true;
+  const rawId = String(eventLike.id || eventLike._originalId || eventLike.originalId || '').trim();
+  // Legacy synthetic public-holiday rows can be "holiday-*" without holiday_type.
+  if (!holidayType && rawId.startsWith('holiday-')) return true;
+  return false;
+}
+
+function isUuidLike(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
+async function deactivatePlannerExclusionFromHolidayEvent(eventLike, familyId) {
+  const targetDate = String(eventLike?.date_local || '').slice(0, 10);
+  if (!familyId || !targetDate) return { success: false, error: 'Missing family/date context' };
+  const holidayType = String(eventLike?.holiday_type || eventLike?.holidayType || '').toUpperCase();
+  const targetType = holidayType === 'CUSTOM_BREAK' ? 'break' : 'holiday';
+  const targetLabel = String(eventLike?.title || '').trim().toLowerCase();
+  const { data, error } = await supabase
+    .from('planner_exclusions')
+    .select('id, exclusion_type, start_date, end_date, label')
+    .eq('family_id', familyId)
+    .eq('scope_type', 'family_default')
+    .eq('is_active', true)
+    .in('exclusion_type', ['holiday', 'break'])
+    .lte('start_date', targetDate)
+    .gte('end_date', targetDate);
+  if (error) return { success: false, error: error.message || 'Failed to load exclusions' };
+  const rows = Array.isArray(data) ? data : [];
+  const typedRows = rows.filter((row) => String(row?.exclusion_type || '').toLowerCase() === targetType);
+  const labelMatched = targetLabel
+    ? typedRows.find((row) => String(row?.label || '').trim().toLowerCase() === targetLabel)
+    : null;
+  const targetRow = labelMatched || typedRows[0] || null;
+  if (!targetRow?.id) return { success: false, error: 'No matching planner exclusion found' };
+  const { error: updateErr } = await supabase
+    .from('planner_exclusions')
+    .update({ is_active: false })
+    .eq('id', targetRow.id);
+  if (updateErr) return { success: false, error: updateErr.message || 'Failed to delete planner exclusion' };
+  return { success: true, error: null };
+}
+
 // Set up error suppression immediately on module load (before React renders)
 // This catches errors that occur during initial page load
 // Only run on web where both window and document exist
@@ -5623,11 +5668,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const isChildViewer = sessionRef.current?.role_flags?.isChild === true;
       const isRestrictedChild = isChildViewer && !allowedRef.current('events');
       let ev = rawEvent;
+      const isPublicHolidayRaw = isReadOnlyPublicHolidayEvent(rawEvent);
       // Hydrate with canonical DB row so non-planner surfaces (Home/Subjects)
       // get the same series-aware context menu options as Planner.
       try {
         const cleanId = cleanPlannerEventId(String(rawEvent?.id || rawEvent?._originalId || rawEvent?.originalId || ''));
-        if (cleanId && rawEvent?._activeSection !== 'trash') {
+        if (cleanId && isUuidLike(cleanId) && rawEvent?._activeSection !== 'trash' && !isPublicHolidayRaw) {
           let query = supabase
             .from('events')
             .select('*')
@@ -5645,8 +5691,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const clientY = position.y ?? 0;
       const existingMenu = document.getElementById('planner-event-context-menu');
       if (existingMenu) existingMenu.remove();
-      const holidayType = String(ev?.holiday_type || ev?.holidayType || '').toUpperCase();
-      const isPublicHoliday = holidayType === 'GLOBAL_HOLIDAY';
+      const isPublicHoliday = isReadOnlyPublicHolidayEvent(ev) || isPublicHolidayRaw;
       const isFromTrash = ev._activeSection === 'trash';
       let menuItems = [];
 
@@ -5768,6 +5813,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       } else if (!isPublicHoliday) {
       let eventId = ev._originalId || ev.originalId || ev.id;
       eventId = cleanPlannerEventId(eventId);
+      const eventHolidayType = String(ev?.holiday_type || ev?.holidayType || '').toUpperCase();
+      const isCustomExclusionHoliday = (
+        (eventHolidayType === 'CUSTOM_HOLIDAY' || eventHolidayType === 'CUSTOM_BREAK') &&
+        !isUuidLike(eventId)
+      );
       const openChildEventModal = (focus) => {
         window.dispatchEvent(
           new CustomEvent('openEventModal', {
@@ -5875,6 +5925,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   window.dispatchEvent(new CustomEvent('eventDeleted', { detail: optimisticDetail }));
                   window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
                   try {
+                    if (!isUuidLike(cleanId)) {
+                      throw new Error('Invalid event id');
+                    }
                     const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
                     if (rpcError) {
                       const result = await deletePlannerEvent(cleanId, familyId);
@@ -5958,6 +6011,19 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                   window.dispatchEvent(new CustomEvent('eventDeleted', { detail: optimisticDetail }));
                   window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
                   try {
+                    if (isCustomExclusionHoliday) {
+                      const exclusionDelete = await deactivatePlannerExclusionFromHolidayEvent(ev, familyId);
+                      if (!exclusionDelete.success) {
+                        throw new Error(exclusionDelete.error || 'Failed to delete day off/break');
+                      }
+                      window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+                      window.dispatchEvent(new CustomEvent('refreshSubjects'));
+                      window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+                      return;
+                    }
+                    if (!isUuidLike(cleanId)) {
+                      throw new Error('Invalid event id');
+                    }
                     const { data: rpcData, error: rpcError } = await supabase.rpc('delete_event', { _event_id: cleanId, _family_id: familyId });
                     if (rpcError) {
                       const result = await deletePlannerEvent(cleanId, familyId);
@@ -9608,7 +9674,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           eventTypes: propSelectedEventTypes && propSelectedEventTypes.length > 0 ? propSelectedEventTypes : null,
         }}
         onEventSelect={(event) => {
-          const isPublicHoliday = String(event?.holiday_type || '').toUpperCase() === 'GLOBAL_HOLIDAY';
+          const isPublicHoliday = isReadOnlyPublicHolidayEvent(event);
           if (isPublicHoliday) return;
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             const hasActiveConflictContext =
@@ -9632,6 +9698,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
         onEventRightClick={(ev, e) => {
           if (Platform.OS !== 'web' || typeof window === 'undefined' || !e) return;
+          if (isReadOnlyPublicHolidayEvent(ev)) return;
           // e may be native event (from MonthGrid) or synthetic (e.nativeEvent has clientX/Y)
           const x = e.clientX ?? e.nativeEvent?.clientX ?? 0;
           const y = e.clientY ?? e.nativeEvent?.clientY ?? 0;
