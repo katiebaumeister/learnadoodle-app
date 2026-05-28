@@ -3016,7 +3016,7 @@ export default function PlannerSettingsContent({
                     </View>
                   ) : (
                     <View style={[settingRowStyle, { marginBottom: 0 }]}>
-                      <Text style={mutedMetaTextStyle}>
+                      <Text style={[settingRowLabelStyle, { fontWeight: '400' }]}>
                         {h.date} — {h.name}
                       </Text>
                       <View style={rowActionButtonsStyle}>
