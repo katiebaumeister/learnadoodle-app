@@ -5055,9 +5055,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       
       const displayEventType = normalizeEventTypeForDisplay(eventType);
       const persistedEventType = normalizeEventTypeForPersistence(displayEventType);
-      const persistedHolidayType = displayEventType === 'Break'
-        ? 'CUSTOM_BREAK'
-        : (displayEventType === 'Day Off' ? 'CUSTOM_HOLIDAY' : null);
       const updates = {
         title: draftTitle.trim(),
         description: notes.trim() ? notes.trim() : null,
@@ -5068,7 +5065,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         material_id: selectedMaterialId || null,
         materials_attachment_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : null,
         event_type: persistedEventType,
-        holiday_type: persistedHolidayType,
         subject_id: subjectIds[0] || null,
         unit: (unit && unit.trim()) ? unit.trim() : null,
         // Mirror unit/lesson for APIs that read curriculum_unit_title / events.lesson (subject structure, plan slot labels).
@@ -5164,12 +5160,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       cleanUpdates.event_type = VALID_DB_EVENT_TYPES.has(normalizedForDb)
         ? normalizedForDb
         : 'Lesson';
-      if (cleanUpdates.event_type !== 'Holiday') {
-        cleanUpdates.holiday_type = null;
-      } else if (!cleanUpdates.holiday_type) {
-        const displayType = normalizeEventTypeForDisplay(eventType);
-        cleanUpdates.holiday_type = displayType === 'Break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY';
-      }
       
       // Ensure child_ids is ALWAYS explicitly included in the update
       // This is critical because Supabase might not update a field if it's not explicitly included
