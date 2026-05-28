@@ -670,6 +670,7 @@ const EVENT_TYPES = [
   'Day Off',
   'Break',
 ];
+const MULTI_DAY_EVENT_TYPES = ['Project', 'Trip', 'Holiday', 'Other', 'Break'];
 const EVENT_TYPE_FILTER_COLORS = {
   lesson: '#E3F0FF',
   assignment: '#DFF7E3',
@@ -701,20 +702,55 @@ const getEventTypeActiveChipStyle = (type) => {
   };
 };
 
-const normalizeEventTypeForDisplay = (type) => {
+const normalizeEventTypeForDisplay = (type, holidayType = null) => {
+  const holidayRaw = String(holidayType || '').trim().toUpperCase();
+  if (holidayRaw === 'CUSTOM_BREAK') return 'Break';
+  if (holidayRaw === 'CUSTOM_HOLIDAY' || holidayRaw === 'GLOBAL_HOLIDAY') return 'Day Off';
   const raw = String(type || '').trim();
   if (!raw) return 'Lesson';
+  const lower = raw.toLowerCase();
   if (raw === 'Schedule Block' || raw === 'Scheduled Class Day' || raw === 'ClassDay') {
     return 'Lesson';
   }
+  if (lower === 'custom_break') return 'Break';
+  if (lower === 'custom_holiday' || lower === 'global_holiday') return 'Day Off';
+  if (lower === 'break') return 'Break';
+  if (lower === 'holiday' || lower === 'day off' || lower === 'dayoff') return 'Day Off';
+  const canonical = EVENT_TYPES.find((option) => option.toLowerCase() === lower);
+  if (canonical) return canonical;
   return raw;
 };
 
 const normalizeEventTypeForPersistence = (type) => {
   if (type === 'Scheduled Class Day') return 'Schedule Block';
   if (type === 'Class Day') return 'ClassDay';
+  if (type === 'Day Off' || type === 'Break') return 'Holiday';
+  const lower = String(type || '').trim().toLowerCase();
+  if (lower === 'day off' || lower === 'dayoff' || lower === 'break') return 'Holiday';
   return type || 'Lesson';
 };
+
+const VALID_DB_EVENT_TYPES = new Set([
+  'Appointment',
+  'Travel',
+  'Live Class',
+  'Home Lesson',
+  'Core Class',
+  'Activity',
+  'Sport',
+  'Assessment',
+  'Meeting',
+  'Family Event',
+  'Lesson',
+  'Project',
+  'Exam',
+  'Assignment',
+  'Holiday',
+  'Trip',
+  'Other',
+  'Schedule Block',
+  'ClassDay',
+]);
 
 // Tag categories and suggested tags
 const TAG_CATEGORIES = {
@@ -2485,6 +2521,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const shouldHideAttendanceChip = isDaysOffOrBreakEvent || currentHolidayType === 'GLOBAL_HOLIDAY';
   const hideScheduleTimeControls = isDaysOffOrBreakEvent;
   const hideLearningDetailsSection = isDaysOffOrBreakEvent;
+  const showBreakEndDateField = placement === 'calendar' && normalizeEventTypeForDisplay(eventType) === 'Break';
   const isClassDayEventType = useMemo(
     () => normalizeEventTypeForDisplay(eventType) === 'Class Day',
     [eventType]
@@ -2557,6 +2594,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (!eventType) {
       errors.eventType = 'Event type is required';
     }
+
+    if (showBreakEndDateField && eventEndDate && dueDate && eventEndDate < dueDate) {
+      errors.endDate = 'End date cannot be before the start date';
+    }
     
     if (assigneeIds.length === 0) {
       errors.assignee = 'At least one assignee is required';
@@ -2593,8 +2634,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     if (assigneeIds.length === 0) return false;
     if (!dueDate) return false;
     if (!eventType) return false;
-    const isMultiDayEvent = false; // No multi-day events in new system
-    if (isMultiDayEvent && placement === 'calendar' && !eventEndDate) return false;
+    const isMultiDayEvent = MULTI_DAY_EVENT_TYPES.includes(normalizeEventTypeForDisplay(eventType));
+    if (isMultiDayEvent && placement === 'calendar' && eventEndDate && eventEndDate < dueDate) return false;
     if (isRecurring && placement === 'calendar' && !isSingleSeriesOccurrenceEdit) {
       if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) return false;
       if (recurrenceEndType === 'after') {
@@ -3002,9 +3043,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setDueDate(dateObj);
     setCalendarViewMonth(dateObj);
     
-    // End date for multi-day events (Project, Trip, Holiday, Other)
-    // Check if this is a multi-day event type
-    const isMultiDayEventType = event.event_type && ['Project', 'Trip', 'Holiday', 'Other'].includes(event.event_type);
+    // End date for multi-day events (Project, Trip, Holiday, Other, Break)
+    const normalizedLoadedType = normalizeEventTypeForDisplay(
+      event?.event_type || eventType || 'Lesson',
+      event?.holiday_type || event?.holidayType
+    );
+    const isMultiDayEventType = MULTI_DAY_EVENT_TYPES.includes(normalizedLoadedType);
     if (endTs && isMultiDayEventType) {
       const endDateObj = new Date(endTs);
       const startDateObj = startTs ? new Date(startTs) : null;
@@ -3045,8 +3089,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     // IMPORTANT: keep "no explicit time" events editable by treating flexible/timeless
     // lesson rows as untimed (empty editable fields), not as locked all-day rows.
     const isFlexibleTimeless = event?.is_flexible === true;
-    const eventTypeRaw = String(event?.event_type || eventType || '').trim();
-    const isIntrinsicAllDayType = ['Project', 'Trip', 'Holiday', 'Other'].includes(eventTypeRaw);
+    const eventTypeRaw = normalizeEventTypeForDisplay(
+      event?.event_type || eventType || '',
+      event?.holiday_type || event?.holidayType
+    );
+    const isIntrinsicAllDayType = MULTI_DAY_EVENT_TYPES.includes(eventTypeRaw);
     const inferredAllDayFromBounds =
       !!startTs &&
       (() => {
@@ -3133,7 +3180,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setTagInput('');
     
     // Event type (display class day variants consistently as "Class Day")
-    setEventType(normalizeEventTypeForDisplay(event.event_type || 'Lesson'));
+    setEventType(normalizeEventTypeForDisplay(event.event_type || 'Lesson', event?.holiday_type || event?.holidayType));
     
     // Academic fields
     applySubjectSelection(extractSubjectIdsFromEvent(event));
@@ -4076,6 +4123,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             setDeleting(true);
             try {
       const deleteTargetId = cleanPlannerEventId(String(event.id));
+      const isCustomExclusionDelete =
+        currentHolidayType === 'CUSTOM_HOLIDAY' || currentHolidayType === 'CUSTOM_BREAK';
+      if (
+        isCustomExclusionDelete &&
+        Platform.OS === 'web' &&
+        typeof window !== 'undefined' &&
+        deleteTargetId
+      ) {
+        window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: deleteTargetId } }));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+      }
       console.log('[EventDetails] Attempting to delete event:', deleteTargetId);
       console.log('[EventDetails] Event details:', { id: deleteTargetId, family_id: event.family_id, title: event.title });
       
@@ -4348,6 +4406,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         // Ignore logging errors
       }
             } catch (err) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const attemptedDeleteId = cleanPlannerEventId(String(event?.id || ''));
+        const isCustomExclusionDelete =
+          currentHolidayType === 'CUSTOM_HOLIDAY' || currentHolidayType === 'CUSTOM_BREAK';
+        if (isCustomExclusionDelete && attemptedDeleteId) {
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        }
+      }
       // Handle different types of errors
       let errorMessage = 'Failed to delete event';
       
@@ -4445,7 +4511,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           return;
         }
 
-        const isMultiDayEventType = eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType);
+        const isMultiDayEventType = MULTI_DAY_EVENT_TYPES.includes(normalizeEventTypeForDisplay(eventType));
         let resolvedEnd;
 
         if (isMultiDayEventType && eventEndDate) {
@@ -4865,6 +4931,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     const dateToUse = dueDate ? toDateInput(dueDate.toISOString()) : draftDate;
     const normalizedStartInput = normalizeTimeValue(startTime) || normalizeTimeValue(draftStartTime);
     const normalizedEndInput = normalizeTimeValue(endTime) || normalizeTimeValue(draftEndTime);
+    const isMultiDayEventType = MULTI_DAY_EVENT_TYPES.includes(normalizeEventTypeForDisplay(eventType));
     if (!(allDay || draftAllDay) && !normalizedStartInput && normalizedEndInput) {
       setValidationErrors((prev) => ({
         ...prev,
@@ -4927,6 +4994,24 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }
     }
 
+    if (dateToUse && isMultiDayEventType) {
+      const startBase = dueDate ? new Date(dueDate) : new Date(dateToUse);
+      startBase.setHours(0, 0, 0, 0);
+      if (!startDateObj || Number.isNaN(startDateObj.getTime())) {
+        startDateObj = new Date(startBase);
+      }
+      if (eventEndDate instanceof Date && !Number.isNaN(eventEndDate.getTime())) {
+        const endDateOnly = new Date(eventEndDate.getFullYear(), eventEndDate.getMonth(), eventEndDate.getDate());
+        if (endDateOnly < startBase) {
+          setValidationErrors((prev) => ({ ...prev, endDate: 'End date cannot be before the start date.' }));
+          return;
+        }
+        endDateObj = new Date(endDateOnly.getFullYear(), endDateOnly.getMonth(), endDateOnly.getDate(), 23, 59, 59, 999);
+      } else {
+        endDateObj = new Date(startBase.getFullYear(), startBase.getMonth(), startBase.getDate(), 23, 59, 59, 999);
+      }
+    }
+
     setSaving(true);
     try {
       const isBacklog = event.is_backlog === true || event.data?.is_backlog === true;
@@ -4968,6 +5053,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         recurrenceRule = rule;
       }
       
+      const displayEventType = normalizeEventTypeForDisplay(eventType);
+      const persistedEventType = normalizeEventTypeForPersistence(displayEventType);
+      const persistedHolidayType = displayEventType === 'Break'
+        ? 'CUSTOM_BREAK'
+        : (displayEventType === 'Day Off' ? 'CUSTOM_HOLIDAY' : null);
       const updates = {
         title: draftTitle.trim(),
         description: notes.trim() ? notes.trim() : null,
@@ -4977,7 +5067,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         tags: draftTags.length ? draftTags : null,
         material_id: selectedMaterialId || null,
         materials_attachment_ids: attachedMaterialIds.length > 0 ? attachedMaterialIds : null,
-        event_type: normalizeEventTypeForPersistence(eventType),
+        event_type: persistedEventType,
+        holiday_type: persistedHolidayType,
         subject_id: subjectIds[0] || null,
         unit: (unit && unit.trim()) ? unit.trim() : null,
         // Mirror unit/lesson for APIs that read curriculum_unit_title / events.lesson (subject structure, plan slot labels).
@@ -5054,7 +5145,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           eventEndDate: eventEndDate?.toISOString(),
           endDateObj: endDateObj?.toISOString(),
           hasEventEndDate: !!eventEndDate,
-          isMultiDay: eventType && ['Project', 'Trip', 'Holiday', 'Other'].includes(eventType)
+          isMultiDay: MULTI_DAY_EVENT_TYPES.includes(normalizeEventTypeForDisplay(eventType))
         });
       } else if (schedulingBacklog) {
         // If we're in scheduling mode but no date was set, this shouldn't happen due to validation above
@@ -5068,6 +5159,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const cleanUpdates = Object.fromEntries(
         Object.entries(updates).filter(([_, value]) => value !== undefined)
       );
+      // Final defensive normalization before write so DB constraints are never violated.
+      const normalizedForDb = normalizeEventTypeForPersistence(cleanUpdates.event_type);
+      cleanUpdates.event_type = VALID_DB_EVENT_TYPES.has(normalizedForDb)
+        ? normalizedForDb
+        : 'Lesson';
+      if (cleanUpdates.event_type !== 'Holiday') {
+        cleanUpdates.holiday_type = null;
+      } else if (!cleanUpdates.holiday_type) {
+        const displayType = normalizeEventTypeForDisplay(eventType);
+        cleanUpdates.holiday_type = displayType === 'Break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY';
+      }
       
       // Ensure child_ids is ALWAYS explicitly included in the update
       // This is critical because Supabase might not update a field if it's not explicitly included
@@ -6063,7 +6165,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     // Get end date for display - use state first, then fallback to event's end_ts
     let displayEndDate = eventEndDate;
     if (!displayEndDate && event?.end_ts) {
-      const isMultiDayEventType = event?.event_type && ['Project', 'Trip', 'Holiday', 'Other'].includes(event.event_type);
+      const isMultiDayEventType = MULTI_DAY_EVENT_TYPES.includes(
+        normalizeEventTypeForDisplay(event?.event_type, event?.holiday_type || event?.holidayType)
+      );
       if (isMultiDayEventType) {
         const endDateObj = new Date(event.end_ts);
         const startDateObj = event?.start_ts ? new Date(event.start_ts) : dueDate;
@@ -6915,6 +7019,52 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 </View>
                 {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
               </View>
+              {showBreakEndDateField ? (
+                <View style={[styles.timeField, styles.dateFieldInline]}>
+                  <Text style={styles.timeLabel}>End date</Text>
+                  <View style={[styles.chip, validationErrors.endDate && styles.chipFieldError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const next = new Date(eventEndDate || dueDate || new Date());
+                        next.setDate(next.getDate() - 1);
+                        setEventEndDate(next);
+                        if (validationErrors.endDate) {
+                          setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                        }
+                      }}
+                    >
+                      <ChevronLeft size={16} color={FG} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (validationErrors.endDate) {
+                          setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                        }
+                        setEventEndDateCalendarViewMonth(eventEndDate || dueDate || new Date());
+                        setShowEventEndDatePicker(true);
+                      }}
+                      style={{ flex: 1, paddingHorizontal: 8 }}
+                    >
+                      <Text style={[styles.chipText, !eventEndDate && { color: MUTED }]}>
+                        {eventEndDate ? fmt(eventEndDate) : 'Optional'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const next = new Date(eventEndDate || dueDate || new Date());
+                        next.setDate(next.getDate() + 1);
+                        setEventEndDate(next);
+                        if (validationErrors.endDate) {
+                          setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                        }
+                      }}
+                    >
+                      <ChevronRight size={16} color={FG} />
+                    </TouchableOpacity>
+                  </View>
+                  {validationErrors.endDate ? <Text style={styles.errorTextSmall}>{validationErrors.endDate}</Text> : null}
+                </View>
+              ) : null}
               {!hideScheduleTimeControls && (
               <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
                 <View style={[styles.timeField, styles.timeFieldCompact]}>

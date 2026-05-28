@@ -19,7 +19,115 @@ export default function TasksView({
   familyId: familyIdProp = null,
   preloadedBacklogEvents = null,
   preloadedTrashEvents = null,
+  plannerHolidaysCache = {},
+  plannerExclusions = [],
 }) {
+  const normalizeEventTypeLower = useCallback((ev) => {
+    const raw = ev?.event_type ?? ev?.eventType ?? ev?.type ?? ev?.data?.event_type ?? '';
+    return String(raw || '').trim().toLowerCase();
+  }, []);
+  const isBreakRangeEvent = useCallback((ev) => {
+    const holidayType = String(ev?.holiday_type || ev?.holidayType || ev?.data?.holiday_type || '').trim().toUpperCase();
+    const type = normalizeEventTypeLower(ev);
+    return type === 'break' || (type === 'holiday' && holidayType === 'CUSTOM_BREAK');
+  }, [normalizeEventTypeLower]);
+  const resolveEventDateValue = useCallback((ev) => {
+    if (!ev) return null;
+    const direct = ev.start || ev.start_ts || ev.start_local;
+    if (direct) return direct;
+    const ymd = String(ev.date_local || ev.date || '').slice(0, 10);
+    if (!ymd) return null;
+    return `${ymd}T12:00:00.000Z`;
+  }, []);
+  const expandPlannerExclusionsForRange = useCallback((rangeStart, rangeEnd) => {
+    if (!(rangeStart instanceof Date) || Number.isNaN(rangeStart.getTime())) return [];
+    if (!(rangeEnd instanceof Date) || Number.isNaN(rangeEnd.getTime())) return [];
+    const rows = Array.isArray(plannerExclusions) ? plannerExclusions : [];
+    if (rows.length === 0) return [];
+    const toDateOnly = (value) => {
+      const ymd = String(value || '').slice(0, 10);
+      if (!ymd) return null;
+      const d = new Date(`${ymd}T00:00:00`);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+    const toYmdString = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const out = [];
+    rows.forEach((row) => {
+      const rowType = String(row?.exclusion_type || '').toLowerCase();
+      if (rowType !== 'holiday' && rowType !== 'break') return;
+      const rowStart = toDateOnly(row?.start_date);
+      const rowEnd = toDateOnly(row?.end_date || row?.start_date);
+      if (!rowStart || !rowEnd) return;
+      const clampedStart = rowStart > rangeStart ? rowStart : rangeStart;
+      const clampedEnd = rowEnd < rangeEnd ? rowEnd : rangeEnd;
+      if (clampedEnd < clampedStart) return;
+      const fallbackLabel = rowType === 'break' ? 'Break' : 'Day off';
+      const label = String(row?.label || '').trim() || fallbackLabel;
+      const labelSlug = label.replace(/\s+/g, '-').slice(0, 30) || fallbackLabel.toLowerCase().replace(/\s+/g, '-');
+      for (let cursorDate = new Date(clampedStart); cursorDate <= clampedEnd; cursorDate.setDate(cursorDate.getDate() + 1)) {
+        const dateKey = toYmdString(cursorDate);
+        out.push({
+          id: `holiday-${dateKey}-${labelSlug}`,
+          date_local: dateKey,
+          title: label,
+          type: 'holiday',
+          event_type: 'holiday',
+          holiday_type: rowType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY',
+          status: null,
+          source: 'planner_exclusion',
+          start_ts: `${dateKey}T12:00:00.000Z`,
+          end_ts: `${dateKey}T12:30:00.000Z`,
+          start: `${dateKey}T12:00:00.000Z`,
+          end: `${dateKey}T12:30:00.000Z`,
+          start_local: `${dateKey}T12:00:00.000Z`,
+          end_local: `${dateKey}T12:30:00.000Z`,
+        });
+      }
+    });
+    return out;
+  }, [plannerExclusions]);
+  const expandCachedHolidaysForRange = useCallback((rangeStart, rangeEnd) => {
+    if (!(rangeStart instanceof Date) || Number.isNaN(rangeStart.getTime())) return [];
+    if (!(rangeEnd instanceof Date) || Number.isNaN(rangeEnd.getTime())) return [];
+    const cache = plannerHolidaysCache && typeof plannerHolidaysCache === 'object'
+      ? plannerHolidaysCache
+      : {};
+    const toYmdString = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const monthKeys = new Set();
+    for (let cursor = new Date(rangeStart); cursor <= rangeEnd; cursor.setDate(cursor.getDate() + 1)) {
+      monthKeys.add(`${cursor.getFullYear()}-${cursor.getMonth()}`);
+    }
+    const out = [];
+    monthKeys.forEach((monthKey) => {
+      const rows = Array.isArray(cache[monthKey]) ? cache[monthKey] : [];
+      rows.forEach((holiday) => {
+        const dateYmd = String(holiday?.date || '').slice(0, 10);
+        if (!dateYmd) return;
+        const d = new Date(`${dateYmd}T00:00:00`);
+        if (Number.isNaN(d.getTime()) || d < rangeStart || d > rangeEnd) return;
+        const safeName = String(holiday?.name || '').trim();
+        const holidayType = String(holiday?.type || '').toUpperCase();
+        const label = safeName || (holidayType === 'CUSTOM_BREAK' ? 'Break' : 'Day off');
+        out.push({
+          id: `holiday-${dateYmd}-${label.replace(/\s+/g, '-').slice(0, 30)}`,
+          date_local: dateYmd,
+          title: label,
+          type: 'holiday',
+          event_type: 'holiday',
+          holiday_type: holidayType || null,
+          status: null,
+          start_ts: `${dateYmd}T12:00:00.000Z`,
+          end_ts: `${dateYmd}T12:30:00.000Z`,
+          start: `${dateYmd}T12:00:00.000Z`,
+          end: `${dateYmd}T12:30:00.000Z`,
+          start_local: `${dateYmd}T12:00:00.000Z`,
+          end_local: `${dateYmd}T12:30:00.000Z`,
+        });
+      });
+    });
+    return out;
+  }, [plannerHolidaysCache]);
+
   const toYmd = useCallback((dateValue) => {
     if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime())) return '';
     const y = dateValue.getFullYear();
@@ -53,6 +161,10 @@ export default function TasksView({
   const [activeSection, setActiveSection] = useState('today');
   const [userLists, setUserLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
+  const eventsRef = useRef(events);
+  useEffect(() => {
+    eventsRef.current = events;
+  }, [events]);
   const [backlogEvents, setBacklogEvents] = useState(() =>
     preloadedBacklogEvents != null ? preloadedBacklogEvents : [],
   );
@@ -60,6 +172,12 @@ export default function TasksView({
     preloadedTrashEvents != null ? preloadedTrashEvents : [],
   );
   const [sectionEvents, setSectionEvents] = useState([]);
+  const resolveFamilyIdFromLocalSources = useCallback(() => {
+    if (familyIdProp) return familyIdProp;
+    const sourceEvents = Array.isArray(eventsRef.current) ? eventsRef.current : [];
+    const rowWithFamily = sourceEvents.find((e) => e?.family_id || e?.familyId);
+    return rowWithFamily?.family_id || rowWithFamily?.familyId || null;
+  }, [familyIdProp]);
   const sectionBaseDate = useMemo(() => {
     const candidate = monthDate ? new Date(monthDate) : new Date();
     if (Number.isNaN(candidate.getTime())) return startOfToday();
@@ -127,8 +245,8 @@ export default function TasksView({
       if (seenIds.has(e.id)) continue;
       seenIds.add(e.id);
       
-      // Check if this is a Project event with start and end dates
-      if (e.event_type === 'Project' && (e.start_ts || e.start || e.start_local) && (e.end_ts || e.end || e.end_local)) {
+      // Expand Project/Break range events with start + end to one row per day.
+      if ((e.event_type === 'Project' || isBreakRangeEvent(e)) && (e.start_ts || e.start || e.start_local) && (e.end_ts || e.end || e.end_local)) {
         const startTimestamp = e.start_ts || e.start || e.start_local;
         const endTimestamp = e.end_ts || e.end || e.end_local;
         const startDate = new Date(startTimestamp);
@@ -178,15 +296,12 @@ export default function TasksView({
     }
     
     return expanded;
-  }, [events]);
+  }, [events, isBreakRangeEvent]);
 
   // Fetch deleted events for trash view
   const fetchTrashItems = useCallback(async () => {
     try {
-      const familyIdFromEvents =
-        familyIdProp ||
-        events.find((e) => e.family_id || e.familyId)?.family_id ||
-        events.find((e) => e.family_id || e.familyId)?.familyId;
+      const familyIdFromEvents = resolveFamilyIdFromLocalSources();
       if (!familyIdFromEvents) return;
 
       let queryBuilder = supabase
@@ -211,14 +326,11 @@ export default function TasksView({
       console.error('Error fetching trash items:', error);
       // Don't clear existing trashEvents on error - keep what we have
     }
-  }, [familyIdProp, events]);
+  }, [resolveFamilyIdFromLocalSources]);
 
   const fetchBacklogItems = useCallback(async () => {
     try {
-      const familyIdFromEvents =
-        familyIdProp ||
-        events.find((e) => e.family_id || e.familyId)?.family_id ||
-        events.find((e) => e.family_id || e.familyId)?.familyId;
+      const familyIdFromEvents = resolveFamilyIdFromLocalSources();
       if (!familyIdFromEvents) return;
 
       let queryBuilder = supabase
@@ -247,7 +359,7 @@ export default function TasksView({
       console.error('Error fetching backlog items:', error);
       // Don't clear existing backlogEvents on error - keep what we have
     }
-  }, [familyIdProp, events]);
+  }, [resolveFamilyIdFromLocalSources]);
 
   const fetchSectionEvents = useCallback(async (section) => {
     if (!['today', 'tomorrow', 'thismonth', 'nextmonth', 'completed'].includes(section)) {
@@ -255,10 +367,7 @@ export default function TasksView({
       return;
     }
     try {
-      const familyIdFromEvents =
-        familyIdProp ||
-        events.find((e) => e.family_id || e.familyId)?.family_id ||
-        events.find((e) => e.family_id || e.familyId)?.familyId;
+      const familyIdFromEvents = resolveFamilyIdFromLocalSources();
       if (!familyIdFromEvents) return;
 
       let query = supabase
@@ -321,7 +430,7 @@ export default function TasksView({
     } catch (error) {
       console.error(`[TasksView] Error fetching ${section} events:`, error);
     }
-  }, [familyIdProp, events, sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart, mapHolidayToTaskEvent, toYmd]);
+  }, [resolveFamilyIdFromLocalSources, sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart, mapHolidayToTaskEvent, toYmd]);
 
   useEffect(() => {
     if (preloadedBacklogEvents != null) {
@@ -586,9 +695,56 @@ export default function TasksView({
     const sectionTomorrow = sectionTomorrowDate;
     // Use nonDeletedEvents instead of events (nonDeletedEvents already includes expanded Project events)
     const eventsToFilter = nonDeletedEvents || events;
-    const combinedEvents = [...eventsToFilter, ...(Array.isArray(sectionEvents) ? sectionEvents : [])]
-      .filter(Boolean)
-      .filter((ev, index, self) => index === self.findIndex((e) => String(e.id) === String(ev.id)));
+    const sectionRangeEvents = (() => {
+      if (section === 'today') {
+        return [
+          ...expandPlannerExclusionsForRange(sectionToday, sectionToday),
+          ...expandCachedHolidaysForRange(sectionToday, sectionToday),
+        ];
+      }
+      if (section === 'tomorrow') {
+        return [
+          ...expandPlannerExclusionsForRange(sectionTomorrow, sectionTomorrow),
+          ...expandCachedHolidaysForRange(sectionTomorrow, sectionTomorrow),
+        ];
+      }
+      if (section === 'thismonth') {
+        return [
+          ...expandPlannerExclusionsForRange(sectionThisMonthStart, sectionThisMonthEnd),
+          ...expandCachedHolidaysForRange(sectionThisMonthStart, sectionThisMonthEnd),
+        ];
+      }
+      if (section === 'nextmonth') {
+        return [
+          ...expandPlannerExclusionsForRange(sectionNextMonthStart, sectionNextMonthEnd),
+          ...expandCachedHolidaysForRange(sectionNextMonthStart, sectionNextMonthEnd),
+        ];
+      }
+      return [];
+    })();
+    const combinedEvents = (() => {
+      const merged = [
+        ...eventsToFilter,
+        ...(Array.isArray(sectionEvents) ? sectionEvents : []),
+        ...sectionRangeEvents,
+      ].filter(Boolean);
+      const byId = new Map();
+      merged.forEach((ev) => {
+        const id = String(ev?.id || '');
+        if (!id) return;
+        const existing = byId.get(id);
+        if (!existing) {
+          byId.set(id, ev);
+          return;
+        }
+        const existingHasDate = !!resolveEventDateValue(existing);
+        const incomingHasDate = !!resolveEventDateValue(ev);
+        if (!existingHasDate && incomingHasDate) {
+          byId.set(id, ev);
+        }
+      });
+      return Array.from(byId.values());
+    })();
     
     switch (section) {
       case 'today':
@@ -597,7 +753,7 @@ export default function TasksView({
           if (ev.is_backlog === true) return false;
           if (ev.deleted || ev.deleted_at) return false;
           if (ev.status === 'done') return false;
-          const evDate = ev.start || ev.start_ts || ev.start_local;
+          const evDate = resolveEventDateValue(ev);
           if (!evDate) return false;
           const d = new Date(evDate);
           // For expanded events, the start_ts is already set to the specific day, so we just check if it's today
@@ -610,7 +766,7 @@ export default function TasksView({
           if (ev.is_backlog === true) return false;
           if (ev.deleted || ev.deleted_at) return false;
           if (ev.status === 'done') return false;
-          const evDate = ev.start || ev.start_ts || ev.start_local;
+          const evDate = resolveEventDateValue(ev);
           if (!evDate) return false;
           const d = new Date(evDate);
           // For expanded events, the start_ts is already set to the specific day, so we just check if it's tomorrow
@@ -623,7 +779,7 @@ export default function TasksView({
           if (ev.is_backlog === true) return false;
           if (ev.deleted || ev.deleted_at) return false;
           if (ev.status === 'done') return false;
-          const evDate = ev.start || ev.start_ts || ev.start_local;
+          const evDate = resolveEventDateValue(ev);
           if (!evDate) return false;
           const d = new Date(evDate);
           return d >= sectionThisMonthStart && d <= sectionThisMonthEnd;
@@ -634,7 +790,7 @@ export default function TasksView({
           if (ev.is_backlog === true) return false;
           if (ev.deleted || ev.deleted_at) return false;
           if (ev.status === 'done') return false;
-          const evDate = ev.start || ev.start_ts || ev.start_local;
+          const evDate = resolveEventDateValue(ev);
           if (!evDate) return false;
           const d = new Date(evDate);
           return d >= sectionNextMonthStart && d <= sectionNextMonthEnd;
@@ -658,8 +814,8 @@ export default function TasksView({
         return combinedEvents
           .filter(ev => ev.status === 'done' && !ev.deleted && !ev.deleted_at)
           .sort((a, b) => {
-            const aDate = a.start || a.start_ts || a.start_local;
-            const bDate = b.start || b.start_ts || b.start_local;
+            const aDate = resolveEventDateValue(a);
+            const bDate = resolveEventDateValue(b);
             
             // Events without dates go to the end
             if (!aDate && !bDate) return 0;

@@ -52,6 +52,16 @@ function isReadOnlyPublicHolidayEvent(eventLike) {
   return false;
 }
 
+function isSyntheticPlannerExclusionEvent(eventLike) {
+  if (!eventLike || typeof eventLike !== 'object') return false;
+  const source = String(eventLike.source || eventLike?.data?.source || '').toLowerCase();
+  if (source === 'planner_exclusion') return true;
+  const rawId = String(eventLike.id || eventLike._originalId || eventLike.originalId || '').trim();
+  if (!rawId) return false;
+  // Synthetic holiday rows are generated as holiday-YYYY-MM-DD-... and do not exist in events table.
+  return rawId.startsWith('holiday-') && !isUuidLike(rawId);
+}
+
 function isUuidLike(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
 }
@@ -3013,6 +3023,20 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       const allChildren = options.allChildren === true; // when true, fetch all family events (e.g. for plan summary slot lookup)
       try {
         const holidaysPromise = getHolidaysForRange(familyId, start, end);
+        holidaysPromise
+          .then((holidaysResult) => {
+            const holidays = holidaysResult?.error ? [] : (holidaysResult?.data?.holidays || []);
+            setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: holidays }));
+          })
+          .catch(() => {});
+        const exclusionsPromise = supabase
+          .from('planner_exclusions')
+          .select('id, exclusion_type, start_date, end_date, label, is_active, scope_type')
+          .eq('family_id', familyId)
+          .eq('is_active', true)
+          .in('exclusion_type', ['holiday', 'break'])
+          .lte('start_date', end)
+          .gte('end_date', start);
         const monthResult = await supabase.rpc('get_month_view', {
           _family_id: familyId,
           _year: year,
@@ -3152,6 +3176,62 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             return true;
           });
         });
+        try {
+          const { data: exclusionRows, error: exclusionsError } = await exclusionsPromise;
+          if (!exclusionsError && Array.isArray(exclusionRows) && exclusionRows.length > 0) {
+            const toDateOnly = (value) => {
+              const ymd = String(value || '').slice(0, 10);
+              if (!ymd) return null;
+              const d = new Date(`${ymd}T00:00:00`);
+              return Number.isNaN(d.getTime()) ? null : d;
+            };
+            const toYmd = (d) =>
+              `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            const monthStartDate = toDateOnly(start);
+            const monthEndDate = toDateOnly(end);
+            (exclusionRows || []).forEach((row) => {
+              const type = String(row?.exclusion_type || '').toLowerCase();
+              if (type !== 'holiday' && type !== 'break') return;
+              const rangeStart = toDateOnly(row?.start_date);
+              const rangeEnd = toDateOnly(row?.end_date || row?.start_date);
+              if (!rangeStart || !rangeEnd || !monthStartDate || !monthEndDate) return;
+              const clampedStart = rangeStart > monthStartDate ? rangeStart : monthStartDate;
+              const clampedEnd = rangeEnd < monthEndDate ? rangeEnd : monthEndDate;
+              if (clampedEnd < clampedStart) return;
+              const fallbackLabel = type === 'break' ? 'Break' : 'Day off';
+              const label = String(row?.label || '').trim() || fallbackLabel;
+              const labelSlug = label.replace(/\s+/g, '-').slice(0, 30) || fallbackLabel.toLowerCase().replace(/\s+/g, '-');
+              for (let cursor = new Date(clampedStart); cursor <= clampedEnd; cursor.setDate(cursor.getDate() + 1)) {
+                const dateKey = toYmd(cursor);
+                const eventId = `holiday-${dateKey}-${labelSlug}`;
+                const list = Array.isArray(byDate[dateKey]) ? byDate[dateKey] : [];
+                if (list.some((ev) => String(ev?.id || '') === eventId)) {
+                  byDate[dateKey] = list;
+                  continue;
+                }
+                byDate[dateKey] = [
+                  ...list,
+                  {
+                    id: eventId,
+                    date_local: dateKey,
+                    title: label,
+                    type: 'holiday',
+                    event_type: 'holiday',
+                    holiday_type: type === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY',
+                    status: null,
+                    source: 'planner_exclusion',
+                    start_ts: `${dateKey}T12:00:00.000Z`,
+                    end_ts: `${dateKey}T12:30:00.000Z`,
+                    start: `${dateKey}T12:00:00.000Z`,
+                    end: `${dateKey}T12:30:00.000Z`,
+                    start_local: `${dateKey}T12:00:00.000Z`,
+                    end_local: `${dateKey}T12:30:00.000Z`,
+                  },
+                ];
+              }
+            });
+          }
+        } catch (_) {}
         setCalendarDataCache((prev) => ({ ...prev, [monthKey]: byDate }));
         setCalendarEvents((prev) => {
           let merged = { ...prev, ...byDate };
@@ -3201,12 +3281,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           return merged;
         });
         setIsCalendarDataLoaded(true);
-        holidaysPromise
-          .then((holidaysResult) => {
-            const holidays = holidaysResult?.error ? [] : (holidaysResult?.data?.holidays || []);
-            setPlannerHolidaysCache((prev) => ({ ...prev, [monthKey]: holidays }));
-          })
-          .catch(() => {});
       } catch (err) {
         if (!isAbortLikeError(err)) {
           console.error('[WebContent] refreshCalendarData failed:', err);
@@ -4708,6 +4782,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [plannerHolidaysCache, setPlannerHolidaysCache] = useState({}) // monthKey -> [{ date, name, type }]
   const plannerHolidaysCacheRef = useRef({})
   useEffect(() => { plannerHolidaysCacheRef.current = plannerHolidaysCache; }, [plannerHolidaysCache])
+  const [plannerExclusionsCache, setPlannerExclusionsCache] = useState([]) // active planner_exclusions rows
   const [plannerSpilloverEventsByDate, setPlannerSpilloverEventsByDate] = useState({})
   const [isCalendarDataLoaded, setIsCalendarDataLoaded] = useState(false)
   // Pre-fetched planner tasks + attendance (null = not yet loaded for this family)
@@ -4717,6 +4792,70 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Planner view date (synced from WebLayout via plannerMonthChange)
   const [plannerDate, setPlannerDate] = useState(() => new Date())
   useEffect(() => { plannerDateRef.current = plannerDate; }, [plannerDate]);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) return;
+    try {
+      const rawExclusions = sessionStorage.getItem(`ld_web_planner_exclusions_${familyId}`);
+      if (rawExclusions) {
+        const parsed = JSON.parse(rawExclusions);
+        if (Array.isArray(parsed)) {
+          setPlannerExclusionsCache(parsed);
+        }
+      }
+      const rawHolidays = sessionStorage.getItem(`ld_web_planner_holidays_${familyId}`);
+      if (rawHolidays) {
+        const parsed = JSON.parse(rawHolidays);
+        if (parsed && typeof parsed === 'object') {
+          setPlannerHolidaysCache(parsed);
+        }
+      }
+    } catch (_) {}
+  }, [familyId]);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) return;
+    try {
+      sessionStorage.setItem(
+        `ld_web_planner_exclusions_${familyId}`,
+        JSON.stringify(Array.isArray(plannerExclusionsCache) ? plannerExclusionsCache : [])
+      );
+    } catch (_) {}
+  }, [familyId, plannerExclusionsCache]);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) return;
+    try {
+      sessionStorage.setItem(
+        `ld_web_planner_holidays_${familyId}`,
+        JSON.stringify(plannerHolidaysCache && typeof plannerHolidaysCache === 'object' ? plannerHolidaysCache : {})
+      );
+    } catch (_) {}
+  }, [familyId, plannerHolidaysCache]);
+  const fetchPlannerExclusions = useCallback(async () => {
+    if (!familyId) return;
+    try {
+      const { data, error } = await supabase
+        .from('planner_exclusions')
+        .select('id, exclusion_type, start_date, end_date, label, is_active')
+        .eq('family_id', familyId)
+        .eq('is_active', true)
+        .in('exclusion_type', ['holiday', 'break']);
+      if (!error) {
+        setPlannerExclusionsCache(Array.isArray(data) ? data : []);
+      }
+    } catch (_) {}
+  }, [familyId]);
+  useEffect(() => {
+    if (!familyId) {
+      setPlannerExclusionsCache([]);
+      return;
+    }
+    fetchPlannerExclusions();
+  }, [familyId, fetchPlannerExclusions]);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = () => { fetchPlannerExclusions(); };
+    window.addEventListener('refreshPlanDefaults', handler);
+    return () => window.removeEventListener('refreshPlanDefaults', handler);
+  }, [fetchPlannerExclusions]);
   // Preload planner current month once when familyId is available so planner opens with data.
   // Report to parent so initial app load overlay stays until planner data is ready.
   const plannerPreloadedForKeyRef = useRef(null);
@@ -4752,6 +4891,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     prefetchPlanEditListForFamily(familyId).catch(() => {});
     Promise.allSettled([
       // Warm current month + neighbors first so spillover cells populate quickly.
+      fetchPlannerExclusions(),
       refreshCalendarData(preloadAnchorDate, { background: true }),
       refreshCalendarData(prevMonth, { background: true }),
       refreshCalendarData(nextMonth, { background: true }),
@@ -4772,7 +4912,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           }),
         ]).catch(() => {});
       });
-  }, [familyId, refreshCalendarData, propSession]);
+  }, [familyId, refreshCalendarData, propSession, fetchPlannerExclusions]);
 
   const plannerChildrenKey = useMemo(
     () => (Array.isArray(children) ? children.map((c) => c?.id).filter(Boolean).sort().join(',') : ''),
@@ -6210,6 +6350,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         status: raw.status || 'scheduled',
         year_plan_id: raw.year_plan_id,
         event_type: raw.event_type,
+        holiday_type: raw.holiday_type || raw.holidayType || null,
         data: { ...raw, date_local: dateKey },
         date_local: dateKey,
         start_local: startLocalStr,
@@ -9611,10 +9752,69 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           event_type: 'holiday',
           holiday_type: String(h?.type || '').toUpperCase() || null,
           status: null,
+          start_ts: `${String(h.date).slice(0, 10)}T12:00:00.000Z`,
+          end_ts: `${String(h.date).slice(0, 10)}T12:30:00.000Z`,
+          start: `${String(h.date).slice(0, 10)}T12:00:00.000Z`,
+          end: `${String(h.date).slice(0, 10)}T12:30:00.000Z`,
+          start_local: `${String(h.date).slice(0, 10)}T12:00:00.000Z`,
+          end_local: `${String(h.date).slice(0, 10)}T12:30:00.000Z`,
         }));
     });
-    return [...calendarEventList, ...holidayEvents];
-  }, [plannerDate, calendarDataCache, calendarEvents, plannerHolidaysCache, plannerSpilloverEventsByDate]);
+    const exclusionHolidayEvents = (() => {
+      const rows = Array.isArray(plannerExclusionsCache) ? plannerExclusionsCache : [];
+      if (rows.length === 0) return [];
+      const toDateOnly = (value) => {
+        const ymd = String(value || '').slice(0, 10);
+        if (!ymd) return null;
+        const d = new Date(`${ymd}T00:00:00`);
+        return Number.isNaN(d.getTime()) ? null : d;
+      };
+      const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const visibleStart = toDateOnly(rangeStartKey);
+      const visibleEnd = toDateOnly(rangeEndKey);
+      if (!visibleStart || !visibleEnd) return [];
+      const mapped = [];
+      rows.forEach((row) => {
+        const rowType = String(row?.exclusion_type || '').toLowerCase();
+        if (rowType !== 'holiday' && rowType !== 'break') return;
+        const startDate = toDateOnly(row?.start_date);
+        const endDate = toDateOnly(row?.end_date || row?.start_date);
+        if (!startDate || !endDate) return;
+        const clampedStart = startDate > visibleStart ? startDate : visibleStart;
+        const clampedEnd = endDate < visibleEnd ? endDate : visibleEnd;
+        if (clampedEnd < clampedStart) return;
+        const fallbackLabel = rowType === 'break' ? 'Break' : 'Day off';
+        const label = String(row?.label || '').trim() || fallbackLabel;
+        const labelSlug = label.replace(/\s+/g, '-').slice(0, 30) || fallbackLabel.toLowerCase().replace(/\s+/g, '-');
+        for (let cursorDate = new Date(clampedStart); cursorDate <= clampedEnd; cursorDate.setDate(cursorDate.getDate() + 1)) {
+          const dateKey = toYmd(cursorDate);
+          mapped.push({
+            id: `holiday-${dateKey}-${labelSlug}`,
+            date_local: dateKey,
+            title: label,
+            type: 'holiday',
+            event_type: 'holiday',
+            holiday_type: rowType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY',
+            status: null,
+            source: 'planner_exclusion',
+            start_ts: `${dateKey}T12:00:00.000Z`,
+            end_ts: `${dateKey}T12:30:00.000Z`,
+            start: `${dateKey}T12:00:00.000Z`,
+            end: `${dateKey}T12:30:00.000Z`,
+            start_local: `${dateKey}T12:00:00.000Z`,
+            end_local: `${dateKey}T12:30:00.000Z`,
+          });
+        }
+      });
+      return mapped;
+    })();
+    const byId = new Map();
+    [...calendarEventList, ...holidayEvents, ...exclusionHolidayEvents].forEach((ev) => {
+      if (!ev?.id) return;
+      byId.set(String(ev.id), ev);
+    });
+    return Array.from(byId.values());
+  }, [plannerDate, calendarDataCache, calendarEvents, plannerHolidaysCache, plannerSpilloverEventsByDate, plannerExclusionsCache]);
 
   const renderPlannerContent = () => {
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
@@ -9673,9 +9873,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           childIds: propSelectedCalendarChildren && propSelectedCalendarChildren.length > 0 ? propSelectedCalendarChildren : null,
           eventTypes: propSelectedEventTypes && propSelectedEventTypes.length > 0 ? propSelectedEventTypes : null,
         }}
+        plannerHolidaysCache={plannerHolidaysCache}
+        plannerExclusions={plannerExclusionsCache}
         onEventSelect={(event) => {
           const isPublicHoliday = isReadOnlyPublicHolidayEvent(event);
-          if (isPublicHoliday) return;
+          const isSyntheticExclusion = isSyntheticPlannerExclusionEvent(event);
+          if (isPublicHoliday || isSyntheticExclusion) return;
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             const hasActiveConflictContext =
               conflictBanner.visible &&

@@ -2767,6 +2767,54 @@ export default function TaskCreateModal({
 
     // Store allowOverlaps in a variable that will be used in the RPC call
     const shouldAllowOverlaps = allowOverlaps || (skipConflictValidation && conflictWarning !== null);
+    const plannerExclusionType = normalizeExclusionTypeForEvent(eventType);
+    const exclusionStartDate = plannerExclusionType ? (toYmd(dueDate) || toYmd(new Date())) : null;
+    const exclusionEndDate = plannerExclusionType
+      ? (plannerExclusionType === 'break'
+        ? (toYmd(eventEndDate) || exclusionStartDate)
+        : exclusionStartDate)
+      : null;
+    const exclusionLabel = plannerExclusionType
+      ? (title.trim() || (plannerExclusionType === 'break' ? 'Break' : 'Day off'))
+      : '';
+    const normalizedStart = plannerExclusionType ? parseYmdDate(exclusionStartDate) : null;
+    const normalizedEnd = plannerExclusionType ? parseYmdDate(exclusionEndDate) : null;
+    let optimisticExclusionEventId = null;
+
+    if (plannerExclusionType && normalizedStart && normalizedEnd && normalizedEnd < normalizedStart) {
+      setValidationErrors((prev) => ({
+        ...prev,
+        endDate: 'End date must be on or after start date',
+      }));
+      return;
+    }
+
+    if (plannerExclusionType && Platform.OS === 'web' && typeof window !== 'undefined') {
+      optimisticExclusionEventId = `optimistic-exclusion-${plannerExclusionType}-${exclusionStartDate}-${exclusionEndDate}-${Date.now()}`;
+      const optimisticStartTs = new Date(`${exclusionStartDate}T00:00:00`).toISOString();
+      const optimisticEndTs = new Date(`${exclusionEndDate}T23:59:59`).toISOString();
+      window.dispatchEvent(new CustomEvent('eventCreated', {
+        detail: {
+          event: {
+            id: optimisticExclusionEventId,
+            family_id: familyId || null,
+            title: exclusionLabel,
+            status: 'scheduled',
+            source: 'planner_exclusion',
+            event_type: plannerExclusionType === 'break' ? 'Break' : 'Day Off',
+            holiday_type: plannerExclusionType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY',
+            start_ts: optimisticStartTs,
+            end_ts: optimisticEndTs,
+            start_local: '00:00',
+            end_local: '23:59',
+            date_local: exclusionStartDate,
+            child_id: null,
+            child_ids: [],
+          },
+          isBacklog: false,
+        },
+      }));
+    }
 
     setSubmitting(true);
     try {
@@ -2774,6 +2822,10 @@ export default function TaskCreateModal({
       // This ensures we use the exact family_id that RLS expects
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) {
+        if (optimisticExclusionEventId && Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: optimisticExclusionEventId } }));
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        }
         toast.push('User not authenticated', 'error');
         setSubmitting(false);
         return;
@@ -2786,40 +2838,30 @@ export default function TaskCreateModal({
         .single();
 
       if (profileError || !profile?.family_id) {
+        if (optimisticExclusionEventId && Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: optimisticExclusionEventId } }));
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        }
         toast.push('Failed to fetch family information', 'error');
         setSubmitting(false);
         return;
       }
 
       const userFamilyId = profile.family_id;
-      const plannerExclusionType = normalizeExclusionTypeForEvent(eventType);
       if (plannerExclusionType) {
         // Day Off / Break are planning exclusions and should never be blocked by event overlap checks.
         setConflictWarningSafely(null);
         const schoolYearLabel = resolveSchoolYearLabelForDate(dueDate instanceof Date ? dueDate : new Date());
-        const exclusionStartDate = toYmd(dueDate) || toYmd(new Date());
-        const exclusionEndDate = plannerExclusionType === 'break'
-          ? (toYmd(eventEndDate) || exclusionStartDate)
-          : exclusionStartDate;
-        const normalizedStart = parseYmdDate(exclusionStartDate);
-        const normalizedEnd = parseYmdDate(exclusionEndDate);
-        if (normalizedStart && normalizedEnd && normalizedEnd < normalizedStart) {
-          setValidationErrors((prev) => ({
-            ...prev,
-            endDate: 'End date must be on or after start date',
-          }));
-          setSubmitting(false);
-          return;
-        }
-
-        const exclusionLabel = title.trim()
-          || (plannerExclusionType === 'break' ? 'Break' : 'Day off');
         const { data: currentExclusions, error: exclusionsError } = await getFamilyExclusions(
           userFamilyId,
           'family_default',
           schoolYearLabel
         );
         if (exclusionsError) {
+          if (optimisticExclusionEventId && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: optimisticExclusionEventId } }));
+            window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+          }
           toast.push(exclusionsError?.message || 'Failed to load planning exclusions', 'error');
           setSubmitting(false);
           return;
@@ -2842,6 +2884,10 @@ export default function TaskCreateModal({
             is_active: true,
           });
           if (updateError) {
+            if (optimisticExclusionEventId && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: optimisticExclusionEventId } }));
+              window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+            }
             toast.push(updateError?.message || 'Failed to update planning exclusion', 'error');
             setSubmitting(false);
             return;
@@ -2875,6 +2921,10 @@ export default function TaskCreateModal({
             if (!isSourceConstraint) break;
           }
           if (addError) {
+            if (optimisticExclusionEventId && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: optimisticExclusionEventId } }));
+              window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+            }
             toast.push(addError?.message || 'Failed to save planning exclusion', 'error');
             setSubmitting(false);
             return;
@@ -3695,6 +3745,10 @@ export default function TaskCreateModal({
       // Reset shouldAutoAdjust flag
       setShouldAutoAdjust(false);
     } catch (error) {
+      if (optimisticExclusionEventId && Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('eventDeleted', { detail: { eventId: optimisticExclusionEventId } }));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+      }
       toast.push(`Failed to create task: ${error.message || 'Unknown error'}`, 'error');
     } finally {
       setSubmitting(false);

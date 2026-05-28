@@ -63,9 +63,10 @@ export default function EventModal({
   const isHolidayEvent = (id, initial) => {
     const holidayType = String(initial?.holiday_type || initial?.holidayType || '').toUpperCase();
     if (holidayType === 'GLOBAL_HOLIDAY') return true;
-    // Legacy synthetic public-holiday rows use "holiday-*" ids and may omit holiday_type.
-    // If holiday_type is explicitly custom, keep editable.
-    if (!holidayType && id && typeof id === 'string' && id.startsWith('holiday-')) return true;
+    const source = String(initial?.source || initial?.data?.source || '').toLowerCase();
+    if (source === 'planner_exclusion') return true;
+    // Synthetic holiday rows (holiday-*) are not real events-table rows and must stay view-only.
+    if (id && typeof id === 'string' && id.startsWith('holiday-')) return true;
     return false;
   };
   const eventReadOnly = isHolidayEvent(eventId, event) || viewerRole === 'tutor' || denyFamilyEventEdit;

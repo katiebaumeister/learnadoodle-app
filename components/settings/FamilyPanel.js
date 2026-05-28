@@ -238,6 +238,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [showChildLogoutConfirmModal, setShowChildLogoutConfirmModal] = useState(false);
   const [savingOnboardingGoal, setSavingOnboardingGoal] = useState(false);
   const goalDropdownRef = useRef(null);
+  const onboardingGoalHydratedForFamilyRef = useRef(null);
+  const prefetchedAvatarUrisRef = useRef(new Set());
   const coursesSchoolYearDropdownRef = useRef(null);
   const lastProfileSaveRef = useRef(0);
   const lastNotificationToastAtRef = useRef(0);
@@ -611,6 +613,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         try {
           const prevFingerprint = JSON.stringify({
             id: prev?.id || null,
+            default_planning_mode: prev?.default_planning_mode ?? null,
             child_invite_summaries: prev?.child_invite_summaries || null,
             pending_parent_invites: prev?.pending_parent_invites || [],
             role: prev?.role || null,
@@ -618,6 +621,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           });
           const nextFingerprint = JSON.stringify({
             id: next?.id || null,
+            default_planning_mode: next?.default_planning_mode ?? null,
             child_invite_summaries: next?.child_invite_summaries || null,
             pending_parent_invites: next?.pending_parent_invites || [],
             role: next?.role || null,
@@ -653,6 +657,41 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       setFamilyId(propFamilyId);
     }
   }, [propFamilyId]);
+
+  useEffect(() => {
+    const fid = family?.id || familyId || propFamilyId;
+    if (!fid || !user?.id) return;
+    if (onboardingGoalHydratedForFamilyRef.current === String(fid)) return;
+    onboardingGoalHydratedForFamilyRef.current = String(fid);
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('family')
+          .select('id, default_planning_mode')
+          .eq('id', fid)
+          .maybeSingle();
+        if (cancelled || error || !data) return;
+        const resolvedMode = data.default_planning_mode ?? null;
+        setFamily((prev) => {
+          if (prev?.id && String(prev.id) !== String(fid)) return prev;
+          const currentMode = prev?.default_planning_mode ?? null;
+          if (prev && currentMode === resolvedMode) return prev;
+          return {
+            ...(prev || {}),
+            id: prev?.id || fid,
+            default_planning_mode: resolvedMode,
+          };
+        });
+      } catch (_) {
+        // Best-effort hydration only; keep UI functional if this lookup fails.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [family?.id, familyId, propFamilyId, user?.id]);
 
   // Load children directly from Supabase (including archived) so everyone shows on Family page
   useEffect(() => {
@@ -1715,7 +1754,44 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         .filter((invite) => invite.id || invite.email)
     : [];
   const latestPendingParentInvite = pendingParentInvites[0] || null;
-  const children = (childrenFromDb != null ? childrenFromDb : family?.children || []);
+  const children = useMemo(() => {
+    const baseChildren = childrenFromDb != null ? childrenFromDb : (family?.children || []);
+    const byId = new Map(
+      (familyChildrenForSubjectDots || [])
+        .filter((child) => child?.id != null)
+        .map((child) => [String(child.id), child])
+    );
+    return (baseChildren || []).map((child) => {
+      const key = child?.id != null ? String(child.id) : null;
+      const merged = key ? byId.get(key) : null;
+      if (!merged) return child;
+      return {
+        ...child,
+        ...merged,
+        id: child?.id ?? merged?.id,
+      };
+    });
+  }, [childrenFromDb, family?.children, familyChildrenForSubjectDots]);
+
+  useEffect(() => {
+    if (!Array.isArray(children) || children.length === 0) return;
+    if (typeof Image?.prefetch !== 'function') return;
+
+    const urisToPrefetch = [];
+    children.forEach((child) => {
+      const source = sourceForChild(child);
+      const uri = source && typeof source === 'object' ? source.uri : null;
+      if (typeof uri !== 'string') return;
+      const trimmed = uri.trim();
+      if (!trimmed || (!trimmed.startsWith('https://') && !trimmed.startsWith('http://'))) return;
+      if (prefetchedAvatarUrisRef.current.has(trimmed)) return;
+      prefetchedAvatarUrisRef.current.add(trimmed);
+      urisToPrefetch.push(trimmed);
+    });
+
+    if (urisToPrefetch.length === 0) return;
+    Promise.allSettled(urisToPrefetch.map((uri) => Image.prefetch(uri))).catch(() => {});
+  }, [children]);
 
   const openIdCardModal = (role, candidates) => {
     if (!candidates || candidates.length === 0) {
@@ -7253,6 +7329,7 @@ function createStyles(tokens) {
     },
     profileReadOnlyValue: {
       minHeight: SettingsLayout.rowHeight,
+      width: '100%',
       paddingHorizontal: 16,
       borderRadius: 12,
       borderWidth: 1,
@@ -7283,7 +7360,7 @@ function createStyles(tokens) {
     profileGoalDropdownWrap: {
       marginTop: 0,
       position: 'relative',
-      alignSelf: 'flex-start',
+      width: '100%',
       zIndex: 120,
     },
     profileGoalDropdownMenu: {

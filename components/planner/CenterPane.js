@@ -49,6 +49,8 @@ export default function CenterPane({
   preloadedBacklogEvents = null,
   preloadedTrashEvents = null,
   plannerAttendanceSnapshot = null,
+  plannerHolidaysCache = {},
+  plannerExclusions = [],
   /** Tutor / observer: view events, no drag-create-complete ownership */
   readOnly = false,
 }) {
@@ -328,6 +330,8 @@ export default function CenterPane({
               familyId={familyId}
               preloadedBacklogEvents={preloadedBacklogEvents}
               preloadedTrashEvents={preloadedTrashEvents}
+              plannerHolidaysCache={plannerHolidaysCache}
+              plannerExclusions={plannerExclusions}
             />
           )}
           {/* Web: keep mounted while on other planner modes so prefetch hydrates before first open (no blank flash). */}
