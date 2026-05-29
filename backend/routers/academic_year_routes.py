@@ -55,8 +55,8 @@ def _is_missing_rpc_error(exc: Exception) -> bool:
 
 def _resolve_family_timezone(supabase, family_id: Optional[str], fallback: str = "UTC") -> str:
     """
-    Resolve family timezone via stable RPC instead of selecting family.timezone directly.
-    This avoids repeated DB errors when older schemas don't include that column.
+    Resolve family timezone via stable RPC.
+    If the RPC is missing in a target environment, disable repeated attempts and use fallback.
     """
     fid = str(family_id or "").strip()
     if not fid:
