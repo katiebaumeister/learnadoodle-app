@@ -132,6 +132,20 @@ function clampAssignmentsForRail(rows) {
     .slice(0, RAIL_ASSIGNMENTS_MAX);
 }
 
+function setRightRailDebug(payload) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  try {
+    const detail = {
+      ...payload,
+      at: new Date().toISOString(),
+    };
+    window.__LD_RIGHT_RAIL_DEBUG__ = detail;
+    window.dispatchEvent(new CustomEvent('ldRightRailDebug', { detail }));
+  } catch (_) {
+    // no-op debug path
+  }
+}
+
 export default function ChildHomeRightRail({ familyId, childId }) {
   const toast = useToast();
   const session = useSession();
@@ -180,11 +194,19 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       setLoadingAssignments(false);
       setLoadingUpcomingEvents(!(snapshot.data.upcomingLoaded === true));
       setUpcomingLoaded(snapshot.data.upcomingLoaded === true);
+      setRightRailDebug({
+        phase: 'hydrate_cache',
+        fresh: snapshot.fresh === true,
+        assignments: Array.isArray(snapshot.data.assignments) ? snapshot.data.assignments.length : 0,
+        upcomingEvents: Array.isArray(snapshot.data.upcomingEvents) ? snapshot.data.upcomingEvents.length : 0,
+      });
       if (!snapshot.fresh) {
+        setRightRailDebug({ phase: 'cache_stale_refresh_start' });
         loadData({ includeUpcoming: selectedSectionRef.current === 'coming_up', silent: true });
       }
       return;
     }
+    setRightRailDebug({ phase: 'no_cache_initial_load' });
     loadData({ includeUpcoming: selectedSectionRef.current === 'coming_up', silent: false });
   }, [sessionLoading, familyId, childId]);
 
@@ -314,9 +336,21 @@ export default function ChildHomeRightRail({ familyId, childId }) {
               ms: Date.now() - startedAt,
               rows: lateRows.length,
             });
+            setRightRailDebug({
+              phase: 'assignments_late_loaded',
+              source: 'legacy_rpc_late',
+              ms: Date.now() - startedAt,
+              rows: lateRows.length,
+            });
           })
           .catch(() => {});
         console.log('[RightRail] assignments timeout', {
+          source: 'legacy_rpc_timeout',
+          ms: Date.now() - startedAt,
+          rows: 0,
+        });
+        setRightRailDebug({
+          phase: 'assignments_timeout',
           source: 'legacy_rpc_timeout',
           ms: Date.now() - startedAt,
           rows: 0,
@@ -335,6 +369,12 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     // Paint immediately from the first successful response.
     setAssignments(baseRows);
     console.log('[RightRail] assignments loaded', {
+      source: loadSource,
+      ms: Date.now() - startedAt,
+      rows: baseRows.length,
+    });
+    setRightRailDebug({
+      phase: 'assignments_loaded',
       source: loadSource,
       ms: Date.now() - startedAt,
       rows: baseRows.length,
