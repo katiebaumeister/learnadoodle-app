@@ -148,10 +148,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       setUpcomingLoaded(snapshot.data.upcomingLoaded === true);
       if (!snapshot.fresh) {
         loadData({ includeUpcoming: selectedSection === 'coming_up', silent: true });
-      } else {
-        setTimeout(() => {
-          loadDataRef.current({ includeUpcoming: false, silent: true });
-        }, 1200);
       }
       return;
     }
@@ -195,32 +191,13 @@ export default function ChildHomeRightRail({ familyId, childId }) {
 
   const loadAssignments = async ({ silent = false } = {}) => {
     if (!silent) setLoadingAssignments(true);
-    let baseRows = [];
-    try {
-      const { data: railRows, error: railErr } = await supabase.rpc('get_assignments_rail', {
-        p_child_id: childId,
-        p_limit: 120,
-      });
-      if (!railErr && Array.isArray(railRows)) {
-        baseRows = railRows;
-      } else {
-        const { data, error } = await getAssignments(childId);
-        if (error) {
-          setAssignments([]);
-          if (!silent) setLoadingAssignments(false);
-          return;
-        }
-        baseRows = Array.isArray(data) ? data : [];
-      }
-    } catch (_) {
-      const { data, error } = await getAssignments(childId);
-      if (error) {
-        setAssignments([]);
-        if (!silent) setLoadingAssignments(false);
-        return;
-      }
-      baseRows = Array.isArray(data) ? data : [];
+    const { data, error } = await getAssignments(childId);
+    if (error) {
+      setAssignments([]);
+      if (!silent) setLoadingAssignments(false);
+      return;
     }
+    const baseRows = Array.isArray(data) ? data : [];
     if (baseRows.length === 0) {
       setAssignments([]);
       if (!silent) setLoadingAssignments(false);
