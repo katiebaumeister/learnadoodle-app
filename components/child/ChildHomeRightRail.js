@@ -111,6 +111,10 @@ function timeoutAfter(ms = 900) {
   });
 }
 
+function isTimeoutError(error) {
+  return String(error?.message || '').toLowerCase() === 'timeout';
+}
+
 export default function ChildHomeRightRail({ familyId, childId }) {
   const toast = useToast();
   const session = useSession();
@@ -254,13 +258,32 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     }
 
     if (!Array.isArray(baseRows) || baseRows.length === 0) {
-      const { data, error } = await legacyPromise;
-      if (error) {
+      try {
+        const { data, error } = await Promise.race([legacyPromise, timeoutAfter(1400)]);
+        if (error) {
+          setAssignments([]);
+          if (!silent) setLoadingAssignments(false);
+          return;
+        }
+        baseRows = Array.isArray(data) ? data : [];
+      } catch (err) {
+        if (isTimeoutError(err)) {
+          // Don't block the rail on long-tail backend latency.
+          // Keep whatever we already have visible and apply the slow result later.
+          if (!silent) setLoadingAssignments(false);
+          legacyPromise
+            .then(({ data, error }) => {
+              if (error) return;
+              const lateRows = Array.isArray(data) ? data : [];
+              if (lateRows.length > 0) setAssignments(lateRows);
+            })
+            .catch(() => {});
+          return;
+        }
         setAssignments([]);
         if (!silent) setLoadingAssignments(false);
         return;
       }
-      baseRows = Array.isArray(data) ? data : [];
     }
 
     if (baseRows.length === 0) {
