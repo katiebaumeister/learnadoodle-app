@@ -13,6 +13,12 @@ DEFAULT_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.events.readonly",
 ]
+_FAMILY_TZ_RPC_AVAILABLE = True
+
+
+def _is_missing_rpc_error(exc: Exception) -> bool:
+    msg = str(exc or "").lower()
+    return "get_family_timezone" in msg and ("404" in msg or "not found" in msg)
 
 
 def _get_google_config() -> Tuple[str, str, str]:
@@ -159,6 +165,9 @@ def _build_event_payload(event: Dict[str, Any], timezone_name: str) -> Dict[str,
 
 def _get_family_timezone(family_id: str) -> str:
     supabase = get_admin_client()
+    global _FAMILY_TZ_RPC_AVAILABLE
+    if not _FAMILY_TZ_RPC_AVAILABLE:
+        return "UTC"
     try:
         resp = supabase.rpc("get_family_timezone", {"_family_id": family_id}).execute()
         data = getattr(resp, "data", None)
@@ -177,6 +186,8 @@ def _get_family_timezone(family_id: str) -> str:
                 if tz:
                     return tz
     except Exception as exc:  # noqa: BLE001
+        if _is_missing_rpc_error(exc):
+            _FAMILY_TZ_RPC_AVAILABLE = False
         log_event("google.calendar.timezone_lookup_failed", family_id=family_id, error=str(exc))
     return "UTC"
 

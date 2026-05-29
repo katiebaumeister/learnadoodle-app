@@ -45,6 +45,12 @@ from services.holiday_providers import fetch_global_holidays, HolidayProvider
 import uuid
 
 router = APIRouter(prefix="/api/academic_year", tags=["academic_year"])
+_FAMILY_TZ_RPC_AVAILABLE = True
+
+
+def _is_missing_rpc_error(exc: Exception) -> bool:
+    msg = str(exc or "").lower()
+    return "get_family_timezone" in msg and ("404" in msg or "not found" in msg)
 
 
 def _resolve_family_timezone(supabase, family_id: Optional[str], fallback: str = "UTC") -> str:
@@ -54,6 +60,9 @@ def _resolve_family_timezone(supabase, family_id: Optional[str], fallback: str =
     """
     fid = str(family_id or "").strip()
     if not fid:
+        return fallback
+    global _FAMILY_TZ_RPC_AVAILABLE
+    if not _FAMILY_TZ_RPC_AVAILABLE:
         return fallback
     try:
         tz_resp = supabase.rpc("get_family_timezone", {"_family_id": fid}).execute()
@@ -72,8 +81,10 @@ def _resolve_family_timezone(supabase, family_id: Optional[str], fallback: str =
         tz_name = str(tz_value or "").strip()
         if tz_name:
             return tz_name
-    except Exception:
-        pass
+    except Exception as exc:
+        if _is_missing_rpc_error(exc):
+            _FAMILY_TZ_RPC_AVAILABLE = False
+        log_event("academic_year.family_timezone_lookup_failed", family_id=fid, error=str(exc))
     return fallback
 
 
