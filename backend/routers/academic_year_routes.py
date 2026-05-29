@@ -47,6 +47,36 @@ import uuid
 router = APIRouter(prefix="/api/academic_year", tags=["academic_year"])
 
 
+def _resolve_family_timezone(supabase, family_id: Optional[str], fallback: str = "UTC") -> str:
+    """
+    Resolve family timezone via stable RPC instead of selecting family.timezone directly.
+    This avoids repeated DB errors when older schemas don't include that column.
+    """
+    fid = str(family_id or "").strip()
+    if not fid:
+        return fallback
+    try:
+        tz_resp = supabase.rpc("get_family_timezone", {"_family_id": fid}).execute()
+        data = getattr(tz_resp, "data", None)
+        tz_value = None
+        if isinstance(data, str):
+            tz_value = data
+        elif isinstance(data, dict):
+            tz_value = data.get("timezone") or data.get("get_family_timezone")
+        elif isinstance(data, list) and len(data) > 0:
+            first = data[0]
+            if isinstance(first, str):
+                tz_value = first
+            elif isinstance(first, dict):
+                tz_value = first.get("timezone") or first.get("get_family_timezone")
+        tz_name = str(tz_value or "").strip()
+        if tz_name:
+            return tz_name
+    except Exception:
+        pass
+    return fallback
+
+
 # ============================================================
 # Request/Response Models
 # ============================================================
@@ -1865,12 +1895,7 @@ async def fix_target_gap(
         if getattr(body, "timezone", None) and (body.timezone or "").strip():
             fix_gap_timezone_name = (body.timezone or "").strip()
         if not fix_gap_timezone_name:
-            try:
-                tz_resp = supabase.table("family").select("timezone").eq("id", family_id).maybe_single().execute()
-                if getattr(tz_resp, "data", None) and (tz_resp.data.get("timezone") or "").strip():
-                    fix_gap_timezone_name = (tz_resp.data.get("timezone") or "").strip()
-            except Exception:
-                pass
+            fix_gap_timezone_name = _resolve_family_timezone(supabase, family_id, "UTC")
         if not fix_gap_timezone_name:
             fix_gap_timezone_name = "UTC"
         try:
@@ -6121,12 +6146,7 @@ async def get_event_for_plan_slot(
         supabase = get_admin_client()
         # Family timezone for comparing start_local
         family_tz = "UTC"
-        try:
-            tz_resp = supabase.table("family").select("timezone").eq("id", family_id).maybe_single().execute()
-            if getattr(tz_resp, "data", None) and (tz_resp.data.get("timezone") or "").strip():
-                family_tz = (tz_resp.data.get("timezone") or "").strip()
-        except Exception:
-            pass
+        family_tz = _resolve_family_timezone(supabase, family_id, "UTC")
         # Query events for this plan: same family, academic_year, subject, on this date
         start_str = date_ymd.strip()
         if len(start_str) != 10:
@@ -6594,12 +6614,7 @@ async def _get_academic_year_impl(academic_year_id: str, user: dict):
         if plan_summary and family_id and academic_year_id:
             try:
                 tz_name = "America/New_York"
-                try:
-                    tz_resp = supabase.table("family").select("timezone").eq("id", family_id).maybe_single().execute()
-                    if getattr(tz_resp, "data", None) and (tz_resp.data.get("timezone") or "").strip():
-                        tz_name = (tz_resp.data.get("timezone") or "").strip()
-                except Exception:
-                    pass
+                tz_name = _resolve_family_timezone(supabase, family_id, "America/New_York")
                 local_tz = ZoneInfo(tz_name) if tz_name and tz_name.upper() != "UTC" else ZoneInfo("America/New_York")
                 start_str = plan_summary.start_date if isinstance(plan_summary.start_date, str) else (plan_summary.start_date.isoformat() if hasattr(plan_summary.start_date, "isoformat") else str(plan_summary.start_date))
                 end_str = plan_summary.end_date if isinstance(plan_summary.end_date, str) else (plan_summary.end_date.isoformat() if hasattr(plan_summary.end_date, "isoformat") else str(plan_summary.end_date))
@@ -7242,12 +7257,7 @@ async def apply_to_calendar(
         if getattr(body, "timezone", None) and (body.timezone or "").strip():
             family_tz = (body.timezone or "").strip()
         if not family_tz:
-            try:
-                tz_resp = supabase.table("family").select("timezone").eq("id", body.family_id).maybe_single().execute()
-                if getattr(tz_resp, "data", None) and (tz_resp.data.get("timezone") or "").strip():
-                    family_tz = (tz_resp.data.get("timezone") or "").strip()
-            except Exception:
-                pass
+            family_tz = _resolve_family_timezone(supabase, body.family_id, "UTC")
         if not family_tz:
             family_tz = "UTC"
             print("[BACKEND] apply_to_calendar: no timezone from client or family; using UTC (plan times may show wrong)", flush=True)
