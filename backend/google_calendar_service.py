@@ -159,17 +159,26 @@ def _build_event_payload(event: Dict[str, Any], timezone_name: str) -> Dict[str,
 
 def _get_family_timezone(family_id: str) -> str:
     supabase = get_admin_client()
-    resp = (
-        supabase
-        .table("family")
-        .select("timezone")
-        .eq("id", family_id)
-        .maybe_single()
-        .execute()
-    )
-    data = getattr(resp, "data", None)
-    tz = data.get("timezone") if data else None
-    return tz or "UTC"
+    try:
+        resp = supabase.rpc("get_family_timezone", {"_family_id": family_id}).execute()
+        data = getattr(resp, "data", None)
+        if isinstance(data, str) and data.strip():
+            return data.strip()
+        if isinstance(data, dict):
+            tz = (data.get("timezone") or data.get("get_family_timezone") or "").strip()
+            if tz:
+                return tz
+        if isinstance(data, list) and len(data) > 0:
+            first = data[0]
+            if isinstance(first, str) and first.strip():
+                return first.strip()
+            if isinstance(first, dict):
+                tz = (first.get("timezone") or first.get("get_family_timezone") or "").strip()
+                if tz:
+                    return tz
+    except Exception as exc:  # noqa: BLE001
+        log_event("google.calendar.timezone_lookup_failed", family_id=family_id, error=str(exc))
+    return "UTC"
 
 
 def push_event_to_google(credential: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, Any]:
