@@ -102,6 +102,15 @@ function writeRailCacheSnapshot(key, payload) {
   }
 }
 
+function timeoutAfter(ms = 900) {
+  return new Promise((_, reject) => {
+    const timer = setTimeout(() => {
+      clearTimeout(timer);
+      reject(new Error('timeout'));
+    }, ms);
+  });
+}
+
 export default function ChildHomeRightRail({ familyId, childId }) {
   const toast = useToast();
   const session = useSession();
@@ -191,13 +200,69 @@ export default function ChildHomeRightRail({ familyId, childId }) {
 
   const loadAssignments = async ({ silent = false } = {}) => {
     if (!silent) setLoadingAssignments(true);
-    const { data, error } = await getAssignments(childId);
-    if (error) {
-      setAssignments([]);
-      if (!silent) setLoadingAssignments(false);
-      return;
+    const legacyPromise = getAssignments(childId);
+    const quickRailPromise = (async () => {
+      const { data, error } = await supabase.rpc('get_assignments_rail', {
+        p_child_id: childId,
+        p_limit: 120,
+      });
+      if (error || !Array.isArray(data)) {
+        throw error || new Error('rail rpc unavailable');
+      }
+      return data;
+    })();
+    const quickDirectPromise = (async () => {
+      const { data, error } = await supabase
+        .from('assignments')
+        .select(`
+          id,
+          child_id,
+          title,
+          due_date,
+          status,
+          review_status,
+          review_feedback,
+          reviewed_at,
+          linked_event_ids,
+          need_help,
+          help_message_log,
+          assigned_by,
+          submitted_at,
+          created_at,
+          updated_at
+        `)
+        .eq('child_id', childId)
+        .order('updated_at', { ascending: false })
+        .limit(120);
+      if (error || !Array.isArray(data)) {
+        throw error || new Error('direct query unavailable');
+      }
+      return data;
+    })();
+
+    let baseRows = [];
+    try {
+      const quickRows = await Promise.race([
+        Promise.any([quickRailPromise, quickDirectPromise]),
+        timeoutAfter(900),
+      ]);
+      if (Array.isArray(quickRows)) {
+        baseRows = quickRows;
+      }
+    } catch (_) {
+      // fall through to legacy RPC
     }
-    const baseRows = Array.isArray(data) ? data : [];
+
+    if (!Array.isArray(baseRows) || baseRows.length === 0) {
+      const { data, error } = await legacyPromise;
+      if (error) {
+        setAssignments([]);
+        if (!silent) setLoadingAssignments(false);
+        return;
+      }
+      baseRows = Array.isArray(data) ? data : [];
+    }
+
     if (baseRows.length === 0) {
       setAssignments([]);
       if (!silent) setLoadingAssignments(false);
