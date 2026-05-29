@@ -115,6 +115,10 @@ function isTimeoutError(error) {
   return String(error?.message || '').toLowerCase() === 'timeout';
 }
 
+async function withTimeout(promise, ms = 900) {
+  return Promise.race([promise, timeoutAfter(ms)]);
+}
+
 export default function ChildHomeRightRail({ familyId, childId }) {
   const toast = useToast();
   const session = useSession();
@@ -131,6 +135,10 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   const [helpModalEvent, setHelpModalEvent] = useState(null);
   const [linkedEventsById, setLinkedEventsById] = useState(() => initialRailCache.data?.linkedEventsById || {});
   const railCacheKeyRef = useRef(initialRailCache.key);
+  const selectedSectionRef = useRef(selectedSection);
+  const upcomingLoadedRef = useRef(upcomingLoaded);
+  selectedSectionRef.current = selectedSection;
+  upcomingLoadedRef.current = upcomingLoaded;
 
   const loadData = async ({ includeUpcoming = false, silent = false } = {}) => {
     if (!familyId || !childId) return;
@@ -160,12 +168,12 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       setLoadingUpcomingEvents(!(snapshot.data.upcomingLoaded === true));
       setUpcomingLoaded(snapshot.data.upcomingLoaded === true);
       if (!snapshot.fresh) {
-        loadData({ includeUpcoming: selectedSection === 'coming_up', silent: true });
+        loadData({ includeUpcoming: selectedSectionRef.current === 'coming_up', silent: true });
       }
       return;
     }
-    loadData({ includeUpcoming: selectedSection === 'coming_up', silent: false });
-  }, [sessionLoading, familyId, childId, selectedSection]);
+    loadData({ includeUpcoming: selectedSectionRef.current === 'coming_up', silent: false });
+  }, [sessionLoading, familyId, childId]);
 
   useEffect(() => {
     if (selectedSection !== 'coming_up' || upcomingLoaded || !familyId || !childId) return;
@@ -175,7 +183,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = () => loadDataRef.current({
-      includeUpcoming: selectedSection === 'coming_up' || upcomingLoaded,
+      includeUpcoming: selectedSectionRef.current === 'coming_up' || upcomingLoadedRef.current,
       silent: true,
     });
     window.addEventListener('childAssignmentsNeedRefresh', handler);
@@ -188,7 +196,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       window.removeEventListener('refreshCalendar', handler);
       window.removeEventListener('refreshRightRail', handler);
     };
-  }, [selectedSection, upcomingLoaded]);
+  }, []);
 
   useEffect(() => {
     const key = railCacheKeyRef.current || railCacheKey(familyId, childId);
@@ -204,62 +212,61 @@ export default function ChildHomeRightRail({ familyId, childId }) {
 
   const loadAssignments = async ({ silent = false } = {}) => {
     if (!silent) setLoadingAssignments(true);
-    const legacyPromise = getAssignments(childId);
-    const quickRailPromise = (async () => {
-      const { data, error } = await supabase.rpc('get_assignments_rail', {
-        p_child_id: childId,
-        p_limit: 120,
-      });
-      if (error || !Array.isArray(data)) {
-        throw error || new Error('rail rpc unavailable');
-      }
-      return data;
-    })();
-    const quickDirectPromise = (async () => {
-      const { data, error } = await supabase
-        .from('assignments')
-        .select(`
-          id,
-          child_id,
-          title,
-          due_date,
-          status,
-          review_status,
-          review_feedback,
-          reviewed_at,
-          linked_event_ids,
-          need_help,
-          help_message_log,
-          assigned_by,
-          submitted_at,
-          created_at,
-          updated_at
-        `)
-        .eq('child_id', childId)
-        .order('updated_at', { ascending: false })
-        .limit(120);
-      if (error || !Array.isArray(data)) {
-        throw error || new Error('direct query unavailable');
-      }
-      return data;
-    })();
-
     let baseRows = [];
     try {
-      const quickRows = await Promise.race([
-        Promise.any([quickRailPromise, quickDirectPromise]),
-        timeoutAfter(900),
-      ]);
-      if (Array.isArray(quickRows)) {
-        baseRows = quickRows;
-      }
+      const railRows = await withTimeout((async () => {
+        const { data, error } = await supabase.rpc('get_assignments_rail', {
+          p_child_id: childId,
+          p_limit: 120,
+        });
+        if (error || !Array.isArray(data)) throw error || new Error('rail rpc unavailable');
+        return data;
+      })(), 800);
+      if (Array.isArray(railRows)) baseRows = railRows;
     } catch (_) {
-      // fall through to legacy RPC
+      // fall through to direct quick query
     }
 
     if (!Array.isArray(baseRows) || baseRows.length === 0) {
       try {
-        const { data, error } = await Promise.race([legacyPromise, timeoutAfter(1400)]);
+        const { data, error } = await withTimeout(
+          supabase
+            .from('assignments')
+            .select(`
+              id,
+              child_id,
+              title,
+              due_date,
+              status,
+              review_status,
+              review_feedback,
+              reviewed_at,
+              linked_event_ids,
+              need_help,
+              help_message_log,
+              assigned_by,
+              submitted_at,
+              created_at,
+              updated_at
+            `)
+            .eq('child_id', childId)
+            .order('updated_at', { ascending: false })
+            .limit(120),
+          800
+        );
+        if (error) {
+          throw error;
+        }
+        baseRows = Array.isArray(data) ? data : [];
+      } catch (_) {
+        // fall through to legacy path
+      }
+    }
+
+    if (!Array.isArray(baseRows) || baseRows.length === 0) {
+      const legacyPromise = getAssignments(childId);
+      try {
+        const { data, error } = await withTimeout(legacyPromise, 1200);
         if (error) {
           setAssignments([]);
           if (!silent) setLoadingAssignments(false);
@@ -267,21 +274,21 @@ export default function ChildHomeRightRail({ familyId, childId }) {
         }
         baseRows = Array.isArray(data) ? data : [];
       } catch (err) {
-        if (isTimeoutError(err)) {
-          // Don't block the rail on long-tail backend latency.
-          // Keep whatever we already have visible and apply the slow result later.
+        if (!isTimeoutError(err)) {
+          setAssignments([]);
           if (!silent) setLoadingAssignments(false);
-          legacyPromise
-            .then(({ data, error }) => {
-              if (error) return;
-              const lateRows = Array.isArray(data) ? data : [];
-              if (lateRows.length > 0) setAssignments(lateRows);
-            })
-            .catch(() => {});
           return;
         }
-        setAssignments([]);
+        // Don't block the rail on long-tail backend latency.
+        // Keep whatever we already have visible and apply the slow result later.
         if (!silent) setLoadingAssignments(false);
+        legacyPromise
+          .then(({ data, error }) => {
+            if (error) return;
+            const lateRows = Array.isArray(data) ? data : [];
+            if (lateRows.length > 0) setAssignments(lateRows);
+          })
+          .catch(() => {});
         return;
       }
     }
@@ -291,8 +298,8 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       if (!silent) setLoadingAssignments(false);
       return;
     }
-    // Paint immediately from the primary RPC response so first load is not
-    // blocked by enrichment queries.
+
+    // Paint immediately from the first successful response.
     setAssignments(baseRows);
     if (!silent) setLoadingAssignments(false);
   };
