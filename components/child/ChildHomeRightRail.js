@@ -30,6 +30,7 @@ const TABS = [
 
 const LIMIT = 8;
 const RAIL_CACHE_TTL_MS = 10 * 60 * 1000;
+const RAIL_ASSIGNMENTS_MAX = 180;
 const railMemoryCache = new Map();
 
 function railCacheKey(familyId, childId) {
@@ -117,6 +118,18 @@ function isTimeoutError(error) {
 
 async function withTimeout(promise, ms = 900) {
   return Promise.race([promise, timeoutAfter(ms)]);
+}
+
+function clampAssignmentsForRail(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length <= RAIL_ASSIGNMENTS_MAX) return list;
+  return [...list]
+    .sort(
+      (a, b) =>
+        new Date(b?.updated_at || b?.created_at || 0).getTime() -
+        new Date(a?.updated_at || a?.created_at || 0).getTime()
+    )
+    .slice(0, RAIL_ASSIGNMENTS_MAX);
 }
 
 export default function ChildHomeRightRail({ familyId, childId }) {
@@ -211,6 +224,8 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   }, [familyId, childId, assignments, upcomingEvents, linkedEventsById, loadingAssignments, upcomingLoaded]);
 
   const loadAssignments = async ({ silent = false } = {}) => {
+    const startedAt = Date.now();
+    let loadSource = 'unknown';
     if (!silent) setLoadingAssignments(true);
     let baseRows = [];
     try {
@@ -222,7 +237,10 @@ export default function ChildHomeRightRail({ familyId, childId }) {
         if (error || !Array.isArray(data)) throw error || new Error('rail rpc unavailable');
         return data;
       })(), 800);
-      if (Array.isArray(railRows)) baseRows = railRows;
+      if (Array.isArray(railRows)) {
+        baseRows = railRows;
+        loadSource = 'rail_rpc';
+      }
     } catch (_) {
       // fall through to direct quick query
     }
@@ -233,6 +251,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
           supabase
             .from('assignments')
             .select(`
+              family_id,
               id,
               child_id,
               title,
@@ -250,6 +269,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
               updated_at
             `)
             .eq('child_id', childId)
+            .eq('family_id', familyId)
             .order('updated_at', { ascending: false })
             .limit(120),
           800
@@ -258,6 +278,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
           throw error;
         }
         baseRows = Array.isArray(data) ? data : [];
+        loadSource = 'direct_query';
       } catch (_) {
         // fall through to legacy path
       }
@@ -272,7 +293,8 @@ export default function ChildHomeRightRail({ familyId, childId }) {
           if (!silent) setLoadingAssignments(false);
           return;
         }
-        baseRows = Array.isArray(data) ? data : [];
+        baseRows = clampAssignmentsForRail(data);
+        loadSource = 'legacy_rpc';
       } catch (err) {
         if (!isTimeoutError(err)) {
           setAssignments([]);
@@ -285,14 +307,25 @@ export default function ChildHomeRightRail({ familyId, childId }) {
         legacyPromise
           .then(({ data, error }) => {
             if (error) return;
-            const lateRows = Array.isArray(data) ? data : [];
+            const lateRows = clampAssignmentsForRail(data);
             if (lateRows.length > 0) setAssignments(lateRows);
+            console.log('[RightRail] assignments late-loaded', {
+              source: 'legacy_rpc_late',
+              ms: Date.now() - startedAt,
+              rows: lateRows.length,
+            });
           })
           .catch(() => {});
+        console.log('[RightRail] assignments timeout', {
+          source: 'legacy_rpc_timeout',
+          ms: Date.now() - startedAt,
+          rows: 0,
+        });
         return;
       }
     }
 
+    baseRows = clampAssignmentsForRail(baseRows);
     if (baseRows.length === 0) {
       setAssignments([]);
       if (!silent) setLoadingAssignments(false);
@@ -301,6 +334,11 @@ export default function ChildHomeRightRail({ familyId, childId }) {
 
     // Paint immediately from the first successful response.
     setAssignments(baseRows);
+    console.log('[RightRail] assignments loaded', {
+      source: loadSource,
+      ms: Date.now() - startedAt,
+      rows: baseRows.length,
+    });
     if (!silent) setLoadingAssignments(false);
   };
 
@@ -367,30 +405,22 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     return [];
   };
 
-  const hasCorrespondence = (assignment) => {
-    const status = String(assignment?.status || '').trim().toLowerCase();
-    const reviewStatus = String(assignment?.review_status || '').trim().toLowerCase();
-    if (assignment?.need_help) return true;
-    if (['submitted', 'accepted', 'reviewed'].includes(status)) return true;
-    if (['needs_revision', 'reviewed', 'approved'].includes(reviewStatus)) return true;
-    return parseHelpLogEntries(assignment).length > 0;
-  };
-
-  const isAssignmentLinkedEventActive = (assignment) => {
+  function linkedEventIdForAssignment(assignment) {
     const raw = assignment?.linked_event_ids;
-    let linkedEventId = null;
-    if (Array.isArray(raw) && raw.length > 0) {
-      linkedEventId = String(raw[0]);
-    } else if (typeof raw === 'string') {
+    if (Array.isArray(raw) && raw.length > 0) return String(raw[0]);
+    if (typeof raw === 'string') {
       try {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          linkedEventId = String(parsed[0]);
-        }
+        if (Array.isArray(parsed) && parsed.length > 0) return String(parsed[0]);
       } catch (_) {
-        linkedEventId = null;
+        return null;
       }
     }
+    return null;
+  }
+
+  const isAssignmentLinkedEventActive = (assignment) => {
+    const linkedEventId = linkedEventIdForAssignment(assignment);
     if (!linkedEventId) return true;
     const linkedEvent = linkedEventsById[String(linkedEventId)];
     if (!linkedEvent) {
@@ -404,14 +434,27 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   };
 
   const correspondenceAssignments = useMemo(() => {
-    return (assignments || [])
-      .filter((a) => hasCorrespondence(a))
-      .filter((a) => isAssignmentLinkedEventActive(a))
-      .sort(
-        (a, b) =>
-          new Date(b.updated_at || b.created_at || 0).getTime() -
-          new Date(a.updated_at || a.created_at || 0).getTime()
-      );
+    const modeled = (assignments || []).map((assignment) => {
+      const helpEntries = parseHelpLogEntries(assignment);
+      const status = String(assignment?.status || '').trim().toLowerCase();
+      const reviewStatus = String(assignment?.review_status || '').trim().toLowerCase();
+      const hasMessages =
+        assignment?.need_help ||
+        ['submitted', 'accepted', 'reviewed'].includes(status) ||
+        ['needs_revision', 'reviewed', 'approved'].includes(reviewStatus) ||
+        helpEntries.length > 0;
+      return {
+        assignment,
+        hasMessages,
+        updatedTs: new Date(assignment?.updated_at || assignment?.created_at || 0).getTime(),
+      };
+    });
+
+    return modeled
+      .filter((m) => m.hasMessages)
+      .filter((m) => isAssignmentLinkedEventActive(m.assignment))
+      .sort((a, b) => b.updatedTs - a.updatedTs)
+      .map((m) => m.assignment);
   }, [assignments, linkedEventsById]);
 
   useEffect(() => {
@@ -472,20 +515,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     setHelpModalEvent(null);
     setHelpModalAssignment(a);
     setHelpModalOpen(true);
-  };
-
-  const linkedEventIdForAssignment = (assignment) => {
-    const raw = assignment?.linked_event_ids;
-    if (Array.isArray(raw) && raw.length > 0) return String(raw[0]);
-    if (typeof raw === 'string') {
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return String(parsed[0]);
-      } catch (_) {
-        return null;
-      }
-    }
-    return null;
   };
 
   const openSubmitForAssignment = (assignment) => {
