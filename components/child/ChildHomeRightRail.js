@@ -29,25 +29,103 @@ const TABS = [
 ];
 
 const LIMIT = 8;
+const RAIL_CACHE_TTL_MS = 10 * 60 * 1000;
+const railMemoryCache = new Map();
+
+function railCacheKey(familyId, childId) {
+  return `${String(familyId || '').trim()}::${String(childId || '').trim()}`;
+}
+
+function readRailSessionCache(key) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !key) return null;
+  try {
+    const raw = window.sessionStorage.getItem(`ld_child_home_rail_${key}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function readRailPersistentCache(key) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !key) return null;
+  try {
+    const raw = window.localStorage.getItem(`ld_child_home_rail_${key}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function readRailCacheSnapshot(familyId, childId) {
+  const key = railCacheKey(familyId, childId);
+  if (!key.trim()) return { key: null, data: null, fresh: false };
+  const memory = railMemoryCache.get(key) || null;
+  const session = readRailSessionCache(key);
+  const persistent = readRailPersistentCache(key);
+  const data = memory || session || persistent;
+  if (!data) return { key, data: null, fresh: false };
+  const updatedAt = Number(data.updatedAt || 0);
+  const fresh = Date.now() - updatedAt < RAIL_CACHE_TTL_MS;
+  return { key, data, fresh };
+}
+
+function writeRailCacheSnapshot(key, payload) {
+  if (!key) return;
+  const next = {
+    assignments: Array.isArray(payload?.assignments) ? payload.assignments : [],
+    upcomingEvents: Array.isArray(payload?.upcomingEvents) ? payload.upcomingEvents : [],
+    linkedEventsById: payload?.linkedEventsById && typeof payload.linkedEventsById === 'object'
+      ? payload.linkedEventsById
+      : {},
+    assignmentsLoaded: payload?.assignmentsLoaded === true,
+    upcomingLoaded: payload?.upcomingLoaded === true,
+    updatedAt: Date.now(),
+  };
+  railMemoryCache.set(key, next);
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    try {
+      window.sessionStorage.setItem(`ld_child_home_rail_${key}`, JSON.stringify(next));
+    } catch (_) {
+      /* ignore session cache quota errors */
+    }
+    try {
+      window.localStorage.setItem(`ld_child_home_rail_${key}`, JSON.stringify(next));
+    } catch (_) {
+      /* ignore local cache quota errors */
+    }
+  }
+}
 
 export default function ChildHomeRightRail({ familyId, childId }) {
   const toast = useToast();
   const session = useSession();
+  const initialRailCache = readRailCacheSnapshot(familyId, childId);
   const [selectedSection, setSelectedSection] = useState('help');
-  const [assignments, setAssignments] = useState([]);
-  const [upcomingEvents, setUpcomingEvents] = useState([]);
-  const [loadingAssignments, setLoadingAssignments] = useState(true);
-  const [loadingUpcomingEvents, setLoadingUpcomingEvents] = useState(true);
+  const [assignments, setAssignments] = useState(() => initialRailCache.data?.assignments || []);
+  const [upcomingEvents, setUpcomingEvents] = useState(() => initialRailCache.data?.upcomingEvents || []);
+  const [loadingAssignments, setLoadingAssignments] = useState(() => !initialRailCache.data?.assignmentsLoaded);
+  const [loadingUpcomingEvents, setLoadingUpcomingEvents] = useState(() => !initialRailCache.data?.upcomingLoaded);
+  const [upcomingLoaded, setUpcomingLoaded] = useState(() => initialRailCache.data?.upcomingLoaded === true);
   const [linkedEventsLoading, setLinkedEventsLoading] = useState(false);
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [helpModalAssignment, setHelpModalAssignment] = useState(null);
   const [helpModalEvent, setHelpModalEvent] = useState(null);
-  const [linkedEventsById, setLinkedEventsById] = useState({});
+  const [linkedEventsById, setLinkedEventsById] = useState(() => initialRailCache.data?.linkedEventsById || {});
+  const railCacheKeyRef = useRef(initialRailCache.key);
 
-  const loadData = async () => {
+  const loadData = async ({ includeUpcoming = false, silent = false } = {}) => {
     if (!familyId || !childId) return;
     try {
-      await Promise.all([loadAssignments(), loadUpcomingEvents()]);
+      await loadAssignments({ silent });
+      if (includeUpcoming) {
+        await loadUpcomingEvents({ silent });
+      }
     } catch (e) {
       console.error('[ChildHomeRightRail]', e);
     }
@@ -59,12 +137,38 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   const sessionLoading = session?.loading;
   useEffect(() => {
     if (sessionLoading !== false || !familyId || !childId || !session) return;
-    loadData();
-  }, [sessionLoading, familyId, childId]);
+    const snapshot = readRailCacheSnapshot(familyId, childId);
+    railCacheKeyRef.current = snapshot.key;
+    if (snapshot.data) {
+      setAssignments(snapshot.data.assignments || []);
+      setUpcomingEvents(snapshot.data.upcomingEvents || []);
+      setLinkedEventsById(snapshot.data.linkedEventsById || {});
+      setLoadingAssignments(false);
+      setLoadingUpcomingEvents(!(snapshot.data.upcomingLoaded === true));
+      setUpcomingLoaded(snapshot.data.upcomingLoaded === true);
+      if (!snapshot.fresh) {
+        loadData({ includeUpcoming: selectedSection === 'coming_up', silent: true });
+      } else {
+        setTimeout(() => {
+          loadDataRef.current({ includeUpcoming: false, silent: true });
+        }, 1200);
+      }
+      return;
+    }
+    loadData({ includeUpcoming: selectedSection === 'coming_up', silent: false });
+  }, [sessionLoading, familyId, childId, selectedSection]);
+
+  useEffect(() => {
+    if (selectedSection !== 'coming_up' || upcomingLoaded || !familyId || !childId) return;
+    loadUpcomingEvents({ silent: false });
+  }, [selectedSection, upcomingLoaded, familyId, childId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = () => loadDataRef.current();
+    const handler = () => loadDataRef.current({
+      includeUpcoming: selectedSection === 'coming_up' || upcomingLoaded,
+      silent: true,
+    });
     window.addEventListener('childAssignmentsNeedRefresh', handler);
     window.addEventListener('parentAssignmentsNeedRefresh', handler);
     window.addEventListener('refreshCalendar', handler);
@@ -75,59 +179,61 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       window.removeEventListener('refreshCalendar', handler);
       window.removeEventListener('refreshRightRail', handler);
     };
-  }, []);
+  }, [selectedSection, upcomingLoaded]);
 
-  const loadAssignments = async () => {
-    setLoadingAssignments(true);
-    const { data, error } = await getAssignments(childId);
-    if (error) {
-      setAssignments([]);
-      setLoadingAssignments(false);
-      return;
+  useEffect(() => {
+    const key = railCacheKeyRef.current || railCacheKey(familyId, childId);
+    if (!key) return;
+    writeRailCacheSnapshot(key, {
+      assignments,
+      upcomingEvents,
+      linkedEventsById,
+      assignmentsLoaded: !loadingAssignments,
+      upcomingLoaded,
+    });
+  }, [familyId, childId, assignments, upcomingEvents, linkedEventsById, loadingAssignments, upcomingLoaded]);
+
+  const loadAssignments = async ({ silent = false } = {}) => {
+    if (!silent) setLoadingAssignments(true);
+    let baseRows = [];
+    try {
+      const { data: railRows, error: railErr } = await supabase.rpc('get_assignments_rail', {
+        p_child_id: childId,
+        p_limit: 120,
+      });
+      if (!railErr && Array.isArray(railRows)) {
+        baseRows = railRows;
+      } else {
+        const { data, error } = await getAssignments(childId);
+        if (error) {
+          setAssignments([]);
+          if (!silent) setLoadingAssignments(false);
+          return;
+        }
+        baseRows = Array.isArray(data) ? data : [];
+      }
+    } catch (_) {
+      const { data, error } = await getAssignments(childId);
+      if (error) {
+        setAssignments([]);
+        if (!silent) setLoadingAssignments(false);
+        return;
+      }
+      baseRows = Array.isArray(data) ? data : [];
     }
-    const baseRows = Array.isArray(data) ? data : [];
     if (baseRows.length === 0) {
       setAssignments([]);
-      setLoadingAssignments(false);
+      if (!silent) setLoadingAssignments(false);
       return;
     }
-    try {
-      const ids = baseRows.map((row) => row?.id).filter(Boolean);
-      if (ids.length === 0) {
-        setAssignments(baseRows);
-        setLoadingAssignments(false);
-        return;
-      }
-      const { data: reviewRows, error: reviewErr } = await supabase
-        .from('assignments')
-        .select('id, review_status, review_feedback, reviewed_at')
-        .in('id', ids);
-      if (reviewErr || !Array.isArray(reviewRows)) {
-        setAssignments(baseRows);
-        setLoadingAssignments(false);
-        return;
-      }
-      const reviewById = new Map(reviewRows.map((row) => [String(row.id), row]));
-      const merged = baseRows.map((row) => {
-        const review = reviewById.get(String(row?.id || '')) || null;
-        if (!review) return row;
-        return {
-          ...row,
-          review_status: review.review_status ?? row.review_status ?? null,
-          review_feedback: review.review_feedback ?? row.review_feedback ?? null,
-          reviewed_at: review.reviewed_at ?? row.reviewed_at ?? null,
-        };
-      });
-      setAssignments(merged);
-    } catch (_) {
-      setAssignments(baseRows);
-    } finally {
-      setLoadingAssignments(false);
-    }
+    // Paint immediately from the primary RPC response so first load is not
+    // blocked by enrichment queries.
+    setAssignments(baseRows);
+    if (!silent) setLoadingAssignments(false);
   };
 
-  const loadUpcomingEvents = async () => {
-    setLoadingUpcomingEvents(true);
+  const loadUpcomingEvents = async ({ silent = false } = {}) => {
+    if (!silent) setLoadingUpcomingEvents(true);
     try {
       const now = new Date();
       const horizon = new Date(now);
@@ -166,10 +272,12 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       const raw = data || [];
       const filtered = raw.filter((event) => isSchoolWorkEventType(event?.event_type));
       setUpcomingEvents(filtered);
+      setUpcomingLoaded(true);
     } catch (e) {
       setUpcomingEvents([]);
+      setUpcomingLoaded(true);
     } finally {
-      setLoadingUpcomingEvents(false);
+      if (!silent) setLoadingUpcomingEvents(false);
     }
   };
 
@@ -635,7 +743,7 @@ export default function ChildHomeRightRail({ familyId, childId }) {
         }}
         onSent={() => {
           toast.push('Sent to your parent', 'success');
-          loadData();
+          loadData({ includeUpcoming: selectedSection === 'coming_up' || upcomingLoaded, silent: true });
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
             window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));

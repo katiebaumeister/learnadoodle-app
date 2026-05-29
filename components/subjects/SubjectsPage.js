@@ -455,9 +455,13 @@ export default function SubjectsPage({
 
   // Update local cache when prop changes
   useEffect(() => {
-    if (preloadedSubjectDetailCache) {
-      setSubjectDetailCache(preloadedSubjectDetailCache);
-    }
+    if (!preloadedSubjectDetailCache || typeof preloadedSubjectDetailCache !== 'object') return;
+    const keys = Object.keys(preloadedSubjectDetailCache);
+    if (keys.length === 0) return;
+    setSubjectDetailCache((prev) => ({
+      ...(prev || {}),
+      ...preloadedSubjectDetailCache,
+    }));
   }, [preloadedSubjectDetailCache]);
   useEffect(() => {
     subjectDetailCacheRef.current = subjectDetailCache || {};
@@ -592,10 +596,11 @@ export default function SubjectsPage({
   }, [isChildView, safeChildren, selectedChildFilter]);
 
   useEffect(() => {
-    if (!preloadedSubjects) {
+    const hasPreloadedSubjects = Array.isArray(preloadedSubjects) && preloadedSubjects.length > 0;
+    if (!hasPreloadedSubjects) {
       loadSubjects();
     }
-  }, [familyId, selectedChildFilter, selectedModeFilter]);
+  }, [familyId, selectedChildFilter, selectedModeFilter, preloadedSubjects, loadSubjects]);
 
   // Listen for subject updates
   useEffect(() => {
@@ -645,7 +650,7 @@ export default function SubjectsPage({
 
   // When parent passes a new preloaded list (e.g. after its cache reloads), stay in sync
   useEffect(() => {
-    if (Array.isArray(preloadedSubjects)) {
+    if (Array.isArray(preloadedSubjects) && preloadedSubjects.length > 0) {
       setSubjects(preloadedSubjects);
     }
   }, [preloadedSubjects]);

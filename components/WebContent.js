@@ -775,6 +775,24 @@ function readSubjectsOverviewSessionSnapshot(familyId) {
   }
 }
 
+/** Synchronous read so Subject detail/progress can paint from cache on first open. */
+function readSubjectDetailSessionSnapshot(familyId) {
+  if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) {
+    return { data: {}, t: null };
+  }
+  try {
+    const raw = sessionStorage.getItem(`ld_web_subject_detail_cache_${familyId}`);
+    if (!raw) return { data: {}, t: null };
+    const parsed = JSON.parse(raw);
+    if (!parsed?.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
+      return { data: {}, t: null };
+    }
+    return { data: parsed.data, t: parsed.t || Date.now() };
+  } catch {
+    return { data: {}, t: null };
+  }
+}
+
 import ParentHomeScreen from './home/ParentHomeScreen';
 
 export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null, onHomeInitialDataReady = null }) {
@@ -962,6 +980,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   );
 
   const _subjectsOverviewSessionInitial = readSubjectsOverviewSessionSnapshot(
+    propFamilyId || propSession?.family_id || propProfile?.family_id || null
+  );
+  const _subjectDetailSessionInitial = readSubjectDetailSessionSnapshot(
     propFamilyId || propSession?.family_id || propProfile?.family_id || null
   );
 
@@ -4586,7 +4607,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Cache for subjects with overview data
   const [subjectsOverviewCache, setSubjectsOverviewCache] = useState(() => _subjectsOverviewSessionInitial.data)
   // Cache for subject detail data (for SubjectDetailPage) - keyed by subjectId
-  const [subjectDetailCache, setSubjectDetailCache] = useState({})
+  const [subjectDetailCache, setSubjectDetailCache] = useState(() => _subjectDetailSessionInitial.data || {})
   const preloadingDetailsRef = useRef(new Set())
   const [activities, setActivities] = useState([])
   const [dailyTasks, setDailyTasks] = useState([])
@@ -4643,6 +4664,22 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     } catch (_) {}
   }, [familyId]);
 
+  // Hydrate Subject detail cache from session tab cache for instant first open.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) return;
+    try {
+      const raw = sessionStorage.getItem(`ld_web_subject_detail_cache_${familyId}`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed?.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) return;
+      setSubjectDetailCache((prev) => {
+        const prevKeys = Object.keys(prev || {});
+        if (prevKeys.length > 0) return prev;
+        return parsed.data;
+      });
+    } catch (_) {}
+  }, [familyId]);
+
   // Persist Subjects overview cache for this browser tab.
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId || !Array.isArray(subjectsOverviewCache)) return;
@@ -4653,6 +4690,19 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       );
     } catch (_) {}
   }, [familyId, subjectsOverviewCache]);
+
+  // Persist Subject detail cache for this browser tab.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof sessionStorage === 'undefined' || !familyId) return;
+    if (!subjectDetailCache || typeof subjectDetailCache !== 'object' || Array.isArray(subjectDetailCache)) return;
+    if (Object.keys(subjectDetailCache).length === 0) return;
+    try {
+      sessionStorage.setItem(
+        `ld_web_subject_detail_cache_${familyId}`,
+        JSON.stringify({ t: Date.now(), data: subjectDetailCache })
+      );
+    } catch (_) {}
+  }, [familyId, subjectDetailCache]);
 
   // Preload subject detail data for all subjects when overview is loaded
   useEffect(() => {
