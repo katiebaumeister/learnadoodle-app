@@ -4609,6 +4609,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Cache for subject detail data (for SubjectDetailPage) - keyed by subjectId
   const [subjectDetailCache, setSubjectDetailCache] = useState(() => _subjectDetailSessionInitial.data || {})
   const preloadingDetailsRef = useRef(new Set())
+  const [subjectsPrefetchReady, setSubjectsPrefetchReady] = useState(() => activeTab === 'subjects');
   const [activities, setActivities] = useState([])
   const [dailyTasks, setDailyTasks] = useState([])
   const [today] = useState(new Date().toISOString().split('T')[0])
@@ -4620,10 +4621,29 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     }
   }, [propSubjects]);
 
+  // Defer heavy subjects prefetch on initial Home load so critical app shell and
+  // right-rail requests get network priority. Open Subjects tab enables immediately.
+  useEffect(() => {
+    if (!familyId) return;
+    if (activeTab === 'subjects') {
+      setSubjectsPrefetchReady(true);
+      return;
+    }
+    if (subjectsPrefetchReady) return;
+    let cancelled = false;
+    const timerId = setTimeout(() => {
+      if (!cancelled) setSubjectsPrefetchReady(true);
+    }, 2500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timerId);
+    };
+  }, [familyId, activeTab, subjectsPrefetchReady]);
+
   // Preload subjects overview once when the app initializes (per family)
   // so that Subjects screens don't need to block on their own fetches. Report to parent for initial load overlay.
   useEffect(() => {
-    if (!familyId) {
+    if (!familyId || !subjectsPrefetchReady) {
       return;
     }
     if (subjectsOverviewCache) {
@@ -4650,7 +4670,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     return () => {
       isCancelled = true;
     };
-  }, [familyId, subjectsOverviewCache, propSession]);
+  }, [familyId, subjectsOverviewCache, propSession, subjectsPrefetchReady]);
 
   // Hydrate Subjects overview from session tab cache so navigation feels instant.
   useEffect(() => {
@@ -4706,7 +4726,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
   // Preload subject detail data for all subjects when overview is loaded
   useEffect(() => {
-    if (!familyId || !subjectsOverviewCache || subjectsOverviewCache.length === 0) return;
+    if (!subjectsPrefetchReady || !familyId || !subjectsOverviewCache || subjectsOverviewCache.length === 0) return;
 
     // Preload all subject details in background
     subjectsOverviewCache.forEach((subject) => {
@@ -4752,12 +4772,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         return prev; // Return unchanged for now
       });
     });
-  }, [familyId, subjectsOverviewCache]);
+  }, [familyId, subjectsOverviewCache, subjectsPrefetchReady]);
 
   // Preload Progress (plan + curriculum) for all subjects into subjectProgressPlanCache
   // so Subject detail → Progress avoids skeleton when opening a subject after load.
   useEffect(() => {
-    if (!familyId || !subjectsOverviewCache || subjectsOverviewCache.length === 0) return;
+    if (!subjectsPrefetchReady || !familyId || !subjectsOverviewCache || subjectsOverviewCache.length === 0) return;
     let cancelled = false;
     (async () => {
       try {
@@ -4769,7 +4789,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     return () => {
       cancelled = true;
     };
-  }, [familyId, subjectsOverviewCache]);
+  }, [familyId, subjectsOverviewCache, subjectsPrefetchReady]);
 
   // Handle subjects overview cache updates
   const handleSubjectsOverviewUpdate = useCallback((overviewData) => {
