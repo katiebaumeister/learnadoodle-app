@@ -40,13 +40,13 @@ def get_credential(user_id: str, family_id: str) -> Optional[Dict[str, Any]]:
         .select("id, user_id, family_id, account_email, access_token, refresh_token, scope, expires_at, sync_token, last_synced_at")
         .eq("user_id", user_id)
         .eq("family_id", family_id)
-        .maybe_single()
+        .limit(1)
         .execute()
     )
-    data = getattr(resp, "data", None)
-    if not data:
+    rows = getattr(resp, "data", None) or []
+    if not rows:
         return None
-    return data
+    return rows[0]
 
 
 def upsert_credential(user_id: str, family_id: str, values: Dict[str, Any]) -> Dict[str, Any]:

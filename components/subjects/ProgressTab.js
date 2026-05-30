@@ -834,11 +834,28 @@ export default function ProgressTab({
     if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
     nativeEvent?.preventDefault?.();
     nativeEvent?.stopPropagation?.();
-    const x = nativeEvent?.clientX ?? nativeEvent?.nativeEvent?.clientX ?? 0;
-    const y = nativeEvent?.clientY ?? nativeEvent?.nativeEvent?.clientY ?? 0;
+    let x =
+      nativeEvent?.clientX ??
+      nativeEvent?.pageX ??
+      nativeEvent?.x ??
+      nativeEvent?.nativeEvent?.clientX ??
+      nativeEvent?.nativeEvent?.pageX ??
+      nativeEvent?.nativeEvent?.x;
+    let y =
+      nativeEvent?.clientY ??
+      nativeEvent?.pageY ??
+      nativeEvent?.y ??
+      nativeEvent?.nativeEvent?.clientY ??
+      nativeEvent?.nativeEvent?.pageY ??
+      nativeEvent?.nativeEvent?.y;
+    if ((x == null || y == null) && nativeEvent?.target?.getBoundingClientRect) {
+      const rect = nativeEvent.target.getBoundingClientRect();
+      x = rect.left + rect.width / 2;
+      y = rect.top + rect.height / 2;
+    }
     window.dispatchEvent(
       new CustomEvent('plannerEventContextMenu', {
-        detail: { event, position: { x, y } },
+        detail: { event, position: { x: x ?? 0, y: y ?? 0 } },
       })
     );
   }, []);

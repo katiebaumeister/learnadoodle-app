@@ -44,10 +44,43 @@ const PLANNER_CTX_ICON_PATHS = {
 
 function isReadOnlyPublicHolidayEvent(eventLike) {
   if (!eventLike || typeof eventLike !== 'object') return false;
-  const holidayType = String(eventLike.holiday_type || eventLike.holidayType || '').toUpperCase();
+  const holidayType = normalizeHolidayType(eventLike.holiday_type || eventLike.holidayType);
   // Keep only explicit global holidays read-only so custom breaks/day-off rows
   // always retain context menu actions across Home/Planner/Subjects lists.
   return holidayType === 'GLOBAL_HOLIDAY';
+}
+
+function normalizeHolidayType(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (raw === 'BREAK') return 'CUSTOM_BREAK';
+  if (raw === 'DAY_OFF' || raw === 'DAYOFF' || raw === 'HOLIDAY' || raw === 'NO_SCHOOL') {
+    return 'CUSTOM_HOLIDAY';
+  }
+  return raw;
+}
+
+function normalizeExclusionType(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'break' || raw === 'custom_break') return 'break';
+  if (
+    raw === 'holiday' ||
+    raw === 'custom_holiday' ||
+    raw === 'day_off' ||
+    raw === 'dayoff' ||
+    raw === 'day-off' ||
+    raw === 'no_school'
+  ) {
+    return 'holiday';
+  }
+  return raw;
+}
+
+function buildSyntheticHolidayId(dateYmd, label, holidayType) {
+  const safeDate = String(dateYmd || '').slice(0, 10);
+  const safeLabel = String(label || '').trim();
+  const labelSlug = safeLabel.replace(/\s+/g, '-').slice(0, 30) || 'holiday';
+  const typeSlug = String(normalizeHolidayType(holidayType) || 'CUSTOM_HOLIDAY').toLowerCase();
+  return `holiday-${typeSlug}-${safeDate}-${labelSlug}`;
 }
 
 function isSyntheticPlannerExclusionEvent(eventLike) {
@@ -67,7 +100,7 @@ function isUuidLike(value) {
 async function deactivatePlannerExclusionFromHolidayEvent(eventLike, familyId) {
   const targetDate = String(eventLike?.date_local || '').slice(0, 10);
   if (!familyId || !targetDate) return { success: false, error: 'Missing family/date context' };
-  const holidayType = String(eventLike?.holiday_type || eventLike?.holidayType || '').toUpperCase();
+  const holidayType = normalizeHolidayType(eventLike?.holiday_type || eventLike?.holidayType);
   const targetType = holidayType === 'CUSTOM_BREAK' ? 'break' : 'holiday';
   const targetLabel = String(eventLike?.title || '').trim().toLowerCase();
   const { data, error } = await supabase
@@ -75,13 +108,13 @@ async function deactivatePlannerExclusionFromHolidayEvent(eventLike, familyId) {
     .select('id, exclusion_type, start_date, end_date, label')
     .eq('family_id', familyId)
     .eq('scope_type', 'family_default')
-    .eq('is_active', true)
-    .in('exclusion_type', ['holiday', 'break'])
+    .or('is_active.is.true,is_active.is.null')
+    .in('exclusion_type', ['holiday', 'break', 'day_off', 'dayoff', 'day-off', 'no_school', 'custom_holiday', 'custom_break'])
     .lte('start_date', targetDate)
     .gte('end_date', targetDate);
   if (error) return { success: false, error: error.message || 'Failed to load exclusions' };
   const rows = Array.isArray(data) ? data : [];
-  const typedRows = rows.filter((row) => String(row?.exclusion_type || '').toLowerCase() === targetType);
+  const typedRows = rows.filter((row) => normalizeExclusionType(row?.exclusion_type) === targetType);
   const labelMatched = targetLabel
     ? typedRows.find((row) => String(row?.label || '').trim().toLowerCase() === targetLabel)
     : null;
@@ -3071,8 +3104,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           .from('planner_exclusions')
           .select('id, exclusion_type, start_date, end_date, label, is_active, scope_type')
           .eq('family_id', familyId)
-          .eq('is_active', true)
-          .in('exclusion_type', ['holiday', 'break'])
+          .or('is_active.is.true,is_active.is.null')
+          .in('exclusion_type', ['holiday', 'break', 'day_off', 'dayoff', 'day-off', 'no_school', 'custom_holiday', 'custom_break'])
           .lte('start_date', end)
           .gte('end_date', start);
         const monthResult = await supabase.rpc('get_month_view', {
@@ -4452,8 +4485,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       // Prevent default context menu globally, but allow it on events
       const preventContextMenu = (e) => {
         // Allow context menu on event elements (they handle their own right-click)
-        const target = e.target;
-        if (target && (target.closest('[data-event-id]') || target.hasAttribute('data-event-id'))) {
+        const rawTarget = e.target;
+        const target = rawTarget && rawTarget.nodeType === 1
+          ? rawTarget
+          : rawTarget?.parentElement || null;
+        if (target && ((target.closest && target.closest('[data-event-id]')) || (target.hasAttribute && target.hasAttribute('data-event-id')))) {
           // Don't prevent - let the event handle it
           return;
         }
@@ -4923,8 +4959,8 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         .from('planner_exclusions')
         .select('id, exclusion_type, start_date, end_date, label, is_active')
         .eq('family_id', familyId)
-        .eq('is_active', true)
-        .in('exclusion_type', ['holiday', 'break']);
+        .or('is_active.is.true,is_active.is.null')
+        .in('exclusion_type', ['holiday', 'break', 'day_off', 'dayoff', 'day-off', 'no_school', 'custom_holiday', 'custom_break']);
       if (!error) {
         setPlannerExclusionsCache(Array.isArray(data) ? data : []);
       }
@@ -5229,11 +5265,22 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   }, []);
   const openEventEditorWithScopePrompt = useCallback(async (ev, options = {}) => {
     if (!ev?.id) return;
+    const cleanId = cleanPlannerEventId(String(ev.id || ''));
+    const eventHolidayType = normalizeHolidayType(ev?.holiday_type || ev?.holidayType);
+    const isSyntheticCustomExclusion =
+      (eventHolidayType === 'CUSTOM_HOLIDAY' || eventHolidayType === 'CUSTOM_BREAK') &&
+      (
+        !isUuidLike(cleanId) ||
+        String(ev?.source || ev?.data?.source || '').toLowerCase() === 'planner_exclusion'
+      );
+    if (isSyntheticCustomExclusion) {
+      dispatchOpenEventModal(ev, { ...options, editScope: 'single' });
+      return;
+    }
     let shouldShowSeriesPrompt = isDeletableSeriesGroup(ev);
     if (!shouldShowSeriesPrompt) {
       try {
-        const cleanId = cleanPlannerEventId(String(ev.id || ''));
-        if (cleanId) {
+        if (cleanId && isUuidLike(cleanId)) {
           let query = supabase
             .from('events')
             .select('id, recurrence_rule, parent_event_id, recurrence_id, generated_by, source_block_id, academic_year_id')
@@ -6040,7 +6087,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       } else if (!isPublicHoliday) {
       let eventId = ev._originalId || ev.originalId || ev.id;
       eventId = cleanPlannerEventId(eventId);
-      const eventHolidayType = String(ev?.holiday_type || ev?.holidayType || '').toUpperCase();
+      const eventHolidayType = normalizeHolidayType(ev?.holiday_type || ev?.holidayType);
       const isCustomExclusionHoliday = (
         (eventHolidayType === 'CUSTOM_HOLIDAY' || eventHolidayType === 'CUSTOM_BREAK') &&
         !isUuidLike(eventId)
@@ -9831,21 +9878,25 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       const holidays = plannerHolidaysCache[mk] || [];
       return holidays
         .filter((h) => h?.date && isInVisibleRange(String(h.date).slice(0, 10)))
-        .map((h) => ({
-          id: `holiday-${h.date}-${(h.name || '').replace(/\s+/g, '-').slice(0, 30)}`,
+        .map((h) => {
+          const holidayType = normalizeHolidayType(h?.type || h?.holiday_type || h?.holidayType) || null;
+          const dateKey = String(h.date).slice(0, 10);
+          return ({
+          id: buildSyntheticHolidayId(dateKey, h.name || '', holidayType),
           date_local: h.date,
           title: h.name,
           type: 'holiday',
           event_type: 'holiday',
-          holiday_type: String(h?.type || '').toUpperCase() || null,
+          holiday_type: holidayType,
           status: null,
-          start_ts: `${String(h.date).slice(0, 10)}T12:00:00.000Z`,
-          end_ts: `${String(h.date).slice(0, 10)}T12:30:00.000Z`,
-          start: `${String(h.date).slice(0, 10)}T12:00:00.000Z`,
-          end: `${String(h.date).slice(0, 10)}T12:30:00.000Z`,
-          start_local: `${String(h.date).slice(0, 10)}T12:00:00.000Z`,
-          end_local: `${String(h.date).slice(0, 10)}T12:30:00.000Z`,
-        }));
+          start_ts: `${dateKey}T12:00:00.000Z`,
+          end_ts: `${dateKey}T12:30:00.000Z`,
+          start: `${dateKey}T12:00:00.000Z`,
+          end: `${dateKey}T12:30:00.000Z`,
+          start_local: `${dateKey}T12:00:00.000Z`,
+          end_local: `${dateKey}T12:30:00.000Z`,
+        });
+      });
     });
     const exclusionHolidayEvents = (() => {
       const rows = Array.isArray(plannerExclusionsCache) ? plannerExclusionsCache : [];
@@ -9862,7 +9913,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       if (!visibleStart || !visibleEnd) return [];
       const mapped = [];
       rows.forEach((row) => {
-        const rowType = String(row?.exclusion_type || '').toLowerCase();
+        const rawType = String(row?.exclusion_type || '').toLowerCase();
+        const rowType =
+          rawType === 'break' || rawType === 'custom_break'
+            ? 'break'
+            : (rawType === 'holiday' || rawType === 'custom_holiday' || rawType === 'day_off' || rawType === 'dayoff' || rawType === 'day-off' || rawType === 'no_school')
+              ? 'holiday'
+              : '';
         if (rowType !== 'holiday' && rowType !== 'break') return;
         const startDate = toDateOnly(row?.start_date);
         const endDate = toDateOnly(row?.end_date || row?.start_date);
@@ -9872,16 +9929,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         if (clampedEnd < clampedStart) return;
         const fallbackLabel = rowType === 'break' ? 'Break' : 'Day off';
         const label = String(row?.label || '').trim() || fallbackLabel;
-        const labelSlug = label.replace(/\s+/g, '-').slice(0, 30) || fallbackLabel.toLowerCase().replace(/\s+/g, '-');
         for (let cursorDate = new Date(clampedStart); cursorDate <= clampedEnd; cursorDate.setDate(cursorDate.getDate() + 1)) {
           const dateKey = toYmd(cursorDate);
+          const holidayType = rowType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY';
           mapped.push({
-            id: `holiday-${dateKey}-${labelSlug}`,
+            id: buildSyntheticHolidayId(dateKey, label, holidayType),
             date_local: dateKey,
             title: label,
             type: 'holiday',
             event_type: 'holiday',
-            holiday_type: rowType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY',
+            holiday_type: holidayType,
             status: null,
             source: 'planner_exclusion',
             start_ts: `${dateKey}T12:00:00.000Z`,
@@ -9965,7 +10022,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         onEventSelect={(event) => {
           const isPublicHoliday = isReadOnlyPublicHolidayEvent(event);
           const isSyntheticExclusion = isSyntheticPlannerExclusionEvent(event);
-          const syntheticHolidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
+          const syntheticHolidayType = normalizeHolidayType(event?.holiday_type || event?.holidayType);
           const isEditableSyntheticExclusion =
             isSyntheticExclusion &&
             (syntheticHolidayType === 'CUSTOM_HOLIDAY' || syntheticHolidayType === 'CUSTOM_BREAK');
@@ -9993,9 +10050,26 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         onEventRightClick={(ev, e) => {
           if (Platform.OS !== 'web' || typeof window === 'undefined' || !e) return;
           if (isReadOnlyPublicHolidayEvent(ev)) return;
-          // e may be native event (from MonthGrid) or synthetic (e.nativeEvent has clientX/Y)
-          const x = e.clientX ?? e.nativeEvent?.clientX ?? 0;
-          const y = e.clientY ?? e.nativeEvent?.clientY ?? 0;
+          // e may be native event (from MonthGrid) or synthetic (RN web wrappers vary by source).
+          let x =
+            e.clientX ??
+            e.pageX ??
+            e.x ??
+            e.nativeEvent?.clientX ??
+            e.nativeEvent?.pageX ??
+            e.nativeEvent?.x;
+          let y =
+            e.clientY ??
+            e.pageY ??
+            e.y ??
+            e.nativeEvent?.clientY ??
+            e.nativeEvent?.pageY ??
+            e.nativeEvent?.y;
+          if ((x == null || y == null) && e?.target?.getBoundingClientRect) {
+            const rect = e.target.getBoundingClientRect();
+            x = rect.left + rect.width / 2;
+            y = rect.top + rect.height / 2;
+          }
           window.dispatchEvent(new CustomEvent('plannerEventContextMenu', { detail: { event: ev, position: { x, y } } }));
         }}
         onEventComplete={plannerReadOnly ? undefined : async (event) => {

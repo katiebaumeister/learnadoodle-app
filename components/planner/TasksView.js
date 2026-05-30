@@ -22,19 +22,34 @@ export default function TasksView({
   plannerHolidaysCache = {},
   plannerExclusions = [],
 }) {
+  const normalizeHolidayType = useCallback((value) => {
+    const raw = String(value || '').trim().toUpperCase();
+    if (raw === 'BREAK') return 'CUSTOM_BREAK';
+    if (raw === 'DAY_OFF' || raw === 'DAYOFF' || raw === 'HOLIDAY' || raw === 'NO_SCHOOL') {
+      return 'CUSTOM_HOLIDAY';
+    }
+    return raw;
+  }, []);
+  const buildSyntheticHolidayId = useCallback((dateYmd, label, holidayType) => {
+    const safeDate = String(dateYmd || '').slice(0, 10);
+    const safeLabel = String(label || '').trim();
+    const labelSlug = safeLabel.replace(/\s+/g, '-').slice(0, 30) || 'holiday';
+    const typeSlug = String(normalizeHolidayType(holidayType) || 'CUSTOM_HOLIDAY').toLowerCase();
+    return `holiday-${typeSlug}-${safeDate}-${labelSlug}`;
+  }, [normalizeHolidayType]);
   const normalizeEventTypeLower = useCallback((ev) => {
     const raw = ev?.event_type ?? ev?.eventType ?? ev?.type ?? ev?.data?.event_type ?? '';
     return String(raw || '').trim().toLowerCase();
   }, []);
   const isBreakRangeEvent = useCallback((ev) => {
-    const holidayType = String(ev?.holiday_type || ev?.holidayType || ev?.data?.holiday_type || '').trim().toUpperCase();
+    const holidayType = normalizeHolidayType(ev?.holiday_type || ev?.holidayType || ev?.data?.holiday_type);
     const type = normalizeEventTypeLower(ev);
     return type === 'break' || (type === 'holiday' && holidayType === 'CUSTOM_BREAK');
-  }, [normalizeEventTypeLower]);
+  }, [normalizeEventTypeLower, normalizeHolidayType]);
   const isUsPublicHolidayEvent = useCallback((ev) => {
-    const holidayType = String(ev?.holiday_type || ev?.holidayType || ev?.data?.holiday_type || '').trim().toUpperCase();
+    const holidayType = normalizeHolidayType(ev?.holiday_type || ev?.holidayType || ev?.data?.holiday_type);
     return holidayType === 'GLOBAL_HOLIDAY';
-  }, []);
+  }, [normalizeHolidayType]);
   const resolveEventDateValue = useCallback((ev) => {
     if (!ev) return null;
     const direct = ev.start || ev.start_ts || ev.start_local;
@@ -57,7 +72,13 @@ export default function TasksView({
     const toYmdString = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const out = [];
     rows.forEach((row) => {
-      const rowType = String(row?.exclusion_type || '').toLowerCase();
+      const rawType = String(row?.exclusion_type || '').toLowerCase();
+      const rowType =
+        rawType === 'break' || rawType === 'custom_break'
+          ? 'break'
+          : (rawType === 'holiday' || rawType === 'custom_holiday' || rawType === 'day_off' || rawType === 'dayoff' || rawType === 'day-off' || rawType === 'no_school')
+            ? 'holiday'
+            : '';
       if (rowType !== 'holiday' && rowType !== 'break') return;
       const rowStart = toDateOnly(row?.start_date);
       const rowEnd = toDateOnly(row?.end_date || row?.start_date);
@@ -67,16 +88,16 @@ export default function TasksView({
       if (clampedEnd < clampedStart) return;
       const fallbackLabel = rowType === 'break' ? 'Break' : 'Day off';
       const label = String(row?.label || '').trim() || fallbackLabel;
-      const labelSlug = label.replace(/\s+/g, '-').slice(0, 30) || fallbackLabel.toLowerCase().replace(/\s+/g, '-');
       for (let cursorDate = new Date(clampedStart); cursorDate <= clampedEnd; cursorDate.setDate(cursorDate.getDate() + 1)) {
         const dateKey = toYmdString(cursorDate);
+        const holidayType = rowType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY';
         out.push({
-          id: `holiday-${dateKey}-${labelSlug}`,
+          id: buildSyntheticHolidayId(dateKey, label, holidayType),
           date_local: dateKey,
           title: label,
           type: 'holiday',
           event_type: 'holiday',
-          holiday_type: rowType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY',
+          holiday_type: holidayType,
           status: null,
           source: 'planner_exclusion',
           start_ts: `${dateKey}T12:00:00.000Z`,
@@ -89,7 +110,7 @@ export default function TasksView({
       }
     });
     return out;
-  }, [plannerExclusions]);
+  }, [plannerExclusions, buildSyntheticHolidayId]);
   const expandCachedHolidaysForRange = useCallback((rangeStart, rangeEnd) => {
     if (!(rangeStart instanceof Date) || Number.isNaN(rangeStart.getTime())) return [];
     if (!(rangeEnd instanceof Date) || Number.isNaN(rangeEnd.getTime())) return [];
@@ -110,10 +131,10 @@ export default function TasksView({
         const d = new Date(`${dateYmd}T00:00:00`);
         if (Number.isNaN(d.getTime()) || d < rangeStart || d > rangeEnd) return;
         const safeName = String(holiday?.name || '').trim();
-        const holidayType = String(holiday?.type || '').toUpperCase();
+        const holidayType = normalizeHolidayType(holiday?.type || holiday?.holiday_type || holiday?.holidayType);
         const label = safeName || (holidayType === 'CUSTOM_BREAK' ? 'Break' : 'Day off');
         out.push({
-          id: `holiday-${dateYmd}-${label.replace(/\s+/g, '-').slice(0, 30)}`,
+          id: buildSyntheticHolidayId(dateYmd, label, holidayType),
           date_local: dateYmd,
           title: label,
           type: 'holiday',
@@ -130,7 +151,7 @@ export default function TasksView({
       });
     });
     return out;
-  }, [plannerHolidaysCache]);
+  }, [plannerHolidaysCache, normalizeHolidayType, buildSyntheticHolidayId]);
 
   const toYmd = useCallback((dateValue) => {
     if (!(dateValue instanceof Date) || Number.isNaN(dateValue.getTime())) return '';
@@ -143,12 +164,13 @@ export default function TasksView({
   const mapHolidayToTaskEvent = useCallback((holiday) => {
     const dateYmd = String(holiday?.date || '').slice(0, 10);
     if (!dateYmd) return null;
-    const holidayType = String(holiday?.type || '').toUpperCase();
+    const holidayType = normalizeHolidayType(holiday?.type || holiday?.holiday_type || holiday?.holidayType);
     const safeName = String(holiday?.name || '').trim();
+    const label = safeName || (holidayType === 'CUSTOM_BREAK' ? 'Break' : 'Day off');
     return {
-      id: `holiday-${dateYmd}-${safeName.replace(/\s+/g, '-').slice(0, 30)}`,
+      id: buildSyntheticHolidayId(dateYmd, label, holidayType),
       date_local: dateYmd,
-      title: safeName || (holidayType === 'CUSTOM_BREAK' ? 'Break' : 'Day off'),
+      title: label,
       type: 'holiday',
       event_type: 'holiday',
       holiday_type: holidayType || null,
@@ -160,7 +182,7 @@ export default function TasksView({
       start_local: `${dateYmd}T12:00:00.000Z`,
       end_local: `${dateYmd}T12:30:00.000Z`,
     };
-  }, []);
+  }, [normalizeHolidayType, buildSyntheticHolidayId]);
 
   const [activeSection, setActiveSection] = useState('today');
   const [userLists, setUserLists] = useState([]);
@@ -993,9 +1015,29 @@ export default function TasksView({
   const renderTaskItem = (event) => {
     // Add active section metadata to the event object so the handler knows we're in trash
     const eventWithSection = { ...event, _activeSection: activeSection };
+    const handleRowContextMenu = (nativeEvent) => {
+      if (Platform.OS !== 'web' || typeof window === 'undefined' || !onEventRightClick) return;
+      nativeEvent?.preventDefault?.();
+      nativeEvent?.stopPropagation?.();
+      onEventRightClick(eventWithSection, nativeEvent);
+    };
     
     return (
-      <View key={event.id} style={styles.taskItem}>
+      <View
+        key={event.id}
+        style={styles.taskItem}
+        {...(Platform.OS === 'web' && {
+          'data-event-id': String(eventWithSection?.id || ''),
+          onMouseDown: (e) => {
+            const button = e?.button ?? e?.nativeEvent?.button;
+            if (button !== 2) return;
+            handleRowContextMenu(e?.nativeEvent || e);
+          },
+          onContextMenu: (e) => {
+            handleRowContextMenu(e?.nativeEvent || e);
+          },
+        })}
+      >
         <EventChip
           ev={eventWithSection}
           compact={true}

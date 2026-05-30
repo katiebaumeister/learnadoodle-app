@@ -5030,6 +5030,119 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }
     }
 
+    const targetEventId = cleanPlannerEventId(String(event.id));
+    const isSyntheticCustomExclusionEvent =
+      (currentHolidayType === 'CUSTOM_HOLIDAY' || currentHolidayType === 'CUSTOM_BREAK') &&
+      (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(targetEventId || '')) ||
+        String(event?.source || event?.data?.source || '').toLowerCase() === 'planner_exclusion'
+      );
+    if (isSyntheticCustomExclusionEvent) {
+      setSaving(true);
+      try {
+        const scopedFamilyId = String(familyId || event?.family_id || '').trim();
+        if (!scopedFamilyId) {
+          throw new Error('Missing family context');
+        }
+        const anchorDate = String(
+          event?.date_local ||
+          (event?.start_ts ? String(event.start_ts).slice(0, 10) : '') ||
+          dateToUse ||
+          ''
+        ).slice(0, 10);
+        if (!anchorDate) {
+          throw new Error('Missing break date context');
+        }
+        const existingType = currentHolidayType === 'CUSTOM_BREAK' ? 'break' : 'holiday';
+        const displayEventType = normalizeEventTypeForDisplay(eventType);
+        const nextType = displayEventType === 'Break' ? 'break' : 'holiday';
+        const nextStartDate = String(dateToUse || anchorDate).slice(0, 10);
+        const nextEndDate = (isMultiDayEventType && eventEndDate instanceof Date && !Number.isNaN(eventEndDate.getTime()))
+          ? String(toDateInput(eventEndDate.toISOString()) || nextStartDate).slice(0, 10)
+          : nextStartDate;
+        if (nextEndDate < nextStartDate) {
+          throw new Error('End date cannot be before start date');
+        }
+
+        const { data: exclusions, error: exclusionError } = await supabase
+          .from('planner_exclusions')
+          .select('id, exclusion_type, start_date, end_date, label')
+          .eq('family_id', scopedFamilyId)
+          .eq('scope_type', 'family_default')
+          .or('is_active.is.true,is_active.is.null')
+          .in('exclusion_type', ['holiday', 'break', 'day_off', 'dayoff', 'day-off', 'no_school', 'custom_holiday', 'custom_break'])
+          .lte('start_date', anchorDate)
+          .gte('end_date', anchorDate);
+        if (exclusionError) {
+          throw exclusionError;
+        }
+        const rows = Array.isArray(exclusions) ? exclusions : [];
+        const oldLabel = String(event?.title || '').trim().toLowerCase();
+        const typedRows = rows.filter((row) => {
+          const rawType = String(row?.exclusion_type || '').toLowerCase();
+          const rowType =
+            rawType === 'break' || rawType === 'custom_break'
+              ? 'break'
+              : (rawType === 'holiday' || rawType === 'custom_holiday' || rawType === 'day_off' || rawType === 'dayoff' || rawType === 'day-off' || rawType === 'no_school')
+                ? 'holiday'
+                : rawType;
+          return rowType === existingType || rowType === nextType;
+        });
+        const labelMatched = oldLabel
+          ? typedRows.find((row) => String(row?.label || '').trim().toLowerCase() === oldLabel)
+          : null;
+        const targetRow = labelMatched || typedRows[0] || rows[0] || null;
+        if (!targetRow?.id) {
+          throw new Error('No matching break/day-off record found');
+        }
+
+        const { error: updateError } = await supabase
+          .from('planner_exclusions')
+          .update({
+            exclusion_type: nextType,
+            label: draftTitle.trim() || (nextType === 'break' ? 'Break' : 'Day off'),
+            start_date: nextStartDate,
+            end_date: nextEndDate,
+          })
+          .eq('id', targetRow.id);
+        if (updateError) {
+          throw updateError;
+        }
+
+        setEditing(false);
+        setSchedulingBacklog(false);
+        setConflictWarning(null);
+        setShouldAutoAdjust(false);
+        setShouldAllowOverlaps(false);
+        toast.push('Event updated', 'success');
+        handleDismissEventModal();
+        onEventPatched?.({
+          id: event.id,
+          title: draftTitle.trim(),
+          holiday_type: nextType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY',
+          date_local: nextStartDate,
+          start_ts: `${nextStartDate}T12:00:00.000Z`,
+          end_ts: `${nextEndDate}T12:30:00.000Z`,
+        });
+        onEventUpdated?.();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
+          window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          window.dispatchEvent(
+            new CustomEvent('refreshCalendar', {
+              detail: { forceInvalidate: true, skipHomeRefresh: false },
+            }),
+          );
+        }
+      } catch (err) {
+        toast.push('Failed to update event', 'error');
+        Alert.alert('Error', err?.message || 'Failed to update event');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     setSaving(true);
     try {
       const isBacklog = event.is_backlog === true || event.data?.is_backlog === true;
@@ -5196,7 +5309,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       // Using empty array [] instead of null ensures Supabase processes the update
       cleanUpdates.child_ids = newChildIds;
       cleanUpdates.child_id = assigneeIds.length > 0 ? assigneeIds[0] : null;
-      const targetEventId = cleanPlannerEventId(String(event.id));
       const seriesLinkIds = isSeriesEditScope
         ? resolveSeriesLinkIds(event, targetEventId)
         : [];

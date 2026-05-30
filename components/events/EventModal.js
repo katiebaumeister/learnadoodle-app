@@ -60,16 +60,17 @@ export default function EventModal({
     }
   }, [visible, schedulingMode]);
 
-  const isHolidayEvent = (id, initial) => {
+  const isReadOnlyPublicHoliday = (initial) => {
     const holidayType = String(initial?.holiday_type || initial?.holidayType || '').toUpperCase();
-    if (holidayType === 'GLOBAL_HOLIDAY') return true;
+    return holidayType === 'GLOBAL_HOLIDAY';
+  };
+  const isSyntheticPlannerExclusionEvent = (id, initial) => {
     const source = String(initial?.source || initial?.data?.source || '').toLowerCase();
     if (source === 'planner_exclusion') return true;
-    // Synthetic holiday rows (holiday-*) are not real events-table rows and must stay view-only.
-    if (id && typeof id === 'string' && id.startsWith('holiday-')) return true;
-    return false;
+    // Synthetic holiday rows (holiday-*) don't exist in events table; keep initial payload and skip DB fetch.
+    return !!(id && typeof id === 'string' && id.startsWith('holiday-'));
   };
-  const eventReadOnly = isHolidayEvent(eventId, event) || viewerRole === 'tutor' || denyFamilyEventEdit;
+  const eventReadOnly = isReadOnlyPublicHoliday(event) || viewerRole === 'tutor' || denyFamilyEventEdit;
   const readOnlyReason = denyFamilyEventEdit ? 'permissions' : null;
 
   const initialEventSignature = [
@@ -114,7 +115,7 @@ export default function EventModal({
 
   useEffect(() => {
     if (visible && eventId) {
-      if (isHolidayEvent(eventId, initialEvent)) {
+      if (isSyntheticPlannerExclusionEvent(eventId, initialEvent)) {
         setEvent(initialEvent || null);
         setLoading(false);
         return;
@@ -149,7 +150,7 @@ export default function EventModal({
   
   const loadEvent = useCallback(async (forceUseDb = false) => {
     if (!eventId) return;
-    if (isHolidayEvent(eventId, initialEvent)) return;
+    if (isSyntheticPlannerExclusionEvent(eventId, initialEvent)) return;
 
     if (!initialEvent) {
       setLoading(true);
