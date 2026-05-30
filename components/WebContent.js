@@ -9965,7 +9965,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         onEventSelect={(event) => {
           const isPublicHoliday = isReadOnlyPublicHolidayEvent(event);
           const isSyntheticExclusion = isSyntheticPlannerExclusionEvent(event);
-          if (isPublicHoliday || isSyntheticExclusion) return;
+          const syntheticHolidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
+          const isEditableSyntheticExclusion =
+            isSyntheticExclusion &&
+            (syntheticHolidayType === 'CUSTOM_HOLIDAY' || syntheticHolidayType === 'CUSTOM_BREAK');
+          if (isPublicHoliday || (isSyntheticExclusion && !isEditableSyntheticExclusion)) return;
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             const hasActiveConflictContext =
               conflictBanner.visible &&

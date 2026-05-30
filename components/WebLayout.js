@@ -2265,7 +2265,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         )
         .eq('family_id', sessionFamilyId)
         .order('updated_at', { ascending: false })
-        .limit(200);
+        .limit(120);
       if (!mounted) return;
       if (error) {
         setPreloadedFamilyAssignments([]);
@@ -2278,15 +2278,36 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     Promise.all([
       fetchFamilyMembers(),
       fetchFamilyData(),
+    ]).catch(() => {});
+    const runDeferredPreloads = () => {
       fetchAcademicYears().catch(() => {
         if (mounted) setPreloadedAcademicYears([]);
-      }),
+      });
       fetchFamilyAssignments().catch(() => {
         if (mounted) setPreloadedFamilyAssignments([]);
-      }),
-      prefetchPlanEditListForFamily(sessionFamilyId).catch(() => {}),
-    ]).catch(() => {});
-    return () => { mounted = false; };
+      });
+      prefetchPlanEditListForFamily(sessionFamilyId).catch(() => {});
+    };
+    let idleHandle = null;
+    let timeoutHandle = null;
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      idleHandle = window.requestIdleCallback(() => {
+        if (!mounted) return;
+        runDeferredPreloads();
+      }, { timeout: 1800 });
+    } else {
+      timeoutHandle = setTimeout(() => {
+        if (!mounted) return;
+        runDeferredPreloads();
+      }, 900);
+    }
+    return () => {
+      mounted = false;
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && idleHandle != null && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleHandle);
+      }
+      if (timeoutHandle != null) clearTimeout(timeoutHandle);
+    };
   }, [fetchFamilyData, fetchFamilyMembers, authUserId, sessionFamilyId]);
 
   // Resolve onboarding status before showing main content so we never flash landing without modal
