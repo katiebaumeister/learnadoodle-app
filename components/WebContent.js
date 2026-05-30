@@ -45,11 +45,9 @@ const PLANNER_CTX_ICON_PATHS = {
 function isReadOnlyPublicHolidayEvent(eventLike) {
   if (!eventLike || typeof eventLike !== 'object') return false;
   const holidayType = String(eventLike.holiday_type || eventLike.holidayType || '').toUpperCase();
-  if (holidayType === 'GLOBAL_HOLIDAY') return true;
-  const rawId = String(eventLike.id || eventLike._originalId || eventLike.originalId || '').trim();
-  // Legacy synthetic public-holiday rows can be "holiday-*" without holiday_type.
-  if (!holidayType && rawId.startsWith('holiday-')) return true;
-  return false;
+  // Keep only explicit global holidays read-only so custom breaks/day-off rows
+  // always retain context menu actions across Home/Planner/Subjects lists.
+  return holidayType === 'GLOBAL_HOLIDAY';
 }
 
 function isSyntheticPlannerExclusionEvent(eventLike) {

@@ -31,6 +31,10 @@ export default function TasksView({
     const type = normalizeEventTypeLower(ev);
     return type === 'break' || (type === 'holiday' && holidayType === 'CUSTOM_BREAK');
   }, [normalizeEventTypeLower]);
+  const isUsPublicHolidayEvent = useCallback((ev) => {
+    const holidayType = String(ev?.holiday_type || ev?.holidayType || ev?.data?.holiday_type || '').trim().toUpperCase();
+    return holidayType === 'GLOBAL_HOLIDAY';
+  }, []);
   const resolveEventDateValue = useCallback((ev) => {
     if (!ev) return null;
     const direct = ev.start || ev.start_ts || ev.start_local;
@@ -422,7 +426,7 @@ export default function TasksView({
       if (section !== 'completed' && rangeStartYmd && rangeEndYmd) {
         const holidayRes = await getHolidaysForRange(familyIdFromEvents, rangeStartYmd, rangeEndYmd);
         const holidayRows = Array.isArray(holidayRes?.data?.holidays)
-          ? holidayRes.data.holidays.map(mapHolidayToTaskEvent).filter(Boolean)
+          ? holidayRes.data.holidays.map(mapHolidayToTaskEvent).filter(Boolean).filter((ev) => !isUsPublicHolidayEvent(ev))
           : [];
         if (holidayRows.length > 0) merged = merged.concat(holidayRows);
       }
@@ -430,7 +434,7 @@ export default function TasksView({
     } catch (error) {
       console.error(`[TasksView] Error fetching ${section} events:`, error);
     }
-  }, [resolveFamilyIdFromLocalSources, sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart, mapHolidayToTaskEvent, toYmd]);
+  }, [resolveFamilyIdFromLocalSources, sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart, mapHolidayToTaskEvent, toYmd, isUsPublicHolidayEvent]);
 
   useEffect(() => {
     if (preloadedBacklogEvents != null) {
@@ -751,6 +755,7 @@ export default function TasksView({
         return combinedEvents.filter(ev => {
           // Exclude backlog items and soft-deleted events from today view
           if (ev.is_backlog === true) return false;
+          if (isUsPublicHolidayEvent(ev)) return false;
           if (ev.deleted || ev.deleted_at) return false;
           if (ev.status === 'done') return false;
           const evDate = resolveEventDateValue(ev);
@@ -764,6 +769,7 @@ export default function TasksView({
         return combinedEvents.filter(ev => {
           // Exclude backlog items and soft-deleted events from tomorrow view
           if (ev.is_backlog === true) return false;
+          if (isUsPublicHolidayEvent(ev)) return false;
           if (ev.deleted || ev.deleted_at) return false;
           if (ev.status === 'done') return false;
           const evDate = resolveEventDateValue(ev);
@@ -777,6 +783,7 @@ export default function TasksView({
         return combinedEvents.filter(ev => {
           // Exclude backlog items and soft-deleted events from month list view
           if (ev.is_backlog === true) return false;
+          if (isUsPublicHolidayEvent(ev)) return false;
           if (ev.deleted || ev.deleted_at) return false;
           if (ev.status === 'done') return false;
           const evDate = resolveEventDateValue(ev);
@@ -788,6 +795,7 @@ export default function TasksView({
       case 'nextmonth':
         return combinedEvents.filter(ev => {
           if (ev.is_backlog === true) return false;
+          if (isUsPublicHolidayEvent(ev)) return false;
           if (ev.deleted || ev.deleted_at) return false;
           if (ev.status === 'done') return false;
           const evDate = resolveEventDateValue(ev);
