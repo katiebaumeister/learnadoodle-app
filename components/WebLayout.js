@@ -2362,11 +2362,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [fetchFamilyData, fetchFamilyMembers]);
 
   useEffect(() => {
-    if (!authUserId || !sessionIsParent || familyId) return;
+    if (!authUserId || !sessionIsParent || familyId || !hasSession || session?.loading !== false) return;
     let cancelled = false;
     ensureFamilyAndSet().then(() => { if (!cancelled) {} });
     return () => { cancelled = true; };
-  }, [authUserId, sessionIsParent, familyId, ensureFamilyAndSet]);
+  }, [authUserId, sessionIsParent, familyId, hasSession, session?.loading, ensureFamilyAndSet]);
 
   // Listen for children refresh events
   useEffect(() => {
