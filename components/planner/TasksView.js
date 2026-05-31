@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Platform, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, FlatList, TouchableOpacity, Platform, StyleSheet, Alert } from 'react-native';
 import { Calendar, CalendarDays, List, Archive, Trash2, Plus, CheckCircle2, Circle } from 'lucide-react';
 import { addDays, isSameDay, startOfToday } from './utils/date';
 import EventChip from '../calendar/EventChip';
+import CompletionRing from '../calendar/CompletionRing';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { supabase } from '../../lib/supabase';
 import { permanentlyDeleteAllTrashEvents } from '../../lib/services/plannerClientWithOffline';
@@ -22,6 +23,12 @@ export default function TasksView({
   plannerHolidaysCache = {},
   plannerExclusions = [],
 }) {
+  const isDoneStatus = useCallback((statusValue) => {
+    const normalized = String(statusValue || '').trim().toLowerCase();
+    return normalized === 'done' || normalized === 'completed';
+  }, []);
+  const DENSE_DATE_HEADER_HEIGHT = 32;
+  const DENSE_EVENT_ROW_HEIGHT = 36;
   const normalizeHolidayType = useCallback((value) => {
     const raw = String(value || '').trim().toUpperCase();
     if (raw === 'BREAK') return 'CUSTOM_BREAK';
@@ -184,7 +191,7 @@ export default function TasksView({
     };
   }, [normalizeHolidayType, buildSyntheticHolidayId]);
 
-  const [activeSection, setActiveSection] = useState('today');
+  const [activeSection, setActiveSection] = useState('all');
   const [userLists, setUserLists] = useState([]);
   const [selectedList, setSelectedList] = useState(null);
   const eventsRef = useRef(events);
@@ -210,6 +217,7 @@ export default function TasksView({
     candidate.setHours(0, 0, 0, 0);
     return candidate;
   }, [monthDate]);
+  const actualTodayDate = useMemo(() => startOfToday(), []);
   const sectionTomorrowDate = useMemo(() => addDays(sectionBaseDate, 1), [sectionBaseDate]);
   const sectionThisMonthStart = useMemo(
     () => new Date(sectionBaseDate.getFullYear(), sectionBaseDate.getMonth(), 1, 0, 0, 0, 0),
@@ -227,6 +235,31 @@ export default function TasksView({
     () => new Date(sectionBaseDate.getFullYear(), sectionBaseDate.getMonth() + 2, 0, 23, 59, 59, 999),
     [sectionBaseDate]
   );
+  const sectionAllHardStart = useMemo(
+    () => new Date(sectionBaseDate.getFullYear() - 5, 0, 1, 0, 0, 0, 0),
+    [sectionBaseDate]
+  );
+  const sectionAllHardEnd = useMemo(
+    () => new Date(sectionBaseDate.getFullYear() + 5, 11, 31, 23, 59, 59, 999),
+    [sectionBaseDate]
+  );
+  const [allPastMonths, setAllPastMonths] = useState(1);
+  const [allFutureMonths, setAllFutureMonths] = useState(2);
+  const sectionAllStart = useMemo(
+    () => {
+      if (allPastMonths <= 0) {
+        const d = new Date(actualTodayDate);
+        d.setHours(0, 0, 0, 0);
+        return d;
+      }
+      return new Date(sectionBaseDate.getFullYear(), sectionBaseDate.getMonth() - allPastMonths, 1, 0, 0, 0, 0);
+    },
+    [actualTodayDate, sectionBaseDate, allPastMonths]
+  );
+  const sectionAllEnd = useMemo(
+    () => new Date(sectionBaseDate.getFullYear(), sectionBaseDate.getMonth() + allFutureMonths + 1, 0, 23, 59, 59, 999),
+    [sectionBaseDate, allFutureMonths]
+  );
   const formatDayLabel = useCallback(
     (dateValue) => dateValue.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
     []
@@ -241,6 +274,7 @@ export default function TasksView({
       tomorrow: `Tomorrow - ${formatDayLabel(sectionTomorrowDate)}`,
       thismonth: `This month - ${formatMonthLabel(sectionBaseDate)}`,
       nextmonth: `Next month - ${formatMonthLabel(sectionNextMonthStart)}`,
+      all: 'All',
       backlog: 'Backlog',
       completed: 'Completed',
       trash: 'Trash',
@@ -388,7 +422,7 @@ export default function TasksView({
   }, [resolveFamilyIdFromLocalSources]);
 
   const fetchSectionEvents = useCallback(async (section) => {
-    if (!['today', 'tomorrow', 'thismonth', 'nextmonth', 'completed'].includes(section)) {
+    if (!['today', 'tomorrow', 'thismonth', 'nextmonth', 'all', 'completed'].includes(section)) {
       setSectionEvents([]);
       return;
     }
@@ -423,6 +457,15 @@ export default function TasksView({
           .lte('start_ts', monthEnd.toISOString())
           .order('start_ts', { ascending: true })
           .limit(1000);
+      } else if (section === 'all') {
+        rangeStartYmd = toYmd(sectionAllStart);
+        rangeEndYmd = toYmd(sectionAllEnd);
+        query = query
+          .or('is_backlog.is.false,is_backlog.is.null')
+          .gte('start_ts', sectionAllStart.toISOString())
+          .lte('start_ts', sectionAllEnd.toISOString())
+          .order('start_ts', { ascending: true, nullsFirst: false })
+          .limit(2000);
       } else {
         const targetDate = section === 'tomorrow' ? sectionTomorrowDate : sectionBaseDate;
         const start = new Date(targetDate);
@@ -456,7 +499,7 @@ export default function TasksView({
     } catch (error) {
       console.error(`[TasksView] Error fetching ${section} events:`, error);
     }
-  }, [resolveFamilyIdFromLocalSources, sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart, mapHolidayToTaskEvent, toYmd, isUsPublicHolidayEvent]);
+  }, [resolveFamilyIdFromLocalSources, sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart, sectionAllStart, sectionAllEnd, mapHolidayToTaskEvent, toYmd, isUsPublicHolidayEvent]);
 
   useEffect(() => {
     if (preloadedBacklogEvents != null) {
@@ -491,6 +534,12 @@ export default function TasksView({
   useEffect(() => {
     fetchSectionEvents(activeSection);
   }, [activeSection, fetchSectionEvents]);
+
+  useEffect(() => {
+    if (activeSection !== 'all') return;
+    setAllPastMonths((prev) => (prev < 1 ? 1 : prev));
+    setAllFutureMonths((prev) => (prev < 2 ? 2 : prev));
+  }, [activeSection]);
 
   // Listen for calendar refresh events to refetch backlog items
   useEffect(() => {
@@ -601,31 +650,11 @@ export default function TasksView({
     }
   }, [familyIdFromEvents, fetchedFamilyId]);
 
-  // Listen for section changes from external sources (e.g., search results)
+  // Force All-only list mode.
   useEffect(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      // Check URL parameter for section on mount
-      const urlParams = new URLSearchParams(window.location.search);
-      const sectionParam = urlParams.get('section');
-      if (sectionParam && ['today', 'tomorrow', 'thismonth', 'nextmonth', 'backlog', 'completed', 'trash'].includes(sectionParam)) {
-        setActiveSection(sectionParam);
-        setSelectedList(null);
-      }
-
-      // Listen for custom event to change section
-      const handleSectionChange = (event) => {
-        const section = event.detail?.section;
-        if (section && ['today', 'tomorrow', 'thismonth', 'nextmonth', 'backlog', 'completed', 'trash'].includes(section)) {
-          setActiveSection(section);
-          setSelectedList(null);
-        }
-      };
-
-      window.addEventListener('plannerTasksViewChange', handleSectionChange);
-
-      return () => {
-        window.removeEventListener('plannerTasksViewChange', handleSectionChange);
-      };
+    if (activeSection !== 'all') {
+      setActiveSection('all');
+      setSelectedList(null);
     }
   }, []);
 
@@ -746,6 +775,12 @@ export default function TasksView({
           ...expandCachedHolidaysForRange(sectionNextMonthStart, sectionNextMonthEnd),
         ];
       }
+      if (section === 'all') {
+        return [
+          ...expandPlannerExclusionsForRange(sectionAllStart, sectionAllEnd),
+          ...expandCachedHolidaysForRange(sectionAllStart, sectionAllEnd),
+        ];
+      }
       return [];
     })();
     const combinedEvents = (() => {
@@ -824,6 +859,18 @@ export default function TasksView({
           if (!evDate) return false;
           const d = new Date(evDate);
           return d >= sectionNextMonthStart && d <= sectionNextMonthEnd;
+        });
+
+      case 'all':
+        return combinedEvents.filter(ev => {
+          if (ev.is_backlog === true) return false;
+          if (isUsPublicHolidayEvent(ev)) return false;
+          if (ev.deleted || ev.deleted_at) return false;
+          const evDate = resolveEventDateValue(ev);
+          if (!evDate) return false;
+          const d = new Date(evDate);
+          if (Number.isNaN(d.getTime())) return false;
+          return d >= sectionAllStart && d <= sectionAllEnd;
         });
       
       case 'backlog':
@@ -908,6 +955,8 @@ export default function TasksView({
     sectionThisMonthEnd,
     sectionNextMonthStart,
     sectionNextMonthEnd,
+    sectionAllStart,
+    sectionAllEnd,
   ]);
 
   // Trash display: group plan placeholder events into one row per plan; other events stay as single rows
@@ -1060,130 +1109,345 @@ export default function TasksView({
     );
   };
 
+  const isDenseCalendarSection = ['today', 'tomorrow', 'thismonth', 'nextmonth', 'all'].includes(activeSection);
+  const childNameById = useMemo(() => {
+    const map = new Map();
+    (children || []).forEach((child) => {
+      if (!child?.id) return;
+      const name = String(child?.first_name || child?.name || '').trim();
+      if (name) map.set(String(child.id), name);
+    });
+    return map;
+  }, [children]);
+
+  const formatDenseStartTimeLabel = useCallback((event) => {
+    const holidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
+    const typeLower = String(event?.event_type || event?.type || '').toLowerCase();
+    if (typeLower === 'holiday' || holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'CUSTOM_BREAK' || holidayType === 'GLOBAL_HOLIDAY') {
+      return 'All day';
+    }
+    const dateValue = resolveEventDateValue(event);
+    if (!dateValue) return '';
+    const d = new Date(dateValue);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }, [resolveEventDateValue]);
+  const formatDenseEndTimeLabel = useCallback((event) => {
+    const holidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
+    const typeLower = String(event?.event_type || event?.type || '').toLowerCase();
+    if (typeLower === 'holiday' || holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'CUSTOM_BREAK' || holidayType === 'GLOBAL_HOLIDAY') {
+      return 'All day';
+    }
+    const endValue = event?.end_ts || event?.end || event?.end_local;
+    if (!endValue) return '';
+    const d = new Date(endValue);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  }, []);
+  const formatDenseTimeRangeLabel = useCallback((event) => {
+    const startLabel = formatDenseStartTimeLabel(event);
+    const endLabel = formatDenseEndTimeLabel(event);
+    if (!startLabel && !endLabel) return '';
+    if (startLabel === 'All day' || endLabel === 'All day') return 'All day';
+    if (startLabel && endLabel) return `${startLabel} - ${endLabel}`;
+    return startLabel || endLabel || '';
+  }, [formatDenseStartTimeLabel, formatDenseEndTimeLabel]);
+
+  const formatDenseDateHeader = useCallback((dateYmd) => {
+    const d = new Date(`${dateYmd}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return dateYmd;
+    const month = d.toLocaleDateString('en-US', { month: 'long' });
+    const day = d.getDate();
+    const weekday = d.toLocaleDateString('en-US', { weekday: 'long' });
+    return `${month} ${day} • ${weekday}`;
+  }, []);
+
+  const getDenseEventTypeLabel = useCallback((event) => {
+    const holidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
+    if (holidayType === 'CUSTOM_BREAK') return 'Break';
+    if (holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'GLOBAL_HOLIDAY') return 'Holiday';
+    return String(event?.event_type || event?.type || 'Event');
+  }, []);
+
+  const getDenseColorKey = useCallback((event) => {
+    const holidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
+    const eventType = String(event?.event_type || event?.type || '').trim().toLowerCase();
+    if (holidayType === 'CUSTOM_BREAK' || eventType === 'break') return 'break';
+    if (holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'GLOBAL_HOLIDAY' || eventType === 'day off' || eventType === 'holiday') return 'day_off';
+    if (eventType === 'lesson' || eventType === 'schedule block' || eventType === 'scheduled class day' || eventType === 'classday' || eventType === 'class day') return 'lesson';
+    if (eventType === 'assignment') return 'assignment';
+    if (eventType === 'activity') return 'activity';
+    if (eventType === 'project') return 'project';
+    if (eventType === 'exam' || eventType === 'assessment') return 'exam';
+    if (eventType === 'appointment') return 'appointment';
+    return 'appointment';
+  }, []);
+  const getDenseRowFillColor = useCallback((event) => {
+    const colorKey = getDenseColorKey(event);
+    switch (colorKey) {
+      case 'lesson': return '#E3F0FF';
+      case 'activity': return '#EDE6FF';
+      case 'assignment': return '#DFF7E3';
+      case 'project': return '#D6F0ED';
+      case 'exam': return '#FCE7F3';
+      case 'day_off': return '#FFEDE2';
+      case 'break': return '#FFF7D6';
+      default: return '#F2F4F7';
+    }
+  }, [getDenseColorKey]);
+  const getDenseTypeChipFillColor = useCallback((event) => getDenseRowFillColor(event), [getDenseRowFillColor]);
+  const getDenseTextColor = useCallback((event) => {
+    const colorKey = getDenseColorKey(event);
+    switch (colorKey) {
+      case 'lesson': return '#4C7ED9';
+      case 'activity': return '#7A5CD6';
+      case 'assignment': return '#4FAF75';
+      case 'project': return '#0D9488';
+      case 'exam': return '#BE185D';
+      case 'day_off': return '#9A3412';
+      case 'break': return '#A16207';
+      default: return '#6B7280';
+    }
+  }, [getDenseColorKey]);
+  const todayYmd = useMemo(() => toYmd(actualTodayDate), [toYmd, actualTodayDate]);
+
+  const groupedDenseRows = useMemo(() => {
+    if (!isDenseCalendarSection) return [];
+    const sorted = [...(currentEvents || [])].sort((a, b) => {
+      const aDate = new Date(resolveEventDateValue(a) || 0).getTime();
+      const bDate = new Date(resolveEventDateValue(b) || 0).getTime();
+      return aDate - bDate;
+    });
+    const groups = [];
+    let currentKey = null;
+    sorted.forEach((event) => {
+      const dateValue = resolveEventDateValue(event);
+      if (!dateValue) return;
+      const ymd = String(event?.date_local || '').slice(0, 10) || String(dateValue).slice(0, 10);
+      if (!ymd) return;
+      if (currentKey !== ymd) {
+        currentKey = ymd;
+        groups.push({ type: 'header', key: `hdr-${ymd}`, dateKey: ymd });
+      }
+      groups.push({ type: 'event', key: `ev-${String(event?.id || Math.random())}`, dateKey: ymd, event });
+    });
+    if (activeSection === 'all') {
+      const hasTodayHeader = groups.some((row) => row?.type === 'header' && row?.dateKey === todayYmd);
+      if (!hasTodayHeader) {
+        // Ensure "today" can always be the initial anchor row, even when there are no events today.
+        let inserted = false;
+        for (let i = 0; i < groups.length; i += 1) {
+          const row = groups[i];
+          if (row?.type !== 'header') continue;
+          const rowDate = String(row?.dateKey || '');
+          if (rowDate > todayYmd) {
+            groups.splice(i, 0, { type: 'header', key: `hdr-${todayYmd}`, dateKey: todayYmd });
+            inserted = true;
+            break;
+          }
+        }
+        if (!inserted) {
+          groups.push({ type: 'header', key: `hdr-${todayYmd}`, dateKey: todayYmd });
+        }
+      }
+    }
+    return groups;
+  }, [isDenseCalendarSection, currentEvents, resolveEventDateValue, activeSection, todayYmd]);
+
+  const denseListRef = useRef(null);
+  const prevActiveSectionRef = useRef(activeSection);
+  const [allOpenVersion, setAllOpenVersion] = useState(0);
+  const allWindowExpandAtRef = useRef({ past: 0, future: 0 });
+  const hasCenteredAllRef = useRef(false);
+  const denseTodayIndex = useMemo(
+    () => groupedDenseRows.findIndex((row) => row?.type === 'header' && row?.dateKey === todayYmd),
+    [groupedDenseRows, todayYmd]
+  );
+  const denseStickyHeaderIndices = useMemo(() => {
+    const out = [];
+    groupedDenseRows.forEach((row, idx) => {
+      if (row?.type === 'header') out.push(idx);
+    });
+    return out;
+  }, [groupedDenseRows]);
+  const denseItemLayouts = useMemo(() => {
+    const offsets = [];
+    let cursor = 0;
+    groupedDenseRows.forEach((row) => {
+      offsets.push(cursor);
+      cursor += row?.type === 'header' ? DENSE_DATE_HEADER_HEIGHT : DENSE_EVENT_ROW_HEIGHT;
+    });
+    return offsets;
+  }, [groupedDenseRows, DENSE_DATE_HEADER_HEIGHT, DENSE_EVENT_ROW_HEIGHT]);
+
+  useEffect(() => {
+    if (activeSection !== 'all') {
+      hasCenteredAllRef.current = false;
+    }
+  }, [activeSection]);
+
+  useEffect(() => {
+    const prev = prevActiveSectionRef.current;
+    if (activeSection === 'all' && prev !== 'all') {
+      hasCenteredAllRef.current = false;
+      setAllOpenVersion((v) => v + 1);
+    }
+    prevActiveSectionRef.current = activeSection;
+  }, [activeSection]);
+
+  useEffect(() => {
+    if (activeSection !== 'all') return;
+    if (denseTodayIndex < 0) return;
+    hasCenteredAllRef.current = true;
+  }, [activeSection, denseTodayIndex, groupedDenseRows.length]);
+
+  const maybeExpandAllPast = useCallback(() => {
+    if (activeSection !== 'all') return;
+    const now = Date.now();
+    if (now - (allWindowExpandAtRef.current.past || 0) < 700) return;
+    allWindowExpandAtRef.current.past = now;
+    setAllPastMonths((prev) => {
+      if (prev >= 60) return prev;
+      const candidate = prev + 2;
+      const nextStart = new Date(sectionBaseDate.getFullYear(), sectionBaseDate.getMonth() - candidate, 1, 0, 0, 0, 0);
+      return nextStart < sectionAllHardStart ? prev : candidate;
+    });
+  }, [activeSection, sectionBaseDate, sectionAllHardStart]);
+
+  const maybeExpandAllFuture = useCallback(() => {
+    if (activeSection !== 'all') return;
+    const now = Date.now();
+    if (now - (allWindowExpandAtRef.current.future || 0) < 700) return;
+    allWindowExpandAtRef.current.future = now;
+    setAllFutureMonths((prev) => {
+      if (prev >= 60) return prev;
+      const candidate = prev + 2;
+      const nextEnd = new Date(sectionBaseDate.getFullYear(), sectionBaseDate.getMonth() + candidate + 1, 0, 23, 59, 59, 999);
+      return nextEnd > sectionAllHardEnd ? prev : candidate;
+    });
+  }, [activeSection, sectionBaseDate, sectionAllHardEnd]);
+
+  const renderDenseEventRow = useCallback((event) => {
+    const eventWithSection = { ...event, _activeSection: activeSection };
+    const childId = String(event?.child_id || event?.childId || (Array.isArray(event?.child_ids) ? event.child_ids[0] : '') || '');
+    const studentLabel = childNameById.get(childId) || '';
+    const status = String(event?.status || '').toLowerCase();
+    const isDone = isDoneStatus(status);
+    const shouldShowDoneStyling = isDone;
+    const shouldShowLighterText = isDone;
+    const handleRowContextMenu = (nativeEvent) => {
+      if (Platform.OS !== 'web' || typeof window === 'undefined' || !onEventRightClick) return;
+      nativeEvent?.preventDefault?.();
+      nativeEvent?.stopPropagation?.();
+      onEventRightClick(eventWithSection, nativeEvent);
+    };
+    return (
+      <TouchableOpacity
+        key={String(event?.id || Math.random())}
+        style={[
+          styles.denseRow,
+          {
+            backgroundColor: '#FFFFFF',
+            opacity: isDone ? 0.5 : 1,
+          },
+        ]}
+        onPress={activeSection === 'trash' ? undefined : (() => onEventPress && onEventPress(event))}
+        {...(Platform.OS === 'web' && {
+          'data-event-id': String(eventWithSection?.id || ''),
+          onMouseDown: (e) => {
+            const button = e?.button ?? e?.nativeEvent?.button;
+            if (button !== 2) return;
+            handleRowContextMenu(e?.nativeEvent || e);
+          },
+          onContextMenu: (e) => {
+            handleRowContextMenu(e?.nativeEvent || e);
+          },
+        })}
+      >
+        <View
+          style={styles.denseStatusCell}
+          {...(Platform.OS === 'web' && {
+            onClick: (e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onEventComplete && onEventComplete(event);
+            },
+            onMouseDown: (e) => {
+              e.stopPropagation();
+            },
+          })}
+        >
+          <CompletionRing
+            isDone={isDone}
+            size={14}
+            pendingBorderColor="rgba(107, 114, 128, 0.5)"
+            onPress={() => {
+              onEventComplete && onEventComplete(event);
+            }}
+          />
+        </View>
+        <Text
+          style={[
+            styles.denseEventTitle,
+            {
+              color: '#111827',
+              fontWeight: '500',
+              textDecorationLine: shouldShowDoneStyling ? 'line-through' : 'none',
+              opacity: shouldShowLighterText ? 0.5 : 1,
+            },
+          ]}
+          numberOfLines={1}
+        >
+          {String(event?.title || 'Untitled')}
+        </Text>
+        <Text style={[styles.denseTimeCell, { opacity: shouldShowLighterText ? 0.5 : 1 }]} numberOfLines={1}>{formatDenseTimeRangeLabel(event)}</Text>
+        <Text style={[styles.denseStudentCell, { opacity: shouldShowLighterText ? 0.5 : 1 }]} numberOfLines={1}>{studentLabel || '—'}</Text>
+        <View style={styles.denseTypeCell}>
+          <View style={[styles.denseTypeChip, { backgroundColor: getDenseTypeChipFillColor(event) }]}>
+            <Text style={styles.denseTypeChipText} numberOfLines={1}>{getDenseEventTypeLabel(event)}</Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  }, [activeSection, childNameById, onEventComplete, onEventPress, onEventRightClick, formatDenseTimeRangeLabel, getDenseEventTypeLabel, getDenseTypeChipFillColor, getDenseTextColor, isDoneStatus]);
+
+  const renderDenseListItem = useCallback(({ item }) => {
+    if (item?.type === 'header') {
+      return (
+        <View style={styles.denseDateHeader}>
+          <Text style={styles.denseDateHeaderText}>{formatDenseDateHeader(item.dateKey)}</Text>
+        </View>
+      );
+    }
+    return renderDenseEventRow(item?.event);
+  }, [formatDenseDateHeader, renderDenseEventRow]);
+
   return (
     <View style={styles.container}>
-      {/* Sidebar */}
-      <View style={styles.sidebar}>
-        <ScrollView style={styles.sidebarScroll}>
-          {/* Primary Views */}
-          <View style={styles.sidebarSection}>
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'today' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('today');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'today' && styles.sidebarItemTextActive
-              ]}>
-                {sectionTitles.today}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'tomorrow' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('tomorrow');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'tomorrow' && styles.sidebarItemTextActive
-              ]}>
-                {sectionTitles.tomorrow}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'thismonth' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('thismonth');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'thismonth' && styles.sidebarItemTextActive
-              ]}>
-                {sectionTitles.thismonth}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.sidebarItem, activeSection === 'nextmonth' && styles.sidebarItemActive]}
-              onPress={() => {
-                setActiveSection('nextmonth');
-                setSelectedList(null);
-              }}
-            >
-              <Text style={[
-                styles.sidebarItemText,
-                activeSection === 'nextmonth' && styles.sidebarItemTextActive
-              ]}>
-                {sectionTitles.nextmonth}
-              </Text>
-            </TouchableOpacity>
-
-          </View>
-
-          {/* User Lists */}
-          {userLists.length > 0 && (
-            <View style={styles.sidebarSection}>
-              {userLists.map(list => (
-                <TouchableOpacity
-                  key={list.id}
-                  style={[
-                    styles.sidebarItem,
-                    selectedList?.id === list.id && styles.sidebarItemActive
-                  ]}
-                  onPress={() => {
-                    setActiveSection(list.id);
-                    setSelectedList(list);
-                  }}
-                >
-                  <Text style={styles.listIcon}>{list.icon}</Text>
-                  <Text style={[
-                    styles.sidebarItemText,
-                    selectedList?.id === list.id && styles.sidebarItemTextActive
-                  ]}>
-                    {list.name}
-                  </Text>
-                  {list.count > 0 && (
-                    <Text style={styles.listCount}>{list.count}</Text>
-                  )}
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-        </ScrollView>
-      </View>
-
       {/* Main Content */}
       <View style={styles.mainContent}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>
-            {activeSection === 'today' && sectionTitles.today}
-            {activeSection === 'tomorrow' && sectionTitles.tomorrow}
-            {activeSection === 'thismonth' && sectionTitles.thismonth}
-            {activeSection === 'nextmonth' && sectionTitles.nextmonth}
-            {activeSection === 'backlog' && sectionTitles.backlog}
-            {activeSection === 'completed' && sectionTitles.completed}
-            {activeSection === 'trash' && sectionTitles.trash}
-            {selectedList && selectedList.name}
-          </Text>
-          {activeSection === 'backlog' && (
-            <Text style={styles.headerDescription}>
-              Keep backburner items here. Add them to the calendar any time.
+        {activeSection !== 'all' ? (
+          <View style={styles.header}>
+            <Text style={styles.headerTitle}>
+              {activeSection === 'today' && sectionTitles.today}
+              {activeSection === 'tomorrow' && sectionTitles.tomorrow}
+              {activeSection === 'thismonth' && sectionTitles.thismonth}
+              {activeSection === 'nextmonth' && sectionTitles.nextmonth}
+              {activeSection === 'backlog' && sectionTitles.backlog}
+              {activeSection === 'completed' && sectionTitles.completed}
+              {activeSection === 'trash' && sectionTitles.trash}
+              {selectedList && selectedList.name}
             </Text>
-          )}
-        </View>
+            {activeSection === 'backlog' && (
+              <Text style={styles.headerDescription}>
+                Keep backburner items here. Add them to the calendar any time.
+              </Text>
+            )}
+          </View>
+        ) : null}
 
         {/* Add Task Input or Clear Trash Button */}
-        {activeSection === 'completed' ? null : activeSection === 'trash' ? (
+        {activeSection === 'all' ? null : activeSection === 'completed' ? null : activeSection === 'trash' ? (
           trashEvents.length > 0 ? (
             <TouchableOpacity
               style={[styles.addTaskInput, styles.clearTrashButton]}
@@ -1213,27 +1477,64 @@ export default function TasksView({
         )}
 
         {/* Tasks List */}
-        <ScrollView style={styles.tasksList}>
-            {activeSection === 'trash' ? (
-              trashDisplayItems.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyStateText}>No tasks in trash</Text>
-                </View>
-              ) : (
-                trashDisplayItems.map((item) =>
-                  item.type === 'event' ? renderTaskItem(item.event) : renderPlanTrashItem(item)
-                )
-              )
-            ) : currentEvents.length === 0 ? (
+        {activeSection === 'trash' ? (
+          <ScrollView style={styles.tasksList}>
+            {trashDisplayItems.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyStateText}>
-                  No tasks {activeSection === 'today' ? 'today' : activeSection === 'completed' ? 'completed' : 'here'}
-                </Text>
+                <Text style={styles.emptyStateText}>No tasks in trash</Text>
               </View>
             ) : (
-              currentEvents.map(renderTaskItem)
-          )}
-        </ScrollView>
+              trashDisplayItems.map((item) =>
+                item.type === 'event' ? renderTaskItem(item.event) : renderPlanTrashItem(item)
+              )
+            )}
+          </ScrollView>
+        ) : currentEvents.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>
+              No tasks {activeSection === 'today' ? 'today' : activeSection === 'completed' ? 'completed' : 'here'}
+            </Text>
+          </View>
+        ) : isDenseCalendarSection ? (
+          <View style={styles.tasksList}>
+            <FlatList
+              key={activeSection === 'all' ? `all-${allOpenVersion}` : `dense-${activeSection}`}
+              ref={denseListRef}
+              style={styles.tasksList}
+              data={groupedDenseRows}
+              keyExtractor={(item) => String(item?.key || '')}
+              renderItem={renderDenseListItem}
+              stickyHeaderIndices={denseStickyHeaderIndices}
+              initialScrollIndex={Math.max(0, denseTodayIndex)}
+              getItemLayout={(_, index) => {
+                const row = groupedDenseRows[index];
+                const length = row?.type === 'header' ? DENSE_DATE_HEADER_HEIGHT : DENSE_EVENT_ROW_HEIGHT;
+                const offset = denseItemLayouts[index] ?? 0;
+                return { length, offset, index };
+              }}
+              onEndReachedThreshold={0.65}
+              onEndReached={() => {
+                if (activeSection === 'all') maybeExpandAllFuture();
+              }}
+              onScroll={(e) => {
+                if (activeSection !== 'all') return;
+                const y = e?.nativeEvent?.contentOffset?.y ?? 0;
+                if (y <= 120) maybeExpandAllPast();
+              }}
+              scrollEventThrottle={16}
+              onScrollToIndexFailed={() => {
+                setTimeout(() => {
+                  const target = Math.max(0, denseTodayIndex);
+                  denseListRef.current?.scrollToIndex?.({ index: target, animated: false, viewPosition: 0 });
+                }, 120);
+              }}
+            />
+          </View>
+        ) : (
+          <ScrollView style={styles.tasksList}>
+            {currentEvents.map(renderTaskItem)}
+          </ScrollView>
+        )}
       </View>
     </View>
   );
@@ -1244,6 +1545,10 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      height: '100vh',
+      overflow: 'hidden',
+    }),
   },
   sidebar: {
     width: 200,
@@ -1320,7 +1625,8 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 24,
     ...(Platform.OS === 'web' && {
-      overflowY: 'auto',
+      minHeight: 0,
+      overflow: 'hidden',
     }),
   },
   header: {
@@ -1373,6 +1679,136 @@ const styles = StyleSheet.create({
   },
   tasksList: {
     flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+    }),
+  },
+  denseColumnsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 30,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    paddingBottom: 0,
+    marginBottom: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  denseHeaderText: {
+    fontSize: 11,
+    color: '#6B7280',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      letterSpacing: '0.04em',
+    }),
+  },
+  denseDateHeader: {
+    height: 32,
+    justifyContent: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+    marginTop: 0,
+    backgroundColor: '#FFFFFF',
+  },
+  denseDateHeaderText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      letterSpacing: '0.05em',
+    }),
+  },
+  denseRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(17, 24, 39, 0.06)',
+    borderLeftWidth: 1,
+    backgroundColor: '#F2F4F7',
+    paddingVertical: 0,
+    paddingHorizontal: 10,
+    marginBottom: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  denseStatusCell: {
+    width: 58,
+    textAlign: 'center',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  denseStatusText: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '700',
+  },
+  denseHeaderEventCell: {
+    flex: 1.6,
+    paddingLeft: 34,
+  },
+  denseHeaderTimeCell: {
+    flex: 1.4,
+    alignItems: 'flex-start',
+    paddingLeft: 12,
+  },
+  denseHeaderStudentCell: {
+    flex: 0.8,
+    alignItems: 'flex-start',
+    paddingLeft: 12,
+  },
+  denseHeaderTypeCell: {
+    flex: 0.7,
+    alignItems: 'flex-start',
+    paddingLeft: 12,
+  },
+  denseEventTitle: {
+    flex: 1.6,
+    paddingLeft: 20,
+    fontSize: 14,
+    color: '#111827',
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  denseTimeCell: {
+    flex: 1.4,
+    fontSize: 13,
+    color: '#374151',
+    textAlign: 'left',
+    paddingLeft: 12,
+  },
+  denseStudentCell: {
+    flex: 0.8,
+    fontSize: 13,
+    color: '#4B5563',
+    textAlign: 'left',
+    paddingLeft: 12,
+  },
+  denseTypeCell: {
+    flex: 0.7,
+    alignItems: 'flex-start',
+    paddingLeft: 12,
+  },
+  denseTypeChip: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  denseTypeChipText: {
+    fontSize: 11,
+    color: '#4B5563',
+    textTransform: 'capitalize',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      letterSpacing: '0.01em',
+    }),
   },
   taskItem: {
     marginBottom: 8,

@@ -6454,6 +6454,37 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     });
   }, [activeTab, familyId, plannerDate, refreshCalendarData]);
 
+  // When leaving List/Tasks view, force-refresh planner caches for calendar-style views.
+  // This guards against a stale-empty month cache rendering blank chips after view switch.
+  const prevPlannerViewRef = useRef(propPlannerView);
+  useEffect(() => {
+    if (activeTab !== 'planner' && activeTab !== 'ai-planner') {
+      prevPlannerViewRef.current = propPlannerView;
+      return;
+    }
+    if (!familyId) {
+      prevPlannerViewRef.current = propPlannerView;
+      return;
+    }
+    const normalizeView = (value) => String(value || '').trim().toLowerCase();
+    const prevView = normalizeView(prevPlannerViewRef.current);
+    const nextView = normalizeView(propPlannerView);
+    prevPlannerViewRef.current = propPlannerView;
+    if (!['tasks', 'list'].includes(prevView)) return;
+    if (!['month', 'week', 'board', 'day'].includes(nextView)) return;
+
+    const refreshDate = new Date(plannerDate.getFullYear(), plannerDate.getMonth(), 1);
+    const prevMonth = new Date(refreshDate.getFullYear(), refreshDate.getMonth() - 1, 1);
+    const nextMonth = new Date(refreshDate.getFullYear(), refreshDate.getMonth() + 1, 1);
+    Promise.allSettled([
+      refreshCalendarData(refreshDate, { background: false, force: true }),
+      refreshCalendarData(prevMonth, { background: true, force: true }),
+      refreshCalendarData(nextMonth, { background: true, force: true }),
+    ]).catch((err) => {
+      console.error('[WebContent] Planner view switch refresh failed:', err);
+    });
+  }, [activeTab, familyId, plannerDate, propPlannerView, refreshCalendarData]);
+
   // Optimistically add newly created calendar events so they appear on the planner immediately
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;

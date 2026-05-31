@@ -7,7 +7,12 @@ const STROKE = 2.5;
 /**
  * Month / list completion control: fixed size on web (no dangerouslySetInnerHTML) to avoid reflow and flicker when props re-render.
  */
-export default function CompletionRing({ isDone, size = 16, onPress }) {
+export default function CompletionRing({
+  isDone,
+  size = 16,
+  onPress,
+  pendingBorderColor = 'rgba(59, 130, 246, 0.45)',
+}) {
   const scaleAnim = useRef(new Animated.Value(isDone ? 1 : 0)).current;
   const sparkleOpacity = useRef(new Animated.Value(0)).current;
   const ringProgress = useRef(new Animated.Value(isDone ? 1 : 0)).current;
@@ -79,7 +84,7 @@ export default function CompletionRing({ isDone, size = 16, onPress }) {
           height: size,
           borderRadius: size / 2,
           borderWidth: STROKE,
-          borderColor: isDone ? 'transparent' : 'rgba(59, 130, 246, 0.45)',
+          borderColor: isDone ? 'transparent' : pendingBorderColor,
           backgroundColor: isDone ? '#10B981' : 'rgba(243, 244, 246, 0.85)',
           alignItems: 'center',
           justifyContent: 'center',
