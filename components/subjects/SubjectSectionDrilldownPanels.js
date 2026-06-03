@@ -446,6 +446,7 @@ export function SubjectAttendanceMonthDrilldown({
   }, [subjectEvents]);
   const dayStatusByChild = useMemo(() => {
     const statuses = {};
+    const todayKey = toDateKey(new Date());
     const allKeys = new Set([...Array.from(recordsByDate.keys()), ...Array.from(eventsByDate.keys())]);
     allKeys.forEach((key) => {
       const rows = recordsByDate.get(key) || [];
@@ -454,7 +455,7 @@ export function SubjectAttendanceMonthDrilldown({
       const hasEvents = (eventsByDate.get(key) || []).length > 0;
       if (hasPresent) statuses[key] = 'present';
       else if (hasAbsent) statuses[key] = 'absent';
-      else if (hasEvents) statuses[key] = 'unmarked';
+      else if (hasEvents) statuses[key] = todayKey && key > todayKey ? 'unmarked' : 'absent';
       else statuses[key] = 'noEvents';
     });
     return { all: statuses };
@@ -463,12 +464,15 @@ export function SubjectAttendanceMonthDrilldown({
   const selectedEvents = selectedKey ? (eventsByDate.get(selectedKey) || []) : [];
   const selectedAttendanceByEventId = useMemo(() => {
     if (!selectedKey) return {};
+    const todayKey = toDateKey(new Date());
     const statusMap = {};
     selectedEvents.forEach((event) => {
       const rowsForEvent = selectedRows.filter((row) => row?.event_id === event.id);
       if (rowsForEvent.some((row) => String(row?.status || '').toLowerCase() === 'present')) {
         statusMap[event.id] = 'present';
       } else if (rowsForEvent.some((row) => String(row?.status || '').toLowerCase() === 'absent')) {
+        statusMap[event.id] = 'absent';
+      } else if (!todayKey || selectedKey <= todayKey) {
         statusMap[event.id] = 'absent';
       }
     });
@@ -488,10 +492,6 @@ export function SubjectAttendanceMonthDrilldown({
 
   return (
     <View style={styles.attendanceDrilldownSection}>
-      <Text style={styles.attendanceDrilldownTitle}>Month drill-down</Text>
-      <Text style={[styles.attendanceDrilldownHelp, styles.attendanceDrilldownHelpMonth]}>
-        Click a day on the calendar to see that day’s events for all children. Toggle the circle next to an event to mark it attended or unattended.
-      </Text>
       <View style={styles.attendanceDrilldownGrid}>
         <View style={styles.attendanceCalendarWithDivider}>
           <View style={styles.attendanceCalendarColumn}>
@@ -501,6 +501,7 @@ export function SubjectAttendanceMonthDrilldown({
               selectedChildId="all"
               selectedDateKey={selectedKey}
               children={[{ id: 'all' }]}
+              enableVerticalMonthScroll
               onMonthChange={(delta) => setMonthDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1))}
               onDayPress={setSelectedKey}
             />

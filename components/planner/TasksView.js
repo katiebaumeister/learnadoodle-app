@@ -1,13 +1,148 @@
 import React, { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, FlatList, TouchableOpacity, Platform, StyleSheet, Alert } from 'react-native';
-import { Calendar, CalendarDays, List, Archive, Trash2, Plus, CheckCircle2, Circle } from 'lucide-react';
+import { View, Text, ScrollView, FlatList, TouchableOpacity, Platform, StyleSheet, Alert, Modal } from 'react-native';
+import { Calendar, CalendarDays, List, Archive, Trash2, Plus, Hand, ClipboardList, MessageCircle, X } from 'lucide-react';
 import { addDays, isSameDay, startOfToday } from './utils/date';
 import EventChip from '../calendar/EventChip';
 import CompletionRing from '../calendar/CompletionRing';
+import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { supabase } from '../../lib/supabase';
 import { permanentlyDeleteAllTrashEvents } from '../../lib/services/plannerClientWithOffline';
 import { getHolidaysForRange } from '../../lib/services/academicYearClient';
+import { ASSIGNMENT_SELECT } from '../../lib/familyDmClient';
+import { dispatchAssignmentRefreshEvents, getChildIdsFromEvent } from '../../lib/assignmentWorkflowClient';
+import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
+import AssignmentMessageModal from '../subjects/AssignmentMessageModal';
+import AssignmentSubmittalRequestModal from '../subjects/AssignmentSubmittalRequestModal';
+import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
+import {
+  formatEventTypeLabel,
+  formatTimeRangeLabel,
+  formatChildNamesCommaLine,
+  resolveChildIdsForEvent,
+  getEventUnitLessonLabel,
+  getEventMaterialIds,
+  resolveMaterialDisplayLabel,
+  formatEventGradeLabel,
+  pickAssignmentForEvent,
+  mergeAssignmentsByEventId,
+  getPlannerEventTypeColors,
+} from './plannerListTableUtils';
+
+const WEB_BODY_FONT = Platform.OS === 'web'
+  ? { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
+  : {};
+
+function renderPlannerListActionHint(actionHint) {
+  if (Platform.OS !== 'web' || !actionHint?.text || typeof document === 'undefined') return null;
+  let ReactDOM;
+  try {
+    ReactDOM = require('react-dom');
+  } catch {
+    return null;
+  }
+  if (!ReactDOM?.createPortal) return null;
+  return ReactDOM.createPortal(
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'fixed',
+        zIndex: 100001,
+        maxWidth: 240,
+        backgroundColor: 'rgba(15, 23, 42, 0.92)',
+        borderRadius: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        marginTop: 6,
+        left: actionHint.x,
+        top: actionHint.y,
+        transform: [{ translateX: -50 }],
+      }}
+    >
+      <Text style={{ fontSize: 12, fontWeight: '500', color: '#FFFFFF', textAlign: 'center', ...WEB_BODY_FONT }}>
+        {actionHint.text}
+      </Text>
+    </View>,
+    document.body
+  );
+}
+
+function PlannerListActionButton({
+  Icon,
+  label,
+  hint,
+  onPress,
+  onShowHint,
+  onHideHint,
+  disabled = false,
+  allowDisabledPress = false,
+  urgent = false,
+}) {
+  const hintText = String(hint || label || '').trim();
+  const canPressWhenDisabled = disabled && allowDisabledPress;
+  const touchDisabled = disabled && !allowDisabledPress;
+  const iconColor = disabled ? '#CBD5E1' : urgent ? '#EA580C' : '#5B6880';
+
+  const handleMouseEnter = useCallback((e) => {
+    if (Platform.OS !== 'web' || !hintText) return;
+    onShowHint?.(hintText, e);
+  }, [hintText, onShowHint]);
+
+  const handleMouseLeave = useCallback(() => {
+    if (Platform.OS !== 'web') return;
+    onHideHint?.();
+  }, [onHideHint]);
+
+  return (
+    <TouchableOpacity
+      style={[
+        plannerListActionStyles.actionBtn,
+        disabled && plannerListActionStyles.actionBtnDisabled,
+        urgent && !disabled && plannerListActionStyles.actionBtnUrgent,
+      ]}
+      onPress={() => {
+        if (disabled) {
+          if (canPressWhenDisabled) onPress?.();
+          return;
+        }
+        onPress?.();
+      }}
+      disabled={touchDisabled}
+      activeOpacity={0.75}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      {...(Platform.OS === 'web' && {
+        cursor: canPressWhenDisabled || !disabled ? 'pointer' : 'default',
+        title: hintText,
+        onMouseEnter: handleMouseEnter,
+        onMouseLeave: handleMouseLeave,
+      })}
+    >
+      <Icon size={15} color={iconColor} strokeWidth={2.1} />
+    </TouchableOpacity>
+  );
+}
+
+const plannerListActionStyles = StyleSheet.create({
+  actionBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.28)',
+    backgroundColor: '#F9FAFB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  actionBtnDisabled: {
+    opacity: 0.38,
+  },
+  actionBtnUrgent: {
+    borderColor: 'rgba(234, 88, 12, 0.35)',
+    backgroundColor: '#FFF7ED',
+  },
+});
 
 export default function TasksView({ 
   events = [], 
@@ -29,7 +164,8 @@ export default function TasksView({
     return normalized === 'done' || normalized === 'completed';
   }, []);
   const DENSE_DATE_HEADER_HEIGHT = 32;
-  const DENSE_EVENT_ROW_HEIGHT = 36;
+  const DENSE_EVENT_ROW_HEIGHT = 64;
+  const DENSE_TABLE_MIN_WIDTH = 980;
   const normalizeHolidayType = useCallback((value) => {
     const raw = String(value || '').trim().toUpperCase();
     if (raw === 'BREAK') return 'CUSTOM_BREAK';
@@ -271,6 +407,15 @@ export default function TasksView({
   );
   const [allPastMonths, setAllPastMonths] = useState(1);
   const [allFutureMonths, setAllFutureMonths] = useState(2);
+  const [assignmentsByEventId, setAssignmentsByEventId] = useState({});
+  const [materialById, setMaterialById] = useState(() => new Map());
+  const [actionHint, setActionHint] = useState(null);
+  const [showNudgeModal, setShowNudgeModal] = useState(false);
+  const [showSubmittalModal, setShowSubmittalModal] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
+  const [showHelpUnavailableModal, setShowHelpUnavailableModal] = useState(false);
+  const [modalEvent, setModalEvent] = useState(null);
+  const [modalAssignment, setModalAssignment] = useState(null);
   const sectionAllStart = useMemo(
     () => {
       if (allPastMonths <= 0) {
@@ -1138,15 +1283,129 @@ export default function TasksView({
   };
 
   const isDenseCalendarSection = ['today', 'tomorrow', 'thismonth', 'nextmonth', 'all'].includes(activeSection);
-  const childNameById = useMemo(() => {
-    const map = new Map();
-    (children || []).forEach((child) => {
-      if (!child?.id) return;
-      const name = String(child?.first_name || child?.name || '').trim();
-      if (name) map.set(String(child.id), name);
+  const canShowPlannerActions = !!familyIdProp && !!onEventComplete;
+
+  const showActionHint = useCallback((text, event) => {
+    if (Platform.OS !== 'web' || !text) return;
+    const node = event?.currentTarget || event?.target;
+    if (!node || typeof node.getBoundingClientRect !== 'function') return;
+    const rect = node.getBoundingClientRect();
+    setActionHint({ text, x: rect.left + rect.width / 2, y: rect.bottom });
+  }, []);
+
+  const hideActionHint = useCallback(() => {
+    if (Platform.OS !== 'web') return;
+    setActionHint(null);
+  }, []);
+
+  const closeWorkflowModals = useCallback(() => {
+    setShowNudgeModal(false);
+    setShowSubmittalModal(false);
+    setShowHelpModal(false);
+    setModalEvent(null);
+    setModalAssignment(null);
+  }, []);
+
+  const handleWorkflowComplete = useCallback(() => {
+    dispatchAssignmentRefreshEvents();
+    closeWorkflowModals();
+  }, [closeWorkflowModals]);
+
+  const openWorkflow = useCallback((event, assignment, kind) => {
+    if (!familyIdProp) return;
+    if (getChildIdsFromEvent(event).length === 0) {
+      const message = 'Select a student on this event first.';
+      if (Platform.OS === 'web') window.alert(message);
+      else Alert.alert('Student required', message);
+      return;
+    }
+    setModalEvent(event);
+    setModalAssignment(assignment || null);
+    if (kind === 'nudge') setShowNudgeModal(true);
+    else if (kind === 'submittal') setShowSubmittalModal(true);
+    else if (kind === 'help') setShowHelpModal(true);
+  }, [familyIdProp]);
+
+  const modalChildIds = useMemo(() => getChildIdsFromEvent(modalEvent), [modalEvent]);
+
+  useEffect(() => {
+    if (!familyIdProp || !isDenseCalendarSection) {
+      setAssignmentsByEventId({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('assignments')
+          .select(ASSIGNMENT_SELECT)
+          .eq('family_id', familyIdProp)
+          .order('updated_at', { ascending: false })
+          .limit(500);
+        if (cancelled) return;
+        if (error) {
+          console.warn('[TasksView] assignments load:', error.message);
+          setAssignmentsByEventId({});
+          return;
+        }
+        setAssignmentsByEventId(mergeAssignmentsByEventId(data || []));
+      } catch (err) {
+        if (!cancelled) console.warn('[TasksView] assignments load:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [familyIdProp, isDenseCalendarSection, currentEvents.length]);
+
+  useEffect(() => {
+    if (!isDenseCalendarSection) {
+      setMaterialById(new Map());
+      return;
+    }
+    const ids = new Set();
+    (currentEvents || []).forEach((event) => {
+      getEventMaterialIds(event).forEach((id) => ids.add(id));
     });
-    return map;
-  }, [children]);
+    if (!ids.size) {
+      setMaterialById(new Map());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('materials')
+          .select('id, title, provider_name, storage_path')
+          .in('id', [...ids])
+          .is('deleted_at', null);
+        if (cancelled) return;
+        if (error) {
+          console.warn('[TasksView] materials load:', error.message);
+          setMaterialById(new Map());
+          return;
+        }
+        const map = new Map();
+        (data || []).forEach((row) => {
+          const id = String(row?.id || '').trim();
+          if (id) map.set(id, row);
+        });
+        setMaterialById(map);
+      } catch (err) {
+        if (!cancelled) console.warn('[TasksView] materials load:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isDenseCalendarSection, currentEvents]);
+
+  const renderDenseTableHeader = useCallback(() => (
+    <View style={styles.denseTableHeaderRow}>
+      <View style={styles.denseColLeading} />
+      <Text style={[styles.denseTableHeaderCell, styles.denseColDetails]}>Event Details</Text>
+      <Text style={[styles.denseTableHeaderCell, styles.denseColUnits]}>Units</Text>
+      <Text style={[styles.denseTableHeaderCell, styles.denseColGrade]}>Grade</Text>
+      <Text style={[styles.denseTableHeaderCell, styles.denseColAttachments]}>Attachments</Text>
+      <Text style={[styles.denseTableHeaderCell, styles.denseColActions]}>Actions</Text>
+    </View>
+  ), []);
 
   const formatDenseStartTimeLabel = useCallback((event) => {
     const holidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
@@ -1386,31 +1645,36 @@ export default function TasksView({
 
   const renderDenseEventRow = useCallback((event) => {
     const eventWithSection = { ...event, _activeSection: activeSection };
-    const childId = String(event?.child_id || event?.childId || (Array.isArray(event?.child_ids) ? event.child_ids[0] : '') || '');
-    const studentLabel = childNameById.get(childId) || '';
+    const eventId = String(event?.id || '');
     const status = String(event?.status || '').toLowerCase();
     const isDone = isDoneStatus(status);
-    const shouldShowDoneStyling = isDone;
-    const shouldShowLighterText = isDone;
+    const typeLabel = formatEventTypeLabel(event);
+    const timeLabel = formatTimeRangeLabel(event);
+    const eventChildIds = resolveChildIdsForEvent(event);
+    const childLabel = eventChildIds.length > 0
+      ? formatChildNamesCommaLine(eventChildIds, children)
+      : '';
+    const { chipBg, chipText } = getPlannerEventTypeColors(event);
+    const unitLessonLabel = getEventUnitLessonLabel(event);
+    const gradeLabel = formatEventGradeLabel(event);
+    const linkedAssignments = assignmentsByEventId?.[eventId] || [];
+    const assignment = pickAssignmentForEvent(event, linkedAssignments);
+    const canRespondHelp = assignment?.need_help === true;
+    const materialIds = getEventMaterialIds(event);
+
     const handleRowContextMenu = (nativeEvent) => {
       if (Platform.OS !== 'web' || typeof window === 'undefined' || !onEventRightClick) return;
       nativeEvent?.preventDefault?.();
       nativeEvent?.stopPropagation?.();
       onEventRightClick(eventWithSection, nativeEvent);
     };
+
     return (
-      <TouchableOpacity
-        key={String(event?.id || Math.random())}
-        style={[
-          styles.denseRow,
-          {
-            backgroundColor: '#FFFFFF',
-            opacity: isDone ? 0.5 : 1,
-          },
-        ]}
-        onPress={activeSection === 'trash' ? undefined : (() => onEventPress && onEventPress(event))}
+      <View
+        key={eventId || Math.random()}
+        style={[styles.denseRow, isDone && styles.denseRowDone]}
         {...(Platform.OS === 'web' && {
-          'data-event-id': String(eventWithSection?.id || ''),
+          'data-event-id': eventId,
           onMouseDown: (e) => {
             const button = e?.button ?? e?.nativeEvent?.button;
             if (button !== 2) return;
@@ -1421,52 +1685,165 @@ export default function TasksView({
           },
         })}
       >
-        <View
-          style={styles.denseStatusCell}
-          {...(Platform.OS === 'web' && {
-            onClick: (e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              onEventComplete && onEventComplete(event);
-            },
-            onMouseDown: (e) => {
-              e.stopPropagation();
-            },
-          })}
-        >
-          <CompletionRing
-            isDone={isDone}
-            size={14}
-            pendingBorderColor="rgba(107, 114, 128, 0.5)"
-            onPress={() => {
-              onEventComplete && onEventComplete(event);
-            }}
-          />
-        </View>
-        <Text
-          style={[
-            styles.denseEventTitle,
-            {
-              color: '#111827',
-              fontWeight: '500',
-              textDecorationLine: shouldShowDoneStyling ? 'line-through' : 'none',
-              opacity: shouldShowLighterText ? 0.5 : 1,
-            },
-          ]}
-          numberOfLines={1}
-        >
-          {String(event?.title || 'Untitled')}
-        </Text>
-        <Text style={[styles.denseTimeCell, { opacity: shouldShowLighterText ? 0.5 : 1 }]} numberOfLines={1}>{formatDenseTimeRangeLabel(event)}</Text>
-        <Text style={[styles.denseStudentCell, { opacity: shouldShowLighterText ? 0.5 : 1 }]} numberOfLines={1}>{studentLabel || '—'}</Text>
-        <View style={styles.denseTypeCell}>
-          <View style={[styles.denseTypeChip, { backgroundColor: getDenseTypeChipFillColor(event) }]}>
-            <Text style={styles.denseTypeChipText} numberOfLines={1}>{getDenseEventTypeLabel(event)}</Text>
+        <View style={styles.denseColLeading}>
+          <View
+            style={styles.denseStatusCell}
+            {...(Platform.OS === 'web' && {
+              onClick: (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                onEventComplete && onEventComplete(event);
+              },
+              onMouseDown: (e) => e.stopPropagation(),
+            })}
+          >
+            <CompletionRing
+              isDone={isDone}
+              size={14}
+              pendingBorderColor="rgba(107, 114, 128, 0.5)"
+              onPress={() => onEventComplete && onEventComplete(event)}
+            />
           </View>
         </View>
-      </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.denseColDetails, styles.denseDetailsCell]}
+          onPress={activeSection === 'trash' ? undefined : () => onEventPress?.(event)}
+          activeOpacity={0.7}
+          disabled={activeSection === 'trash'}
+          {...(Platform.OS === 'web' && { cursor: activeSection === 'trash' ? 'default' : 'pointer' })}
+        >
+          <Text style={[styles.denseEventTitle, isDone && styles.denseMutedText]} numberOfLines={1}>
+            {String(event?.title || 'Untitled')}
+          </Text>
+          <View style={styles.denseSublineRow}>
+            <View style={[styles.denseTypeChip, { backgroundColor: chipBg }]}>
+              <Text style={[styles.denseTypeChipText, { color: chipText }]} numberOfLines={1}>
+                {typeLabel}
+              </Text>
+            </View>
+            {timeLabel ? (
+              <Text style={[styles.denseSublineMeta, isDone && styles.denseMutedText]} numberOfLines={1}>
+                {timeLabel}
+              </Text>
+            ) : null}
+            {eventChildIds.length > 0 ? (
+              <View style={styles.denseChildLabel}>
+                <ChildAvatarCluster
+                  childIds={eventChildIds}
+                  familyChildren={children}
+                  size={20}
+                  overlap={-6}
+                />
+                {childLabel ? (
+                  <Text style={[styles.denseSublineMeta, isDone && styles.denseMutedText]} numberOfLines={1}>
+                    {childLabel}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.denseColUnits}>
+          {unitLessonLabel ? (
+            <Text style={[styles.denseCellText, isDone && styles.denseMutedText]} numberOfLines={1} ellipsizeMode="tail">
+              {unitLessonLabel}
+            </Text>
+          ) : (
+            <Text style={styles.denseEmptyCellText}>—</Text>
+          )}
+        </View>
+
+        <View style={styles.denseColGrade}>
+          {gradeLabel ? (
+            <Text style={[styles.denseCellText, styles.denseGradeText, isDone && styles.denseMutedText]} numberOfLines={1}>
+              {gradeLabel}
+            </Text>
+          ) : (
+            <Text style={styles.denseEmptyCellText}>—</Text>
+          )}
+        </View>
+
+        <View style={styles.denseColAttachments}>
+          {materialIds.length === 0 ? (
+            <Text style={styles.denseEmptyCellText}>—</Text>
+          ) : (
+            <View style={styles.denseAttachmentLinksWrap}>
+              {materialIds.map((materialId) => {
+                const material = materialById.get(materialId);
+                const label = resolveMaterialDisplayLabel(material, materialId, event);
+                return (
+                  <TouchableOpacity
+                    key={materialId}
+                    onPress={() => onEventPress?.(event)}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer', title: label })}
+                  >
+                    <Text style={styles.denseAttachmentLinkText} numberOfLines={1} ellipsizeMode="tail">
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+        </View>
+
+        <View style={styles.denseColActions}>
+          {canShowPlannerActions ? (
+            <View style={styles.denseActionsRow}>
+              <PlannerListActionButton
+                Icon={Hand}
+                label="Nudge student"
+                hint="Nudge student"
+                onShowHint={showActionHint}
+                onHideHint={hideActionHint}
+                onPress={() => openWorkflow(event, assignment, 'nudge')}
+              />
+              <PlannerListActionButton
+                Icon={ClipboardList}
+                label="Request submit"
+                hint="Request submit"
+                onShowHint={showActionHint}
+                onHideHint={hideActionHint}
+                onPress={() => openWorkflow(event, assignment, 'submittal')}
+              />
+              <PlannerListActionButton
+                Icon={MessageCircle}
+                label="Respond to help"
+                hint="Respond to help"
+                onShowHint={showActionHint}
+                onHideHint={hideActionHint}
+                disabled={!canRespondHelp}
+                allowDisabledPress
+                onPress={() => {
+                  if (canRespondHelp) openWorkflow(event, assignment, 'help');
+                  else setShowHelpUnavailableModal(true);
+                }}
+                urgent={canRespondHelp}
+              />
+            </View>
+          ) : (
+            <Text style={styles.denseEmptyCellText}>—</Text>
+          )}
+        </View>
+      </View>
     );
-  }, [activeSection, childNameById, onEventComplete, onEventPress, onEventRightClick, formatDenseTimeRangeLabel, getDenseEventTypeLabel, getDenseTypeChipFillColor, getDenseTextColor, isDoneStatus]);
+  }, [
+    activeSection,
+    assignmentsByEventId,
+    canShowPlannerActions,
+    children,
+    hideActionHint,
+    isDoneStatus,
+    materialById,
+    onEventComplete,
+    onEventPress,
+    onEventRightClick,
+    openWorkflow,
+    showActionHint,
+  ]);
 
   const renderDenseListItem = useCallback(({ item }) => {
     if (item?.type === 'header') {
@@ -1553,16 +1930,18 @@ export default function TasksView({
             </Text>
           </View>
         ) : isDenseCalendarSection ? (
-          <View style={styles.tasksList}>
+          <View style={styles.denseListWrap}>
+            {renderDenseTableHeader()}
             <FlatList
               key={activeSection === 'all' ? `all-${allOpenVersion}-${listVisibilityEpoch}` : `dense-${activeSection}-${listVisibilityEpoch}`}
               ref={denseListRef}
               style={styles.tasksList}
+              contentContainerStyle={styles.denseListContent}
               data={groupedDenseRows}
               keyExtractor={(item) => String(item?.key || '')}
               renderItem={renderDenseListItem}
               stickyHeaderIndices={denseStickyHeaderIndices}
-              initialScrollIndex={Math.max(0, denseTodayIndex)}
+              initialScrollIndex={Math.max(0, denseTodayIndex >= 0 ? denseTodayIndex : 0)}
               getItemLayout={(_, index) => {
                 const row = groupedDenseRows[index];
                 const length = row?.type === 'header' ? DENSE_DATE_HEADER_HEIGHT : DENSE_EVENT_ROW_HEIGHT;
@@ -1581,7 +1960,7 @@ export default function TasksView({
               scrollEventThrottle={16}
               onScrollToIndexFailed={() => {
                 setTimeout(() => {
-                  const target = Math.max(0, denseTodayIndex);
+                  const target = Math.max(0, denseTodayIndex >= 0 ? denseTodayIndex : 0);
                   denseListRef.current?.scrollToIndex?.({ index: target, animated: false, viewPosition: 0 });
                 }, 120);
               }}
@@ -1593,6 +1972,59 @@ export default function TasksView({
           </ScrollView>
         )}
       </View>
+
+      <AssignmentMessageModal
+        visible={showNudgeModal}
+        onClose={closeWorkflowModals}
+        onSent={handleWorkflowComplete}
+        familyId={familyIdProp}
+        event={modalEvent}
+        assignment={modalAssignment}
+        isParentViewer
+        children={children}
+        assignedChildIds={modalChildIds}
+        subjectId={modalEvent?.subject_id || modalAssignment?.related_subject || null}
+      />
+      <AssignmentSubmittalRequestModal
+        visible={showSubmittalModal}
+        onClose={closeWorkflowModals}
+        onRequested={handleWorkflowComplete}
+        familyId={familyIdProp}
+        event={modalEvent}
+        assignment={modalAssignment}
+        children={children}
+        assignedChildIds={modalChildIds}
+        subjectId={modalEvent?.subject_id || modalAssignment?.related_subject || null}
+      />
+      <RespondToHelpRequestModal
+        visible={showHelpModal}
+        assignment={modalAssignment}
+        onClose={closeWorkflowModals}
+        onResponded={handleWorkflowComplete}
+      />
+      {renderPlannerListActionHint(actionHint)}
+      <Modal
+        visible={showHelpUnavailableModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowHelpUnavailableModal(false)}
+      >
+        <View style={comingSoonModalStyles.overlay}>
+          <View style={comingSoonModalStyles.content}>
+            <TouchableOpacity
+              style={comingSoonModalStyles.close}
+              onPress={() => setShowHelpUnavailableModal(false)}
+              activeOpacity={0.7}
+            >
+              <X size={18} color="#64748B" />
+            </TouchableOpacity>
+            <Text style={comingSoonModalStyles.title}>Respond to help</Text>
+            <Text style={comingSoonModalStyles.body}>
+              The student has not asked for help on this assignment yet.
+            </Text>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1744,117 +2176,125 @@ const styles = StyleSheet.create({
       overflowY: 'auto',
     }),
   },
-  denseColumnsHeader: {
+  denseListWrap: {
+    flex: 1,
+    minHeight: 0,
+    flexDirection: 'column',
+    ...(Platform.OS === 'web' && {
+      overflowX: 'auto',
+    }),
+  },
+  denseListContent: {
+    minWidth: 980,
+  },
+  denseTableHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 30,
+    minHeight: 34,
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
-    paddingBottom: 0,
-    marginBottom: 8,
-    backgroundColor: '#FFFFFF',
-  },
-  denseHeaderText: {
-    fontSize: 11,
-    color: '#6B7280',
-    fontWeight: '700',
-    textTransform: 'uppercase',
+    minWidth: 980,
+    flexShrink: 0,
+    zIndex: 10,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      letterSpacing: '0.04em',
+      position: 'sticky',
+      top: 0,
+    }),
+  },
+  denseTableHeaderCell: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   denseDateHeader: {
     height: 32,
     justifyContent: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-    marginTop: 0,
+    paddingHorizontal: 12,
     backgroundColor: '#FFFFFF',
   },
   denseDateHeaderText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6B7280',
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      letterSpacing: '0.05em',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   denseRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 36,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(17, 24, 39, 0.06)',
-    borderLeftWidth: 1,
-    backgroundColor: '#F2F4F7',
-    paddingVertical: 0,
-    paddingHorizontal: 10,
-    marginBottom: 0,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
+    gap: 12,
+    minHeight: 64,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    minWidth: 980,
+  },
+  denseRowDone: {
+    opacity: 0.72,
+  },
+  denseColLeading: {
+    width: 40,
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   denseStatusCell: {
-    width: 58,
-    textAlign: 'center',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  denseStatusText: {
-    fontSize: 14,
-    color: '#374151',
-    fontWeight: '700',
+  denseColDetails: {
+    flex: 1.8,
+    minWidth: 0,
   },
-  denseHeaderEventCell: {
-    flex: 1.6,
-    paddingLeft: 34,
-  },
-  denseHeaderTimeCell: {
-    flex: 1.4,
+  denseDetailsCell: {
     alignItems: 'flex-start',
-    paddingLeft: 12,
+    gap: 4,
   },
-  denseHeaderStudentCell: {
+  denseColUnits: {
+    flex: 1.2,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  denseColGrade: {
     flex: 0.8,
-    alignItems: 'flex-start',
-    paddingLeft: 12,
+    minWidth: 0,
+    justifyContent: 'center',
   },
-  denseHeaderTypeCell: {
-    flex: 0.7,
-    alignItems: 'flex-start',
-    paddingLeft: 12,
+  denseColAttachments: {
+    flex: 1.1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  denseColActions: {
+    flex: 1,
+    minWidth: 108,
+    justifyContent: 'center',
   },
   denseEventTitle: {
-    flex: 1.6,
-    paddingLeft: 20,
     fontSize: 14,
-    color: '#111827',
     fontWeight: '600',
+    color: '#111827',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  denseTimeCell: {
-    flex: 1.4,
-    fontSize: 13,
-    color: '#374151',
-    textAlign: 'left',
-    paddingLeft: 12,
-  },
-  denseStudentCell: {
-    flex: 0.8,
-    fontSize: 13,
-    color: '#4B5563',
-    textAlign: 'left',
-    paddingLeft: 12,
-  },
-  denseTypeCell: {
-    flex: 0.7,
-    alignItems: 'flex-start',
-    paddingLeft: 12,
+  denseSublineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    width: '100%',
   },
   denseTypeChip: {
     borderRadius: 999,
@@ -1863,12 +2303,57 @@ const styles = StyleSheet.create({
   },
   denseTypeChipText: {
     fontSize: 11,
-    color: '#4B5563',
-    textTransform: 'capitalize',
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      letterSpacing: '0.01em',
     }),
+  },
+  denseSublineMeta: {
+    fontSize: 12,
+    color: '#64748B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  denseChildLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  denseCellText: {
+    fontSize: 13,
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  denseGradeText: {
+    fontWeight: '600',
+  },
+  denseEmptyCellText: {
+    fontSize: 13,
+    color: '#94A3B8',
+  },
+  denseMutedText: {
+    opacity: 0.65,
+  },
+  denseAttachmentLinksWrap: {
+    gap: 4,
+  },
+  denseAttachmentLinkText: {
+    fontSize: 13,
+    color: '#5AAEF2',
+    textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  denseActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   taskItem: {
     marginBottom: 8,

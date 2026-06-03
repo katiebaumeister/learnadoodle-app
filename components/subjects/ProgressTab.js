@@ -9,11 +9,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { BarChart3, Calendar, Check, ChevronLeft, ChevronRight, Download, Edit2, List, Plus, X } from 'lucide-react';
-import {
-  SubjectAttendanceMonthDrilldown,
-  SubjectAttendanceYearHeatmap,
-} from './SubjectSectionDrilldownPanels';
+import { ChevronLeft, ChevronRight, Download, Edit2, Plus, X } from 'lucide-react';
+import { SubjectAttendanceMonthDrilldown } from './SubjectSectionDrilldownPanels';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import SubjectAllEventsSection from './SubjectAllEventsSection';
@@ -32,44 +29,8 @@ const WEB_HEADING_FONT = Platform.OS === 'web'
 const WEB_BODY_FONT = Platform.OS === 'web'
   ? { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
   : {};
-const ATTENDANCE_LIST_LIMIT = 5;
 const EMPTY_SUBJECT_MODAL_ID = '__empty_subject__';
-const PROGRESS_ATTENDANCE_VIEW_STORAGE_PREFIX = 'ld_progress_attendance_view_v1::';
 const ATTENDANCE_OVERRIDE_CLEAR = '__clear__';
-
-function normalizeAttendanceViewMode(value) {
-  const raw = String(value || '').trim().toLowerCase();
-  if (raw === 'month' || raw === 'year') return raw;
-  return 'list';
-}
-
-function buildProgressAttendanceViewStorageKey({ familyId, childId, academicYearStart } = {}) {
-  const familyKey = String(familyId || '').trim();
-  const childKey = String(childId || '').trim();
-  const yearKey = Number.isFinite(Number(academicYearStart)) ? String(Number(academicYearStart)) : '';
-  if (!familyKey || !childKey || !yearKey) return '';
-  return `${PROGRESS_ATTENDANCE_VIEW_STORAGE_PREFIX}${familyKey}|${childKey}|${yearKey}`;
-}
-
-function readProgressAttendanceView(storageKey) {
-  if (!storageKey || Platform.OS !== 'web' || typeof window === 'undefined') return null;
-  try {
-    const raw = window.sessionStorage?.getItem(storageKey);
-    if (!raw) return null;
-    return normalizeAttendanceViewMode(raw);
-  } catch (_) {
-    return null;
-  }
-}
-
-function writeProgressAttendanceView(storageKey, mode) {
-  if (!storageKey || Platform.OS !== 'web' || typeof window === 'undefined') return;
-  try {
-    window.sessionStorage?.setItem(storageKey, normalizeAttendanceViewMode(mode));
-  } catch (_) {
-    // ignore storage write failures
-  }
-}
 
 function buildAttendanceOverrideKey(eventId, dayDate, childId) {
   const eventKey = String(eventId || '').trim();
@@ -92,6 +53,40 @@ function eventMatchesChildIds(entity, childIds) {
   if (Array.isArray(childIdsArr) && childIdsArr.some((id) => idSet.has(String(id)))) return true;
   if (!childId && (!childIdsArr || childIdsArr.length === 0)) return true;
   return false;
+}
+
+function normalizeEventForAllEventsList(raw, subjectId) {
+  if (!raw || typeof raw !== 'object') return null;
+  const start_ts = raw.start_ts || raw.startTs || raw.start || raw.start_local || raw.due_ts || null;
+  return {
+    ...raw,
+    id: String(raw.id || '').trim() || null,
+    subject_id: raw.subject_id || subjectId,
+    start_ts,
+    start: raw.start || start_ts,
+    start_local: raw.start_local || null,
+    due_ts: raw.due_ts || null,
+    end_ts: raw.end_ts || null,
+    child_id: raw.child_id || raw.childId || null,
+    child_ids: raw.child_ids || raw.childIds || null,
+    event_type: raw.event_type || raw.type || null,
+    title: raw.title || raw.lesson_name || null,
+    lesson_name: raw.lesson_name || null,
+    unit_name: raw.unit_name || raw.unitName || raw.unit || null,
+    status: raw.status || null,
+    date_local: raw.date_local || raw.date || null,
+  };
+}
+
+function collectPlanEventsForSubject(planProgressContext, subjectId) {
+  const sid = String(subjectId || '').trim();
+  if (!sid) return [];
+  const merged = [];
+  const planRow = (planProgressContext?.rows || []).find((row) => String(row?.id || '').trim() === sid);
+  if (Array.isArray(planRow?.eventItems)) merged.push(...planRow.eventItems);
+  const bySubject = planProgressContext?.instructionalEventsBySubject?.[sid];
+  if (Array.isArray(bySubject)) merged.push(...bySubject);
+  return merged;
 }
 
 function recordMatchesChildIds(record, childIds) {
@@ -618,38 +613,11 @@ export default function ProgressTab({
     }
   };
 
-  const attendanceViewStorageKey = useMemo(
-    () => buildProgressAttendanceViewStorageKey({
-      familyId,
-      childId: primaryChildIdForActions,
-      academicYearStart: selectedAcademicYearStart,
-    }),
-    [familyId, primaryChildIdForActions, selectedAcademicYearStart]
-  );
-  const [attendanceViewMode, setAttendanceViewMode] = useState(() => (
-    readProgressAttendanceView(
-      buildProgressAttendanceViewStorageKey({
-        familyId,
-        childId: preferredStudentId,
-        academicYearStart: selectedAcademicYearStart,
-      })
-    ) || 'list'
-  ));
-  const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
+  const [expandedSummaryPanel, setExpandedSummaryPanel] = useState(null);
   const [optimisticAttendanceByKey, setOptimisticAttendanceByKey] = useState({});
-  useEffect(() => {
-    const persisted = readProgressAttendanceView(attendanceViewStorageKey) || 'list';
-    setAttendanceViewMode((prev) => (prev === persisted ? prev : persisted));
-  }, [attendanceViewStorageKey]);
-  useEffect(() => {
-    writeProgressAttendanceView(attendanceViewStorageKey, attendanceViewMode);
-  }, [attendanceViewStorageKey, attendanceViewMode]);
   useEffect(() => {
     setOptimisticAttendanceByKey({});
   }, [familyId, primaryChildIdForActions, selectedAcademicYearStart]);
-  useEffect(() => {
-    setShowAttendanceExpanded(false);
-  }, [attendanceViewMode, primaryChildIdForActions, resolvedActiveChildIds.join('|')]);
 
   const attendanceRecordsForUI = useMemo(() => {
     const rows = [];
@@ -972,17 +940,43 @@ export default function ProgressTab({
     const eventAttachmentMaterials = [];
     const assignmentsByEventId = {};
     const materialIds = new Set();
+    const eventOutcomeIds = new Set();
+    const seenEventIds = new Set();
+    const applyAcademicYearFilter = sectionsMode !== 'allEventsOnly';
+
+    const pushEventIfEligible = (rawEvent, subject) => {
+      const event = normalizeEventForAllEventsList(rawEvent, subject?.id);
+      if (!event?.id) return;
+      const dedupeKey = String(event.id);
+      if (seenEventIds.has(dedupeKey)) return;
+      if (event.is_backlog === true) return;
+      if (event.deleted || event.deleted_at) return;
+      if (String(event?.status || '').toLowerCase() === 'canceled') return;
+      if (!eventMatchesChildIds(event, resolvedActiveChildIds)) return;
+      const rawTs = event.start_ts || event.due_ts || null;
+      let eventTs = rawTs ? new Date(rawTs).getTime() : NaN;
+      if (!Number.isFinite(eventTs)) {
+        const ymd = String(event?.date_local || '').slice(0, 10);
+        if (ymd) eventTs = new Date(`${ymd}T12:00:00`).getTime();
+      }
+      if (applyAcademicYearFilter && Number.isFinite(eventTs)) {
+        if (eventTs < academicYearStartDate.getTime() || eventTs > academicYearEndDate.getTime()) return;
+      }
+      seenEventIds.add(dedupeKey);
+      events.push(event);
+    };
 
     subjectDetails.forEach(({ subject, detail }) => {
       const subjectId = String(subject?.id || '').trim();
       if (!subjectId || !activeSet.has(subjectId)) return;
-      (detail?.events || []).forEach((event) => {
-        events.push({
-          ...event,
-          subject_id: event?.subject_id || subject.id,
-        });
+      (detail?.events || []).forEach((event) => pushEventIfEligible(event, subject));
+      collectPlanEventsForSubject(planProgressContext, subjectId).forEach((event) => {
+        pushEventIfEligible(event, subject);
       });
       (detail?.eventOutcomes || []).forEach((outcome) => {
+        const outcomeId = String(outcome?.id || outcome?.event_id || '').trim();
+        if (outcomeId && eventOutcomeIds.has(outcomeId)) return;
+        if (outcomeId) eventOutcomeIds.add(outcomeId);
         eventOutcomes.push(outcome);
       });
       (detail?.materials || []).forEach((material) => {
@@ -1010,7 +1004,15 @@ export default function ProgressTab({
       eventAttachmentMaterials,
       assignmentsByEventId,
     };
-  }, [subjectDetails, resolvedActiveSubjectIds]);
+  }, [
+    subjectDetails,
+    resolvedActiveSubjectIds,
+    resolvedActiveChildIds,
+    academicYearStartDate,
+    academicYearEndDate,
+    sectionsMode,
+    planProgressContext,
+  ]);
   const handleOpenEventDetails = (eventId, initialEvent = null) => {
     if (!eventId) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1213,72 +1215,33 @@ export default function ProgressTab({
     if ((attendanceEvents || []).some((event) => String(getEventStartYmd(event) || '').slice(0, 10) === normKey)) return true;
     return (attendanceRecordsForUI || []).some((record) => String(record?.dayDate || '').slice(0, 10) === normKey);
   }, [attendanceEvents, attendanceRecordsForUI]);
-  const pendingYearDayToggleKeysRef = useRef(new Set());
-  const handleYearHeatmapDayPress = useCallback(async (dateKey) => {
-    const normKey = String(dateKey || '').slice(0, 10);
-    if (!normKey) return;
-    if (pendingYearDayToggleKeysRef.current.has(normKey)) return;
-    if (!canMarkAttendanceForDateKey(normKey)) {
-      return;
-    }
-    const dayEvents = (attendanceEvents || []).filter((event) => (
-      String(getEventStartYmd(event) || '').slice(0, 10) === normKey
-      && String(event?.status || '').toLowerCase() !== 'canceled'
-      && event?.id
-    ));
-    if (!dayEvents.length) {
-      return;
-    }
-    const dayRows = (attendanceRecordsForUI || []).filter((row) => String(row?.dayDate || '').slice(0, 10) === normKey);
-    const hasPresent = dayRows.some((row) => ['present', 'partial'].includes(String(row?.status || '').toLowerCase()));
-    const targetStateLabel = hasPresent ? 'unattended' : 'attended';
-    const eventIdsToToggle = dayEvents
-      .filter((event) => {
-        const rowsForEvent = dayRows.filter((row) => String(row?.eventId || '') === String(event?.id || ''));
-        const eventHasPresent = rowsForEvent.some((row) => ['present', 'partial'].includes(String(row?.status || '').toLowerCase()));
-        return hasPresent ? eventHasPresent : !eventHasPresent;
-      })
-      .map((event) => String(event.id));
-    if (!eventIdsToToggle.length) {
-      return;
-    }
-    pendingYearDayToggleKeysRef.current.add(normKey);
-    try {
-      for (const eventId of eventIdsToToggle) {
-        // Sequential updates avoid race conditions against refresh callbacks.
-        // eslint-disable-next-line no-await-in-loop
-        await handleToggleEventAttendanceForDate(normKey, eventId);
-      }
-    } finally {
-      pendingYearDayToggleKeysRef.current.delete(normKey);
-    }
-  }, [canMarkAttendanceForDateKey, attendanceEvents, attendanceRecordsForUI, handleToggleEventAttendanceForDate]);
   const attendanceDayCounts = useMemo(() => {
     const byDay = new Map();
     const todayYmd = new Date().toISOString().slice(0, 10);
+    const ensureDay = (dayKey) => {
+      if (!byDay.has(dayKey)) byDay.set(dayKey, { hasPresent: false, hasAbsent: false });
+      return byDay.get(dayKey);
+    };
     attendanceRecordsForUI.forEach((record) => {
       const dayKey = String(record?.dayDate || '').slice(0, 10);
       if (!dayKey) return;
       const status = String(record?.status || '').toLowerCase();
-      if (!byDay.has(dayKey)) byDay.set(dayKey, { hasPresent: false, hasAbsent: false });
-      const bucket = byDay.get(dayKey);
+      const bucket = ensureDay(dayKey);
       if (status === 'present' || status === 'partial') bucket.hasPresent = true;
       if (status === 'absent' && dayKey <= todayYmd) bucket.hasAbsent = true;
     });
-    let present = 0;
-    let absent = 0;
-    byDay.forEach((bucket) => {
-      if (bucket.hasPresent) present += 1;
-      else if (bucket.hasAbsent) absent += 1;
-    });
-    const upcomingDaySet = new Set();
     (attendanceEvents || []).forEach((event) => {
       if (String(event?.status || '').toLowerCase() === 'canceled') return;
       const dayKey = String(getEventStartYmd(event) || '').slice(0, 10);
-      if (!dayKey || dayKey <= todayYmd) return;
-      const bucket = byDay.get(dayKey);
-      if (bucket?.hasPresent || bucket?.hasAbsent) return;
-      upcomingDaySet.add(dayKey);
+      if (dayKey) ensureDay(dayKey);
+    });
+    let present = 0;
+    let absent = 0;
+    const upcomingDaySet = new Set();
+    byDay.forEach((bucket, dayKey) => {
+      if (bucket.hasPresent) present += 1;
+      else if (bucket.hasAbsent || dayKey <= todayYmd) absent += 1;
+      else upcomingDaySet.add(dayKey);
     });
     return { present, absent, upcoming: upcomingDaySet.size };
   }, [attendanceRecordsForUI, attendanceEvents]);
@@ -1693,6 +1656,25 @@ export default function ProgressTab({
   const showAllEventsSection = (
     sectionsMode === 'attendanceGradesOnly' || sectionsMode === 'allEventsOnly'
   ) && hasAggregateSubjectScope;
+  const detailLoadAttemptedRef = useRef(new Set());
+  useEffect(() => {
+    if (!showAllEventsSection || typeof onRefreshSubjectDetail !== 'function') return;
+    resolvedActiveSubjectIds.forEach((subjectId) => {
+      const sid = String(subjectId || '').trim();
+      if (!sid || detailLoadAttemptedRef.current.has(sid)) return;
+      const cached = subjectDetailCache?.[sid];
+      const hasPlanEvents = collectPlanEventsForSubject(planProgressContext, sid).length > 0;
+      if (cached && (Array.isArray(cached.events) && cached.events.length > 0 || hasPlanEvents)) return;
+      detailLoadAttemptedRef.current.add(sid);
+      onRefreshSubjectDetail(sid);
+    });
+  }, [
+    showAllEventsSection,
+    resolvedActiveSubjectIds,
+    subjectDetailCache,
+    planProgressContext,
+    onRefreshSubjectDetail,
+  ]);
   const allEventsProgressSummary = useMemo(() => {
     if (!showAllEventsSection || !planProgressContext?.rows?.length) return null;
     const metrics = aggregatePlanProgressMetrics(planProgressContext.rows, {
@@ -1709,6 +1691,84 @@ export default function ProgressTab({
     if (!showAllEventsSection || typeof planProgressContext?.renderAllEventsGap !== 'function') return null;
     return planProgressContext.renderAllEventsGap(resolvedActiveSubjectIds);
   }, [showAllEventsSection, planProgressContext, resolvedActiveSubjectIds]);
+  const submittedArtifactsCount = useMemo(() => {
+    const activeSet = new Set(resolvedActiveSubjectIds.map(String));
+    const seen = new Set();
+    let count = 0;
+    const consider = (row) => {
+      if (!row) return;
+      const id = String(row?.id || '').trim();
+      const dedupeKey = id || `${row?.child_id}|${row?.title}|${row?.updated_at}`;
+      if (seen.has(dedupeKey)) return;
+      if (!recordMatchesChildIds(row, resolvedActiveChildIds)) return;
+      const status = String(row?.status || '').trim().toLowerCase();
+      if (status !== 'submitted' && status !== 'reviewed' && status !== 'accepted') return;
+      seen.add(dedupeKey);
+      count += 1;
+    };
+    subjectDetails.forEach(({ subject, detail }) => {
+      const subjectId = String(subject?.id || '').trim();
+      if (!subjectId || !activeSet.has(subjectId)) return;
+      const assignments = Array.isArray(detail?.subjectAssignments) && detail.subjectAssignments.length
+        ? detail.subjectAssignments
+        : Object.values(detail?.assignmentsByEventId || {}).flat();
+      assignments.forEach(consider);
+    });
+    return count;
+  }, [subjectDetails, resolvedActiveSubjectIds, resolvedActiveChildIds]);
+  const learningGoalsGapLabel = useMemo(() => {
+    const deltaDays = allEventsProgressSummary?.deltaDays;
+    if (deltaDays == null || Number(deltaDays) === 0) return null;
+    const magnitude = Math.abs(Number(deltaDays));
+    if (!Number.isFinite(magnitude) || magnitude === 0) return null;
+    return Number(deltaDays) < 0 ? `+${magnitude} days` : `-${magnitude} days`;
+  }, [allEventsProgressSummary]);
+  const learningLogEntries = useMemo(() => {
+    const activeSet = new Set(resolvedActiveSubjectIds.map(String));
+    const seen = new Set();
+    const entries = [];
+    const pushRow = (row, subjectName) => {
+      if (!row) return;
+      const id = String(row?.id || '').trim();
+      const dedupeKey = id || `${row?.child_id}|${row?.title}|${row?.updated_at}`;
+      if (seen.has(dedupeKey)) return;
+      if (!recordMatchesChildIds(row, resolvedActiveChildIds)) return;
+      const status = String(row?.status || '').trim().toLowerCase();
+      if (status !== 'submitted' && status !== 'reviewed' && status !== 'accepted') return;
+      seen.add(dedupeKey);
+      const childId = String(row?.child_id || '').trim();
+      const child = (children || []).find((c) => String(c?.id) === childId);
+      entries.push({
+        id: dedupeKey,
+        title: String(row?.title || 'Assignment').trim() || 'Assignment',
+        childName: getChildLabel(child) || 'Student',
+        status,
+        date: row?.submitted_at || row?.updated_at || null,
+        assignment: row,
+        subjectName: subjectName || 'Subject',
+      });
+    };
+    subjectDetails.forEach(({ subject, detail }) => {
+      const subjectId = String(subject?.id || '').trim();
+      if (!subjectId || !activeSet.has(subjectId)) return;
+      const subjectName = subject?.name || 'Subject';
+      const assignments = Array.isArray(detail?.subjectAssignments) && detail.subjectAssignments.length
+        ? detail.subjectAssignments
+        : Object.values(detail?.assignmentsByEventId || {}).flat();
+      assignments.forEach((row) => pushRow(row, subjectName));
+    });
+    return entries.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+  }, [subjectDetails, resolvedActiveSubjectIds, resolvedActiveChildIds, children]);
+  const toggleSummaryPanel = useCallback((panel) => {
+    setExpandedSummaryPanel((prev) => (prev === panel ? null : panel));
+  }, []);
+  useEffect(() => {
+    if (expandedSummaryPanel === 'learning_goals') {
+      planProgressContext?.expandAllEventsAggregateGap?.();
+      return;
+    }
+    planProgressContext?.collapseAllEventsAggregateGap?.();
+  }, [expandedSummaryPanel, planProgressContext]);
   const learningHighlights = useMemo(() => {
     const now = Date.now();
     const futureUnits = new Set();
@@ -1738,98 +1798,256 @@ export default function ProgressTab({
   const attendanceSummaryChips = (
     <View style={styles.attendanceSummaryWrap}>
       <View style={styles.attendanceToolbarRow}>
-        <View style={styles.attendanceViewsShell}>
-          <View style={styles.attendanceViewsContainer}>
-            <Text style={styles.attendanceViewsLabel}>Views</Text>
-            <View style={styles.attendanceViewsChipsGroup}>
-              <TouchableOpacity
-                style={[styles.attendanceViewChip, attendanceViewMode === 'list' && styles.attendanceViewChipActive]}
-                onPress={() => setAttendanceViewMode('list')}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <View style={styles.attendanceViewChipInner}>
-                  <List size={12} color={attendanceViewMode === 'list' ? '#6BB3E8' : '#6B7280'} />
-                  <Text style={[styles.attendanceViewChipText, attendanceViewMode === 'list' && styles.attendanceViewChipTextActive]}>
-                    List
-                  </Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.attendanceViewChip, attendanceViewMode === 'month' && styles.attendanceViewChipActive]}
-                onPress={() => setAttendanceViewMode('month')}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <View style={styles.attendanceViewChipInner}>
-                  <Calendar size={12} color={attendanceViewMode === 'month' ? '#6BB3E8' : '#6B7280'} />
-                  <Text style={[styles.attendanceViewChipText, attendanceViewMode === 'month' && styles.attendanceViewChipTextActive]}>
-                    Month
-                  </Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.attendanceViewChip, attendanceViewMode === 'year' && styles.attendanceViewChipActive]}
-                onPress={() => setAttendanceViewMode('year')}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <View style={styles.attendanceViewChipInner}>
-                  <BarChart3 size={12} color={attendanceViewMode === 'year' ? '#6BB3E8' : '#6B7280'} />
-                  <Text style={[styles.attendanceViewChipText, attendanceViewMode === 'year' && styles.attendanceViewChipTextActive]}>
-                    Year
-                  </Text>
-                </View>
-              </TouchableOpacity>
+        <View style={styles.attendanceKeyShell}>
+          <View style={styles.attendanceKeyRow}>
+            <View style={styles.attendanceKeyPill}>
+              <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotAttended]} />
+              <Text style={styles.attendanceKeyText}>Attended</Text>
+            </View>
+            <View style={styles.attendanceKeyPill}>
+              <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUnattended]} />
+              <Text style={styles.attendanceKeyText}>Unattended</Text>
+            </View>
+            <View style={styles.attendanceKeyPill}>
+              <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUpcoming]} />
+              <Text style={styles.attendanceKeyText}>Upcoming</Text>
             </View>
           </View>
         </View>
-          <View style={styles.attendanceKeyShell}>
-            <View style={styles.attendanceKeyRow}>
-              <View style={styles.attendanceKeyPill}>
-                <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotAttended]} />
-                <Text style={styles.attendanceKeyText}>Attended</Text>
-              </View>
-              <View style={styles.attendanceKeyPill}>
-                <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUnattended]} />
-                <Text style={styles.attendanceKeyText}>Unattended</Text>
-              </View>
-              <View style={styles.attendanceKeyPill}>
-                <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUpcoming]} />
-                <Text style={styles.attendanceKeyText}>Upcoming</Text>
-              </View>
-            </View>
-          </View>
       </View>
     </View>
   );
-  const attendanceInsightsPanel = attendanceViewMode === 'year' || attendanceViewMode === 'month' ? (
+
+  const attendancePanelInner = (
     <View style={styles.progressInsightsPanelWrap}>
-      {attendanceViewMode === 'year' ? (
-        <SubjectAttendanceYearHeatmap
-          attendanceRecords={attendanceRecordsForUI.map((record) => ({
-            ...record,
-            day_date: record?.dayDate,
-            event_id: record?.eventId,
-          }))}
-          subjectEvents={attendanceEvents}
-          isDayMarkable={canMarkAttendanceForDateKey}
-          onDayPress={handleYearHeatmapDayPress}
-          hideLegend
-        />
-      ) : attendanceViewMode === 'month' ? (
-        <SubjectAttendanceMonthDrilldown
-          attendanceRecords={attendanceRecordsForUI.map((record) => ({
-            ...record,
-            day_date: record?.dayDate,
-            event_id: record?.eventId,
-          }))}
-          subjectEvents={attendanceEvents}
-          onOpenEventDetails={handleOpenEventDetails}
-          onToggleEventAttendance={handleToggleEventAttendanceForDate}
-          onAddEventForDate={handleOpenAddEventForDate}
-          hideLegend
-        />
-      ) : null}
+      <SubjectAttendanceMonthDrilldown
+        attendanceRecords={attendanceRecordsForUI.map((record) => ({
+          ...record,
+          day_date: record?.dayDate,
+          event_id: record?.eventId,
+        }))}
+        subjectEvents={attendanceEvents}
+        onOpenEventDetails={handleOpenEventDetails}
+        onToggleEventAttendance={handleToggleEventAttendanceForDate}
+        onAddEventForDate={handleOpenAddEventForDate}
+        hideLegend
+      />
     </View>
-  ) : null;
+  );
+
+  const gradesPanelInner = gradeRows.length > 0 ? (
+    <View style={styles.gradeList}>
+      {gradeRows.map((row) => {
+        const hasEvent = !!row?.eventId;
+        return (
+          <View
+            key={row.id}
+            {...(Platform.OS === 'web' && {
+              'data-event-id': String(row?.event?.id || row?.eventId || ''),
+              onMouseDown: (e) => {
+                if (!hasEvent) return;
+                const button = e?.button ?? e?.nativeEvent?.button;
+                if (button !== 2) return;
+                e.preventDefault?.();
+                e.stopPropagation?.();
+                handleEventContextMenu(row.event, e?.nativeEvent || e);
+              },
+              onContextMenu: (e) => {
+                if (!hasEvent) return;
+                e.preventDefault?.();
+                e.stopPropagation?.();
+                handleEventContextMenu(row.event, e?.nativeEvent || e);
+              },
+            })}
+          >
+            <TouchableOpacity
+              style={styles.gradeItem}
+              onPress={() => hasEvent && handleOpenEventDetails(row.eventId, row.event)}
+              activeOpacity={0.7}
+              {...(Platform.OS === 'web' && {
+                cursor: hasEvent ? 'pointer' : 'default',
+              })}
+            >
+              <View style={styles.gradeItemContent}>
+                <Text style={styles.gradeItemName}>{row.name}</Text>
+                <Text style={styles.gradeItemDate}>
+                  {`${row.subjectName} · ${formatDate(row.date)}`}
+                </Text>
+              </View>
+              <Text style={styles.gradeItemGrade}>{row.grade}</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      })}
+    </View>
+  ) : (
+    <Text style={styles.emptyStateText}>
+      {sectionsMode === 'attendanceGradesOnly' || sectionsMode === 'allEventsOnly'
+        ? 'Grades appear once events for the selected children are graded.'
+        : 'Grades appear once events for this child are graded.'}
+    </Text>
+  );
+
+  const renderSummaryExpandPanel = () => {
+    if (!expandedSummaryPanel) return null;
+    if (expandedSummaryPanel === 'attendance') {
+      return (
+        <View style={styles.summaryExpandPanel}>
+          <View style={styles.summaryExpandPanelHeader}>
+            <Text style={styles.summaryExpandPanelTitle}>Attendance</Text>
+            {canManageAttendance ? (
+              <TouchableOpacity
+                style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+                onPress={() => openSubjectPicker('attendance_edit')}
+                activeOpacity={0.7}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Edit2 size={14} color="#6B7280" />
+                <Text style={styles.emptyStateButtonText}>Bulk edit attendance</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          {attendanceSummaryChips}
+          {attendancePanelInner}
+        </View>
+      );
+    }
+    if (expandedSummaryPanel === 'grades') {
+      return (
+        <View style={styles.summaryExpandPanel}>
+          <View style={styles.summaryExpandPanelHeader}>
+            <Text style={styles.summaryExpandPanelTitle}>Grades</Text>
+            {!isChildView ? (
+              <TouchableOpacity
+                style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
+                onPress={() => openSubjectPicker('grades_add')}
+                activeOpacity={0.7}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Plus size={16} color="#6B7280" />
+                <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          {gradesPanelInner}
+        </View>
+      );
+    }
+    if (expandedSummaryPanel === 'learning_log') {
+      return (
+        <View style={styles.summaryExpandPanel}>
+          <View style={styles.summaryExpandPanelHeader}>
+            <Text style={styles.summaryExpandPanelTitle}>Learning Log</Text>
+          </View>
+          {learningLogEntries.length > 0 ? (
+            <View style={styles.learningLogList}>
+              {learningLogEntries.map((entry) => (
+                <TouchableOpacity
+                  key={entry.id}
+                  style={styles.learningLogItem}
+                  onPress={() => {
+                    let rawIds = entry.assignment?.linked_event_ids;
+                    if (typeof rawIds === 'string') {
+                      try {
+                        rawIds = JSON.parse(rawIds);
+                      } catch {
+                        rawIds = null;
+                      }
+                    }
+                    const eventId = Array.isArray(rawIds) && rawIds[0] != null
+                      ? String(rawIds[0]).trim()
+                      : '';
+                    if (!eventId) return;
+                    let match = null;
+                    subjectDetails.forEach(({ detail }) => {
+                      if (match) return;
+                      match = (detail?.events || []).find((ev) => String(ev?.id) === eventId) || null;
+                    });
+                    if (match) handleOpenEventDetails(eventId, match);
+                  }}
+                  activeOpacity={0.75}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.learningLogItemMain}>
+                    <Text style={styles.learningLogItemTitle} numberOfLines={1}>{entry.title}</Text>
+                    <Text style={styles.learningLogItemMeta} numberOfLines={1}>
+                      {`${entry.childName} · ${entry.subjectName}${entry.date ? ` · ${formatDate(entry.date)}` : ''}`}
+                    </Text>
+                  </View>
+                  <Text style={styles.learningLogItemStatus}>
+                    {entry.status === 'submitted' ? 'Submitted' : entry.status === 'reviewed' ? 'Reviewed' : 'Accepted'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.emptyStateText}>
+              Submitted artifacts appear when students turn in assignment work.
+            </Text>
+          )}
+        </View>
+      );
+    }
+    if (expandedSummaryPanel === 'learning_goals') {
+      return (
+        <View style={styles.summaryExpandPanel}>
+          <View style={styles.summaryExpandPanelHeader}>
+            <Text style={styles.summaryExpandPanelTitle}>Learning goals</Text>
+            {allEventsProgressSummary?.summaryLine ? (
+              <Text style={styles.summaryExpandPanelSubtitle}>{allEventsProgressSummary.summaryLine}</Text>
+            ) : null}
+          </View>
+          {allEventsGapSection?.expandedRow || (
+            <Text style={styles.emptyStateText}>
+              Add year targets in Schedule to see gap suggestions here.
+            </Text>
+          )}
+        </View>
+      );
+    }
+    return null;
+  };
+
+  const renderClickableSummaryBox = (panelKey, label, value, meta, options = {}) => {
+    const isActive = expandedSummaryPanel === panelKey;
+    return (
+      <TouchableOpacity
+        key={panelKey}
+        style={[
+          styles.overviewSummaryBox,
+          styles.allEventsSummaryBox,
+          isActive && styles.overviewSummaryBoxActive,
+        ]}
+        onPress={() => toggleSummaryPanel(panelKey)}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: isActive }}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Text style={styles.overviewSummaryLabel}>{label}</Text>
+        <Text
+          style={[
+            styles.overviewSummaryValue,
+            options.compactValue && styles.overviewSummaryValueCompact,
+          ]}
+          numberOfLines={options.compactValue ? 2 : 1}
+        >
+          {value}
+        </Text>
+        {meta ? (
+          <Text
+            style={[
+              styles.overviewSummaryMeta,
+              options.metaAccent && styles.overviewSummaryMetaAccent,
+            ]}
+            numberOfLines={1}
+          >
+            {meta}
+          </Text>
+        ) : null}
+      </TouchableOpacity>
+    );
+  };
 
   const isWeb = Platform.OS === 'web';
   const canEditChildButton = typeof onEditChild === 'function' && !!selectedStudentRecord;
@@ -1930,127 +2148,7 @@ export default function ProgressTab({
               </View>
               <View style={styles.progressSectionBody}>
                 {attendanceSummaryChips}
-                {attendanceViewMode === 'list' ? (
-                  attendanceRecordsListUI.length > 0 ? (
-                    <>
-                      <View style={styles.attendanceList}>
-                        {(showAttendanceExpanded ? attendanceRecordsListUI : attendanceRecordsListUI.slice(0, ATTENDANCE_LIST_LIMIT)).map((record) => {
-                          const statusLabel = String(record?.statusLabel || '');
-                          const statusTone = String(record?.statusTone || '').toLowerCase();
-                          const isAttended = statusTone === 'attended';
-                          const canToggleAttendance = !!record?.event_id && !!record?.day_date;
-                          const event = String(record?.event_id || '').trim()
-                            ? attendanceEventById.get(String(record?.event_id || '').trim()) || null
-                            : null;
-                          return (
-                            <View
-                              key={record.id}
-                              {...(Platform.OS === 'web' && {
-                                'data-event-id': String(event?.id || ''),
-                                onMouseDown: (e) => {
-                                  if (!event) return;
-                                  const button = e?.button ?? e?.nativeEvent?.button;
-                                  if (button !== 2) return;
-                                  e.preventDefault?.();
-                                  e.stopPropagation?.();
-                                  handleEventContextMenu(event, e?.nativeEvent || e);
-                                },
-                                onContextMenu: (e) => {
-                                  if (!event) return;
-                                  e.preventDefault?.();
-                                  e.stopPropagation?.();
-                                  handleEventContextMenu(event, e?.nativeEvent || e);
-                                },
-                              })}
-                            >
-                            <TouchableOpacity
-                              style={styles.attendanceItem}
-                              onPress={() => event && handleOpenEventDetails(event.id, event)}
-                              activeOpacity={0.7}
-                              {...(Platform.OS === 'web' && {
-                                cursor: event ? 'pointer' : 'default',
-                              })}
-                            >
-                              <TouchableOpacity
-                                style={[
-                                  styles.attendanceListToggleCircle,
-                                  isAttended && styles.attendanceListToggleCircleAttended,
-                                ]}
-                                onPress={(ev) => {
-                                  ev?.stopPropagation?.();
-                                  if (!canToggleAttendance) return;
-                                  handleToggleEventAttendanceForDate(record.day_date, record.event_id);
-                                }}
-                                activeOpacity={0.82}
-                                hitSlop={8}
-                                disabled={!canToggleAttendance}
-                                accessibilityRole="button"
-                                accessibilityLabel={isAttended ? 'Mark attendance as unattended' : 'Mark attendance as attended'}
-                                {...(Platform.OS === 'web' && { cursor: canToggleAttendance ? 'pointer' : 'default' })}
-                              >
-                                {isAttended ? <Check size={14} color="#16a34a" strokeWidth={2.5} /> : null}
-                              </TouchableOpacity>
-                              <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
-                              <View style={styles.progressAttendanceTitleWrap}>
-                                <Text style={styles.attendanceItemTitle}>{record?.title || 'Lesson'}</Text>
-                                <Text style={styles.progressAttendanceSubjectText}>
-                                  {formatAttendanceEventSubline(
-                                    event,
-                                    childNameById,
-                                    event ? resolveChildIdsForAttendanceEvent(event) : [],
-                                    record?.minutes
-                                  )}
-                                </Text>
-                              </View>
-                              <View style={styles.attendanceItemStatusWrap}>
-                                <View
-                                  style={[
-                                    styles.attendanceItemStatusDot,
-                                    statusTone === 'attended' && styles.attendanceItemStatusDotAttended,
-                                    statusTone === 'unattended' && styles.attendanceItemStatusDotUnattended,
-                                    statusTone === 'upcoming' && styles.attendanceItemStatusDotUpcoming,
-                                  ]}
-                                />
-                                <Text
-                                  style={[
-                                    styles.attendanceItemStatus,
-                                    statusTone === 'attended' && styles.attendanceItemStatusAttended,
-                                    statusTone === 'unattended' && styles.attendanceItemStatusUnattended,
-                                    statusTone === 'upcoming' && styles.attendanceItemStatusUpcoming,
-                                  ]}
-                                >
-                                  {statusLabel}
-                                </Text>
-                              </View>
-                            </TouchableOpacity>
-                            </View>
-                          );
-                        })}
-                      </View>
-                      {attendanceRecordsListUI.length > ATTENDANCE_LIST_LIMIT ? (
-                        <TouchableOpacity
-                          style={styles.attendanceShowMoreBtn}
-                          onPress={() => setShowAttendanceExpanded((v) => !v)}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={styles.attendanceShowMoreText}>
-                            {showAttendanceExpanded
-                              ? 'Show less'
-                              : `Show more (${attendanceRecordsListUI.length - ATTENDANCE_LIST_LIMIT} more)`}
-                          </Text>
-                        </TouchableOpacity>
-                      ) : null}
-                    </>
-                  ) : (
-                    <Text style={styles.emptyStateText}>
-                      {sectionsMode === 'attendanceGradesOnly'
-                        ? 'Attendance appears once you add events for the selected children.'
-                        : 'Attendance appears once you add an event attached to this child.'}
-                    </Text>
-                  )
-                ) : (
-                  attendanceInsightsPanel
-                )}
+                {attendancePanelInner}
               </View>
             </View>
             <View style={[styles.section, embeddedInScrollView && styles.sectionEmbedded]}>
@@ -2071,108 +2169,63 @@ export default function ProgressTab({
                 </View>
               </View>
               <View style={styles.progressSectionBody}>
-                {gradeRows.length > 0 ? (
-                  <View style={styles.gradeList}>
-                    {gradeRows.map((row) => {
-                      const hasEvent = !!row?.eventId;
-                      return (
-                        <View
-                          key={row.id}
-                          {...(Platform.OS === 'web' && {
-                            'data-event-id': String(row?.event?.id || row?.eventId || ''),
-                            onMouseDown: (e) => {
-                              if (!hasEvent) return;
-                              const button = e?.button ?? e?.nativeEvent?.button;
-                              if (button !== 2) return;
-                              e.preventDefault?.();
-                              e.stopPropagation?.();
-                              handleEventContextMenu(row.event, e?.nativeEvent || e);
-                            },
-                            onContextMenu: (e) => {
-                              if (!hasEvent) return;
-                              e.preventDefault?.();
-                              e.stopPropagation?.();
-                              handleEventContextMenu(row.event, e?.nativeEvent || e);
-                            },
-                          })}
-                        >
-                        <TouchableOpacity
-                          style={styles.gradeItem}
-                          onPress={() => hasEvent && handleOpenEventDetails(row.eventId, row.event)}
-                          activeOpacity={0.7}
-                          {...(Platform.OS === 'web' && {
-                            cursor: hasEvent ? 'pointer' : 'default',
-                          })}
-                        >
-                          <View style={styles.gradeItemContent}>
-                            <Text style={styles.gradeItemName}>{row.name}</Text>
-                            <Text style={styles.gradeItemDate}>
-                              {`${row.subjectName} · ${formatDate(row.date)}`}
-                            </Text>
-                          </View>
-                          <Text style={styles.gradeItemGrade}>{row.grade}</Text>
-                        </TouchableOpacity>
-                        </View>
-                      );
-                    })}
-                  </View>
-                ) : (
-                    <Text style={styles.emptyStateText}>
-                      {sectionsMode === 'attendanceGradesOnly'
-                        ? 'Grades appear once events for the selected children are graded.'
-                        : 'Grades appear once events for this child are graded.'}
-                    </Text>
-                )}
+                {gradesPanelInner}
               </View>
             </View>
           </>
         ) : null}
         {showAllEventsSection ? (
           <View style={[styles.section, embeddedInScrollView && styles.sectionEmbedded]}>
+            {sectionsMode === 'allEventsOnly' ? (
+              <View style={styles.allEventsSummaryWrap}>
+                <View style={styles.overviewSummaryGrid}>
+                  {renderClickableSummaryBox(
+                    'attendance',
+                    'Attendance',
+                    overviewStats.attendanceRate == null ? 'No data' : `${overviewStats.attendanceRate}%`,
+                    `${overviewStats.completedDays} attended · ${attendanceDayCounts.absent} unattended`
+                  )}
+                  {renderClickableSummaryBox(
+                    'grades',
+                    'Grades',
+                    overviewStats.gradeAverage == null ? 'No grades' : `${overviewStats.gradeAverage}%`,
+                    `${gradeRows.length} recorded grade${gradeRows.length === 1 ? '' : 's'}`
+                  )}
+                  {renderClickableSummaryBox(
+                    'learning_log',
+                    'Learning Log',
+                    String(submittedArtifactsCount),
+                    submittedArtifactsCount === 1 ? 'submitted artifact' : 'submitted artifacts'
+                  )}
+                  {renderClickableSummaryBox(
+                    'learning_goals',
+                    'Learning Goals',
+                    allEventsProgressSummary?.summaryLine || 'No targets yet',
+                    learningGoalsGapLabel,
+                    { compactValue: true, metaAccent: !!learningGoalsGapLabel }
+                  )}
+                </View>
+                {renderSummaryExpandPanel()}
+              </View>
+            ) : null}
             <View style={styles.allEventsSectionHeader}>
               <View style={styles.allEventsTitleRow}>
-                <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>All Events</Text>
-                {typeof onOpenExportModal === 'function' ? (
-                  <TouchableOpacity
-                    style={styles.allEventsExportButton}
-                    onPress={onOpenExportModal}
-                    activeOpacity={0.8}
-                    accessibilityRole="button"
-                    accessibilityLabel="Export subjects data"
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Download size={18} color="rgba(15,23,42,0.7)" />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-              {(allEventsProgressSummary?.summaryLine || allEventsGapSection?.gapCell) ? (
-                <View style={styles.allEventsProgressMetaRow}>
-                  {allEventsProgressSummary?.summaryLine ? (
-                    <Text style={styles.allEventsProgressMetric}>{allEventsProgressSummary.summaryLine}</Text>
-                  ) : null}
-                  {allEventsProgressSummary?.showStatusChip ? (
-                    <View
-                      style={[
-                        styles.allEventsProgressChip,
-                        allEventsProgressSummary.statusTone === 'behind' && styles.allEventsProgressChipBehind,
-                        allEventsProgressSummary.statusTone === 'ahead' && styles.allEventsProgressChipAhead,
-                      ]}
+                <View style={styles.allEventsTitleLeft}>
+                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>All Events</Text>
+                  {typeof onOpenExportModal === 'function' ? (
+                    <TouchableOpacity
+                      style={styles.allEventsExportButton}
+                      onPress={onOpenExportModal}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Export subjects data"
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Text
-                        style={[
-                          styles.allEventsProgressChipText,
-                          allEventsProgressSummary.statusTone === 'behind' && styles.allEventsProgressChipTextBehind,
-                          allEventsProgressSummary.statusTone === 'ahead' && styles.allEventsProgressChipTextAhead,
-                        ]}
-                      >
-                        {allEventsProgressSummary.statusLabel}
-                      </Text>
-                    </View>
+                      <Download size={18} color="rgba(15,23,42,0.7)" />
+                    </TouchableOpacity>
                   ) : null}
-                  {allEventsGapSection?.gapCell || null}
                 </View>
-              ) : null}
-              {allEventsGapSection?.expandedRow || null}
+              </View>
             </View>
             <View style={styles.progressSectionBody}>
               <SubjectAllEventsSection
@@ -2181,6 +2234,7 @@ export default function ProgressTab({
                 materials={allEventsAggregate.materials}
                 eventAttachmentMaterials={allEventsAggregate.eventAttachmentMaterials}
                 assignmentsByEventId={allEventsAggregate.assignmentsByEventId}
+                familyId={familyId}
                 isParentViewer={!isChildView}
                 children={children}
                 onEventPress={(event) => handleOpenEventDetails(event?.id, event)}
@@ -2190,8 +2244,6 @@ export default function ProgressTab({
                 onAttachmentPress={(_material, event) => {
                   if (event?.id) handleOpenEventDetails(event.id, event);
                 }}
-                onMessageAboutAssignment={(event) => handleOpenEventDetails(event?.id, event)}
-                onSubmittalAction={(event) => handleOpenEventDetails(event?.id, event)}
                 canManageEvents={canManageAttendance}
               />
             </View>
@@ -2367,10 +2419,53 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8FAFC',
     paddingHorizontal: 11,
     paddingVertical: 10,
+    ...(Platform.OS === 'web' && { cursor: 'pointer', transition: 'border-color 0.15s ease, background-color 0.15s ease' }),
+  },
+  overviewSummaryBoxActive: {
+    borderColor: '#6BB3E8',
+    backgroundColor: '#F0F9FF',
   },
   overviewSummaryLabel: { fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', ...WEB_HEADING_FONT },
   overviewSummaryValue: { marginTop: 4, fontSize: 19, fontWeight: '700', color: '#0F172A', ...WEB_HEADING_FONT },
+  overviewSummaryValueCompact: { fontSize: 14, lineHeight: 20 },
   overviewSummaryMeta: { marginTop: 2, fontSize: 12, color: '#64748B', ...WEB_BODY_FONT },
+  overviewSummaryMetaAccent: { color: '#DC2626', fontWeight: '600' },
+  summaryExpandPanel: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    padding: 14,
+    gap: 12,
+  },
+  summaryExpandPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  summaryExpandPanelTitle: { fontSize: 16, fontWeight: '700', color: '#1F2937', ...WEB_HEADING_FONT },
+  summaryExpandPanelSubtitle: { fontSize: 12, color: '#64748B', ...WEB_BODY_FONT },
+  learningLogList: { gap: 8 },
+  learningLogItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    backgroundColor: '#F8FAFC',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  learningLogItemMain: { flex: 1, minWidth: 0, gap: 2 },
+  learningLogItemTitle: { fontSize: 14, fontWeight: '600', color: '#0F172A', ...WEB_HEADING_FONT },
+  learningLogItemMeta: { fontSize: 12, color: '#64748B', ...WEB_BODY_FONT },
+  learningLogItemStatus: { fontSize: 12, fontWeight: '600', color: '#4F46E5', ...WEB_HEADING_FONT },
   progressHeader: {
     marginHorizontal: 24,
     marginTop: 8,
@@ -2476,15 +2571,6 @@ const styles = StyleSheet.create({
   progressInsightsPanelWrap: {
     marginTop: 0,
   },
-  progressAttendanceTitleWrap: {
-    flex: 1,
-    gap: 2,
-  },
-  progressAttendanceSubjectText: {
-    fontSize: 12,
-    color: '#6B7280',
-    ...WEB_BODY_FONT,
-  },
   subjectRowItem: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -2542,11 +2628,21 @@ const styles = StyleSheet.create({
   subjectsSection: { marginTop: 30 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1F2937', marginBottom: 16, ...WEB_HEADING_FONT },
   attendanceSectionHeader: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 10 },
+  allEventsSummaryWrap: { marginBottom: 14 },
+  allEventsSummaryBox: { minWidth: 140 },
   allEventsSectionHeader: { marginBottom: 10 },
   allEventsTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 10,
+    flexWrap: 'wrap',
+  },
+  allEventsTitleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 1,
   },
   allEventsExportButton: {
     padding: 4,
@@ -2564,31 +2660,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#1F2937',
     ...WEB_BODY_FONT,
-  },
-  allEventsProgressChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  allEventsProgressChipBehind: {
-    borderColor: '#FDBA74',
-    backgroundColor: '#FFF7ED',
-  },
-  allEventsProgressChipAhead: {
-    borderColor: '#6EE7B7',
-    backgroundColor: '#ECFDF5',
-  },
-  allEventsProgressChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    ...WEB_BODY_FONT,
-  },
-  allEventsProgressChipTextBehind: {
-    color: '#C2410C',
-  },
-  allEventsProgressChipTextAhead: {
-    color: '#047857',
   },
   gradesSectionHeader: { marginBottom: 10 },
   gradesSectionTitleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
@@ -2618,39 +2689,6 @@ const styles = StyleSheet.create({
   emptyStateButtonText: { fontSize: 14, fontWeight: '500', color: '#374151', ...WEB_HEADING_FONT },
   attendanceSummaryWrap: { marginBottom: 8 },
   attendanceToolbarRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 8, flexWrap: 'wrap', marginBottom: 10 },
-  attendanceViewsContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  attendanceViewsShell: { borderWidth: 1, borderColor: '#DDE6F1', borderRadius: 999, backgroundColor: '#F8FAFC', paddingHorizontal: 10, paddingVertical: 6 },
-  attendanceViewsLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', color: '#94A3B8', ...WEB_HEADING_FONT },
-  attendanceViewsChipsGroup: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  attendanceViewChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.24)',
-    backgroundColor: '#F9FAFB',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  attendanceViewChipInner: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  attendanceViewChipActive: { borderColor: '#6BB3E8', backgroundColor: 'rgba(107, 179, 232, 0.12)' },
-  attendanceViewChipText: { fontSize: 13, fontWeight: '500', color: '#374151', ...WEB_HEADING_FONT },
-  attendanceViewChipTextActive: { color: '#6BB3E8' },
-  attendanceCountShell: { borderWidth: 1, borderColor: '#DDE6F1', borderRadius: 999, backgroundColor: '#F8FAFC', paddingHorizontal: 10, paddingVertical: 6 },
-  attendanceCountContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  attendanceCountLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', color: '#94A3B8', ...WEB_HEADING_FONT },
-  attendanceChips: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  attendanceChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.12)',
-  },
-  attendanceChipText: { fontSize: 13, fontWeight: '500', color: '#374151', ...WEB_HEADING_FONT },
   attendanceKeyShell: { borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 999, backgroundColor: '#F8FAFC', paddingHorizontal: 8, paddingVertical: 6 },
   attendanceKeyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   attendanceKeyPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, backgroundColor: '#F3F4F6' },
@@ -2661,35 +2699,6 @@ const styles = StyleSheet.create({
   attendanceKeyDotNoEvents: { backgroundColor: '#E5E7EB' },
   attendanceKeyText: { fontSize: 12, color: '#6B7280', ...WEB_BODY_FONT },
   emptyStateText: { fontSize: 14, color: '#6B7280', lineHeight: 20, ...WEB_BODY_FONT },
-  attendanceList: { gap: 8 },
-  attendanceItem: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: '#F9FAFB', borderRadius: 8 },
-  attendanceListToggleCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.14)',
-    backgroundColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  attendanceListToggleCircleAttended: {
-    borderColor: 'rgba(34,197,94,0.35)',
-    backgroundColor: 'rgba(34,197,94,0.12)',
-  },
-  attendanceItemDate: { fontSize: 12, color: '#6B7280', width: 80, ...WEB_BODY_FONT },
-  attendanceItemTitle: { flex: 1, fontSize: 14, fontWeight: '500', color: '#374151', ...WEB_HEADING_FONT },
-  attendanceItemStatusWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 94 },
-  attendanceItemStatusDot: { width: 8, height: 8, borderRadius: 999, backgroundColor: '#CBD5E1' },
-  attendanceItemStatusDotAttended: { backgroundColor: '#6BB3E8' },
-  attendanceItemStatusDotUnattended: { backgroundColor: '#F2A0A0' },
-  attendanceItemStatusDotUpcoming: { backgroundColor: '#C7DDF6' },
-  attendanceItemStatus: { fontSize: 12, color: '#6B7280', textTransform: 'capitalize', ...WEB_BODY_FONT },
-  attendanceItemStatusAttended: { color: '#2f7fb8', fontWeight: '600' },
-  attendanceItemStatusUnattended: { color: '#e68f88', fontWeight: '600' },
-  attendanceItemStatusUpcoming: { color: '#86b5e6', fontWeight: '600' },
-  attendanceShowMoreBtn: { marginTop: 12, paddingVertical: 10, paddingHorizontal: 14, alignSelf: 'flex-start', borderRadius: 8, backgroundColor: '#F3F4F6', ...(Platform.OS === 'web' && { cursor: 'pointer' }) },
-  attendanceShowMoreText: { fontSize: 14, fontWeight: '500', color: '#4F46E5', ...WEB_HEADING_FONT },
   gradeList: { gap: 8 },
   gradeItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, backgroundColor: '#F9FAFB', borderRadius: 8 },
   gradeItemContent: { flex: 1 },

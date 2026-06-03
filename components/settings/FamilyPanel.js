@@ -8836,10 +8836,10 @@ function createStyles(tokens) {
     },
     dangerZoneAccountContent: {
       marginTop: 16,
-      backgroundColor: colors.redSoft || '#fef2f2',
+      backgroundColor: 'rgba(254, 242, 242, 0.35)',
       borderRadius: 8,
       borderWidth: 1,
-      borderColor: '#fecaca',
+      borderColor: 'rgba(252, 165, 165, 0.4)',
       padding: 16,
     },
     dangerZoneAccountHeading: {

@@ -13,6 +13,7 @@ import { ArrowLeft, Search } from 'lucide-react';
 import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { participantKey } from '../../lib/familyDmClient';
+import MessagesPaneCloseButton from './MessagesPaneCloseButton';
 
 function avatarSourceForParticipant(participant) {
   if (!participant) return resolveBundledAvatarSource('prof1');
@@ -29,6 +30,7 @@ export default function FamilyNewMessagePicker({
   participants = [],
   onBack,
   onNext,
+  onClosePane = null,
 }) {
   const [searchText, setSearchText] = useState('');
   const [selectedKey, setSelectedKey] = useState(null);
@@ -56,27 +58,32 @@ export default function FamilyNewMessagePicker({
           <ArrowLeft size={20} color="#0F172A" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>New message</Text>
-        <TouchableOpacity
-          style={styles.headerSide}
-          onPress={() => selectedParticipant && onNext?.(selectedParticipant)}
-          disabled={!selectedParticipant}
-          activeOpacity={0.8}
-          {...(Platform.OS === 'web' && { cursor: selectedParticipant ? 'pointer' : 'default' })}
-        >
-          <View style={[
-            styles.nextButton,
-            !selectedParticipant && styles.nextButtonDisabled,
-          ]}
+        <View style={styles.headerRight}>
+          {typeof onClosePane === 'function' ? (
+            <MessagesPaneCloseButton onPress={onClosePane} />
+          ) : null}
+          <TouchableOpacity
+            style={styles.headerSide}
+            onPress={() => selectedParticipant && onNext?.(selectedParticipant)}
+            disabled={!selectedParticipant}
+            activeOpacity={0.8}
+            {...(Platform.OS === 'web' && { cursor: selectedParticipant ? 'pointer' : 'default' })}
           >
-            <Text style={[
-              styles.nextButtonText,
-              !selectedParticipant && styles.nextButtonTextDisabled,
+            <View style={[
+              styles.nextButton,
+              !selectedParticipant && styles.nextButtonDisabled,
             ]}
             >
-              Next
-            </Text>
-          </View>
-        </TouchableOpacity>
+              <Text style={[
+                styles.nextButtonText,
+                !selectedParticipant && styles.nextButtonTextDisabled,
+              ]}
+              >
+                Next
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.searchWrap}>
@@ -137,6 +144,12 @@ const styles = StyleSheet.create({
     width: 72,
     alignItems: 'flex-start',
     justifyContent: 'center',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    justifyContent: 'flex-end',
   },
   headerTitle: {
     flex: 1,

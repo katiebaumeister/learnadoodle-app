@@ -1619,6 +1619,8 @@ async function fetchAndCacheScheduleSupplement({
           nextBySubject[subjectId].push({
             id: row?.id ? String(row.id) : `ev-${subjectId}-${tsMs}-${nextBySubject[subjectId].length}`,
             subject_id: subjectId,
+            child_id: row?.child_id || null,
+            child_ids: Array.isArray(row?.child_ids) ? row.child_ids : null,
             title: String(row?.title || row?.lesson_name || row?.event_type || 'Event').trim(),
             startTs: row?.start_ts || row?.due_ts || null,
             start_ts: row?.start_ts || row?.due_ts || null,
@@ -6551,6 +6553,38 @@ export default function SubjectsPlanBuilder({
     });
   }, [animateYearTargetDisclosure, getYearTargetSuggestionAnim]);
 
+  const ALL_EVENTS_GAP_AGGREGATE_ID = '__all_events_gap_aggregate__';
+
+  const resolveAllEventsGapExpandKey = useCallback(() => {
+    const gapTargetRows = (yearTargetsDisplayRows || [])
+      .filter((row) => row && !row?.isOverall && String(row?.id || '').trim() !== 'overall');
+    if (gapTargetRows.length === 1) {
+      return String(gapTargetRows[0]?.id || '').trim();
+    }
+    return gapTargetRows.length > 1 ? ALL_EVENTS_GAP_AGGREGATE_ID : '';
+  }, [yearTargetsDisplayRows]);
+
+  const expandAllEventsAggregateGap = useCallback(() => {
+    const key = resolveAllEventsGapExpandKey();
+    if (!key) return;
+    setExpandedAllEventsGapId((prev) => {
+      if (prev === key) return prev;
+      if (prev) animateYearTargetDisclosure(prev, false);
+      const suggestionAnim = getYearTargetSuggestionAnim(key);
+      if (suggestionAnim) suggestionAnim.setValue(0);
+      animateYearTargetDisclosure(key, true);
+      return key;
+    });
+  }, [resolveAllEventsGapExpandKey, animateYearTargetDisclosure, getYearTargetSuggestionAnim]);
+
+  const collapseAllEventsAggregateGap = useCallback(() => {
+    setExpandedAllEventsGapId((prev) => {
+      if (!prev) return null;
+      animateYearTargetDisclosure(prev, false);
+      return null;
+    });
+  }, [animateYearTargetDisclosure]);
+
   const renderYearTargetGapSection = (row, options = {}) => {
     if (!row) return { gapCell: null, expandedRow: null };
     const isClassDayAggregateTable = options?.isClassDayAggregateTable === true;
@@ -7414,8 +7448,6 @@ export default function SubjectsPlanBuilder({
     return { gapCell, expandedRow };
   };
 
-  const ALL_EVENTS_GAP_AGGREGATE_ID = '__all_events_gap_aggregate__';
-
   const renderAllEventsGapForSubjects = (activeSubjectIds) => {
     const subjectIdSet = Array.isArray(activeSubjectIds) && activeSubjectIds.length > 0
       ? new Set(activeSubjectIds.map((id) => String(id)))
@@ -7843,6 +7875,9 @@ export default function SubjectsPlanBuilder({
                 {typeof embeddedFooter === 'function'
                   ? embeddedFooter({
                     ...homePlanProgressContext,
+                    instructionalEventsBySubject,
+                    expandAllEventsAggregateGap,
+                    collapseAllEventsAggregateGap,
                     renderAllEventsGap: renderAllEventsGapForSubjects,
                   })
                   : embeddedFooter}

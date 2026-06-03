@@ -2815,9 +2815,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Home rail "Invite Child" → global modal (stay on Home)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = () => {
+    const handler = (event) => {
       fetchFamilyMembers();
-      setInviteChildModalPrefillId(null);
+      const childId = String(event?.detail?.childId || '').trim() || null;
+      setInviteChildModalPrefillId(childId);
       setShowInviteChildModal(true);
     };
     window.addEventListener('openInviteChildModal', handler);
@@ -3630,6 +3631,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 children={children}
                 active={isMessagesPaneOpen}
                 placement="left"
+                childInviteSummaries={family?.child_invite_summaries ?? null}
+                onClosePane={() => setIsMessagesPaneOpen(false)}
               />
             ),
           }}

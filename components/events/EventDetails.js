@@ -1256,7 +1256,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [parentSubmissionModalAssignment, setParentSubmissionModalAssignment] = useState(null);
   const [showSendToStudentModal, setShowSendToStudentModal] = useState(false);
   const [sendToStudentNote, setSendToStudentNote] = useState('');
-  const [queueSendToStudentAfterSave, setQueueSendToStudentAfterSave] = useState(false);
   const [sendToStudentSubmitting, setSendToStudentSubmitting] = useState(false);
   const [sendToStudentInlineError, setSendToStudentInlineError] = useState('');
   const [invitedAssigneeIds, setInvitedAssigneeIds] = useState([]);
@@ -2128,54 +2127,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     };
   }, [parentLinkedAssignments, familyMembers, assigneeIds]);
 
-  const sendEntryCtaLabel = useMemo(() => {
-    if (hasInvitedAssignee || sendBlockedAssigneeIds.length === 0) {
-      return sendTrackingSummary.ctaLabel || 'Send to student';
-    }
-    if (sendPendingAssigneeIds.length > 0 && sendNeedsInviteAssigneeIds.length === 0) {
-      return sendPendingAssigneeIds.length > 1 ? 'Invites not yet accepted' : 'Invite not yet accepted';
-    }
-    if (sendPendingAssigneeIds.length > 0 && sendNeedsInviteAssigneeIds.length > 0) {
-      return 'Invites pending/needed';
-    }
-    return 'Invite child to send';
-  }, [
-    hasInvitedAssignee,
-    sendBlockedAssigneeIds.length,
-    sendPendingAssigneeIds.length,
-    sendNeedsInviteAssigneeIds.length,
-    sendTrackingSummary.ctaLabel,
-  ]);
-
   useEffect(() => {
-    const canQueueSendAfterSave = Boolean(
-      event?.id
-      && familyId
-      && assigneeIds.length > 0
-      && hasInvitedAssignee
-      && placement === 'calendar'
-      && isParentView
-      && isSchoolWorkEventType(eventType)
-    );
-    if (!canQueueSendAfterSave && queueSendToStudentAfterSave) {
-      setQueueSendToStudentAfterSave(false);
-    }
-  }, [
-    event?.id,
-    familyId,
-    assigneeIds.length,
-    hasInvitedAssignee,
-    placement,
-    isParentView,
-    eventType,
-    queueSendToStudentAfterSave,
-  ]);
-
-  useEffect(() => {
-    if (!showSendToStudentModal && !queueSendToStudentAfterSave) {
+    if (!showSendToStudentModal) {
       setShowSendInviteClarification(false);
     }
-  }, [showSendToStudentModal, queueSendToStudentAfterSave]);
+  }, [showSendToStudentModal]);
 
   useEffect(() => {
     if (!parentLinkedReady || !parentEventFocus) return;
@@ -6166,20 +6122,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const afterEventRow = data?.[0] || { ...event, ...cleanUpdates };
       emitMaterialLinkageEventsIfChangedWeb(familyId, event, afterEventRow);
 
-      if (
-        queueSendToStudentAfterSave
-        && placement === 'calendar'
-        && isParentView
-        && isSchoolWorkEventType(eventType)
-        && event?.id
-        && familyId
-        && assigneeIds.length > 0
-        && hasInvitedAssignee
-      ) {
-        await sendWorkToStudents(sendToStudentNote.trim());
-        setQueueSendToStudentAfterSave(false);
-      }
-
       setEditing(false);
       setSchedulingBacklog(false);
       
@@ -6600,7 +6542,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   {instructor && (
                     <SafeFieldRow style={styles.fieldRow}>
                       <View style={styles.field}>
-                        <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Instructor / Host</Text>
+                        <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Contact</Text>
                         <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{instructor}</Text>
                       </View>
                     </SafeFieldRow>
@@ -8121,84 +8063,101 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               />
             </View>
           </SafeFieldRow>
-          {placement === 'calendar' && isParentView && isSchoolWorkEventType(eventType) ? (
-            <View style={styles.learningDetailsSendSection}>
-              <Text style={[styles.fieldLabel, styles.sendSectionTitle]}>Send to student</Text>
-              {!parentLinkedReady ? (
-                <Text style={styles.fieldHelpText}>Loading...</Text>
-              ) : sendTrackingSummary.totalCount === 0 ? (
-                null
-              ) : (
-                <View style={styles.workflowActivityWrap}>
-                  {queueSendToStudentAfterSave ? (
-                    <TextInput
-                      placeholder="Optional note for student"
-                      placeholderTextColor={MUTED}
-                      value={sendToStudentNote}
-                      onChangeText={setSendToStudentNote}
-                      style={[styles.input, styles.notesInput, { minHeight: 72, marginTop: 8, marginBottom: 8 }]}
-                      multiline
-                      textAlignVertical="top"
-                      editable={!saving}
-                    />
-                  ) : null}
-                  {Array.isArray(sendTrackingSummary.historyLines) && sendTrackingSummary.historyLines.length > 0 ? (
-                    <View style={styles.workflowHistoryList}>
-                      {sendTrackingSummary.historyLines.map((line, index) => (
-                        <Text key={`send-history-line-${index}`} style={styles.workflowSentLine}>
-                          {line}
-                        </Text>
-                      ))}
-                    </View>
-                  ) : null}
-                </View>
-              )}
-              <View style={styles.workflowHeaderRow}>
-                <TouchableOpacity
-                  onPress={() => {
-                    const hasBaseRequirements = Boolean(event?.id && familyId && assigneeIds.length > 0);
-                    setShowSendInviteClarification(true);
-                    if (!hasBaseRequirements) return;
-                    if (!hasInvitedAssignee && sendBlockedAssigneeIds.length > 0) {
-                      if (sendPendingAssigneeIds.length > 0 && sendNeedsInviteAssigneeIds.length === 0) {
-                        // Invite already sent; waiting on acceptance before send can be enabled.
-                        return;
-                      }
-                      openInviteChildModalForSend();
-                      return;
-                    }
-                    setQueueSendToStudentAfterSave((prev) => !prev);
-                  }}
-                  style={[
-                    styles.workflowActionButton,
-                    queueSendToStudentAfterSave && styles.workflowActionButtonActive,
-                    (!event?.id || !familyId || assigneeIds.length === 0) && styles.workflowActionButtonDisabled,
-                  ]}
-                  {...(Platform.OS === 'web' && { cursor: (!event?.id || !familyId || assigneeIds.length === 0) ? 'default' : 'pointer' })}
-                >
-                  <View style={styles.workflowActionButtonRow}>
-                    <View style={[styles.workflowActionIconWrap, queueSendToStudentAfterSave && styles.workflowActionIconWrapActive]}>
-                      {queueSendToStudentAfterSave ? (
-                        <Check size={12} color="#16A34A" />
-                      ) : (
-                        <Send size={12} color="#5B6880" />
-                      )}
-                    </View>
-                    <Text style={styles.workflowActionButtonText}>
-                      {sendEntryCtaLabel}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              </View>
-              {((!hasInvitedAssignee && sendBlockedAssigneeIds.length > 0) || showSendInviteClarification) && sendInviteClarificationText ? (
-                <Text style={[styles.fieldHelpText, { marginTop: 8 }]}>
-                  {sendInviteClarificationText}
-                </Text>
-              ) : null}
-            </View>
-          ) : null}
         </ModalSectionCard>
         )}
+
+        <ModalSectionCard
+          Icon={MapPin}
+          title="Logistical details"
+          subtitle="Location, mode, and contact"
+          expanded={showLogisticDetails}
+          onPress={() => setShowLogisticDetails(!showLogisticDetails)}
+          accent="#9ECFFB"
+        >
+          <SafeFieldRow style={styles.fieldRow}>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Location (optional)</Text>
+              <TextInput
+                placeholder="e.g. Library, co-op, or address"
+                placeholderTextColor={MUTED}
+                value={location}
+                onChangeText={setLocation}
+                style={styles.input}
+              />
+              <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Contact (optional)</Text>
+              <TextInput
+                placeholder="e.g. professor, tutor, or parent"
+                placeholderTextColor={MUTED}
+                value={instructor}
+                onChangeText={setInstructor}
+                style={styles.input}
+              />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Mode (optional)</Text>
+              <SafeView style={styles.dropdownContainer}>
+                <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
+                  {MODE_OPTIONS.map((m) => (
+                    <TouchableOpacity
+                      key={m}
+                      onPress={() => setMode(mode === m ? '' : m)}
+                      style={[
+                        styles.dropdownOption,
+                        mode === m && styles.dropdownOptionActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.dropdownOptionText,
+                          mode === m && styles.dropdownOptionTextActive,
+                        ]}
+                      >
+                        {m.charAt(0).toUpperCase() + m.slice(1)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ChipRow>
+              </SafeView>
+              <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add to connected calendar</Text>
+              <SafeView style={styles.dropdownContainer}>
+                <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
+                  {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
+                    const isSelected = connectedCalendarTargets.includes(provider.value);
+                    return (
+                      <TouchableOpacity
+                        key={provider.value}
+                        onPress={() =>
+                          setConnectedCalendarTargets((prev) =>
+                            prev.includes(provider.value)
+                              ? prev.filter((value) => value !== provider.value)
+                              : [...prev, provider.value]
+                          )
+                        }
+                        style={[
+                          styles.dropdownOption,
+                          styles.calendarConnectionOption,
+                          isSelected && styles.dropdownOptionActive,
+                        ]}
+                      >
+                        <View style={styles.calendarConnectionOptionContent}>
+                          {isSelected ? <Check size={12} color="#6BB3E8" /> : null}
+                          <Text
+                            style={[
+                              styles.dropdownOptionText,
+                              isSelected && styles.dropdownOptionTextActive,
+                            ]}
+                          >
+                            {provider.label}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ChipRow>
+              </SafeView>
+            </View>
+          </SafeFieldRow>
+        </ModalSectionCard>
 
         {/* Notes and attachments section */}
         <ModalSectionCard

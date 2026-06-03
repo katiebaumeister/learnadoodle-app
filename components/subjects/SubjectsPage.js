@@ -920,6 +920,30 @@ export default function SubjectsPage({
     return valid.length > 0 ? valid : allCourseSubjectIds;
   }, [allCourseSubjectIds, selectedCourseSubjectIds]);
 
+  const detailLoadAttemptedRef = useRef(new Set());
+  useEffect(() => {
+    if (!familyId || selectedModeFilter !== 'view') return;
+    const subjectList = (subjects?.length ? subjects : preloadedSubjects) || [];
+    if (!subjectList.length) return;
+    const subjectIds = effectiveCoursesSubjectIds.length > 0
+      ? effectiveCoursesSubjectIds
+      : subjectList.map((subject) => String(subject?.id || '').trim()).filter(Boolean);
+    subjectIds.forEach((sid) => {
+      if (!sid || detailLoadAttemptedRef.current.has(sid)) return;
+      const cached = subjectDetailCacheRef.current?.[sid];
+      if (cached && Array.isArray(cached.events) && cached.events.length > 0) return;
+      detailLoadAttemptedRef.current.add(sid);
+      refreshSubjectDetailById(sid);
+    });
+  }, [
+    familyId,
+    selectedModeFilter,
+    subjects,
+    preloadedSubjects,
+    effectiveCoursesSubjectIds,
+    refreshSubjectDetailById,
+  ]);
+
   const toggleCourseSubjectFilter = useCallback((subjectId) => {
     const safeId = String(subjectId || '').trim();
     if (!safeId) return;
@@ -1592,7 +1616,7 @@ export default function SubjectsPage({
         </View>
       ) : null}
 
-      {showSubjectRow && allCourseSubjectIds.length > 0 ? (
+      {showSubjectRow && (allCourseSubjectIds.length > 0 || canManageSubjectsActions) ? (
         <View style={[styles.filterRow, styles.filterRowBelowTerm]}>
           <Text style={styles.filterLabel}>Subjects</Text>
           <View style={styles.filterChipsWrap}>
@@ -1622,6 +1646,17 @@ export default function SubjectsPage({
                   </TouchableOpacity>
                 );
               })}
+              {canManageSubjectsActions ? (
+                <TouchableOpacity
+                  style={styles.addSubjectFilterChip}
+                  onPress={openAddSubjectWithCurrentHeaders}
+                  activeOpacity={0.85}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Plus size={14} color="#64748B" />
+                  <Text style={styles.addSubjectFilterChipText}>Add subject</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         </View>
@@ -1642,6 +1677,8 @@ export default function SubjectsPage({
     allCourseSubjectIds,
     effectiveCoursesSubjectIds,
     toggleCourseSubjectFilter,
+    canManageSubjectsActions,
+    openAddSubjectWithCurrentHeaders,
   ]);
 
   const selectedChildFilterForCards = useMemo(() => {
@@ -2505,7 +2542,7 @@ export default function SubjectsPage({
         </View>
       ) : selectedModeFilter === 'progress' ? (
         <View style={styles.coursesTabContent}>
-          {renderCoursesHeaderFilters({ showTermRow: false })}
+          {renderCoursesHeaderFilters()}
           <ProgressTab
             familyId={familyId}
             children={safeChildren}
@@ -3441,6 +3478,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: colors.text,
+    width: 80,
+    flexShrink: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -3471,6 +3510,24 @@ const styles = StyleSheet.create({
   filterOptionChipActive: {
     borderColor: '#6BB3E8',
     backgroundColor: 'rgba(107,179,232,0.12)',
+  },
+  addSubjectFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#D1D5DB',
+    borderRadius: 999,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  addSubjectFilterChipText: {
+    fontSize: 14,
+    color: 'rgba(15,23,42,0.9)',
+    fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
   filterOptionChipText: {
     fontSize: 14,

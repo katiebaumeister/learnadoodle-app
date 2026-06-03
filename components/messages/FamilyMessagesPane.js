@@ -24,6 +24,7 @@ import {
 } from '../../lib/familyDmClient';
 import FamilyDmChat from './FamilyDmChat';
 import FamilyNewMessagePicker from './FamilyNewMessagePicker';
+import MessagesPaneCloseButton from './MessagesPaneCloseButton';
 
 function avatarSourceForParticipant(participant) {
   if (!participant) return resolveBundledAvatarSource('prof1');
@@ -44,7 +45,10 @@ export default function FamilyMessagesPane({
   children: familyChildren = [],
   active = false,
   placement = 'left',
+  childInviteSummaries = null,
+  onClosePane = null,
 }) {
+  const showPaneClose = placement === 'left' && typeof onClosePane === 'function';
   const [loading, setLoading] = useState(false);
   const [participants, setParticipants] = useState([]);
   const [previewMap, setPreviewMap] = useState(new Map());
@@ -198,6 +202,7 @@ export default function FamilyMessagesPane({
           participants={participants}
           onBack={handleBackFromPicker}
           onNext={handlePickerNext}
+          onClosePane={showPaneClose ? onClosePane : null}
         />
       </View>
     );
@@ -217,6 +222,8 @@ export default function FamilyMessagesPane({
           viewerRole={viewerRole}
           viewerChildId={viewerChildId}
           familyChildren={familyChildren}
+          childInviteSummaries={childInviteSummaries}
+          onClosePane={showPaneClose ? onClosePane : null}
           onBack={handleBackFromChat}
         />
       </View>
@@ -231,6 +238,7 @@ export default function FamilyMessagesPane({
     ]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Messages</Text>
+        {showPaneClose ? <MessagesPaneCloseButton onPress={onClosePane} /> : null}
       </View>
 
       {loading ? (
@@ -306,11 +314,16 @@ const styles = StyleSheet.create({
     borderLeftColor: '#E2E8F0',
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 12,
   },
   headerTitle: {
+    flex: 1,
     fontSize: 22,
     fontWeight: '700',
     color: '#0F172A',

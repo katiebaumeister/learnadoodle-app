@@ -1118,6 +1118,7 @@ export default function AttendanceView({
                       selectedChildId={selectedDay.childId}
                       selectedDateKey={selectedDay.dateKey}
                       children={children}
+                      enableVerticalMonthScroll
                       onMonthChange={(delta) => setCalendarMonth((m) => {
                         const next = new Date(m);
                         next.setMonth(next.getMonth() + delta);

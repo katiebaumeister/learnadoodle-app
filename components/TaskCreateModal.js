@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Platform, Animated, Easing, ScrollView, StyleSheet, Modal, Switch } from 'react-native';
-import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap, Send } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import AddSubjectModal from './AddSubjectModal';
@@ -10,9 +10,6 @@ import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
 import { apiRequest, pushEventToGoogleCalendar } from '../lib/apiClient';
 import { Search } from 'lucide-react';
-import { createAssignment, updateAssignment } from '../lib/services/assignmentsClient';
-import { assignmentRowLinksEventId } from '../lib/assignmentLinkedEventUtils';
-import { isChildHelpAssignment, isSchoolWorkEventType } from './child/childHomeRailHelpers';
 import {
   LearnerPill,
   formatConflictMetaFromEvent,
@@ -384,8 +381,6 @@ export default function TaskCreateModal({
   const [notes, setNotes] = useState('');
   const [showAcademicDetails, setShowAcademicDetails] = useState(false); // Collapsed by default
   const [showNotesSection, setShowNotesSection] = useState(false); // Collapsed by default (match Add Subject)
-  const [queueSendToStudentAfterSave, setQueueSendToStudentAfterSave] = useState(false);
-  const [queueSendToStudentNote, setQueueSendToStudentNote] = useState('');
   const [showLogisticDetails, setShowLogisticDetails] = useState(false); // Collapsed by default
   const [submitting, setSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
@@ -639,7 +634,6 @@ export default function TaskCreateModal({
     fallback: ATTENDANCE_MODES.CLASS_DAY,
   });
   const isClassDayEvent = eventType === 'Class Day';
-  const canSendToStudentForEvent = useMemo(() => isSchoolWorkEventType(eventType), [eventType]);
   const academicSectionTitle = 'Learning details';
   const handleBodyScroll = useCallback((evt) => {
     const nextY = Number(evt?.nativeEvent?.contentOffset?.y || 0);
@@ -1623,8 +1617,6 @@ export default function TaskCreateModal({
       setRespectSavedDaysOff(true);
       setIsRecurrenceWeekdayAutofilled(true);
       setClassDayDefaultsApplied(false);
-      setQueueSendToStudentAfterSave(false);
-      setQueueSendToStudentNote('');
       // Reset conflict detection state
       setConflictWarning(null);
       setShouldAutoAdjust(false);
@@ -1636,11 +1628,6 @@ export default function TaskCreateModal({
     }
     wasVisibleRef.current = visible;
   }, [visible, defaultDate, defaultChildId, defaultChildIds, defaultPlacement, defaultSubjectId, defaultEventType, defaultStartTime, defaultTitle, defaultMaterialId, familyMembers, applyEventTypeSelection, applySubjectSelection]);
-
-  useEffect(() => {
-    if (canSendToStudentForEvent && assigneeIds.length > 0) return;
-    if (queueSendToStudentAfterSave) setQueueSendToStudentAfterSave(false);
-  }, [canSendToStudentForEvent, assigneeIds.length, queueSendToStudentAfterSave]);
 
   // Keep weekly "On" default aligned with selected date until user manually edits weekday chips.
   useEffect(() => {
@@ -2692,72 +2679,6 @@ export default function TaskCreateModal({
     onClose?.();
   }, [onClose]);
 
-  const mergeDescriptionWithNote = useCallback((prev, note) => {
-    const n = (note || '').trim();
-    if (!n) return prev || null;
-    const p = (prev || '').trim();
-    return p ? `${p}\n\n${n}` : n;
-  }, []);
-
-  const queueSendToStudentsAfterSave = useCallback(async ({
-    createdEvent,
-    familyIdToUse,
-    userId,
-    note,
-  }) => {
-    if (!createdEvent?.id || !familyIdToUse || !userId || assigneeIds.length === 0) return false;
-    if (!isSchoolWorkEventType(createdEvent?.event_type || eventType)) return false;
-
-    const eventIdStr = String(createdEvent.id);
-    const dueTs = createdEvent.due_ts || createdEvent.end_ts || createdEvent.start_ts;
-    const dueStr = dueTs ? new Date(dueTs).toISOString().split('T')[0] : null;
-    const titleBase = String(createdEvent.title || title || 'Schoolwork').trim().slice(0, 200);
-    const noteTrim = String(note || '').trim();
-
-    for (const childId of assigneeIds) {
-      const { data: rows, error: findErr } = await supabase
-        .from('assignments')
-        .select('id, title, description, linked_event_ids, need_help')
-        .eq('family_id', familyIdToUse)
-        .eq('child_id', childId)
-        .order('updated_at', { ascending: false })
-        .limit(200);
-      if (findErr) throw findErr;
-
-      const linked = (rows || []).find((r) => assignmentRowLinksEventId(r, eventIdStr)) || null;
-      if (linked?.id) {
-        const updates = {
-          assigned_by: userId,
-          status: 'not_started',
-        };
-        if (isChildHelpAssignment(linked)) {
-          updates.title = titleBase;
-          updates.need_help = false;
-        }
-        if (noteTrim) {
-          updates.description = mergeDescriptionWithNote(linked.description, noteTrim);
-        }
-        const { error: upErr } = await updateAssignment(linked.id, updates);
-        if (upErr) throw upErr;
-      } else {
-        const { error: insErr } = await createAssignment({
-          family_id: familyIdToUse,
-          child_id: childId,
-          title: titleBase,
-          description: noteTrim || null,
-          assigned_by: userId,
-          related_subject: subjectIds[0] || null,
-          due_date: dueStr,
-          status: 'not_started',
-          linked_event_ids: [eventIdStr],
-          need_help: false,
-        });
-        if (insErr) throw insErr;
-      }
-    }
-    return true;
-  }, [assigneeIds, eventType, mergeDescriptionWithNote, subjectIds, title]);
-
   const handleCreate = async (skipConflictValidation = false, allowOverlaps = false) => {
     // Always validate required fields (including when continuing from conflict UI). skipConflictValidation
     // only affects overlap handling later, not whether we run field validation.
@@ -3660,29 +3581,8 @@ export default function TaskCreateModal({
         }
       }
 
-      let sentToStudentAfterSave = false;
-      if (queueSendToStudentAfterSave && data?.id && canSendToStudentForEvent && assigneeIds.length > 0) {
-        try {
-          sentToStudentAfterSave = await queueSendToStudentsAfterSave({
-            createdEvent: data,
-            familyIdToUse: userFamilyId,
-            userId: authUser.id,
-            note: queueSendToStudentNote,
-          });
-          if (sentToStudentAfterSave && Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
-            window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
-          }
-        } catch (sendErr) {
-          console.error('[TaskCreateModal] queueSendToStudentsAfterSave', sendErr);
-          toast.push(sendErr?.message || 'Saved event, but could not send to student.', 'error');
-        }
-      }
-
       if (placement === 'backlog') {
         toast.push('Backlog task created', 'success');
-      } else if (sentToStudentAfterSave) {
-        toast.push('Task created and sent to student', 'success');
       } else {
         toast.push('Task created successfully', 'success');
       }
@@ -5517,59 +5417,106 @@ export default function TaskCreateModal({
                   />
                 </View>
               </SafeFieldRow>
-              {canSendToStudentForEvent ? (
-                <View style={styles.learningDetailsSendSection}>
-                  <Text style={[styles.fieldLabel, styles.sendSectionTitle]}>Send to student</Text>
-                  {assigneeIds.length === 0 ? (
-                    <Text style={styles.fieldHelpText}>Select at least one student to enable sharing.</Text>
-                  ) : (
-                    <>
-                      {queueSendToStudentAfterSave ? (
-                        <TextInput
-                          placeholder="Optional note for student"
-                          placeholderTextColor={MUTED}
-                          value={queueSendToStudentNote}
-                          onChangeText={setQueueSendToStudentNote}
-                          style={[styles.input, styles.notesInput, { minHeight: 72, marginTop: 8, marginBottom: 8 }]}
-                          multiline
-                          textAlignVertical="top"
-                        />
-                      ) : null}
-                      <View style={styles.workflowHeaderRow}>
-                        <TouchableOpacity
-                          style={[
-                            styles.workflowActionButton,
-                            queueSendToStudentAfterSave && styles.workflowActionButtonActive,
-                            assigneeIds.length === 0 && styles.workflowActionButtonDisabled,
-                          ]}
-                          onPress={() => setQueueSendToStudentAfterSave((prev) => !prev)}
-                          disabled={assigneeIds.length === 0}
-                          activeOpacity={0.85}
-                          accessibilityRole="button"
-                          accessibilityLabel={queueSendToStudentAfterSave ? 'Turn off send after save' : 'Turn on send after save'}
-                          {...(Platform.OS === 'web' && { cursor: assigneeIds.length === 0 ? 'default' : 'pointer' })}
-                        >
-                          <View style={styles.workflowActionButtonRow}>
-                            <View style={[styles.workflowActionIconWrap, queueSendToStudentAfterSave && styles.workflowActionIconWrapActive]}>
-                              {queueSendToStudentAfterSave ? (
-                                <Check size={12} color="#16A34A" />
-                              ) : (
-                                <Send size={12} color="#5B6880" />
-                              )}
-                            </View>
-                            <Text style={styles.workflowActionButtonText}>
-                              {assigneeIds.length > 1 ? 'Send to students' : 'Send to student'}
-                            </Text>
-                          </View>
-                        </TouchableOpacity>
-                      </View>
-                    </>
-                  )}
-                </View>
-              ) : null}
                 </SafeView>
             </ModalSectionCard>
             ) : null}
+
+            <ModalSectionCard
+              Icon={MapPin}
+              title="Logistical details"
+              subtitle="Location, mode, and contact"
+              expanded={showLogisticDetails}
+              onPress={() => setShowLogisticDetails(!showLogisticDetails)}
+              accent="#9ECFFB"
+            >
+              <SafeView>
+                <SafeFieldRow style={styles.fieldRow}>
+                  <View style={styles.field}>
+                    <Text style={styles.fieldLabel}>Location (optional)</Text>
+                    <TextInput
+                      placeholder="e.g. Library, co-op, or address"
+                      placeholderTextColor={MUTED}
+                      value={location}
+                      onChangeText={setLocation}
+                      style={styles.input}
+                    />
+                    <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Contact (optional)</Text>
+                    <TextInput
+                      placeholder="e.g. professor, tutor, or parent"
+                      placeholderTextColor={MUTED}
+                      value={instructor}
+                      onChangeText={setInstructor}
+                      style={styles.input}
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.fieldLabel}>Mode (optional)</Text>
+                    <SafeView style={styles.dropdownContainer}>
+                      <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
+                        {MODE_OPTIONS.map((m) => (
+                          <TouchableOpacity
+                            key={m}
+                            onPress={() => setMode(mode === m ? '' : m)}
+                            style={[
+                              styles.dropdownOption,
+                              mode === m && styles.dropdownOptionActive,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.dropdownOptionText,
+                                mode === m && styles.dropdownOptionTextActive,
+                              ]}
+                            >
+                              {m.charAt(0).toUpperCase() + m.slice(1)}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ChipRow>
+                    </SafeView>
+                    <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add to connected calendar</Text>
+                    <SafeView style={styles.dropdownContainer}>
+                      <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
+                        {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
+                          const isSelected = connectedCalendarTargets.includes(provider.value);
+                          return (
+                            <TouchableOpacity
+                              key={provider.value}
+                              onPress={() =>
+                                setConnectedCalendarTargets((prev) =>
+                                  prev.includes(provider.value)
+                                    ? prev.filter((value) => value !== provider.value)
+                                    : [...prev, provider.value]
+                                )
+                              }
+                              style={[
+                                styles.dropdownOption,
+                                styles.calendarConnectionOption,
+                                isSelected && styles.dropdownOptionActive,
+                              ]}
+                            >
+                              <View style={styles.calendarConnectionOptionContent}>
+                                {isSelected ? (
+                                  <Check size={12} color="#6BB3E8" />
+                                ) : null}
+                                <Text
+                                  style={[
+                                    styles.dropdownOptionText,
+                                    isSelected && styles.dropdownOptionTextActive,
+                                  ]}
+                                >
+                                  {provider.label}
+                                </Text>
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ChipRow>
+                    </SafeView>
+                  </View>
+                </SafeFieldRow>
+              </SafeView>
+            </ModalSectionCard>
 
             {/* Additional notes — collapsible, same pattern as Add Subject modal */}
             <ModalSectionCard
