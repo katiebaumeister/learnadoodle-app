@@ -12,6 +12,7 @@ import LeftRail from '../LeftRail';
  */
 export default function Sidebar({
   topActive,
+  messagesPaneOpen = false,
   onSelectTop,
   childrenList = [],
   activeChildId,
@@ -170,6 +171,7 @@ export default function Sidebar({
       <View style={styles.navSection}>
         <LeftRail
           topActive={topActive}
+          messagesPaneOpen={messagesPaneOpen}
           onSelectTop={onSelectTop}
           childrenList={childrenList}
           activeChildId={activeChildId}

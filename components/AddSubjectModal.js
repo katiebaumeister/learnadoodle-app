@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput } from 'react-native';
-import { ChevronDown, CheckCircle, BookOpen, FileText, Plus } from 'lucide-react';
+import { ChevronDown, CheckCircle, BookOpen, FileText, Plus, Edit2, Layers } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { isAbortLikeError } from '../lib/apiClient';
 import { useToast } from './Toast';
@@ -133,6 +133,7 @@ export default function AddSubjectModal({
   const [hasLoadedCurriculumOnce, setHasLoadedCurriculumOnce] = useState(false);
 
   // Accordion state (all collapsed by default)
+  const [showUnitsLessonsAccordion, setShowUnitsLessonsAccordion] = useState(false);
   const [showAdditionalNotesAccordion, setShowAdditionalNotesAccordion] = useState(false);
   const [deletingSubject, setDeletingSubject] = useState(false);
   const [showDeleteSubjectConfirm, setShowDeleteSubjectConfirm] = useState(false);
@@ -229,6 +230,7 @@ export default function AddSubjectModal({
       setCurriculumUnits([]);
       setLoadingCurriculum(false);
       setHasLoadedCurriculumOnce(false);
+      setShowUnitsLessonsAccordion(false);
       setShowAdditionalNotesAccordion(false);
       setDraftSubjectId(null);
       setOpeningAddUnits(false);
@@ -392,64 +394,6 @@ export default function AddSubjectModal({
       });
   }, [visible, subject?.id, cleanupDraftSubject]);
 
-  /** Open Add units flows directly from Add/Edit Subject (no Plan Builder modal hop). */
-  const openAddUnitsCurriculumAction = useCallback(
-    async (kind) => {
-      if (openingAddUnits) return;
-      const trimmedName = String(subjectName || '').trim();
-      if (!subject?.id && !trimmedName) {
-        setError('Please enter a subject name before adding units.');
-        return;
-      }
-      if (!subject?.id && selectedChildIds.length === 0) {
-        setError('Please select at least one student before adding units.');
-        return;
-      }
-      const existingSubjectId = subject?.id ?? null;
-      if (!existingSubjectId) {
-        setError('Save this subject first, then add units.');
-        return;
-      }
-      const requestedKind = String(kind || '').trim().toLowerCase();
-      const routedMethod = requestedKind === 'paste' ? 'paste_plain' : requestedKind;
-      const safeMethod = ['manual', 'generate', 'upload', 'paste_plain'].includes(routedMethod)
-        ? routedMethod
-        : 'manual';
-      const yearIdForUnits = (subjectEvents || []).find((ev) => ev?.academic_year_id)?.academic_year_id || null;
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        setOpeningAddUnits(true);
-        window.dispatchEvent(
-          new CustomEvent('openPlanYearModal', {
-            detail: {
-              from: 'subject_detail',
-              subjectId: existingSubjectId,
-              academicYearId: yearIdForUnits,
-              subjectName: subjectName?.trim() || subject?.name || null,
-              childIds: selectedChildIds,
-              openAsModal: true,
-              openToEditList: false,
-              skipPlanSummary: true,
-              openDirectlyToScope: true,
-              initialUnitStructureMethod: safeMethod,
-              subjectHasCurriculumContent: hasUnitsOrLessonsContent,
-            },
-          })
-        );
-        setTimeout(() => setOpeningAddUnits(false), 300);
-        return;
-      }
-      setError('Add units is available in web planning flow only.');
-    },
-    [
-      subject?.id,
-      subject?.name,
-      subjectName,
-      selectedChildIds,
-      subjectEvents,
-      openingAddUnits,
-    ]
-  );
-
   // Load events for the subject
   const loadSubjectEvents = async (subjectId) => {
     if (!subjectId || !familyId) return;
@@ -602,6 +546,100 @@ export default function AddSubjectModal({
   }, [curriculumUnits]);
 
   const hasUnitsOrLessonsContent = (curriculumUnits || []).some((u) => (u?.lessons || []).length > 0) || unscheduledLessons.length > 0;
+  const totalCurriculumUnits = (curriculumUnits || []).length;
+  const totalCurriculumLessons = useMemo(
+    () => (curriculumUnits || []).reduce((sum, unit) => sum + ((unit?.lessons || []).length || 0), 0),
+    [curriculumUnits]
+  );
+  const curriculumBuildSummaryLine = `${totalCurriculumUnits} ${totalCurriculumUnits === 1 ? 'unit' : 'units'} · ${totalCurriculumLessons} ${totalCurriculumLessons === 1 ? 'lesson' : 'lessons'} built`;
+  const unitsLessonsAccordionSubtitle = hasUnitsOrLessonsContent
+    ? curriculumBuildSummaryLine
+    : 'Build units and lessons for this subject';
+
+  const ensureDraftSubjectForUnits = useCallback(async () => {
+    if (subject?.id) return subject.id;
+    const existingDraft = draftSubjectIdRef.current;
+    if (existingDraft) return existingDraft;
+
+    const trimmedName = String(subjectName || '').trim();
+    if (!trimmedName) {
+      throw new Error('Please enter a subject name before adding units.');
+    }
+    if (selectedChildIds.length === 0) {
+      throw new Error('Please select at least one student before adding units.');
+    }
+    if (!familyId) {
+      throw new Error('Family ID not found. Please refresh and try again.');
+    }
+
+    const payload = {
+      ...buildSubjectPayload(),
+      family_id: familyId,
+    };
+    const { data, error } = await supabase
+      .from('subject')
+      .insert([payload])
+      .select('id')
+      .maybeSingle();
+    if (error) throw error;
+    const newId = data?.id || null;
+    if (!newId) throw new Error('Could not save subject draft.');
+    draftSubjectIdRef.current = newId;
+    setDraftSubjectId(newId);
+    return newId;
+  }, [subject?.id, subjectName, selectedChildIds, familyId, buildSubjectPayload]);
+
+  /** Open Add units flows directly from Add/Edit Subject (no Plan Builder modal hop). */
+  const openAddUnitsCurriculumAction = useCallback(
+    async (kind) => {
+      if (openingAddUnits) return;
+      setError(null);
+      const requestedKind = String(kind || '').trim().toLowerCase();
+      const routedMethod = requestedKind === 'paste' ? 'paste_plain' : requestedKind;
+      const safeMethod = ['manual', 'generate', 'upload', 'paste_plain'].includes(routedMethod)
+        ? routedMethod
+        : 'manual';
+      if (Platform.OS !== 'web' || typeof window === 'undefined') {
+        setError('Add units is available in web planning flow only.');
+        return;
+      }
+      setOpeningAddUnits(true);
+      try {
+        const subjectIdForUnits = await ensureDraftSubjectForUnits();
+        const yearIdForUnits = (subjectEvents || []).find((ev) => ev?.academic_year_id)?.academic_year_id || null;
+        window.dispatchEvent(
+          new CustomEvent('openPlanYearModal', {
+            detail: {
+              from: 'subject_detail',
+              subjectId: subjectIdForUnits,
+              academicYearId: yearIdForUnits,
+              subjectName: subjectName?.trim() || subject?.name || null,
+              childIds: selectedChildIds,
+              openAsModal: true,
+              openToEditList: false,
+              skipPlanSummary: true,
+              openDirectlyToScope: true,
+              initialUnitStructureMethod: safeMethod,
+              subjectHasCurriculumContent: hasUnitsOrLessonsContent,
+            },
+          })
+        );
+      } catch (err) {
+        setError(err?.message || 'Could not open units editor.');
+      } finally {
+        setTimeout(() => setOpeningAddUnits(false), 300);
+      }
+    },
+    [
+      subject?.name,
+      subjectName,
+      selectedChildIds,
+      subjectEvents,
+      openingAddUnits,
+      ensureDraftSubjectForUnits,
+      hasUnitsOrLessonsContent,
+    ]
+  );
 
   // Keep event management synced for both persisted subjects and add-mode draft subjects.
   useEffect(() => {
@@ -1187,6 +1225,94 @@ export default function AddSubjectModal({
               </View>
             </View>
 
+            <ModalSectionCard
+              Icon={Layers}
+              title="Units and lessons"
+              subtitle={unitsLessonsAccordionSubtitle}
+              expanded={showUnitsLessonsAccordion}
+              onPress={() => setShowUnitsLessonsAccordion(!showUnitsLessonsAccordion)}
+              accent="#9ECFFB"
+            >
+              <View style={styles.accordionContent}>
+                <View style={styles.unitsLessonsActionsRow}>
+                  {!hasUnitsOrLessonsContent ? (
+                    <TouchableOpacity
+                      style={styles.unitsLessonsHeaderButton}
+                      onPress={() => openAddUnitsCurriculumAction('manual')}
+                      activeOpacity={0.8}
+                      disabled={openingAddUnits}
+                      {...(Platform.OS === 'web' && { cursor: openingAddUnits ? 'default' : 'pointer' })}
+                    >
+                      <View style={styles.unitsLessonsHeaderButtonInner}>
+                        <Plus size={14} color="#6B7280" />
+                        <Text style={styles.unitsLessonsHeaderButtonText}>
+                          {openingAddUnits ? 'Opening...' : 'Add new units'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.unitsLessonsEditButton}
+                      onPress={() => openAddUnitsCurriculumAction('manual')}
+                      activeOpacity={0.8}
+                      disabled={openingAddUnits}
+                      {...(Platform.OS === 'web' && { cursor: openingAddUnits ? 'default' : 'pointer' })}
+                    >
+                      <View style={styles.unitsLessonsHeaderButtonInner}>
+                        <Edit2 size={14} color="#5E6C84" />
+                        <Text style={styles.unitsLessonsEditButtonText}>
+                          {openingAddUnits ? 'Opening...' : 'Edit current units'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {loadingCurriculum && !hasLoadedCurriculumOnce ? (
+                  <Text style={styles.unitsLessonsEmptyText}>Loading units...</Text>
+                ) : !hasUnitsOrLessonsContent ? (
+                  <Text style={styles.unitsLessonsEmptyText}>
+                    Units and lessons appear once you add class lessons or units.
+                  </Text>
+                ) : (
+                  <>
+                    <View style={styles.unitsLessonsMethodHeader}>
+                      <Text style={styles.unitsLessonsMethodTitle}>SAVED UNITS</Text>
+                      <Text style={styles.unitsLessonsMethodSubtitle}>{curriculumBuildSummaryLine}</Text>
+                    </View>
+                    <View style={styles.unitsLessonsDivider} />
+                    <View style={styles.unitsLessonsList}>
+                      {curriculumUnits.map((unit, unitIndex) => {
+                        const lessonTitles = (unit?.lessons || [])
+                          .map((lesson) => String(lesson?.title || '').trim())
+                          .filter(Boolean);
+                        return (
+                          <View key={`${unit?.title || 'unit'}-${unitIndex}`} style={styles.unitsLessonsUnitCard}>
+                            <Text style={styles.unitsLessonsUnitTitle}>
+                              {unit?.title || `Unit ${unitIndex + 1}`}
+                            </Text>
+                            <Text style={styles.unitsLessonsUnitMeta}>
+                              {lessonTitles.length} {lessonTitles.length === 1 ? 'lesson' : 'lessons'}
+                            </Text>
+                            {lessonTitles.slice(0, 4).map((lessonTitle, lessonIndex) => (
+                              <Text key={`${lessonTitle}-${lessonIndex}`} style={styles.unitsLessonsLessonRow}>
+                                • {lessonTitle}
+                              </Text>
+                            ))}
+                            {lessonTitles.length > 4 ? (
+                              <Text style={styles.unitsLessonsMoreText}>
+                                +{lessonTitles.length - 4} more lessons
+                              </Text>
+                            ) : null}
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </>
+                )}
+              </View>
+            </ModalSectionCard>
+
             {/* Notes */}
             <ModalSectionCard
               Icon={FileText}
@@ -1335,8 +1461,8 @@ const styles = StyleSheet.create({
   },
   compactSubjectShell: {
     ...(Platform.OS === 'web'
-      ? { height: '74vh' }
-      : { height: '80%' }),
+      ? { height: '82vh' }
+      : { height: '86%' }),
   },
   shellBody: {
     paddingTop: 18,
@@ -1348,8 +1474,8 @@ const styles = StyleSheet.create({
         flexGrow: 0,
         flexShrink: 1,
         minHeight: 0,
-        // Modal is max 85vh; reserve ~88px for footer + borders so short forms don’t stretch with dead space
-        maxHeight: 'calc(85vh - 88px)',
+        // Reserve ~88px for footer + borders so body scrolls within the shell
+        maxHeight: 'calc(90vh - 88px)',
       },
       default: {
         flex: 1,
@@ -1579,6 +1705,132 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     marginHorizontal: 6,
     fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unitsLessonsActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+  },
+  unitsLessonsHeaderButton: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  unitsLessonsEditButton: {
+    borderWidth: 1,
+    borderColor: '#D7DEE8',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  unitsLessonsHeaderButtonInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  unitsLessonsHeaderButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unitsLessonsEditButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#5E6C84',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unitsLessonsEmptyText: {
+    fontSize: 14,
+    color: '#6B7280',
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unitsLessonsMethodHeader: {
+    flex: 1,
+    minWidth: 180,
+    marginBottom: 10,
+  },
+  unitsLessonsMethodTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unitsLessonsMethodSubtitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unitsLessonsDivider: {
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginBottom: 12,
+  },
+  unitsLessonsList: {
+    gap: 8,
+  },
+  unitsLessonsUnitCard: {
+    borderWidth: 1,
+    borderColor: '#E6ECF3',
+    borderRadius: 10,
+    backgroundColor: '#FAFCFF',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  unitsLessonsUnitTitle: {
+    fontSize: 15,
+    color: '#1F2937',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unitsLessonsUnitMeta: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+    marginBottom: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unitsLessonsLessonRow: {
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  unitsLessonsMoreText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+    fontWeight: '600',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

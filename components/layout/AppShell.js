@@ -11,6 +11,7 @@ import Sidebar from './Sidebar';
  */
 export default function AppShell({ 
   sidebar, 
+  leftPane = null,
   children,
   onOpenSettings,
   onOpenFeedback,
@@ -22,6 +23,8 @@ export default function AppShell({
   const handleCollapsedChange = (collapsed) => {
     setIsSidebarCollapsed(collapsed);
   };
+
+  const leftPaneWidth = leftPane?.width || 340;
 
   return (
     <View style={styles.appContainer}>
@@ -44,11 +47,40 @@ export default function AppShell({
               />
             </View>
           )}
-          
+
+          {leftPane?.content ? (
+            <View
+              style={[
+                styles.leftPaneContainer,
+                leftPane.visible
+                  ? [styles.leftPaneContainerOpen, { width: leftPaneWidth, maxWidth: leftPaneWidth }]
+                  : styles.leftPaneContainerClosed,
+              ]}
+              {...(Platform.OS === 'web' && {
+                'aria-hidden': !leftPane.visible,
+              })}
+            >
+              <View
+                style={[
+                  styles.leftPaneInner,
+                  { width: leftPaneWidth },
+                  leftPane.visible ? styles.leftPaneInnerOpen : styles.leftPaneInnerClosed,
+                ]}
+                pointerEvents={leftPane.visible ? 'auto' : 'none'}
+              >
+                {leftPane.content}
+              </View>
+            </View>
+          ) : null}
+
           {/* Main Content Surface */}
           <View 
             style={[
               styles.mainSurface,
+              leftPane?.content && styles.mainSurfaceWithLeftPane,
+              leftPane?.content && (leftPane.visible
+                ? styles.mainSurfaceLeftPaneOpen
+                : styles.mainSurfaceLeftPaneClosed),
               flushToEdge && styles.mainSurfaceFlush
             ]}
             {...(Platform.OS === 'web' ? { className: 'glass-surface' } : {})}
@@ -119,6 +151,75 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       transition: 'width 0.2s ease',
     }),
+  },
+  leftPaneContainer: {
+    alignSelf: 'stretch',
+    flexShrink: 0,
+    marginTop: 16,
+    marginBottom: 16,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      transitionProperty: 'width, max-width, opacity, margin-right',
+      transitionDuration: '320ms',
+      transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    }),
+  },
+  leftPaneContainerOpen: {
+    opacity: 1,
+    marginRight: 0,
+    ...(Platform.OS === 'web' && {
+      transform: [{ translateX: 0 }],
+    }),
+  },
+  leftPaneInnerOpen: {
+    opacity: 1,
+    ...(Platform.OS === 'web' && {
+      transform: [{ translateX: 0 }],
+    }),
+  },
+  leftPaneInnerClosed: {
+    opacity: 0,
+    ...(Platform.OS === 'web' && {
+      transform: [{ translateX: -10 }],
+    }),
+  },
+  leftPaneContainerClosed: {
+    width: 0,
+    maxWidth: 0,
+    opacity: 0,
+    marginRight: 0,
+    ...(Platform.OS === 'web' && {
+      transform: [{ translateX: -12 }],
+      transitionProperty: 'width, max-width, opacity, margin-right, transform',
+      pointerEvents: 'none',
+    }),
+  },
+  leftPaneInner: {
+    flex: 1,
+    height: '100%',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      transitionProperty: 'opacity, transform',
+      transitionDuration: '300ms',
+      transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    }),
+  },
+  mainSurfaceWithLeftPane: {
+    ...(Platform.OS === 'web' && {
+      transitionProperty: 'margin-left, flex-grow',
+      transitionDuration: '320ms',
+      transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+    }),
+  },
+  mainSurfaceLeftPaneOpen: {
+    marginLeft: 8,
+  },
+  mainSurfaceLeftPaneClosed: {
+    marginLeft: 16,
   },
   mainSurface: {
     flex: 1,

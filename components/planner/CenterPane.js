@@ -53,6 +53,7 @@ export default function CenterPane({
   plannerExclusions = [],
   /** Tutor / observer: view events, no drag-create-complete ownership */
   readOnly = false,
+  plannerShellVisible = true,
 }) {
   const { width } = useWindowDimensions();
   const isMobile = Platform.OS !== 'web' || width < 768;
@@ -332,6 +333,7 @@ export default function CenterPane({
               preloadedTrashEvents={preloadedTrashEvents}
               plannerHolidaysCache={plannerHolidaysCache}
               plannerExclusions={plannerExclusions}
+              plannerShellVisible={plannerShellVisible}
             />
           )}
           {/* Web: keep mounted while on other planner modes so prefetch hydrates before first open (no blank flash). */}

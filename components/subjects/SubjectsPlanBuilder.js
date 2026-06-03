@@ -965,6 +965,156 @@ export function getSubjectsPlanOverviewFromCache(familyId, { allowStale = true }
   return getCachedOverview(familyId, { allowStale });
 }
 
+export function getPlanRowProgressMetrics(row, { yearTargetsDisplayRows = [] } = {}) {
+  const matchedYearTargetsRow = (yearTargetsDisplayRows || []).find((targetRow) => (
+    String(targetRow?.id || '').trim() === String(row?.id || '').trim()
+  )) || null;
+  const overallYearTargetsRow = row?.isClassDayAggregate
+    ? (
+      (yearTargetsDisplayRows || []).find((targetRow) => (
+        String(targetRow?.id || '').trim() === 'overall' || targetRow?.isOverall === true
+      )) || null
+    )
+    : null;
+  const targetRowForStatus = overallYearTargetsRow || matchedYearTargetsRow || row;
+  const targetDays = String(targetRowForStatus?.targetUnit || row?.targetUnit || 'days').trim().toLowerCase() === 'days'
+    ? (
+      Number.isFinite(Number(targetRowForStatus?.targetValue))
+        ? Number(targetRowForStatus.targetValue)
+        : (
+          Number.isFinite(Number(targetRowForStatus?.targetDays))
+            ? Number(targetRowForStatus.targetDays)
+            : (
+              Number.isFinite(Number(row.targetValue))
+                ? Number(row.targetValue)
+                : null
+            )
+        )
+    )
+    : null;
+  const completedDays = Math.max(
+    0,
+    Number.isFinite(Number(row?.pastEventsCount))
+      ? Number(row.pastEventsCount)
+      : (
+        Number.isFinite(Number(targetRowForStatus?.completedDays))
+          ? Number(targetRowForStatus.completedDays)
+          : (
+            Number.isFinite(Number(overallYearTargetsRow?.completedDays))
+              ? Number(overallYearTargetsRow.completedDays)
+              : Number(row.actualDays || 0)
+          )
+      )
+  );
+  const upcomingDays = Math.max(
+    0,
+    Number.isFinite(Number(row?.plannedEventsCount))
+      ? Number(row.plannedEventsCount)
+      : (
+        Number.isFinite(Number(targetRowForStatus?.upcomingDays))
+          ? Number(targetRowForStatus.upcomingDays)
+          : (
+            Number.isFinite(Number(overallYearTargetsRow?.upcomingDays))
+              ? Number(overallYearTargetsRow.upcomingDays)
+              : (
+                Number.isFinite(Number(row?.upcomingDays))
+                  ? Number(row.upcomingDays)
+                  : Math.max(0, Number(row?.projectedDays || 0) - completedDays)
+              )
+          )
+      )
+  );
+  const projectedDaysForStatus = Math.max(
+    completedDays + upcomingDays,
+    Number.isFinite(Number(targetRowForStatus?.projectedDays))
+      ? Number(targetRowForStatus.projectedDays)
+      : Number(row?.projectedDays || 0)
+  );
+  return {
+    completedDays,
+    upcomingDays,
+    targetDays,
+    projectedDaysForStatus,
+  };
+}
+
+export function formatPlanProgressSummary({
+  completedDays = 0,
+  upcomingDays = 0,
+  targetDays = null,
+  projectedDaysForStatus = 0,
+} = {}) {
+  return targetDays != null
+    ? `${completedDays} attended / ${upcomingDays} upcoming / ${targetDays} target`
+    : `${completedDays} attended / ${upcomingDays} upcoming / ${projectedDaysForStatus} planned`;
+}
+
+export function getPlanProgressStatusFromMetrics({
+  completedDays = 0,
+  upcomingDays = 0,
+  targetDays = null,
+  projectedDaysForStatus = 0,
+} = {}, { hasCadence = true } = {}) {
+  const deltaDays = targetDays != null ? (projectedDaysForStatus - targetDays) : null;
+  const statusLabel = !hasCadence
+    ? 'No schedule'
+    : (deltaDays == null
+      ? 'On track'
+      : (deltaDays < 0 ? 'Behind target' : (deltaDays > 0 ? 'Ahead target' : 'On target')));
+  const statusTone = !hasCadence
+    ? 'no_cadence'
+    : (deltaDays == null
+      ? 'on_track'
+      : (deltaDays < 0 ? 'behind' : (deltaDays > 0 ? 'ahead' : 'on_track')));
+  const showStatusChip = statusTone === 'behind' || statusTone === 'ahead';
+  return { statusLabel, statusTone, showStatusChip, deltaDays };
+}
+
+export function aggregatePlanProgressMetrics(rows, { yearTargetsDisplayRows = [], subjectIds = null } = {}) {
+  const subjectIdSet = Array.isArray(subjectIds) && subjectIds.length > 0
+    ? new Set(subjectIds.map((id) => String(id)))
+    : null;
+  const eligibleRows = (rows || []).filter((row) => {
+    if (!row || row?.isClassDayAggregate) return false;
+    const subjectId = String(row?.id || '').trim();
+    if (!subjectId) return false;
+    if (subjectIdSet && !subjectIdSet.has(subjectId)) return false;
+    return true;
+  });
+  if (!eligibleRows.length) {
+    return {
+      completedDays: 0,
+      upcomingDays: 0,
+      targetDays: null,
+      projectedDaysForStatus: 0,
+      hasCadence: false,
+    };
+  }
+  let completedDays = 0;
+  let upcomingDays = 0;
+  let targetDaysSum = 0;
+  let targetCount = 0;
+  let projectedDaysForStatus = 0;
+  const hasCadence = eligibleRows.some((row) => Boolean(String(row?.cadenceText || '').trim()));
+  eligibleRows.forEach((row) => {
+    const metrics = getPlanRowProgressMetrics(row, { yearTargetsDisplayRows });
+    completedDays += metrics.completedDays;
+    upcomingDays += metrics.upcomingDays;
+    projectedDaysForStatus += metrics.projectedDaysForStatus;
+    if (metrics.targetDays != null) {
+      targetDaysSum += metrics.targetDays;
+      targetCount += 1;
+    }
+  });
+  return {
+    completedDays,
+    upcomingDays,
+    targetDays: targetCount === eligibleRows.length ? targetDaysSum : null,
+    projectedDaysForStatus,
+    hasCadence,
+  };
+}
+
 async function fetchAndCacheOverview(familyId, { force = false } = {}) {
   const key = normalizeFamilyKey(familyId);
   if (!key || !isUuidLike(key)) {
@@ -1666,6 +1816,9 @@ export default function SubjectsPlanBuilder({
   onPendingScheduleModalHandled = null,
   onDone,
   onOpenPlannerSettings,
+  homeSections = 'all',
+  embeddedInScrollView = false,
+  embeddedFooter = null,
 }) {
   const toast = useToast();
   const presentScope = useMemo(() => getPresentAcademicScope(new Date()), []);
@@ -1707,6 +1860,7 @@ export default function SubjectsPlanBuilder({
   const [saving, setSaving] = useState(false);
   const [applyingSuggestionSubjectId, setApplyingSuggestionSubjectId] = useState(null);
   const [expandedYearTargetSuggestionId, setExpandedYearTargetSuggestionId] = useState(null);
+  const [expandedAllEventsGapId, setExpandedAllEventsGapId] = useState(null);
   const yearTargetChevronAnimByIdRef = useRef({});
   const yearTargetSuggestionAnimByIdRef = useRef({});
   const [blocksBySubject, setBlocksBySubject] = useState({});
@@ -1954,8 +2108,10 @@ export default function SubjectsPlanBuilder({
     [displaySchoolYear?.label, initialSchoolYearState?.selectedLabel, selectedYearFilter]
   );
   const displayTerm = useMemo(() => {
-    if (selectedTermFilter === 'fall_term' || selectedTermFilter === 'spring_term' || selectedTermFilter === 'full_year') {
-      return selectedTermFilter;
+    const normalized = String(selectedTermFilter || '').trim();
+    if (normalized === 'all_terms' || normalized === 'all') return 'full_year';
+    if (normalized === 'fall_term' || normalized === 'spring_term' || normalized === 'full_year') {
+      return normalized;
     }
     return selectedTerm;
   }, [selectedTermFilter, selectedTerm]);
@@ -2988,7 +3144,7 @@ export default function SubjectsPlanBuilder({
 
     return [{
       id: 'school_year',
-      title: 'Subject Days',
+      title: 'Planning engine',
       status,
       plannedDays,
       completedDays,
@@ -3485,6 +3641,13 @@ export default function SubjectsPlanBuilder({
     displayTerm,
     subjectsWithAnyPlanNames,
   ]);
+
+  const homePlanProgressContext = useMemo(() => ({
+    rows: (termSections || [])
+      .flatMap((section) => section?.subjectPlans || [])
+      .filter((row) => row && !row?.isClassDayAggregate),
+    yearTargetsDisplayRows: yearTargetsDisplayRows || [],
+  }), [termSections, yearTargetsDisplayRows]);
 
   const subjectPlans = useMemo(() => {
     const selectedStartYear = Number(displaySchoolYear?.start_year);
@@ -6372,12 +6535,1007 @@ export default function SubjectsPlanBuilder({
     });
   }, [animateYearTargetDisclosure, getYearTargetSuggestionAnim]);
 
+  const toggleAllEventsGapSuggestion = useCallback((subjectId) => {
+    const key = String(subjectId || '').trim();
+    if (!key) return;
+    setExpandedAllEventsGapId((prev) => {
+      if (prev === key) {
+        animateYearTargetDisclosure(key, false);
+        return null;
+      }
+      if (prev) animateYearTargetDisclosure(prev, false);
+      const suggestionAnim = getYearTargetSuggestionAnim(key);
+      if (suggestionAnim) suggestionAnim.setValue(0);
+      animateYearTargetDisclosure(key, true);
+      return key;
+    });
+  }, [animateYearTargetDisclosure, getYearTargetSuggestionAnim]);
+
+  const renderYearTargetGapSection = (row, options = {}) => {
+    if (!row) return { gapCell: null, expandedRow: null };
+    const isClassDayAggregateTable = options?.isClassDayAggregateTable === true;
+    const isLastRow = options?.isLastRow === true;
+    const isInline = options?.variant === 'inline';
+    const skipGapCell = options?.skipGapCell === true;
+    const overrideExpanded = options?.overrideExpanded === true;
+    const rowId = String(row?.id || '').trim();
+    const rowTargetUnit = String(row?.targetUnit || row?.targetMode || 'days').trim().toLowerCase() === 'hours' ? 'hours' : 'days';
+    const rowTargetLabel = rowTargetUnit === 'hours' ? 'hours' : 'days';
+    const rowTargetValue = Number.isFinite(Number(row?.targetValue)) ? Number(row.targetValue) : Number(row?.targetDays || 0);
+    const rawRowGapValue = Number.isFinite(Number(row?.gapHours))
+      ? Number(row.gapHours)
+      : Number(row?.gapDays || 0);
+    const actionableRowGapValue = rawRowGapValue;
+    // Always display the mathematical target gap in the chip, even when no automatic
+    // removal action is available (e.g. all extra days are already attended).
+    const rowGapValue = rawRowGapValue;
+    const displayGapMagnitude = Math.abs(Number(rowGapValue || 0));
+    const rowGapDisplayText = displayGapMagnitude === 0
+      ? `0 ${rowTargetLabel}`
+      : `+${toOneDecimal(displayGapMagnitude)} ${rowTargetLabel}`;
+    const isOverallRow = rowId === 'overall' || row?.isOverall === true;
+    const isOverallScopeTable = String(yearTargetSummary?.trackingMode || '').trim().toLowerCase() === 'overall';
+    const overallSuggestedChanges = (() => {
+      if (!isOverallRow) return { text: '', suggestions: [] };
+      const perRows = Array.isArray(yearTargetSummary?.perSubjectRows) ? yearTargetSummary.perSubjectRows : [];
+      const catchUpRows = Array.isArray(yearTargetSummary?.perSubjectCatchUp) ? yearTargetSummary.perSubjectCatchUp : [];
+      const catchUpById = new Map(catchUpRows.map((entry) => [String(entry?.id || '').trim(), entry]));
+      const occupiedByDay = new Map();
+      const occupiedTimesGlobal = new Set();
+      const isOccupied = (dayNum, hhmm) => {
+        const dayKey = Number(dayNum);
+        const timeKey = String(hhmm || '').trim();
+        if (!Number.isInteger(dayKey) || dayKey < 1 || dayKey > 5 || !timeKey) return false;
+        return Boolean(occupiedByDay.get(dayKey)?.has(timeKey));
+      };
+      const isGloballyOccupiedTime = (hhmm) => occupiedTimesGlobal.has(String(hhmm || '').trim());
+      const reserveSlot = (dayNum, hhmm) => {
+        const dayKey = Number(dayNum);
+        const timeKey = String(hhmm || '').trim();
+        if (!Number.isInteger(dayKey) || dayKey < 1 || dayKey > 5 || !timeKey) return;
+        if (!occupiedByDay.has(dayKey)) occupiedByDay.set(dayKey, new Set());
+        occupiedByDay.get(dayKey).add(timeKey);
+        occupiedTimesGlobal.add(timeKey);
+      };
+      perRows.forEach((subjectRow) => {
+        const dayNums = Array.isArray(subjectRow?.cadenceDayNums)
+          ? subjectRow.cadenceDayNums.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 1 && d <= 5)
+          : [];
+        const cadenceTime = parseTimeLabelToHhmm(extractCadenceTimeLabel(subjectRow?.cadenceText || ''));
+        if (cadenceTime && dayNums.length > 0) {
+          dayNums.forEach((dayNum) => reserveSlot(dayNum, cadenceTime));
+        }
+        (Array.isArray(subjectRow?.eventItems) ? subjectRow.eventItems : []).forEach((eventItem) => {
+          const rawTs = eventItem?.startTs || eventItem?.start_ts || eventItem?.start_local || eventItem?.due_ts || null;
+          if (!rawTs) return;
+          const dt = new Date(rawTs);
+          if (Number.isNaN(dt.getTime())) return;
+          const dayNum = dt.getDay();
+          if (!Number.isInteger(dayNum) || dayNum < 1 || dayNum > 5) return;
+          const hhmm = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+          reserveSlot(dayNum, hhmm);
+        });
+      });
+      const defaultTimes = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00'];
+      const subjectsNeeding = perRows
+        .map((subjectRow) => {
+          const sid = String(subjectRow?.id || '').trim();
+          if (!sid) return null;
+          const catchUp = catchUpById.get(sid) || null;
+          if (!catchUp || Number(catchUp?.shortDays || 0) <= 0) return null;
+          const subjectName = String(subjectRow?.name || 'Subject').trim();
+          if (!subjectName) return null;
+          const suggestedNums = Array.isArray(catchUp?.suggestedAddedDayNums)
+            ? catchUp.suggestedAddedDayNums.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 1 && d <= 5)
+            : [];
+          const existingDayNums = Array.isArray(subjectRow?.cadenceDayNums)
+            ? subjectRow.cadenceDayNums.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 1 && d <= 5)
+            : [];
+          const dayOrder = [...new Set([
+            ...suggestedNums,
+            ...[1, 2, 3, 4, 5].filter((dayNum) => !existingDayNums.includes(dayNum)),
+            ...[1, 2, 3, 4, 5],
+          ])];
+          const rangeStart = String(subjectRow?.rangeStartYmd || '').slice(0, 10);
+          const rangeEnd = String(subjectRow?.rangeEndYmd || '').slice(0, 10);
+          const options = dayOrder
+            .map((dayNum) => ({
+              dayNum,
+              yieldDays: countOccurrencesInRange(rangeStart, rangeEnd, [dayNum]),
+            }))
+            .filter((entry) => Number(entry?.yieldDays || 0) > 0);
+          if (!options.length) return null;
+          return {
+            subjectId: sid,
+            subjectName,
+            preferredTime: parseTimeLabelToHhmm(extractCadenceTimeLabel(subjectRow?.cadenceText || '')),
+            options,
+          };
+        })
+        .filter(Boolean);
+      const requiredDays = Math.max(
+        0,
+        Number(yearTargetSummary?.overallTargetDays || 0) - Number(yearTargetSummary?.overallProjectedDays || 0)
+      );
+      if (!subjectsNeeding.length || requiredDays <= 0) return { text: '', suggestions: [] };
+      let bestCombo = null;
+      let bestSum = 0;
+      const evaluateCombo = (combo, sum) => {
+        const diff = Math.abs(requiredDays - sum);
+        const bestDiff = bestCombo ? Math.abs(requiredDays - bestSum) : Number.POSITIVE_INFINITY;
+        if (diff < bestDiff) {
+          bestCombo = combo.map((entry) => ({ ...entry }));
+          bestSum = sum;
+          return;
+        }
+        if (diff === bestDiff) {
+          const prefersCloserWithoutOvershoot = sum <= requiredDays && bestSum > requiredDays;
+          const prefersLargerWhenBothUnder = sum <= requiredDays && bestSum <= requiredDays && sum > bestSum;
+          if (prefersCloserWithoutOvershoot || prefersLargerWhenBothUnder) {
+            bestCombo = combo.map((entry) => ({ ...entry }));
+            bestSum = sum;
+          }
+        }
+      };
+      const chooseBySubject = (idx, combo, sum) => {
+        if (idx >= subjectsNeeding.length) {
+          evaluateCombo(combo, sum);
+          return;
+        }
+        // Allow skipping this subject so we do not over-prescribe changes.
+        chooseBySubject(idx + 1, combo, sum);
+        const item = subjectsNeeding[idx];
+        (item?.options || []).forEach((option) => {
+          chooseBySubject(
+            idx + 1,
+            [...combo, {
+              subjectId: item.subjectId,
+              subjectName: item.subjectName,
+              preferredTime: item.preferredTime || '',
+              dayNum: Number(option?.dayNum),
+              yieldDays: Number(option?.yieldDays || 0),
+            }],
+            sum + Number(option?.yieldDays || 0)
+          );
+        });
+      };
+      chooseBySubject(0, [], 0);
+      const selectedBySubject = Array.isArray(bestCombo) ? bestCombo : [];
+      const rawSuggestions = selectedBySubject
+        .map((entry) => {
+          const timeOrder = [...new Set([
+            ...(entry?.preferredTime ? [entry.preferredTime] : []),
+            ...defaultTimes,
+          ])];
+          let chosenTime = timeOrder[0] || '09:00';
+          for (let j = 0; j < timeOrder.length; j += 1) {
+            const hhmm = timeOrder[j];
+            if (!isOccupied(entry.dayNum, hhmm) && !isGloballyOccupiedTime(hhmm)) {
+              chosenTime = hhmm;
+              break;
+            }
+          }
+          if (isOccupied(entry.dayNum, chosenTime) || isGloballyOccupiedTime(chosenTime)) {
+            for (let j = 0; j < timeOrder.length; j += 1) {
+              const hhmm = timeOrder[j];
+              if (!isOccupied(entry.dayNum, hhmm)) {
+                chosenTime = hhmm;
+                break;
+              }
+            }
+          }
+          reserveSlot(entry.dayNum, chosenTime);
+          const suggestedDayPhrase = formatCadenceDayPhrase([entry.dayNum]);
+          const timeLabel = formatSuggestionTimeLabel(chosenTime);
+          const text = (suggestedDayPhrase && timeLabel)
+            ? `Add ${entry.subjectName} on ${suggestedDayPhrase} at ${timeLabel}`
+            : (suggestedDayPhrase
+              ? `Add ${entry.subjectName} on ${suggestedDayPhrase}`
+              : (timeLabel
+                ? `Add one ${entry.subjectName} class day at ${timeLabel}`
+                : `Add one ${entry.subjectName} class day each week`));
+          return {
+            subjectId: entry.subjectId,
+            subjectName: entry.subjectName,
+            dayNum: entry.dayNum,
+            startTime: chosenTime,
+            endTime: addMinutesToHhmm(chosenTime, 60),
+            impactDays: Number(entry?.yieldDays || 0),
+            text,
+          };
+        })
+        .filter((entry) => Number(entry?.impactDays || 0) > 0);
+      if (!rawSuggestions.length) return { text: '', suggestions: [] };
+      const weightTotal = rawSuggestions.reduce((sum, entry) => sum + Math.max(1, Number(entry?.impactDays || 0)), 0);
+      const allocations = rawSuggestions.map((entry) => (
+        Math.floor((requiredDays * Math.max(1, Number(entry?.impactDays || 0))) / Math.max(1, weightTotal))
+      ));
+      let allocated = allocations.reduce((sum, n) => sum + Number(n || 0), 0);
+      let remaining = Math.max(0, requiredDays - allocated);
+      const ordering = rawSuggestions
+        .map((entry, idx) => {
+          const weight = Math.max(1, Number(entry?.impactDays || 0));
+          const exact = (requiredDays * weight) / Math.max(1, weightTotal);
+          const frac = exact - Math.floor(exact);
+          return { idx, frac, weight };
+        })
+        .sort((a, b) => (b.frac - a.frac) || (b.weight - a.weight) || (a.idx - b.idx));
+      let cursor = 0;
+      while (remaining > 0 && ordering.length > 0) {
+        const target = ordering[cursor % ordering.length];
+        allocations[target.idx] = Number(allocations[target.idx] || 0) + 1;
+        remaining -= 1;
+        cursor += 1;
+      }
+      const suggestions = rawSuggestions
+        .map((entry, idx) => ({ ...entry, addedDays: Number(allocations[idx] || 0) }))
+        .filter((entry) => Number(entry?.addedDays || 0) > 0);
+      const totalImpactDays = suggestions.reduce((sum, entry) => sum + Number(entry?.impactDays || 0), 0);
+      const text = suggestions.length
+        ? `${suggestions.map((entry) => `${entry.text} (+${entry.addedDays} day${entry.addedDays === 1 ? '' : 's'})`).join('. ')}.`
+        : '';
+      return { text, suggestions, totalImpactDays };
+    })();
+    const overallShortfallDays = Math.max(
+      0,
+      Number(yearTargetSummary?.overallTargetDays || 0) - Number(yearTargetSummary?.overallProjectedDays || 0)
+    );
+    const overallOverloadDays = Math.max(
+      0,
+      Number(yearTargetSummary?.overallProjectedDays || 0) - Number(yearTargetSummary?.overallTargetDays || 0)
+    );
+    const overallRowBaseEndYmd = String(
+      row?.rangeEndYmd
+      || yearTargetSummary?.perSubjectRows?.[0]?.rangeEndYmd
+      || ''
+    ).slice(0, 10);
+    const overallRowBaseStartYmd = String(
+      row?.rangeStartYmd
+      || yearTargetSummary?.perSubjectRows?.[0]?.rangeStartYmd
+      || ''
+    ).slice(0, 10);
+    const overallOverloadPlan = (() => {
+      if (!isOverallRow || overallOverloadDays <= 0) {
+        return { text: '', suggestions: [], totalImpactDays: 0, suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
+      }
+      const perRows = Array.isArray(yearTargetSummary?.perSubjectRows) ? yearTargetSummary.perSubjectRows : [];
+      const targetOverallDays = Number(yearTargetSummary?.overallTargetDays || 0);
+      if (!perRows.length || !Number.isFinite(targetOverallDays) || targetOverallDays <= 0) {
+        return { text: '', suggestions: [], totalImpactDays: 0, suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
+      }
+      const bySubject = perRows
+        .map((subjectRow) => {
+          const subjectId = String(subjectRow?.id || '').trim();
+          if (!subjectId) return null;
+          const subjectName = String(subjectRow?.name || 'Subject').trim() || 'Subject';
+          const rangeStartYmd = String(subjectRow?.rangeStartYmd || '').slice(0, 10);
+          const baseDays = Array.isArray(subjectRow?.cadenceDayNums)
+            ? [...new Set(subjectRow.cadenceDayNums.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 1 && d <= 5))]
+            : [];
+          return {
+            subjectId,
+            subjectName,
+            preferredTime: parseTimeLabelToHhmm(extractCadenceTimeLabel(subjectRow?.cadenceText || '')),
+            rangeStartYmd,
+            completedDays: Number(subjectRow?.completedDays || 0),
+            baseDays,
+          };
+        })
+        .filter(Boolean);
+      const subjectsWithRemovalOptions = bySubject.map((entry) => {
+        const baseDays = Array.isArray(entry?.baseDays) ? entry.baseDays : [];
+        const subsets = [[]];
+        const maxMask = Math.pow(2, baseDays.length);
+        for (let mask = 1; mask < maxMask; mask += 1) {
+          const removedDays = [];
+          for (let bit = 0; bit < baseDays.length; bit += 1) {
+            if (mask & (1 << bit)) removedDays.push(baseDays[bit]);
+          }
+          subsets.push(removedDays);
+        }
+        subsets.sort((a, b) => a.length - b.length);
+        return { ...entry, removalOptions: subsets };
+      });
+      if (!subjectsWithRemovalOptions.length) {
+        return { text: '', suggestions: [], totalImpactDays: 0, suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
+      }
+      const overallStartYmd = (
+        subjectsWithRemovalOptions.map((entry) => entry.rangeStartYmd).filter(Boolean).sort((a, b) => a.localeCompare(b))[0]
+      ) || String(row?.rangeStartYmd || '').slice(0, 10) || overallRowBaseEndYmd;
+      if (!overallStartYmd || !overallRowBaseEndYmd || overallStartYmd > overallRowBaseEndYmd) {
+        return { text: '', suggestions: [], totalImpactDays: 0, suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
+      }
+      const projectedFor = (endYmd, removedBySubject) => (
+        subjectsWithRemovalOptions.reduce((sum, entry) => {
+          if (!entry.rangeStartYmd || !endYmd || endYmd < entry.rangeStartYmd) return sum;
+          const removedSet = removedBySubject.get(entry.subjectId) || new Set();
+          const activeDays = entry.baseDays.filter((dayNum) => !removedSet.has(dayNum));
+          const planned = activeDays.length > 0
+            ? Number(countOccurrencesInRange(entry.rangeStartYmd, endYmd, activeDays) || 0)
+            : 0;
+          const projected = Math.max(Number(entry.completedDays || 0), planned);
+          return sum + projected;
+        }, 0)
+      );
+      const compareCandidate = (a, b) => {
+        if (!a) return false;
+        if (!b) return true;
+        const aDiff = Math.abs(Number(a?.projectedTotal || 0) - targetOverallDays);
+        const bDiff = Math.abs(Number(b?.projectedTotal || 0) - targetOverallDays);
+        if (aDiff !== bDiff) return aDiff < bDiff;
+        if (Number(a?.removalCount || 0) !== Number(b?.removalCount || 0)) {
+          return Number(a?.removalCount || 0) < Number(b?.removalCount || 0);
+        }
+        return String(a?.suggestedEndYmd || '') > String(b?.suggestedEndYmd || '');
+      };
+      let best = null;
+      const maxCombos = 60000;
+      let combosChecked = 0;
+      const searchCombo = (idx, removedBySubject) => {
+        if (combosChecked >= maxCombos) return;
+        if (idx >= subjectsWithRemovalOptions.length) {
+          combosChecked += 1;
+          let dateCursor = overallStartYmd;
+          while (dateCursor && dateCursor <= overallRowBaseEndYmd) {
+            const projectedTotal = projectedFor(dateCursor, removedBySubject);
+            const suggestionCount = [...removedBySubject.values()].reduce((sum, set) => sum + set.size, 0);
+            const candidate = {
+              projectedTotal,
+              suggestedEndYmd: dateCursor,
+              exactGapZero: projectedTotal === targetOverallDays,
+              removalCount: suggestionCount,
+              removedBySubject: new Map([...removedBySubject.entries()].map(([sid, set]) => [sid, new Set([...set])])),
+            };
+            if (compareCandidate(candidate, best)) best = candidate;
+            if (projectedTotal === targetOverallDays && suggestionCount === 0 && dateCursor === overallRowBaseEndYmd) {
+              break;
+            }
+            const next = addDaysToYmd(dateCursor, 1);
+            if (!next || next === dateCursor) break;
+            dateCursor = next;
+          }
+          return;
+        }
+        const entry = subjectsWithRemovalOptions[idx];
+        (Array.isArray(entry?.removalOptions) ? entry.removalOptions : [[]]).forEach((removedDays) => {
+          if (combosChecked >= maxCombos) return;
+          const nextMap = new Map([...removedBySubject.entries()].map(([sid, set]) => [sid, new Set([...set])]));
+          if (!nextMap.has(entry.subjectId)) nextMap.set(entry.subjectId, new Set());
+          nextMap.set(entry.subjectId, new Set(Array.isArray(removedDays) ? removedDays : []));
+          searchCombo(idx + 1, nextMap);
+        });
+      };
+      searchCombo(0, new Map());
+      if (!best) {
+        return { text: '', suggestions: [], totalImpactDays: 0, suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
+      }
+      const suggestions = [];
+      subjectsWithRemovalOptions.forEach((entry) => {
+        const removedSet = best.removedBySubject.get(entry.subjectId) || new Set();
+        [...removedSet].forEach((dayNum) => {
+          const dayPhrase = formatCadenceDayPhrase([dayNum]);
+          const timeLabel = formatSuggestionTimeLabel(entry.preferredTime || '');
+          const text = timeLabel
+            ? `Remove ${entry.subjectName} on ${dayPhrase} at ${timeLabel}`
+            : `Remove ${entry.subjectName} on ${dayPhrase}`;
+          suggestions.push({
+            subjectId: entry.subjectId,
+            subjectName: entry.subjectName,
+            action: 'remove',
+            dayNum,
+            startTime: entry.preferredTime || '',
+            endTime: '',
+            addedDays: Number(countOccurrencesInRange(entry.rangeStartYmd, String(best.suggestedEndYmd || ''), [dayNum]) || 0),
+            text,
+          });
+        });
+      });
+      const text = suggestions.length
+        ? `${suggestions.map((entry) => `${entry.text} (-${entry.addedDays} day${entry.addedDays === 1 ? '' : 's'})`).join('. ')}.`
+        : '';
+      const totalImpactDays = suggestions.reduce((sum, entry) => sum + Number(entry?.addedDays || 0), 0);
+      return {
+        text,
+        suggestions,
+        totalImpactDays,
+        suggestedEndYmd: best.suggestedEndYmd,
+        projectedTotal: best.projectedTotal,
+        exactGapZero: best.exactGapZero,
+      };
+    })();
+    const overallRowSubjectNames = String(row?.name || '')
+      .split(',')
+      .map((name) => name.trim())
+      .filter(Boolean);
+    const overallOverloadSubjectNames = [...new Set(
+      (overallOverloadPlan?.suggestions || [])
+        .map((entry) => String(entry?.subjectName || '').trim())
+        .filter(Boolean)
+    )];
+    const endDateTargetSubjectNames = overallOverloadSubjectNames.length
+      ? overallOverloadSubjectNames
+      : overallRowSubjectNames;
+    const endDateTargetLabel = endDateTargetSubjectNames.length
+      ? `${endDateTargetSubjectNames.join(', ')} ${endDateTargetSubjectNames.length === 1 ? 'schedule' : 'schedules'}`
+      : 'the subject schedules';
+    const shortfallSuggestionImpactDays = Number(overallSuggestedChanges?.totalImpactDays || 0);
+    const shortfallResidualOverageDays = Math.max(0, shortfallSuggestionImpactDays - overallShortfallDays);
+    const shortfallBalanceEndYmd = (overallRowBaseEndYmd && shortfallResidualOverageDays > 0)
+      ? addDaysToYmd(overallRowBaseEndYmd, -shortfallResidualOverageDays)
+      : null;
+    const shortfallTermLengthText = (() => {
+      const nextEnd = shortfallBalanceEndYmd || (
+        Number(yearTargetSummary?.extendWeeks || 0) > 0
+          ? addDaysToYmd(overallRowBaseEndYmd, Number(yearTargetSummary?.extendWeeks || 0) * 7)
+          : null
+      );
+      if (!nextEnd || !overallRowBaseStartYmd) return '';
+      return `Change term length to ${formatDateDisplayYmd(overallRowBaseStartYmd)} to ${formatDateDisplayYmd(nextEnd)}.`;
+    })();
+    const overallOverloadEndOnly = (() => {
+      if (!isOverallRow || overallOverloadDays <= 0) return { suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
+      const perRows = Array.isArray(yearTargetSummary?.perSubjectRows) ? yearTargetSummary.perSubjectRows : [];
+      const targetOverallDays = Number(yearTargetSummary?.overallTargetDays || 0);
+      if (!perRows.length || !Number.isFinite(targetOverallDays) || targetOverallDays <= 0) {
+        return { suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
+      }
+      const rowsLite = perRows.map((subjectRow) => ({
+        rangeStartYmd: String(subjectRow?.rangeStartYmd || '').slice(0, 10),
+        completedDays: Number(subjectRow?.completedDays || 0),
+        cadenceDays: Array.isArray(subjectRow?.cadenceDayNums)
+          ? subjectRow.cadenceDayNums.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 1 && d <= 5)
+          : [],
+      }));
+      const projectedForEndDate = (endYmd) => (
+        rowsLite.reduce((sum, subjectRow) => {
+          if (!subjectRow.rangeStartYmd || !endYmd || endYmd < subjectRow.rangeStartYmd) return sum;
+          const planned = subjectRow.cadenceDays.length > 0
+            ? Number(countOccurrencesInRange(subjectRow.rangeStartYmd, endYmd, subjectRow.cadenceDays) || 0)
+            : 0;
+          return sum + Math.max(subjectRow.completedDays, planned);
+        }, 0)
+      );
+      const startYmd = rowsLite
+        .map((subjectRow) => subjectRow.rangeStartYmd)
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b))[0] || overallRowBaseStartYmd || overallRowBaseEndYmd;
+      const endYmd = overallRowBaseEndYmd;
+      if (!startYmd || !endYmd || startYmd > endYmd) {
+        return { suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
+      }
+      let bestDate = endYmd;
+      let bestProjected = projectedForEndDate(endYmd);
+      let bestDiff = Math.abs(targetOverallDays - bestProjected);
+      let cursor = startYmd;
+      while (cursor && cursor <= endYmd) {
+        const projected = projectedForEndDate(cursor);
+        const diff = Math.abs(targetOverallDays - projected);
+        if (diff < bestDiff || (diff === bestDiff && cursor > bestDate)) {
+          bestDate = cursor;
+          bestProjected = projected;
+          bestDiff = diff;
+        }
+        if (projected === targetOverallDays) {
+          bestDate = cursor;
+          bestProjected = projected;
+          break;
+        }
+        const next = addDaysToYmd(cursor, 1);
+        if (!next || next === cursor) break;
+        cursor = next;
+      }
+      return {
+        suggestedEndYmd: bestDate,
+        projectedTotal: bestProjected,
+        exactGapZero: bestProjected === targetOverallDays,
+      };
+    })();
+    const templateFullYearRange = displaySchoolYear
+      ? formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year')
+      : null;
+    const savedOverallRangeStartYmd = String(
+      familyPlannerSettings?.default_year_start_date
+      || templateFullYearRange?.start_date
+      || overallRowBaseStartYmd
+      || ''
+    ).slice(0, 10);
+    const savedOverallRangeEndYmd = String(
+      familyPlannerSettings?.default_year_end_date
+      || templateFullYearRange?.end_date
+      || overallRowBaseEndYmd
+      || ''
+    ).slice(0, 10);
+    const todayYmdForSavedRange = (() => {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    })();
+    const remainingDaysInSavedRange = (() => {
+      if (!savedOverallRangeStartYmd || !savedOverallRangeEndYmd) return 0;
+      if (savedOverallRangeEndYmd < todayYmdForSavedRange) return 0;
+      const effectiveStart = todayYmdForSavedRange > savedOverallRangeStartYmd
+        ? todayYmdForSavedRange
+        : savedOverallRangeStartYmd;
+      if (savedOverallRangeEndYmd < effectiveStart) return 0;
+      return Math.max(0, Number(daysBetweenInclusive(effectiveStart, savedOverallRangeEndYmd) || 0));
+    })();
+    const remainingWeeksInSavedRange = Math.max(0, Math.ceil(remainingDaysInSavedRange / 7));
+    const savedRangeEnded = remainingDaysInSavedRange <= 0;
+    const overallAdjustmentRow = (isOverallScopeTable && isOverallRow)
+      ? (
+        overallShortfallDays > 0
+          ? {
+            id: rowId || 'overall',
+            mode: 'shortfall',
+            shortDays: overallShortfallDays,
+            lowSessionsPerWeek: savedRangeEnded ? 0 : Number(yearTargetSummary?.catchUpDaysPerWeek || 0),
+            highSessionsPerWeek: savedRangeEnded ? 0 : Number(yearTargetSummary?.catchUpDaysPerWeekHigh || 0),
+            extendWeeks: 0,
+            suggestionSummaryText: (() => {
+              if (savedRangeEnded) {
+                return `${overallShortfallDays} days short. Your saved school-year range ended on ${formatDateDisplayYmd(savedOverallRangeEndYmd)}. Extend planning preferences to add more eligible days.`;
+              }
+              const remainingWeeks = remainingWeeksInSavedRange;
+              if (remainingWeeks <= 6) {
+                return `${overallShortfallDays} days short. Based on your saved planning preferences, there are about ${remainingWeeks} week${remainingWeeks === 1 ? '' : 's'} left in this school year.`;
+              }
+              return `${overallShortfallDays} days short. Based on your saved planning preferences, this year is projected to finish ${overallShortfallDays} instructional day${overallShortfallDays === 1 ? '' : 's'} short.`;
+            })(),
+            extensionAddedDatesLabel: '',
+            suggestedAddedDaysLabel: (
+              (() => {
+                if (savedRangeEnded) {
+                  return 'No eligible learning days remain in this saved range. Change planning preferences to extend the range.';
+                }
+                return `Fix gap will add up to ${overallShortfallDays} placeholder learning day${overallShortfallDays === 1 ? '' : 's'} across the remaining school year while avoiding holidays and days that already count.`;
+              })()
+            ),
+            suggestedPlanChanges: [],
+            suggestedEndYmd: null,
+          }
+          : (overallOverloadDays > 0
+            ? {
+              id: rowId || 'overall',
+              mode: 'overload',
+              shortDays: overallOverloadDays,
+              lowSessionsPerWeek: Math.max(1, Math.floor(overallOverloadDays / Math.max(1, Number(yearTargetSummary?.remainingWeeks || 1)))),
+              highSessionsPerWeek: Math.max(1, Math.ceil(overallOverloadDays / Math.max(1, Number(yearTargetSummary?.remainingWeeks || 1)))),
+              extendWeeks: 0,
+              suggestionSummaryText: `Projected plan is ${overallOverloadDays} day${overallOverloadDays === 1 ? '' : 's'} over target within your saved school-year range.`,
+              extensionAddedDatesLabel: '',
+              suggestedAddedDaysLabel: (
+                (() => {
+                  return 'Reduce target or remove future unlocked placeholder days to reach 0 gap.';
+                })()
+              ),
+              suggestedPlanChanges: [],
+              suggestedEndYmd: null,
+            }
+            : null)
+      )
+      : null;
+    const catchUpRow = isOverallScopeTable
+      ? (overallAdjustmentRow || null)
+      : (yearTargetCatchUpById[rowId] || null);
+    const catchUpRowResolved = catchUpRow || {
+      id: rowId,
+      mode: actionableRowGapValue < 0 ? 'overload' : 'shortfall',
+      shortDays: Math.abs(actionableRowGapValue),
+      lowSessionsPerWeek: 0,
+      highSessionsPerWeek: 0,
+      suggestionSummaryText: 'No automatic suggestion yet. Expand to review saved target details or use Fix gap.',
+      extensionAddedDatesLabel: '',
+      suggestedAddedDaysLabel: '',
+      suggestedPlanChanges: [],
+      suggestedEndYmd: null,
+    };
+    const showSuggestion = true;
+    const isNoSavedSubjectRow = String(row?.name || '').trim().toLowerCase() === 'no saved subject';
+    const noSavedSubjectLearningDaysHint = (
+      isOverallScopeTable
+      && isNoSavedSubjectRow
+      && String(yearTargetSummary?.trackingMode || '').trim().toLowerCase() === 'overall'
+    )
+      ? 'Schedule Learning Days now and assign to subjects later.'
+      : '';
+    const rawSuggestionSummary = String(catchUpRowResolved?.suggestionSummaryText || '').trim();
+    const suggestionSummary = (
+      noSavedSubjectLearningDaysHint
+      && (!rawSuggestionSummary || /no automatic suggestion/i.test(rawSuggestionSummary))
+    )
+      ? noSavedSubjectLearningDaysHint
+      : rawSuggestionSummary;
+    const hasApplyAction = Boolean(catchUpRowResolved?.suggestedEndYmd)
+      || (Array.isArray(catchUpRowResolved?.suggestedPlanChanges) && catchUpRowResolved.suggestedPlanChanges.length > 0);
+    const suggestedDaysText = (() => {
+      const numericGap = Number(actionableRowGapValue || 0);
+      if (numericGap > 0) {
+        const daysToAdd = Math.max(1, Math.ceil(numericGap));
+        return `Add ${daysToAdd} day${daysToAdd === 1 ? '' : 's'}`;
+      }
+      if (numericGap < 0) {
+        const daysToRemove = Math.max(1, Math.ceil(Math.abs(numericGap)));
+        return `Remove ${daysToRemove} day${daysToRemove === 1 ? '' : 's'}`;
+      }
+      return null;
+    })();
+    const fixGapActionRecommendation = fixGapActionRecommendationsByRowId?.[rowId] || null;
+    const canFixGap = Math.abs(Number(actionableRowGapValue || 0)) > 0;
+    const rowFixGapHistoryRuns = Array.isArray(fixGapHistoryByRowId?.[rowId])
+      ? fixGapHistoryByRowId[rowId]
+      : [];
+    const isExpanded = overrideExpanded
+      || (isInline
+        ? expandedAllEventsGapId === rowId
+        : expandedYearTargetSuggestionId === rowId)
+      || rowFixGapHistoryRuns.length > 0;
+    const latestUndoableFixGapHistory = rowFixGapHistoryRuns.find((run) => !isFixGapHistoryUndone(run)) || null;
+    const historyRunsWithDetails = rowFixGapHistoryRuns
+      .map((run, idx) => {
+        const createdCount = Math.max(0, Number(run?.created_events ?? 0));
+        const removedCount = Math.max(0, Number(run?.removed_events ?? 0));
+        const actionVerb = removedCount > 0 ? 'Removed' : 'Added';
+        const slotLines = (Array.isArray(run?.assignment_slots) ? run.assignment_slots : [])
+          .map((slot) => {
+            const line = formatFixGapHistorySlotLabel(slot);
+            if (!line) return null;
+            return {
+              line,
+              verb: formatFixGapHistorySlotVerb(slot, actionVerb),
+            };
+          })
+          .filter(Boolean);
+        return {
+          key: String(run?.id || '').trim() || `run-${rowId}-${idx}`,
+          createdAt: run?.created_at,
+          actionVerb,
+          createdCount,
+          removedCount,
+          slotLines,
+          message: String(run?.message || '').trim() || '',
+          isUndone: isFixGapHistoryUndone(run),
+        };
+      })
+      .filter((run) => run.slotLines.length > 0 || run.createdCount > 0 || run.removedCount > 0);
+    const latestFixGapCreatedIds = Array.isArray(latestUndoableFixGapHistory?.created_event_ids)
+      ? latestUndoableFixGapHistory.created_event_ids
+      : [];
+    const latestFixGapRemovedIds = Array.isArray(latestUndoableFixGapHistory?.removed_event_ids)
+      ? latestUndoableFixGapHistory.removed_event_ids
+      : [];
+    const canUndoLatestFixGap = Boolean(latestUndoableFixGapHistory)
+      && (latestFixGapCreatedIds.length > 0 || latestFixGapRemovedIds.length > 0);
+    const chevronAnim = showSuggestion ? getYearTargetChevronAnim(rowId) : null;
+    const suggestionAnim = showSuggestion ? getYearTargetSuggestionAnim(rowId) : null;
+    const chevronRotate = chevronAnim
+      ? chevronAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0deg', '180deg'],
+      })
+      : '0deg';
+    const suggestionAnimatedStyle = suggestionAnim ? {
+      maxHeight: suggestionAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, 520],
+      }),
+      opacity: suggestionAnim.interpolate({
+        inputRange: [0, 0.15, 1],
+        outputRange: [0, 0.35, 1],
+      }),
+    } : null;
+
+    const gapCell = skipGapCell ? null : (
+      <View style={[
+        !isInline && styles.yearTargetsCellWrap,
+        !isInline && styles.yearTargetsBalanceCol,
+        !isInline && styles.yearTargetsGapCellWrap,
+        !isInline && styles.cadenceStatusActionsCol,
+        !isInline && isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay,
+        isInline && styles.allEventsGapChipWrap,
+      ]}>
+        <Pressable
+          onPress={() => {
+            if (!showSuggestion) return;
+            if (isInline) {
+              toggleAllEventsGapSuggestion(rowId);
+              return;
+            }
+            toggleYearTargetSuggestion(rowId);
+          }}
+          disabled={!showSuggestion}
+          style={({ hovered }) => [
+            styles.yearTargetsGapChipButton,
+            rowGapValue > 0 && styles.yearTargetsNegativeBalancePill,
+            rowGapValue < 0 && styles.yearTargetsPositiveGapPill,
+            showSuggestion && styles.yearTargetsGapChipButtonInteractive,
+            hovered && showSuggestion && styles.yearTargetsGapChipButtonHover,
+            hovered && showSuggestion && rowGapValue > 0 && styles.yearTargetsGapChipButtonNegativeHover,
+            hovered && showSuggestion && rowGapValue < 0 && styles.yearTargetsGapChipButtonPositiveHover,
+          ]}
+        >
+          <View style={styles.yearTargetsGapChipContent}>
+            <Text
+              style={[
+                styles.yearTargetsBalancePill,
+                rowGapValue > 0 && styles.yearTargetsNegativeBalanceText,
+                rowGapValue < 0 && styles.yearTargetsPositiveGapText,
+              ]}
+            >
+              {rowGapDisplayText}
+            </Text>
+            {showSuggestion ? (
+              <Animated.View style={[styles.yearTargetsGapChipChevronWrap, { transform: [{ rotate: chevronRotate }] }]}>
+                <Text
+                  style={[
+                    styles.yearTargetsGapChipChevron,
+                    rowGapValue > 0 && styles.yearTargetsNegativeBalanceText,
+                    rowGapValue < 0 && styles.yearTargetsPositiveGapText,
+                  ]}
+                >
+                  ▾
+                </Text>
+              </Animated.View>
+            ) : null}
+          </View>
+        </Pressable>
+      </View>
+    );
+
+    const expandedRow = (showSuggestion && isExpanded) ? (
+      <View style={[
+        isInline ? styles.allEventsGapExpandedBlock : styles.subjectGapExpandedRow,
+        !isInline && isLastRow && styles.subjectRowLast,
+      ]}>
+        <Animated.View style={[styles.yearTargetsExpandedSuggestionWrap, suggestionAnimatedStyle]}>
+        <View style={styles.yearTargetsExpandedSuggestionContainer}>
+          <View style={styles.yearTargetsSavedTargetRow}>
+            <Text style={styles.yearTargetsSavedTargetText}>
+              {isOverallRow
+                ? `Gap is based on saved overall planning preferences: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`
+                : `Gap is based on saved ${String(row?.name || 'subject')} attendance goal of ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`}
+            </Text>
+            <TouchableOpacity
+              onPress={openPlanningPreferences}
+              style={styles.yearTargetsSavedTargetButton}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Change saved goal"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.yearTargetsSavedTargetButtonText}>Change saved goal</Text>
+            </TouchableOpacity>
+          </View>
+          {fixGapActionRecommendation ? (
+            <View style={styles.yearTargetsRecommendationActionsRow}>
+              {isOverallRow ? (
+                <TouchableOpacity
+                  onPress={() => applyLowerTargetToMaxAchievable(rowId)}
+                  activeOpacity={0.85}
+                  style={styles.yearTargetsRecommendationActionButton}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Check size={14} color="#0F172A" strokeWidth={2.25} />
+                  <Text style={styles.yearTargetsRecommendationActionText}>
+                    {`Lower target to max achievable (${fixGapActionRecommendation?.targetKind === 'hours'
+                      ? toOneDecimal(fixGapActionRecommendation?.maxAchievableValue || 0)
+                      : Math.round(Number(fixGapActionRecommendation?.maxAchievableValue || 0))} ${fixGapActionRecommendation?.targetKind || 'days'}, no new events)`}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+          {suggestedDaysText ? (
+            <View style={styles.yearTargetsExpandedSuggestionLineRow}>
+              <Text style={styles.yearTargetsPredictiveSuggestionLine}>
+                {suggestedDaysText}
+              </Text>
+              <TouchableOpacity
+                onPress={() => fixYearTargetGap({
+                  ...row,
+                  ...(catchUpRowResolved || {}),
+                })}
+                activeOpacity={0.85}
+                disabled={fixingGapRowId === rowId || !canFixGap}
+                style={[
+                  styles.yearTargetsPredictiveSuggestionButton,
+                  styles.yearTargetsPredictiveFixGapButton,
+                  (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonDisabled,
+                ]}
+                {...(Platform.OS === 'web' && { cursor: (fixingGapRowId === rowId || !canFixGap) ? 'default' : 'pointer' })}
+              >
+                <Text
+                  style={[
+                    styles.yearTargetsPredictiveSuggestionButtonText,
+                    (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
+                  ]}
+                >
+                  {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {historyRunsWithDetails.length > 0 ? (
+            <View style={styles.yearTargetsFixGapHistoryContainer}>
+              <Text style={styles.yearTargetsFixGapHistoryLine}>
+                {`Fix gap history (${historyRunsWithDetails.length} action${historyRunsWithDetails.length === 1 ? '' : 's'}):`}
+              </Text>
+              <ScrollView
+                style={styles.yearTargetsFixGapHistoryScroll}
+                contentContainerStyle={styles.yearTargetsFixGapHistoryScrollContent}
+                nestedScrollEnabled
+              >
+                {historyRunsWithDetails.map((run) => (
+                  <View key={run.key} style={styles.yearTargetsFixGapHistoryRun}>
+                    <Text style={styles.yearTargetsFixGapHistoryLine}>
+                      {`${formatFixGapHistoryTimestamp(run.createdAt)}${run.isUndone ? ' (undone)' : ''}:`}
+                    </Text>
+                    {run.slotLines.length > 0 ? (
+                      run.slotLines.map((line, idx) => (
+                        <Text key={`${run.key}-line-${idx}`} style={styles.yearTargetsFixGapHistoryLine}>
+                          {`${line.verb} ${line.line}`}
+                        </Text>
+                      ))
+                    ) : (
+                      <Text style={styles.yearTargetsFixGapHistoryLine}>
+                        {run.message || (
+                          run.removedCount > 0
+                            ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}.`
+                            : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}.`
+                        )}
+                      </Text>
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+              {canUndoLatestFixGap ? (
+                <TouchableOpacity
+                  style={[
+                    styles.yearTargetsUndoFixGapButton,
+                    undoingFixGapRowId === rowId && styles.yearTargetsUndoFixGapButtonDisabled,
+                  ]}
+                  onPress={() => undoLatestFixGapAction(row)}
+                  disabled={undoingFixGapRowId === rowId}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.yearTargetsUndoFixGapButtonText}>
+                    {undoingFixGapRowId === rowId ? 'Undoing...' : 'Undo last action'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+        </Animated.View>
+      </View>
+    ) : null;
+
+    return { gapCell, expandedRow };
+  };
+
+  const ALL_EVENTS_GAP_AGGREGATE_ID = '__all_events_gap_aggregate__';
+
+  const renderAllEventsGapForSubjects = (activeSubjectIds) => {
+    const subjectIdSet = Array.isArray(activeSubjectIds) && activeSubjectIds.length > 0
+      ? new Set(activeSubjectIds.map((id) => String(id)))
+      : null;
+    const gapTargetRows = (yearTargetsDisplayRows || [])
+      .filter((row) => row && !row?.isOverall && String(row?.id || '').trim() !== 'overall')
+      .filter((row) => !subjectIdSet || subjectIdSet.has(String(row?.id || '').trim()));
+
+    if (!gapTargetRows.length) return null;
+
+    if (gapTargetRows.length === 1) {
+      return renderYearTargetGapSection(gapTargetRows[0], {
+        variant: 'inline',
+        isLastRow: true,
+      });
+    }
+
+    const totalGapDays = gapTargetRows.reduce((sum, row) => (
+      sum + (Number.isFinite(Number(row?.gapDays)) ? Number(row.gapDays) : 0)
+    ), 0);
+    const rowGapValue = totalGapDays;
+    const displayGapMagnitude = Math.abs(Number(rowGapValue || 0));
+    const rowGapDisplayText = displayGapMagnitude === 0
+      ? '0 days'
+      : `+${toOneDecimal(displayGapMagnitude)} days`;
+    const isExpanded = expandedAllEventsGapId === ALL_EVENTS_GAP_AGGREGATE_ID;
+    const chevronAnim = getYearTargetChevronAnim(ALL_EVENTS_GAP_AGGREGATE_ID);
+    const suggestionAnim = getYearTargetSuggestionAnim(ALL_EVENTS_GAP_AGGREGATE_ID);
+    const chevronRotate = chevronAnim
+      ? chevronAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0deg', '180deg'],
+      })
+      : '0deg';
+    const suggestionAnimatedStyle = suggestionAnim ? {
+      maxHeight: suggestionAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, 520 * gapTargetRows.length],
+      }),
+      opacity: suggestionAnim.interpolate({
+        inputRange: [0, 0.15, 1],
+        outputRange: [0, 0.35, 1],
+      }),
+    } : null;
+
+    const gapCell = (
+      <View style={styles.allEventsGapChipWrap}>
+        <Pressable
+          onPress={() => toggleAllEventsGapSuggestion(ALL_EVENTS_GAP_AGGREGATE_ID)}
+          style={({ hovered }) => [
+            styles.yearTargetsGapChipButton,
+            rowGapValue > 0 && styles.yearTargetsNegativeBalancePill,
+            rowGapValue < 0 && styles.yearTargetsPositiveGapPill,
+            styles.yearTargetsGapChipButtonInteractive,
+            hovered && styles.yearTargetsGapChipButtonHover,
+            hovered && rowGapValue > 0 && styles.yearTargetsGapChipButtonNegativeHover,
+            hovered && rowGapValue < 0 && styles.yearTargetsGapChipButtonPositiveHover,
+          ]}
+        >
+          <View style={styles.yearTargetsGapChipContent}>
+            <Text
+              style={[
+                styles.yearTargetsBalancePill,
+                rowGapValue > 0 && styles.yearTargetsNegativeBalanceText,
+                rowGapValue < 0 && styles.yearTargetsPositiveGapText,
+              ]}
+            >
+              {rowGapDisplayText}
+            </Text>
+            <Animated.View style={[styles.yearTargetsGapChipChevronWrap, { transform: [{ rotate: chevronRotate }] }]}>
+              <Text
+                style={[
+                  styles.yearTargetsGapChipChevron,
+                  rowGapValue > 0 && styles.yearTargetsNegativeBalanceText,
+                  rowGapValue < 0 && styles.yearTargetsPositiveGapText,
+                ]}
+              >
+                ▾
+              </Text>
+            </Animated.View>
+          </View>
+        </Pressable>
+      </View>
+    );
+
+    const expandedRow = isExpanded ? (
+      <View style={styles.allEventsGapExpandedStack}>
+        <Animated.View style={[styles.allEventsGapExpandedStackInner, suggestionAnimatedStyle]}>
+          {gapTargetRows.map((row, index) => {
+            const { expandedRow: rowExpanded } = renderYearTargetGapSection(row, {
+              variant: 'inline',
+              isLastRow: index === gapTargetRows.length - 1,
+              skipGapCell: true,
+              overrideExpanded: true,
+            });
+            return rowExpanded ? (
+              <React.Fragment key={`all-events-gap-${String(row?.id || index)}`}>
+                {rowExpanded}
+              </React.Fragment>
+            ) : null;
+          })}
+        </Animated.View>
+      </View>
+    ) : null;
+
+    return { gapCell, expandedRow };
+  };
+
+
   if (surfaceMode === 'home') {
-    return (
-      <View style={styles.wrap}>
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <View style={styles.emptyScheduleSection}>
-            {(isAttendanceModeReady ? termSections : []).map((termSection, index) => {
+    const showFooterOnly = homeSections === 'footerOnly';
+    const showSubjectDaysSection = !showFooterOnly && (homeSections === 'all' || homeSections === 'subjectDays');
+    const showYearTargetsSection = !showFooterOnly && (homeSections === 'all' || homeSections === 'yearTargets');
+    const scheduleSectionContent = (
+          <View style={[
+            styles.emptyScheduleSection,
+            embeddedInScrollView && styles.emptyScheduleSectionEmbedded,
+            showFooterOnly && styles.emptyScheduleSectionFooterOnly,
+          ]}>
+            {showSubjectDaysSection ? (termSections || []).map((termSection, index) => {
               return (
                 <View
                   key={termSection.id}
@@ -6389,12 +7547,27 @@ export default function SubjectsPlanBuilder({
                 >
                   <View style={styles.termSectionHeaderRow}>
                     <Text style={styles.termHeaderCompactTitle}>{termSection.title}</Text>
+                    {embeddedInScrollView && showSubjectDaysSection && typeof onOpenPlannerSettings === 'function' ? (
+                      <TouchableOpacity
+                        style={styles.sectionHeaderActionButton}
+                        onPress={openPlanningPreferences}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel="Edit planning preferences"
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Pencil size={14} color="#6B7280" />
+                        <Text style={styles.sectionHeaderActionButtonText}>Edit planning preferences</Text>
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
                   <View style={styles.termHeaderDivider} />
                   {termSection.subjectPlans.length === 0 ? (
                     <View style={styles.scheduleEmptyCard}>
                       <Text style={styles.scheduleEmptyText}>
-                        No subjects for this school year yet. Add a subject, then start scheduling.
+                        {overviewLoading
+                          ? 'Loading schedule status...'
+                          : 'No subjects for this school year yet. Add a subject, then start scheduling.'}
                       </Text>
                     </View>
                   ) : (
@@ -6412,7 +7585,7 @@ export default function SubjectsPlanBuilder({
                             ) : null}
                             <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusStudentsCol, isClassDayAggregateTable && styles.cadenceStatusStudentsColClassDay]}>Students</Text>
                             <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusProgressCol, isClassDayAggregateTable && styles.cadenceStatusProgressColClassDay]}>Scheduled Learning</Text>
-                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay, styles.cadenceStatusActionsHeaderText]}>Actions</Text>
+                            <Text style={[styles.cadenceStatusHeaderText, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay, styles.cadenceStatusActionsHeaderText]}>Gap</Text>
                           </View>
                         </View>
                           );
@@ -6439,62 +7612,18 @@ export default function SubjectsPlanBuilder({
                                 )
                                 : null;
                               const targetRowForStatus = overallYearTargetsRow || matchedYearTargetsRow || row;
-                              const targetDays = String(targetRowForStatus?.targetUnit || row?.targetUnit || 'days').trim().toLowerCase() === 'days'
-                                ? (
-                                  Number.isFinite(Number(targetRowForStatus?.targetValue))
-                                    ? Number(targetRowForStatus.targetValue)
-                                    : (
-                                      Number.isFinite(Number(targetRowForStatus?.targetDays))
-                                        ? Number(targetRowForStatus.targetDays)
-                                        : (
-                                          Number.isFinite(Number(row.targetValue))
-                                            ? Number(row.targetValue)
-                                            : null
-                                        )
-                                    )
-                                )
-                                : null;
-                              const completedDays = Math.max(
-                                0,
-                                Number.isFinite(Number(row?.pastEventsCount))
-                                  ? Number(row.pastEventsCount)
-                                  : (
-                                    Number.isFinite(Number(targetRowForStatus?.completedDays))
-                                      ? Number(targetRowForStatus.completedDays)
-                                      : (
-                                        Number.isFinite(Number(overallYearTargetsRow?.completedDays))
-                                          ? Number(overallYearTargetsRow.completedDays)
-                                          : Number(row.actualDays || 0)
-                                      )
-                                  )
-                              );
-                              const upcomingDays = Math.max(
-                                0,
-                                Number.isFinite(Number(row?.plannedEventsCount))
-                                  ? Number(row.plannedEventsCount)
-                                  : (
-                                    Number.isFinite(Number(targetRowForStatus?.upcomingDays))
-                                      ? Number(targetRowForStatus.upcomingDays)
-                                      : (
-                                        Number.isFinite(Number(overallYearTargetsRow?.upcomingDays))
-                                          ? Number(overallYearTargetsRow.upcomingDays)
-                                          : (
-                                            Number.isFinite(Number(row?.upcomingDays))
-                                              ? Number(row.upcomingDays)
-                                              : Math.max(0, Number(row?.projectedDays || 0) - completedDays)
-                                          )
-                                      )
-                                  )
-                              );
-                              const projectedDaysForStatus = Math.max(
-                                completedDays + upcomingDays,
-                                Number.isFinite(Number(targetRowForStatus?.projectedDays))
-                                  ? Number(targetRowForStatus.projectedDays)
-                                  : Number(row?.projectedDays || 0)
-                              );
-                              const progressSummary = targetDays != null
-                                ? `${completedDays} attended / ${upcomingDays} upcoming / ${targetDays} target`
-                                : `${completedDays} attended / ${upcomingDays} upcoming / ${projectedDaysForStatus} planned`;
+                              const {
+                                completedDays,
+                                upcomingDays,
+                                targetDays,
+                                projectedDaysForStatus,
+                              } = getPlanRowProgressMetrics(row, { yearTargetsDisplayRows });
+                              const progressSummary = formatPlanProgressSummary({
+                                completedDays,
+                                upcomingDays,
+                                targetDays,
+                                projectedDaysForStatus,
+                              });
                               const deltaDays = targetDays != null ? (projectedDaysForStatus - targetDays) : null;
                               const statusLabel = !hasCadence
                                 ? 'No schedule'
@@ -6517,12 +7646,15 @@ export default function SubjectsPlanBuilder({
                                 : (deltaDays == null
                                   ? 'Target not set yet.'
                                   : (deltaDays < 0 ? `Behind by ${Math.abs(deltaDays)}` : (deltaDays > 0 ? `Ahead by ${deltaDays}` : 'On target')));
+                              const isLastPlanRow = index === termSection.subjectPlans.length - 1;
+                              const gapTargetRow = row?.isClassDayAggregate ? overallYearTargetsRow : matchedYearTargetsRow;
+                              const { gapCell, expandedRow } = renderYearTargetGapSection(gapTargetRow, { isClassDayAggregateTable, isLastRow: isLastPlanRow });
                               return (
+                                <React.Fragment key={`plan-${termSection.id}-${row.id}`}>
                                 <View
-                                  key={`plan-${termSection.id}-${row.id}`}
                                   style={[
                                     styles.subjectRow,
-                                    index === termSection.subjectPlans.length - 1 && styles.subjectRowLast,
+                                    (expandedRow || isLastPlanRow) && styles.subjectRowLast,
                                   ]}
                                 >
                                   {!isClassDayAggregateTable ? (
@@ -6593,28 +7725,11 @@ export default function SubjectsPlanBuilder({
                                     ) : null}
                                   </View>
 
-                                  <View style={[styles.subjectRowActions, styles.cadenceStatusActionsCol, isClassDayAggregateTable && styles.cadenceStatusActionsColClassDay]}>
-                                    <TouchableOpacity
-                                      style={styles.subjectRowActionLink}
-                                      onPress={() => openAttendanceBulkActionsModal(row)}
-                                      accessibilityLabel={`Add attendance for ${row.name || 'subject'}`}
-                                      activeOpacity={0.8}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      <Text style={styles.subjectRowActionLinkText}>Add attendance</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                      style={styles.subjectRowActionLink}
-                                      onPress={() => openAddEventModalForSubjectRow(row)}
-                                      accessibilityLabel={`Add subject event for ${row.name || 'subject'}`}
-                                      activeOpacity={0.8}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      <Text style={styles.subjectRowActionLinkText}>Add event</Text>
-                                    </TouchableOpacity>
-                                  </View>
+                                  {gapCell}
 
                                 </View>
+                                {expandedRow}
+                                </React.Fragment>
                               );
                             })
                           )}
@@ -6624,8 +7739,8 @@ export default function SubjectsPlanBuilder({
                   )}
                 </View>
               );
-            })}
-            {!hasAnySubjectPlans ? (
+            }) : null}
+            {showYearTargetsSection && !hasAnySubjectPlans ? (
               <View style={styles.yearTargetsSection}>
                 <View style={styles.yearTargetsSectionHeaderRow}>
                   <Text style={styles.termHeaderCompactTitle}>Year Targets</Text>
@@ -6637,7 +7752,8 @@ export default function SubjectsPlanBuilder({
                   </Text>
                 </View>
               </View>
-            ) : (
+            ) : null}
+            {showYearTargetsSection && hasAnySubjectPlans ? (
               <View style={styles.yearTargetsSection}>
                 <View style={styles.yearTargetsSectionHeaderRow}>
                   <Text style={styles.termHeaderCompactTitle}>Year Targets</Text>
@@ -6664,14 +7780,9 @@ export default function SubjectsPlanBuilder({
                         <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsTargetCol]}>
                           <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellLeft]}>Goal</Text>
                         </View>
-                        <View style={[styles.yearTargetsHeaderCellWrap, styles.yearTargetsBalanceCol, styles.yearTargetsHeaderGapCellWrap]}>
-                          <Text style={[styles.yearTargetsTableHeaderCell, styles.yearTargetsHeaderCellRight]}>Gap</Text>
-                        </View>
                       </View>
                       {yearTargetsDisplayRows.map((row) => {
-                        const rowId = String(row?.id || '').trim();
                         const rowTargetUnit = String(row?.targetUnit || row?.targetMode || 'days').trim().toLowerCase() === 'hours' ? 'hours' : 'days';
-                        const rowTargetLabel = rowTargetUnit === 'hours' ? 'hours' : 'days';
                         const rowTargetValue = Number.isFinite(Number(row?.targetValue)) ? Number(row.targetValue) : Number(row?.targetDays || 0);
                         const rowProjectedValue = rowTargetUnit === 'hours'
                           ? (
@@ -6694,875 +7805,61 @@ export default function SubjectsPlanBuilder({
                               : Number(row?.upcomingDays || 0)
                           )
                           : Number(row?.upcomingDays || 0);
-                        const rawRowGapValue = Number.isFinite(Number(row?.gapHours))
-                          ? Number(row.gapHours)
-                          : Number(row?.gapDays || 0);
-                        const actionableRowGapValue = rawRowGapValue;
-                        // Always display the mathematical target gap in the chip, even when no automatic
-                        // removal action is available (e.g. all extra days are already attended).
-                        const rowGapValue = rawRowGapValue;
-                        const displayGapMagnitude = Math.abs(Number(rowGapValue || 0));
-                        const rowGapDisplayText = displayGapMagnitude === 0
-                          ? `0 ${rowTargetLabel}`
-                          : `+${toOneDecimal(displayGapMagnitude)} ${rowTargetLabel}`;
-                        const isOverallRow = rowId === 'overall' || row?.isOverall === true;
-                        const isOverallScopeTable = String(yearTargetSummary?.trackingMode || '').trim().toLowerCase() === 'overall';
-                        const overallSuggestedChanges = (() => {
-                          if (!isOverallRow) return { text: '', suggestions: [] };
-                          const perRows = Array.isArray(yearTargetSummary?.perSubjectRows) ? yearTargetSummary.perSubjectRows : [];
-                          const catchUpRows = Array.isArray(yearTargetSummary?.perSubjectCatchUp) ? yearTargetSummary.perSubjectCatchUp : [];
-                          const catchUpById = new Map(catchUpRows.map((entry) => [String(entry?.id || '').trim(), entry]));
-                          const occupiedByDay = new Map();
-                          const occupiedTimesGlobal = new Set();
-                          const isOccupied = (dayNum, hhmm) => {
-                            const dayKey = Number(dayNum);
-                            const timeKey = String(hhmm || '').trim();
-                            if (!Number.isInteger(dayKey) || dayKey < 1 || dayKey > 5 || !timeKey) return false;
-                            return Boolean(occupiedByDay.get(dayKey)?.has(timeKey));
-                          };
-                          const isGloballyOccupiedTime = (hhmm) => occupiedTimesGlobal.has(String(hhmm || '').trim());
-                          const reserveSlot = (dayNum, hhmm) => {
-                            const dayKey = Number(dayNum);
-                            const timeKey = String(hhmm || '').trim();
-                            if (!Number.isInteger(dayKey) || dayKey < 1 || dayKey > 5 || !timeKey) return;
-                            if (!occupiedByDay.has(dayKey)) occupiedByDay.set(dayKey, new Set());
-                            occupiedByDay.get(dayKey).add(timeKey);
-                            occupiedTimesGlobal.add(timeKey);
-                          };
-                          perRows.forEach((subjectRow) => {
-                            const dayNums = Array.isArray(subjectRow?.cadenceDayNums)
-                              ? subjectRow.cadenceDayNums.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 1 && d <= 5)
-                              : [];
-                            const cadenceTime = parseTimeLabelToHhmm(extractCadenceTimeLabel(subjectRow?.cadenceText || ''));
-                            if (cadenceTime && dayNums.length > 0) {
-                              dayNums.forEach((dayNum) => reserveSlot(dayNum, cadenceTime));
-                            }
-                            (Array.isArray(subjectRow?.eventItems) ? subjectRow.eventItems : []).forEach((eventItem) => {
-                              const rawTs = eventItem?.startTs || eventItem?.start_ts || eventItem?.start_local || eventItem?.due_ts || null;
-                              if (!rawTs) return;
-                              const dt = new Date(rawTs);
-                              if (Number.isNaN(dt.getTime())) return;
-                              const dayNum = dt.getDay();
-                              if (!Number.isInteger(dayNum) || dayNum < 1 || dayNum > 5) return;
-                              const hhmm = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
-                              reserveSlot(dayNum, hhmm);
-                            });
-                          });
-                          const defaultTimes = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00'];
-                          const subjectsNeeding = perRows
-                            .map((subjectRow) => {
-                              const sid = String(subjectRow?.id || '').trim();
-                              if (!sid) return null;
-                              const catchUp = catchUpById.get(sid) || null;
-                              if (!catchUp || Number(catchUp?.shortDays || 0) <= 0) return null;
-                              const subjectName = String(subjectRow?.name || 'Subject').trim();
-                              if (!subjectName) return null;
-                              const suggestedNums = Array.isArray(catchUp?.suggestedAddedDayNums)
-                                ? catchUp.suggestedAddedDayNums.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 1 && d <= 5)
-                                : [];
-                              const existingDayNums = Array.isArray(subjectRow?.cadenceDayNums)
-                                ? subjectRow.cadenceDayNums.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 1 && d <= 5)
-                                : [];
-                              const dayOrder = [...new Set([
-                                ...suggestedNums,
-                                ...[1, 2, 3, 4, 5].filter((dayNum) => !existingDayNums.includes(dayNum)),
-                                ...[1, 2, 3, 4, 5],
-                              ])];
-                              const rangeStart = String(subjectRow?.rangeStartYmd || '').slice(0, 10);
-                              const rangeEnd = String(subjectRow?.rangeEndYmd || '').slice(0, 10);
-                              const options = dayOrder
-                                .map((dayNum) => ({
-                                  dayNum,
-                                  yieldDays: countOccurrencesInRange(rangeStart, rangeEnd, [dayNum]),
-                                }))
-                                .filter((entry) => Number(entry?.yieldDays || 0) > 0);
-                              if (!options.length) return null;
-                              return {
-                                subjectId: sid,
-                                subjectName,
-                                preferredTime: parseTimeLabelToHhmm(extractCadenceTimeLabel(subjectRow?.cadenceText || '')),
-                                options,
-                              };
-                            })
-                            .filter(Boolean);
-                          const requiredDays = Math.max(
-                            0,
-                            Number(yearTargetSummary?.overallTargetDays || 0) - Number(yearTargetSummary?.overallProjectedDays || 0)
-                          );
-                          if (!subjectsNeeding.length || requiredDays <= 0) return { text: '', suggestions: [] };
-                          let bestCombo = null;
-                          let bestSum = 0;
-                          const evaluateCombo = (combo, sum) => {
-                            const diff = Math.abs(requiredDays - sum);
-                            const bestDiff = bestCombo ? Math.abs(requiredDays - bestSum) : Number.POSITIVE_INFINITY;
-                            if (diff < bestDiff) {
-                              bestCombo = combo.map((entry) => ({ ...entry }));
-                              bestSum = sum;
-                              return;
-                            }
-                            if (diff === bestDiff) {
-                              const prefersCloserWithoutOvershoot = sum <= requiredDays && bestSum > requiredDays;
-                              const prefersLargerWhenBothUnder = sum <= requiredDays && bestSum <= requiredDays && sum > bestSum;
-                              if (prefersCloserWithoutOvershoot || prefersLargerWhenBothUnder) {
-                                bestCombo = combo.map((entry) => ({ ...entry }));
-                                bestSum = sum;
-                              }
-                            }
-                          };
-                          const chooseBySubject = (idx, combo, sum) => {
-                            if (idx >= subjectsNeeding.length) {
-                              evaluateCombo(combo, sum);
-                              return;
-                            }
-                            // Allow skipping this subject so we do not over-prescribe changes.
-                            chooseBySubject(idx + 1, combo, sum);
-                            const item = subjectsNeeding[idx];
-                            (item?.options || []).forEach((option) => {
-                              chooseBySubject(
-                                idx + 1,
-                                [...combo, {
-                                  subjectId: item.subjectId,
-                                  subjectName: item.subjectName,
-                                  preferredTime: item.preferredTime || '',
-                                  dayNum: Number(option?.dayNum),
-                                  yieldDays: Number(option?.yieldDays || 0),
-                                }],
-                                sum + Number(option?.yieldDays || 0)
-                              );
-                            });
-                          };
-                          chooseBySubject(0, [], 0);
-                          const selectedBySubject = Array.isArray(bestCombo) ? bestCombo : [];
-                          const rawSuggestions = selectedBySubject
-                            .map((entry) => {
-                              const timeOrder = [...new Set([
-                                ...(entry?.preferredTime ? [entry.preferredTime] : []),
-                                ...defaultTimes,
-                              ])];
-                              let chosenTime = timeOrder[0] || '09:00';
-                              for (let j = 0; j < timeOrder.length; j += 1) {
-                                const hhmm = timeOrder[j];
-                                if (!isOccupied(entry.dayNum, hhmm) && !isGloballyOccupiedTime(hhmm)) {
-                                  chosenTime = hhmm;
-                                  break;
-                                }
-                              }
-                              if (isOccupied(entry.dayNum, chosenTime) || isGloballyOccupiedTime(chosenTime)) {
-                                for (let j = 0; j < timeOrder.length; j += 1) {
-                                  const hhmm = timeOrder[j];
-                                  if (!isOccupied(entry.dayNum, hhmm)) {
-                                    chosenTime = hhmm;
-                                    break;
-                                  }
-                                }
-                              }
-                              reserveSlot(entry.dayNum, chosenTime);
-                              const suggestedDayPhrase = formatCadenceDayPhrase([entry.dayNum]);
-                              const timeLabel = formatSuggestionTimeLabel(chosenTime);
-                              const text = (suggestedDayPhrase && timeLabel)
-                                ? `Add ${entry.subjectName} on ${suggestedDayPhrase} at ${timeLabel}`
-                                : (suggestedDayPhrase
-                                  ? `Add ${entry.subjectName} on ${suggestedDayPhrase}`
-                                  : (timeLabel
-                                    ? `Add one ${entry.subjectName} class day at ${timeLabel}`
-                                    : `Add one ${entry.subjectName} class day each week`));
-                              return {
-                                subjectId: entry.subjectId,
-                                subjectName: entry.subjectName,
-                                dayNum: entry.dayNum,
-                                startTime: chosenTime,
-                                endTime: addMinutesToHhmm(chosenTime, 60),
-                                impactDays: Number(entry?.yieldDays || 0),
-                                text,
-                              };
-                            })
-                            .filter((entry) => Number(entry?.impactDays || 0) > 0);
-                          if (!rawSuggestions.length) return { text: '', suggestions: [] };
-                          const weightTotal = rawSuggestions.reduce((sum, entry) => sum + Math.max(1, Number(entry?.impactDays || 0)), 0);
-                          const allocations = rawSuggestions.map((entry) => (
-                            Math.floor((requiredDays * Math.max(1, Number(entry?.impactDays || 0))) / Math.max(1, weightTotal))
-                          ));
-                          let allocated = allocations.reduce((sum, n) => sum + Number(n || 0), 0);
-                          let remaining = Math.max(0, requiredDays - allocated);
-                          const ordering = rawSuggestions
-                            .map((entry, idx) => {
-                              const weight = Math.max(1, Number(entry?.impactDays || 0));
-                              const exact = (requiredDays * weight) / Math.max(1, weightTotal);
-                              const frac = exact - Math.floor(exact);
-                              return { idx, frac, weight };
-                            })
-                            .sort((a, b) => (b.frac - a.frac) || (b.weight - a.weight) || (a.idx - b.idx));
-                          let cursor = 0;
-                          while (remaining > 0 && ordering.length > 0) {
-                            const target = ordering[cursor % ordering.length];
-                            allocations[target.idx] = Number(allocations[target.idx] || 0) + 1;
-                            remaining -= 1;
-                            cursor += 1;
-                          }
-                          const suggestions = rawSuggestions
-                            .map((entry, idx) => ({ ...entry, addedDays: Number(allocations[idx] || 0) }))
-                            .filter((entry) => Number(entry?.addedDays || 0) > 0);
-                          const totalImpactDays = suggestions.reduce((sum, entry) => sum + Number(entry?.impactDays || 0), 0);
-                          const text = suggestions.length
-                            ? `${suggestions.map((entry) => `${entry.text} (+${entry.addedDays} day${entry.addedDays === 1 ? '' : 's'})`).join('. ')}.`
-                            : '';
-                          return { text, suggestions, totalImpactDays };
-                        })();
-                        const overallShortfallDays = Math.max(
-                          0,
-                          Number(yearTargetSummary?.overallTargetDays || 0) - Number(yearTargetSummary?.overallProjectedDays || 0)
-                        );
-                        const overallOverloadDays = Math.max(
-                          0,
-                          Number(yearTargetSummary?.overallProjectedDays || 0) - Number(yearTargetSummary?.overallTargetDays || 0)
-                        );
-                        const overallRowBaseEndYmd = String(
-                          row?.rangeEndYmd
-                          || yearTargetSummary?.perSubjectRows?.[0]?.rangeEndYmd
-                          || ''
-                        ).slice(0, 10);
-                        const overallRowBaseStartYmd = String(
-                          row?.rangeStartYmd
-                          || yearTargetSummary?.perSubjectRows?.[0]?.rangeStartYmd
-                          || ''
-                        ).slice(0, 10);
-                        const overallOverloadPlan = (() => {
-                          if (!isOverallRow || overallOverloadDays <= 0) {
-                            return { text: '', suggestions: [], totalImpactDays: 0, suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
-                          }
-                          const perRows = Array.isArray(yearTargetSummary?.perSubjectRows) ? yearTargetSummary.perSubjectRows : [];
-                          const targetOverallDays = Number(yearTargetSummary?.overallTargetDays || 0);
-                          if (!perRows.length || !Number.isFinite(targetOverallDays) || targetOverallDays <= 0) {
-                            return { text: '', suggestions: [], totalImpactDays: 0, suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
-                          }
-                          const bySubject = perRows
-                            .map((subjectRow) => {
-                              const subjectId = String(subjectRow?.id || '').trim();
-                              if (!subjectId) return null;
-                              const subjectName = String(subjectRow?.name || 'Subject').trim() || 'Subject';
-                              const rangeStartYmd = String(subjectRow?.rangeStartYmd || '').slice(0, 10);
-                              const baseDays = Array.isArray(subjectRow?.cadenceDayNums)
-                                ? [...new Set(subjectRow.cadenceDayNums.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 1 && d <= 5))]
-                                : [];
-                              return {
-                                subjectId,
-                                subjectName,
-                                preferredTime: parseTimeLabelToHhmm(extractCadenceTimeLabel(subjectRow?.cadenceText || '')),
-                                rangeStartYmd,
-                                completedDays: Number(subjectRow?.completedDays || 0),
-                                baseDays,
-                              };
-                            })
-                            .filter(Boolean);
-                          const subjectsWithRemovalOptions = bySubject.map((entry) => {
-                            const baseDays = Array.isArray(entry?.baseDays) ? entry.baseDays : [];
-                            const subsets = [[]];
-                            const maxMask = Math.pow(2, baseDays.length);
-                            for (let mask = 1; mask < maxMask; mask += 1) {
-                              const removedDays = [];
-                              for (let bit = 0; bit < baseDays.length; bit += 1) {
-                                if (mask & (1 << bit)) removedDays.push(baseDays[bit]);
-                              }
-                              subsets.push(removedDays);
-                            }
-                            subsets.sort((a, b) => a.length - b.length);
-                            return { ...entry, removalOptions: subsets };
-                          });
-                          if (!subjectsWithRemovalOptions.length) {
-                            return { text: '', suggestions: [], totalImpactDays: 0, suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
-                          }
-                          const overallStartYmd = (
-                            subjectsWithRemovalOptions.map((entry) => entry.rangeStartYmd).filter(Boolean).sort((a, b) => a.localeCompare(b))[0]
-                          ) || String(row?.rangeStartYmd || '').slice(0, 10) || overallRowBaseEndYmd;
-                          if (!overallStartYmd || !overallRowBaseEndYmd || overallStartYmd > overallRowBaseEndYmd) {
-                            return { text: '', suggestions: [], totalImpactDays: 0, suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
-                          }
-                          const projectedFor = (endYmd, removedBySubject) => (
-                            subjectsWithRemovalOptions.reduce((sum, entry) => {
-                              if (!entry.rangeStartYmd || !endYmd || endYmd < entry.rangeStartYmd) return sum;
-                              const removedSet = removedBySubject.get(entry.subjectId) || new Set();
-                              const activeDays = entry.baseDays.filter((dayNum) => !removedSet.has(dayNum));
-                              const planned = activeDays.length > 0
-                                ? Number(countOccurrencesInRange(entry.rangeStartYmd, endYmd, activeDays) || 0)
-                                : 0;
-                              const projected = Math.max(Number(entry.completedDays || 0), planned);
-                              return sum + projected;
-                            }, 0)
-                          );
-                          const compareCandidate = (a, b) => {
-                            if (!a) return false;
-                            if (!b) return true;
-                            const aDiff = Math.abs(Number(a?.projectedTotal || 0) - targetOverallDays);
-                            const bDiff = Math.abs(Number(b?.projectedTotal || 0) - targetOverallDays);
-                            if (aDiff !== bDiff) return aDiff < bDiff;
-                            if (Number(a?.removalCount || 0) !== Number(b?.removalCount || 0)) {
-                              return Number(a?.removalCount || 0) < Number(b?.removalCount || 0);
-                            }
-                            return String(a?.suggestedEndYmd || '') > String(b?.suggestedEndYmd || '');
-                          };
-                          let best = null;
-                          const maxCombos = 60000;
-                          let combosChecked = 0;
-                          const searchCombo = (idx, removedBySubject) => {
-                            if (combosChecked >= maxCombos) return;
-                            if (idx >= subjectsWithRemovalOptions.length) {
-                              combosChecked += 1;
-                              let dateCursor = overallStartYmd;
-                              while (dateCursor && dateCursor <= overallRowBaseEndYmd) {
-                                const projectedTotal = projectedFor(dateCursor, removedBySubject);
-                                const suggestionCount = [...removedBySubject.values()].reduce((sum, set) => sum + set.size, 0);
-                                const candidate = {
-                                  projectedTotal,
-                                  suggestedEndYmd: dateCursor,
-                                  exactGapZero: projectedTotal === targetOverallDays,
-                                  removalCount: suggestionCount,
-                                  removedBySubject: new Map([...removedBySubject.entries()].map(([sid, set]) => [sid, new Set([...set])])),
-                                };
-                                if (compareCandidate(candidate, best)) best = candidate;
-                                if (projectedTotal === targetOverallDays && suggestionCount === 0 && dateCursor === overallRowBaseEndYmd) {
-                                  break;
-                                }
-                                const next = addDaysToYmd(dateCursor, 1);
-                                if (!next || next === dateCursor) break;
-                                dateCursor = next;
-                              }
-                              return;
-                            }
-                            const entry = subjectsWithRemovalOptions[idx];
-                            (Array.isArray(entry?.removalOptions) ? entry.removalOptions : [[]]).forEach((removedDays) => {
-                              if (combosChecked >= maxCombos) return;
-                              const nextMap = new Map([...removedBySubject.entries()].map(([sid, set]) => [sid, new Set([...set])]));
-                              if (!nextMap.has(entry.subjectId)) nextMap.set(entry.subjectId, new Set());
-                              nextMap.set(entry.subjectId, new Set(Array.isArray(removedDays) ? removedDays : []));
-                              searchCombo(idx + 1, nextMap);
-                            });
-                          };
-                          searchCombo(0, new Map());
-                          if (!best) {
-                            return { text: '', suggestions: [], totalImpactDays: 0, suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
-                          }
-                          const suggestions = [];
-                          subjectsWithRemovalOptions.forEach((entry) => {
-                            const removedSet = best.removedBySubject.get(entry.subjectId) || new Set();
-                            [...removedSet].forEach((dayNum) => {
-                              const dayPhrase = formatCadenceDayPhrase([dayNum]);
-                              const timeLabel = formatSuggestionTimeLabel(entry.preferredTime || '');
-                              const text = timeLabel
-                                ? `Remove ${entry.subjectName} on ${dayPhrase} at ${timeLabel}`
-                                : `Remove ${entry.subjectName} on ${dayPhrase}`;
-                              suggestions.push({
-                                subjectId: entry.subjectId,
-                                subjectName: entry.subjectName,
-                                action: 'remove',
-                                dayNum,
-                                startTime: entry.preferredTime || '',
-                                endTime: '',
-                                addedDays: Number(countOccurrencesInRange(entry.rangeStartYmd, String(best.suggestedEndYmd || ''), [dayNum]) || 0),
-                                text,
-                              });
-                            });
-                          });
-                          const text = suggestions.length
-                            ? `${suggestions.map((entry) => `${entry.text} (-${entry.addedDays} day${entry.addedDays === 1 ? '' : 's'})`).join('. ')}.`
-                            : '';
-                          const totalImpactDays = suggestions.reduce((sum, entry) => sum + Number(entry?.addedDays || 0), 0);
-                          return {
-                            text,
-                            suggestions,
-                            totalImpactDays,
-                            suggestedEndYmd: best.suggestedEndYmd,
-                            projectedTotal: best.projectedTotal,
-                            exactGapZero: best.exactGapZero,
-                          };
-                        })();
-                        const overallRowSubjectNames = String(row?.name || '')
-                          .split(',')
-                          .map((name) => name.trim())
-                          .filter(Boolean);
-                        const overallOverloadSubjectNames = [...new Set(
-                          (overallOverloadPlan?.suggestions || [])
-                            .map((entry) => String(entry?.subjectName || '').trim())
-                            .filter(Boolean)
-                        )];
-                        const endDateTargetSubjectNames = overallOverloadSubjectNames.length
-                          ? overallOverloadSubjectNames
-                          : overallRowSubjectNames;
-                        const endDateTargetLabel = endDateTargetSubjectNames.length
-                          ? `${endDateTargetSubjectNames.join(', ')} ${endDateTargetSubjectNames.length === 1 ? 'schedule' : 'schedules'}`
-                          : 'the subject schedules';
-                        const shortfallSuggestionImpactDays = Number(overallSuggestedChanges?.totalImpactDays || 0);
-                        const shortfallResidualOverageDays = Math.max(0, shortfallSuggestionImpactDays - overallShortfallDays);
-                        const shortfallBalanceEndYmd = (overallRowBaseEndYmd && shortfallResidualOverageDays > 0)
-                          ? addDaysToYmd(overallRowBaseEndYmd, -shortfallResidualOverageDays)
-                          : null;
-                        const shortfallTermLengthText = (() => {
-                          const nextEnd = shortfallBalanceEndYmd || (
-                            Number(yearTargetSummary?.extendWeeks || 0) > 0
-                              ? addDaysToYmd(overallRowBaseEndYmd, Number(yearTargetSummary?.extendWeeks || 0) * 7)
-                              : null
-                          );
-                          if (!nextEnd || !overallRowBaseStartYmd) return '';
-                          return `Change term length to ${formatDateDisplayYmd(overallRowBaseStartYmd)} to ${formatDateDisplayYmd(nextEnd)}.`;
-                        })();
-                        const overallOverloadEndOnly = (() => {
-                          if (!isOverallRow || overallOverloadDays <= 0) return { suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
-                          const perRows = Array.isArray(yearTargetSummary?.perSubjectRows) ? yearTargetSummary.perSubjectRows : [];
-                          const targetOverallDays = Number(yearTargetSummary?.overallTargetDays || 0);
-                          if (!perRows.length || !Number.isFinite(targetOverallDays) || targetOverallDays <= 0) {
-                            return { suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
-                          }
-                          const rowsLite = perRows.map((subjectRow) => ({
-                            rangeStartYmd: String(subjectRow?.rangeStartYmd || '').slice(0, 10),
-                            completedDays: Number(subjectRow?.completedDays || 0),
-                            cadenceDays: Array.isArray(subjectRow?.cadenceDayNums)
-                              ? subjectRow.cadenceDayNums.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 1 && d <= 5)
-                              : [],
-                          }));
-                          const projectedForEndDate = (endYmd) => (
-                            rowsLite.reduce((sum, subjectRow) => {
-                              if (!subjectRow.rangeStartYmd || !endYmd || endYmd < subjectRow.rangeStartYmd) return sum;
-                              const planned = subjectRow.cadenceDays.length > 0
-                                ? Number(countOccurrencesInRange(subjectRow.rangeStartYmd, endYmd, subjectRow.cadenceDays) || 0)
-                                : 0;
-                              return sum + Math.max(subjectRow.completedDays, planned);
-                            }, 0)
-                          );
-                          const startYmd = rowsLite
-                            .map((subjectRow) => subjectRow.rangeStartYmd)
-                            .filter(Boolean)
-                            .sort((a, b) => a.localeCompare(b))[0] || overallRowBaseStartYmd || overallRowBaseEndYmd;
-                          const endYmd = overallRowBaseEndYmd;
-                          if (!startYmd || !endYmd || startYmd > endYmd) {
-                            return { suggestedEndYmd: null, projectedTotal: null, exactGapZero: false };
-                          }
-                          let bestDate = endYmd;
-                          let bestProjected = projectedForEndDate(endYmd);
-                          let bestDiff = Math.abs(targetOverallDays - bestProjected);
-                          let cursor = startYmd;
-                          while (cursor && cursor <= endYmd) {
-                            const projected = projectedForEndDate(cursor);
-                            const diff = Math.abs(targetOverallDays - projected);
-                            if (diff < bestDiff || (diff === bestDiff && cursor > bestDate)) {
-                              bestDate = cursor;
-                              bestProjected = projected;
-                              bestDiff = diff;
-                            }
-                            if (projected === targetOverallDays) {
-                              bestDate = cursor;
-                              bestProjected = projected;
-                              break;
-                            }
-                            const next = addDaysToYmd(cursor, 1);
-                            if (!next || next === cursor) break;
-                            cursor = next;
-                          }
-                          return {
-                            suggestedEndYmd: bestDate,
-                            projectedTotal: bestProjected,
-                            exactGapZero: bestProjected === targetOverallDays,
-                          };
-                        })();
-                        const templateFullYearRange = displaySchoolYear
-                          ? formatYmdFromTemplateYear(displaySchoolYear.start_year, displaySchoolYear.end_year, 'full_year')
-                          : null;
-                        const savedOverallRangeStartYmd = String(
-                          familyPlannerSettings?.default_year_start_date
-                          || templateFullYearRange?.start_date
-                          || overallRowBaseStartYmd
-                          || ''
-                        ).slice(0, 10);
-                        const savedOverallRangeEndYmd = String(
-                          familyPlannerSettings?.default_year_end_date
-                          || templateFullYearRange?.end_date
-                          || overallRowBaseEndYmd
-                          || ''
-                        ).slice(0, 10);
-                        const todayYmdForSavedRange = (() => {
-                          const now = new Date();
-                          const yyyy = now.getFullYear();
-                          const mm = String(now.getMonth() + 1).padStart(2, '0');
-                          const dd = String(now.getDate()).padStart(2, '0');
-                          return `${yyyy}-${mm}-${dd}`;
-                        })();
-                        const remainingDaysInSavedRange = (() => {
-                          if (!savedOverallRangeStartYmd || !savedOverallRangeEndYmd) return 0;
-                          if (savedOverallRangeEndYmd < todayYmdForSavedRange) return 0;
-                          const effectiveStart = todayYmdForSavedRange > savedOverallRangeStartYmd
-                            ? todayYmdForSavedRange
-                            : savedOverallRangeStartYmd;
-                          if (savedOverallRangeEndYmd < effectiveStart) return 0;
-                          return Math.max(0, Number(daysBetweenInclusive(effectiveStart, savedOverallRangeEndYmd) || 0));
-                        })();
-                        const remainingWeeksInSavedRange = Math.max(0, Math.ceil(remainingDaysInSavedRange / 7));
-                        const savedRangeEnded = remainingDaysInSavedRange <= 0;
-                        const overallAdjustmentRow = (isOverallScopeTable && isOverallRow)
-                          ? (
-                            overallShortfallDays > 0
-                              ? {
-                                id: rowId || 'overall',
-                                mode: 'shortfall',
-                                shortDays: overallShortfallDays,
-                                lowSessionsPerWeek: savedRangeEnded ? 0 : Number(yearTargetSummary?.catchUpDaysPerWeek || 0),
-                                highSessionsPerWeek: savedRangeEnded ? 0 : Number(yearTargetSummary?.catchUpDaysPerWeekHigh || 0),
-                                extendWeeks: 0,
-                                suggestionSummaryText: (() => {
-                                  if (savedRangeEnded) {
-                                    return `${overallShortfallDays} days short. Your saved school-year range ended on ${formatDateDisplayYmd(savedOverallRangeEndYmd)}. Extend planning preferences to add more eligible days.`;
-                                  }
-                                  const remainingWeeks = remainingWeeksInSavedRange;
-                                  if (remainingWeeks <= 6) {
-                                    return `${overallShortfallDays} days short. Based on your saved planning preferences, there are about ${remainingWeeks} week${remainingWeeks === 1 ? '' : 's'} left in this school year.`;
-                                  }
-                                  return `${overallShortfallDays} days short. Based on your saved planning preferences, this year is projected to finish ${overallShortfallDays} instructional day${overallShortfallDays === 1 ? '' : 's'} short.`;
-                                })(),
-                                extensionAddedDatesLabel: '',
-                                suggestedAddedDaysLabel: (
-                                  (() => {
-                                    if (savedRangeEnded) {
-                                      return 'No eligible learning days remain in this saved range. Change planning preferences to extend the range.';
-                                    }
-                                    return `Fix gap will add up to ${overallShortfallDays} placeholder learning day${overallShortfallDays === 1 ? '' : 's'} across the remaining school year while avoiding holidays and days that already count.`;
-                                  })()
-                                ),
-                                suggestedPlanChanges: [],
-                                suggestedEndYmd: null,
-                              }
-                              : (overallOverloadDays > 0
-                                ? {
-                                  id: rowId || 'overall',
-                                  mode: 'overload',
-                                  shortDays: overallOverloadDays,
-                                  lowSessionsPerWeek: Math.max(1, Math.floor(overallOverloadDays / Math.max(1, Number(yearTargetSummary?.remainingWeeks || 1)))),
-                                  highSessionsPerWeek: Math.max(1, Math.ceil(overallOverloadDays / Math.max(1, Number(yearTargetSummary?.remainingWeeks || 1)))),
-                                  extendWeeks: 0,
-                                  suggestionSummaryText: `Projected plan is ${overallOverloadDays} day${overallOverloadDays === 1 ? '' : 's'} over target within your saved school-year range.`,
-                                  extensionAddedDatesLabel: '',
-                                  suggestedAddedDaysLabel: (
-                                    (() => {
-                                      return 'Reduce target or remove future unlocked placeholder days to reach 0 gap.';
-                                    })()
-                                  ),
-                                  suggestedPlanChanges: [],
-                                  suggestedEndYmd: null,
-                                }
-                                : null)
-                          )
-                          : null;
-                        const catchUpRow = isOverallScopeTable
-                          ? (overallAdjustmentRow || null)
-                          : (yearTargetCatchUpById[rowId] || null);
-                        const catchUpRowResolved = catchUpRow || {
-                          id: rowId,
-                          mode: actionableRowGapValue < 0 ? 'overload' : 'shortfall',
-                          shortDays: Math.abs(actionableRowGapValue),
-                          lowSessionsPerWeek: 0,
-                          highSessionsPerWeek: 0,
-                          suggestionSummaryText: 'No automatic suggestion yet. Expand to review saved target details or use Fix gap.',
-                          extensionAddedDatesLabel: '',
-                          suggestedAddedDaysLabel: '',
-                          suggestedPlanChanges: [],
-                          suggestedEndYmd: null,
-                        };
-                        const showSuggestion = true;
-                        const isNoSavedSubjectRow = String(row?.name || '').trim().toLowerCase() === 'no saved subject';
-                        const noSavedSubjectLearningDaysHint = (
-                          isOverallScopeTable
-                          && isNoSavedSubjectRow
-                          && String(yearTargetSummary?.trackingMode || '').trim().toLowerCase() === 'overall'
-                        )
-                          ? 'Schedule Learning Days now and assign to subjects later.'
-                          : '';
-                        const rawSuggestionSummary = String(catchUpRowResolved?.suggestionSummaryText || '').trim();
-                        const suggestionSummary = (
-                          noSavedSubjectLearningDaysHint
-                          && (!rawSuggestionSummary || /no automatic suggestion/i.test(rawSuggestionSummary))
-                        )
-                          ? noSavedSubjectLearningDaysHint
-                          : rawSuggestionSummary;
-                        const hasApplyAction = Boolean(catchUpRowResolved?.suggestedEndYmd)
-                          || (Array.isArray(catchUpRowResolved?.suggestedPlanChanges) && catchUpRowResolved.suggestedPlanChanges.length > 0);
-                        const suggestedDaysText = (() => {
-                          const numericGap = Number(actionableRowGapValue || 0);
-                          if (numericGap > 0) {
-                            const daysToAdd = Math.max(1, Math.ceil(numericGap));
-                            return `Add ${daysToAdd} day${daysToAdd === 1 ? '' : 's'}`;
-                          }
-                          if (numericGap < 0) {
-                            const daysToRemove = Math.max(1, Math.ceil(Math.abs(numericGap)));
-                            return `Remove ${daysToRemove} day${daysToRemove === 1 ? '' : 's'}`;
-                          }
-                          return null;
-                        })();
-                        const fixGapActionRecommendation = fixGapActionRecommendationsByRowId?.[rowId] || null;
-                        const canFixGap = Math.abs(Number(actionableRowGapValue || 0)) > 0;
-                        const rowFixGapHistoryRuns = Array.isArray(fixGapHistoryByRowId?.[rowId])
-                          ? fixGapHistoryByRowId[rowId]
-                          : [];
-                        const isExpanded = expandedYearTargetSuggestionId === rowId || rowFixGapHistoryRuns.length > 0;
-                        const latestUndoableFixGapHistory = rowFixGapHistoryRuns.find((run) => !isFixGapHistoryUndone(run)) || null;
-                        const historyRunsWithDetails = rowFixGapHistoryRuns
-                          .map((run, idx) => {
-                            const createdCount = Math.max(0, Number(run?.created_events ?? 0));
-                            const removedCount = Math.max(0, Number(run?.removed_events ?? 0));
-                            const actionVerb = removedCount > 0 ? 'Removed' : 'Added';
-                            const slotLines = (Array.isArray(run?.assignment_slots) ? run.assignment_slots : [])
-                              .map((slot) => {
-                                const line = formatFixGapHistorySlotLabel(slot);
-                                if (!line) return null;
-                                return {
-                                  line,
-                                  verb: formatFixGapHistorySlotVerb(slot, actionVerb),
-                                };
-                              })
-                              .filter(Boolean);
-                            return {
-                              key: String(run?.id || '').trim() || `run-${rowId}-${idx}`,
-                              createdAt: run?.created_at,
-                              actionVerb,
-                              createdCount,
-                              removedCount,
-                              slotLines,
-                              message: String(run?.message || '').trim() || '',
-                              isUndone: isFixGapHistoryUndone(run),
-                            };
-                          })
-                          .filter((run) => run.slotLines.length > 0 || run.createdCount > 0 || run.removedCount > 0);
-                        const latestFixGapCreatedIds = Array.isArray(latestUndoableFixGapHistory?.created_event_ids)
-                          ? latestUndoableFixGapHistory.created_event_ids
-                          : [];
-                        const latestFixGapRemovedIds = Array.isArray(latestUndoableFixGapHistory?.removed_event_ids)
-                          ? latestUndoableFixGapHistory.removed_event_ids
-                          : [];
-                        const canUndoLatestFixGap = Boolean(latestUndoableFixGapHistory)
-                          && (latestFixGapCreatedIds.length > 0 || latestFixGapRemovedIds.length > 0);
-                        const chevronAnim = showSuggestion ? getYearTargetChevronAnim(rowId) : null;
-                        const suggestionAnim = showSuggestion ? getYearTargetSuggestionAnim(rowId) : null;
-                        const chevronRotate = chevronAnim
-                          ? chevronAnim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: ['0deg', '180deg'],
-                          })
-                          : '0deg';
-                        const suggestionAnimatedStyle = suggestionAnim ? {
-                          maxHeight: suggestionAnim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0, 520],
-                          }),
-                          opacity: suggestionAnim.interpolate({
-                            inputRange: [0, 0.15, 1],
-                            outputRange: [0, 0.35, 1],
-                          }),
-                        } : null;
                         return (
-                        <React.Fragment key={`year-target-row-${row.id}`}>
-                        <View
-                          style={[
-                            styles.yearTargetsTableRow,
-                            styles.yearTargetsTableBodyRow,
-                            isExpanded && styles.yearTargetsTableBodyRowExpanded,
-                          ]}
-                        >
-                          <View style={[styles.yearTargetsSubjectCol, styles.yearTargetsSubjectCell]}>
-                            <Text style={styles.yearTargetsSubjectCellName}>{row.name}</Text>
-                          </View>
-                          <View style={[styles.yearTargetsCellWrap, styles.yearTargetsDoneCol]}>
-                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsMetricCellEmphasisText, styles.yearTargetsCellLeft]}>{toOneDecimal(rowCompletedValue)}</Text>
-                          </View>
-                          {rowUpcomingValue > 0 ? (
+                          <View
+                            key={`year-target-row-${row.id}`}
+                            style={[styles.yearTargetsTableRow, styles.yearTargetsTableBodyRow]}
+                          >
+                            <View style={[styles.yearTargetsSubjectCol, styles.yearTargetsSubjectCell]}>
+                              <Text style={styles.yearTargetsSubjectCellName}>{row.name}</Text>
+                            </View>
+                            <View style={[styles.yearTargetsCellWrap, styles.yearTargetsDoneCol]}>
+                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsMetricCellEmphasisText, styles.yearTargetsCellLeft]}>{toOneDecimal(rowCompletedValue)}</Text>
+                            </View>
                             <View style={[styles.yearTargetsCellWrap, styles.yearTargetsUpcomingCol]}>
                               <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellLeft]}>{toOneDecimal(rowUpcomingValue)}</Text>
                             </View>
-                          ) : (
-                            <View style={[styles.yearTargetsCellWrap, styles.yearTargetsUpcomingCol]}>
-                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellLeft]}>0</Text>
+                            <View style={[styles.yearTargetsCellWrap, styles.yearTargetsProjectedCol]}>
+                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellLeft]}>
+                                {toOneDecimal(rowProjectedValue)}
+                              </Text>
                             </View>
-                          )}
-                          <View style={[styles.yearTargetsCellWrap, styles.yearTargetsProjectedCol]}>
-                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsCellLeft]}>
-                              {toOneDecimal(rowProjectedValue)}
-                            </Text>
-                          </View>
-                          <View style={[styles.yearTargetsCellWrap, styles.yearTargetsTargetCol]}>
-                            <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsTargetCellText, styles.yearTargetsCellLeft]}>{toOneDecimal(rowTargetValue)}</Text>
-                          </View>
-                          <View style={[styles.yearTargetsCellWrap, styles.yearTargetsBalanceCol, styles.yearTargetsGapCellWrap]}>
-                            <Pressable
-                              onPress={() => {
-                                if (!showSuggestion) return;
-                                toggleYearTargetSuggestion(rowId);
-                              }}
-                              disabled={!showSuggestion}
-                              style={({ hovered }) => [
-                                styles.yearTargetsGapChipButton,
-                                rowGapValue > 0 && styles.yearTargetsNegativeBalancePill,
-                                rowGapValue < 0 && styles.yearTargetsPositiveGapPill,
-                                showSuggestion && styles.yearTargetsGapChipButtonInteractive,
-                                hovered && showSuggestion && styles.yearTargetsGapChipButtonHover,
-                                hovered && showSuggestion && rowGapValue > 0 && styles.yearTargetsGapChipButtonNegativeHover,
-                                hovered && showSuggestion && rowGapValue < 0 && styles.yearTargetsGapChipButtonPositiveHover,
-                              ]}
-                            >
-                              <View style={styles.yearTargetsGapChipContent}>
-                                <Text
-                                  style={[
-                                    styles.yearTargetsBalancePill,
-                                    rowGapValue > 0 && styles.yearTargetsNegativeBalanceText,
-                                    rowGapValue < 0 && styles.yearTargetsPositiveGapText,
-                                  ]}
-                                >
-                                  {rowGapDisplayText}
-                                </Text>
-                                {showSuggestion ? (
-                                  <Animated.View style={[styles.yearTargetsGapChipChevronWrap, { transform: [{ rotate: chevronRotate }] }]}>
-                                    <Text
-                                      style={[
-                                        styles.yearTargetsGapChipChevron,
-                                        rowGapValue > 0 && styles.yearTargetsNegativeBalanceText,
-                                        rowGapValue < 0 && styles.yearTargetsPositiveGapText,
-                                      ]}
-                                    >
-                                      ▾
-                                    </Text>
-                                  </Animated.View>
-                                ) : null}
-                              </View>
-                            </Pressable>
-                          </View>
-                        </View>
-                        {showSuggestion && isExpanded ? (
-                          <View style={[styles.yearTargetsTableRow, styles.yearTargetsExpandedSuggestionRow]}>
-                            <Animated.View style={[styles.yearTargetsExpandedSuggestionWrap, suggestionAnimatedStyle]}>
-                            <View style={styles.yearTargetsExpandedSuggestionContainer}>
-                              <View style={styles.yearTargetsSavedTargetRow}>
-                                <Text style={styles.yearTargetsSavedTargetText}>
-                                  {isOverallRow
-                                    ? `Gap is based on saved overall planning preferences: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`
-                                    : `Gap is based on saved ${String(row?.name || 'subject')} attendance goal of ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`}
-                                </Text>
-                                <TouchableOpacity
-                                  onPress={openPlanningPreferences}
-                                  style={styles.yearTargetsSavedTargetButton}
-                                  activeOpacity={0.85}
-                                  accessibilityRole="button"
-                                  accessibilityLabel="Change saved goal"
-                                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                >
-                                  <Text style={styles.yearTargetsSavedTargetButtonText}>Change saved goal</Text>
-                                </TouchableOpacity>
-                              </View>
-                              {fixGapActionRecommendation ? (
-                                <View style={styles.yearTargetsRecommendationActionsRow}>
-                                  {isOverallRow ? (
-                                    <TouchableOpacity
-                                      onPress={() => applyLowerTargetToMaxAchievable(rowId)}
-                                      activeOpacity={0.85}
-                                      style={styles.yearTargetsRecommendationActionButton}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      <Check size={14} color="#0F172A" strokeWidth={2.25} />
-                                      <Text style={styles.yearTargetsRecommendationActionText}>
-                                        {`Lower target to max achievable (${fixGapActionRecommendation?.targetKind === 'hours'
-                                          ? toOneDecimal(fixGapActionRecommendation?.maxAchievableValue || 0)
-                                          : Math.round(Number(fixGapActionRecommendation?.maxAchievableValue || 0))} ${fixGapActionRecommendation?.targetKind || 'days'}, no new events)`}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  ) : null}
-                                </View>
-                              ) : null}
-                              {suggestedDaysText ? (
-                                <View style={styles.yearTargetsExpandedSuggestionLineRow}>
-                                  <Text style={styles.yearTargetsPredictiveSuggestionLine}>
-                                    {suggestedDaysText}
-                                  </Text>
-                                  <TouchableOpacity
-                                    onPress={() => fixYearTargetGap({
-                                      ...row,
-                                      ...(catchUpRowResolved || {}),
-                                    })}
-                                    activeOpacity={0.85}
-                                    disabled={fixingGapRowId === rowId || !canFixGap}
-                                    style={[
-                                      styles.yearTargetsPredictiveSuggestionButton,
-                                      styles.yearTargetsPredictiveFixGapButton,
-                                      (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonDisabled,
-                                    ]}
-                                    {...(Platform.OS === 'web' && { cursor: (fixingGapRowId === rowId || !canFixGap) ? 'default' : 'pointer' })}
-                                  >
-                                    <Text
-                                      style={[
-                                        styles.yearTargetsPredictiveSuggestionButtonText,
-                                        (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
-                                      ]}
-                                    >
-                                      {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
-                                    </Text>
-                                  </TouchableOpacity>
-                                </View>
-                              ) : null}
-                              {historyRunsWithDetails.length > 0 ? (
-                                <View style={styles.yearTargetsFixGapHistoryContainer}>
-                                  <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                    {`Fix gap history (${historyRunsWithDetails.length} action${historyRunsWithDetails.length === 1 ? '' : 's'}):`}
-                                  </Text>
-                                  <ScrollView
-                                    style={styles.yearTargetsFixGapHistoryScroll}
-                                    contentContainerStyle={styles.yearTargetsFixGapHistoryScrollContent}
-                                    nestedScrollEnabled
-                                  >
-                                    {historyRunsWithDetails.map((run) => (
-                                      <View key={run.key} style={styles.yearTargetsFixGapHistoryRun}>
-                                        <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                          {`${formatFixGapHistoryTimestamp(run.createdAt)}${run.isUndone ? ' (undone)' : ''}:`}
-                                        </Text>
-                                        {run.slotLines.length > 0 ? (
-                                          run.slotLines.map((line, idx) => (
-                                            <Text key={`${run.key}-line-${idx}`} style={styles.yearTargetsFixGapHistoryLine}>
-                                              {`${line.verb} ${line.line}`}
-                                            </Text>
-                                          ))
-                                        ) : (
-                                          <Text style={styles.yearTargetsFixGapHistoryLine}>
-                                            {run.message || (
-                                              run.removedCount > 0
-                                                ? `Removed ${run.removedCount} event${run.removedCount === 1 ? '' : 's'}.`
-                                                : `Added ${run.createdCount} event${run.createdCount === 1 ? '' : 's'}.`
-                                            )}
-                                          </Text>
-                                        )}
-                                      </View>
-                                    ))}
-                                  </ScrollView>
-                                  {canUndoLatestFixGap ? (
-                                    <TouchableOpacity
-                                      style={[
-                                        styles.yearTargetsUndoFixGapButton,
-                                        undoingFixGapRowId === rowId && styles.yearTargetsUndoFixGapButtonDisabled,
-                                      ]}
-                                      onPress={() => undoLatestFixGapAction(row)}
-                                      disabled={undoingFixGapRowId === rowId}
-                                      activeOpacity={0.85}
-                                    >
-                                      <Text style={styles.yearTargetsUndoFixGapButtonText}>
-                                        {undoingFixGapRowId === rowId ? 'Undoing...' : 'Undo last action'}
-                                      </Text>
-                                    </TouchableOpacity>
-                                  ) : null}
-                                </View>
-                              ) : null}
+                            <View style={[styles.yearTargetsCellWrap, styles.yearTargetsTargetCol]}>
+                              <Text style={[styles.yearTargetsMetricCellLinkText, styles.yearTargetsTargetCellText, styles.yearTargetsCellLeft]}>{toOneDecimal(rowTargetValue)}</Text>
                             </View>
-                            </Animated.View>
                           </View>
-                        ) : null}
-                        </React.Fragment>
                         );
                       })}
                     </View>
                   </View>
                 </View>
               </View>
-            )}
+            ) : null}
+            {embeddedInScrollView && embeddedFooter ? (
+              <View style={[
+                styles.embeddedFooterSection,
+                showFooterOnly && styles.embeddedFooterSectionFooterOnly,
+              ]}>
+                {typeof embeddedFooter === 'function'
+                  ? embeddedFooter({
+                    ...homePlanProgressContext,
+                    renderAllEventsGap: renderAllEventsGapForSubjects,
+                  })
+                  : embeddedFooter}
+              </View>
+            ) : null}
           </View>
-        </ScrollView>
+    );
+
+    return (
+      <View style={embeddedInScrollView ? styles.wrapEmbedded : [styles.wrap, styles.wrapScrollMode]}>
+        {embeddedInScrollView ? (
+          scheduleSectionContent
+        ) : (
+          <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            {scheduleSectionContent}
+          </ScrollView>
+        )}
         <Modal
           visible={showFixGapSetupModal}
           transparent
@@ -8011,7 +8308,7 @@ export default function SubjectsPlanBuilder({
   }
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, styles.wrapScrollMode]}>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.stepSection}>
           <Text style={styles.stepTitle}>STEP 1 — WHAT ARE WE PLANNING FOR?</Text>
@@ -8285,10 +8582,25 @@ export default function SubjectsPlanBuilder({
 const styles = StyleSheet.create({
   wrap: {
     flex: 1,
-    minHeight: 0,
     paddingHorizontal: 24,
     paddingTop: 8,
     paddingBottom: 16,
+  },
+  wrapScrollMode: {
+    minHeight: 0,
+  },
+  wrapEmbedded: {
+    width: '100%',
+    alignSelf: 'stretch',
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      flexShrink: 0,
+      position: 'relative',
+    }),
   },
   scroll: { flex: 1 },
   content: { paddingBottom: 32 },
@@ -8439,6 +8751,31 @@ const styles = StyleSheet.create({
   emptyScheduleSection: {
     marginBottom: 14,
     gap: 0,
+  },
+  emptyScheduleSectionEmbedded: {
+    marginTop: 20,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      flexShrink: 0,
+    }),
+  },
+  emptyScheduleSectionFooterOnly: {
+    marginTop: 0,
+  },
+  embeddedFooterSection: {
+    width: '100%',
+    marginTop: 24,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      flexShrink: 0,
+      position: 'relative',
+    }),
+  },
+  embeddedFooterSectionFooterOnly: {
+    marginTop: 0,
   },
   scheduleEmptyCard: {
     borderWidth: 1,
@@ -9449,6 +9786,30 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  sectionHeaderActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 34,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  sectionHeaderActionButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   termHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -9717,6 +10078,33 @@ const styles = StyleSheet.create({
   },
   subjectRowLast: {
     borderBottomWidth: 0,
+  },
+  subjectGapExpandedRow: {
+    paddingHorizontal: 20,
+    paddingTop: 0,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+  },
+  allEventsGapChipWrap: {
+    alignSelf: 'flex-start',
+  },
+  allEventsGapExpandedBlock: {
+    marginTop: 8,
+    marginBottom: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  allEventsGapExpandedStack: {
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  allEventsGapExpandedStackInner: {
+    overflow: 'hidden',
   },
   subjectMain: {
     width: 'auto',

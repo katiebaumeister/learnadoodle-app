@@ -9,13 +9,19 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { BarChart3, Calendar, Check, ChevronLeft, ChevronRight, Edit2, List, Plus, X } from 'lucide-react';
+import { BarChart3, Calendar, Check, ChevronLeft, ChevronRight, Download, Edit2, List, Plus, X } from 'lucide-react';
 import {
   SubjectAttendanceMonthDrilldown,
   SubjectAttendanceYearHeatmap,
 } from './SubjectSectionDrilldownPanels';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
+import SubjectAllEventsSection from './SubjectAllEventsSection';
+import {
+  aggregatePlanProgressMetrics,
+  formatPlanProgressSummary,
+  getPlanProgressStatusFromMetrics,
+} from './SubjectsPlanBuilder';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
 import { supabase } from '../../lib/supabase';
 import { createAttendanceLog, deleteAttendanceLog, updateAttendanceLog } from '../../lib/services/recordsClient';
@@ -77,9 +83,113 @@ function getChildLabel(child) {
   return child?.first_name || child?.name || child?.full_name || child?.display_name || 'Student';
 }
 
+function eventMatchesChildIds(entity, childIds) {
+  if (!Array.isArray(childIds) || childIds.length === 0) return true;
+  const idSet = new Set(childIds.map((id) => String(id)));
+  const childId = entity?.child_id || entity?.childId || null;
+  if (childId && idSet.has(String(childId))) return true;
+  const childIdsArr = entity?.child_ids || entity?.childIds || [];
+  if (Array.isArray(childIdsArr) && childIdsArr.some((id) => idSet.has(String(id)))) return true;
+  if (!childId && (!childIdsArr || childIdsArr.length === 0)) return true;
+  return false;
+}
+
+function recordMatchesChildIds(record, childIds) {
+  if (!Array.isArray(childIds) || childIds.length === 0) return true;
+  const recordChildId = String(record?.child_id || record?.childId || '').trim();
+  if (!recordChildId) return true;
+  return childIds.some((id) => String(id) === recordChildId);
+}
+
 function getEventStartYmd(event) {
   const raw = event?.start_ts || event?.start || event?.start_local || event?.due_ts;
   return raw ? String(raw).slice(0, 10) : null;
+}
+
+function formatEventTypeLabel(event) {
+  if (!event) return 'Lesson';
+  const holidayType = String(event?.holiday_type || event?.holidayType || '').trim().toUpperCase();
+  if (holidayType === 'CUSTOM_BREAK') return 'Break';
+  if (holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'GLOBAL_HOLIDAY') return 'Day Off';
+  const raw = String(event?.event_type || event?.type || '').trim();
+  if (!raw) return 'Lesson';
+  const lower = raw.toLowerCase();
+  if (lower === 'schedule block' || lower === 'scheduled class day' || lower === 'classday') return 'Class Day';
+  if (lower === 'custom_break' || lower === 'break') return 'Break';
+  if (lower === 'custom_holiday' || lower === 'global_holiday' || lower === 'holiday' || lower === 'day off' || lower === 'dayoff') return 'Day Off';
+  const knownLabels = {
+    lesson: 'Lesson',
+    assignment: 'Assignment',
+    activity: 'Activity',
+    project: 'Project',
+    exam: 'Exam',
+    assessment: 'Assessment',
+    appointment: 'Appointment',
+    travel: 'Travel',
+    'live class': 'Live Class',
+    'home lesson': 'Home Lesson',
+    'core class': 'Core Class',
+    'class day': 'Class Day',
+  };
+  return knownLabels[lower] || raw;
+}
+
+function resolveEventStartValue(event) {
+  return event?.start_ts || event?.start || event?.start_local || event?.due_ts || null;
+}
+
+function formatEventTimeLabel(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+const ATTENDANCE_SUBLINE_SEPARATOR = ' · ';
+
+function formatEventTimeRangeLabel(event, fallbackMinutes = null) {
+  if (!event) return '';
+  const holidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
+  const typeLower = String(event?.event_type || event?.type || '').toLowerCase();
+  if (
+    typeLower === 'holiday'
+    || holidayType === 'CUSTOM_HOLIDAY'
+    || holidayType === 'CUSTOM_BREAK'
+    || holidayType === 'GLOBAL_HOLIDAY'
+  ) {
+    return '';
+  }
+  const startValue = resolveEventStartValue(event);
+  let endValue = event?.end_ts || event?.end || event?.end_local || null;
+  const startMs = startValue ? new Date(startValue).getTime() : NaN;
+  if (!endValue && Number.isFinite(startMs)) {
+    const durationMinutes = Number(event?.duration_minutes);
+    const minutes = Number.isFinite(durationMinutes) && durationMinutes > 0
+      ? durationMinutes
+      : (Number.isFinite(Number(fallbackMinutes)) && Number(fallbackMinutes) > 0 ? Number(fallbackMinutes) : NaN);
+    if (Number.isFinite(minutes)) {
+      endValue = new Date(startMs + minutes * 60000).toISOString();
+    }
+  }
+  const startLabel = formatEventTimeLabel(startValue);
+  const endLabel = formatEventTimeLabel(endValue);
+  if (startLabel && endLabel) return `${startLabel}${ATTENDANCE_SUBLINE_SEPARATOR}${endLabel}`;
+  return startLabel || endLabel || '';
+}
+
+function formatEventTypeWithTime(event, fallbackMinutes = null) {
+  const typeLabel = formatEventTypeLabel(event);
+  const timeRange = formatEventTimeRangeLabel(event, fallbackMinutes);
+  return timeRange ? `${typeLabel}${ATTENDANCE_SUBLINE_SEPARATOR}${timeRange}` : typeLabel;
+}
+
+function formatAttendanceEventSubline(event, childNameById, childIds, fallbackMinutes = null) {
+  const typeWithTime = formatEventTypeWithTime(event, fallbackMinutes);
+  const names = (Array.isArray(childIds) ? childIds : [])
+    .map((id) => childNameById?.[String(id)] || null)
+    .filter(Boolean);
+  const childLabel = formatNeedsSentence(names);
+  return childLabel ? `${childLabel}${ATTENDANCE_SUBLINE_SEPARATOR}${typeWithTime}` : typeWithTime;
 }
 
 function formatDate(dateValue) {
@@ -194,6 +304,12 @@ export default function ProgressTab({
   onRefreshSubjectDetail,
   onEditChild = null,
   canManageAttendance = true,
+  sectionsMode = 'full',
+  embeddedInScrollView = false,
+  activeChildIds = null,
+  activeSubjectIds = null,
+  planProgressContext = null,
+  onOpenExportModal = null,
 }) {
   const students = useMemo(
     () => (Array.isArray(children) ? children : [])
@@ -263,6 +379,25 @@ export default function ProgressTab({
     () => (children || []).map((child) => String(child?.id || '').trim()).filter(Boolean),
     [children]
   );
+  const resolvedActiveChildIds = useMemo(() => {
+    if (Array.isArray(activeChildIds) && activeChildIds.length > 0) {
+      return activeChildIds.map((id) => String(id).trim()).filter(Boolean);
+    }
+    if (selectedChildFilter && selectedChildFilter !== 'all') {
+      return [String(selectedChildFilter)];
+    }
+    if (selectedStudentId) return [String(selectedStudentId)];
+    return allChildIds;
+  }, [activeChildIds, selectedChildFilter, selectedStudentId, allChildIds]);
+  const primaryChildIdForActions = useMemo(
+    () => (
+      resolvedActiveChildIds.length === 1
+        ? resolvedActiveChildIds[0]
+        : (selectedStudentId || resolvedActiveChildIds[0] || null)
+    ),
+    [resolvedActiveChildIds, selectedStudentId]
+  );
+  const showMultipleChildLabels = resolvedActiveChildIds.length > 1;
   const childNameById = useMemo(() => {
     const map = {};
     (children || []).forEach((child) => {
@@ -486,10 +621,10 @@ export default function ProgressTab({
   const attendanceViewStorageKey = useMemo(
     () => buildProgressAttendanceViewStorageKey({
       familyId,
-      childId: selectedStudentId,
+      childId: primaryChildIdForActions,
       academicYearStart: selectedAcademicYearStart,
     }),
-    [familyId, selectedStudentId, selectedAcademicYearStart]
+    [familyId, primaryChildIdForActions, selectedAcademicYearStart]
   );
   const [attendanceViewMode, setAttendanceViewMode] = useState(() => (
     readProgressAttendanceView(
@@ -511,10 +646,10 @@ export default function ProgressTab({
   }, [attendanceViewStorageKey, attendanceViewMode]);
   useEffect(() => {
     setOptimisticAttendanceByKey({});
-  }, [familyId, selectedStudentId, selectedAcademicYearStart]);
+  }, [familyId, primaryChildIdForActions, selectedAcademicYearStart]);
   useEffect(() => {
     setShowAttendanceExpanded(false);
-  }, [attendanceViewMode, selectedStudentId]);
+  }, [attendanceViewMode, primaryChildIdForActions, resolvedActiveChildIds.join('|')]);
 
   const attendanceRecordsForUI = useMemo(() => {
     const rows = [];
@@ -523,11 +658,7 @@ export default function ProgressTab({
     const todayYmd = new Date().toISOString().slice(0, 10);
     subjectDetails.forEach(({ subject, detail }) => {
       (detail?.attendanceRecords || []).forEach((record) => {
-        if (
-          selectedStudentId
-          && record?.child_id
-          && String(record.child_id) !== String(selectedStudentId)
-        ) return;
+        if (!recordMatchesChildIds(record, resolvedActiveChildIds)) return;
         const dayDate = String(record?.day_date || '').slice(0, 10);
         if (!dayDate) return;
         const normalizedStatus = String(record?.status || '').toLowerCase();
@@ -551,13 +682,7 @@ export default function ProgressTab({
         });
       });
       (detail?.events || []).forEach((event) => {
-        const matchesChild = selectedStudentId
-          ? (
-            (event?.child_id && String(event.child_id) === String(selectedStudentId))
-            || (Array.isArray(event?.child_ids) && event.child_ids.some((id) => String(id) === String(selectedStudentId)))
-          )
-          : true;
-        if (!matchesChild) return;
+        if (!eventMatchesChildIds(event, resolvedActiveChildIds)) return;
         if (String(event?.status || '').toLowerCase() !== 'done') return;
         if (!event?.id || byEvent.has(String(event.id))) return;
         const dayDate = getEventStartYmd(event);
@@ -579,7 +704,7 @@ export default function ProgressTab({
           minutes: Number(event?.duration_minutes || 60),
           eventId: event.id,
           attendanceLogId: null,
-          childId: selectedStudentId || null,
+          childId: primaryChildIdForActions || null,
         });
       });
     });
@@ -588,7 +713,7 @@ export default function ProgressTab({
       const key = buildAttendanceOverrideKey(entry?.eventId, entry?.dayDate, entry?.childId);
       if (!key) return;
       const idx = rows.findIndex((row) => (
-        buildAttendanceOverrideKey(row?.eventId, row?.dayDate, row?.childId || selectedStudentId) === key
+        buildAttendanceOverrideKey(row?.eventId, row?.dayDate, row?.childId || primaryChildIdForActions) === key
       ));
       const overrideStatus = String(entry?.status || '').toLowerCase();
       if (overrideStatus === ATTENDANCE_OVERRIDE_CLEAR) {
@@ -612,25 +737,19 @@ export default function ProgressTab({
           minutes: Number(entry?.minutes || 60),
           eventId: entry?.eventId || null,
           attendanceLogId: null,
-          childId: entry?.childId || selectedStudentId || null,
+          childId: entry?.childId || primaryChildIdForActions || null,
         });
       }
     });
     rows.sort((a, b) => String(b.dayDate).localeCompare(String(a.dayDate)));
     return rows;
-  }, [subjectDetails, selectedStudentId, academicYearStartDate, academicYearEndDate, optimisticAttendanceByKey]);
+  }, [subjectDetails, resolvedActiveChildIds, academicYearStartDate, academicYearEndDate, optimisticAttendanceByKey]);
 
   const attendanceEvents = useMemo(() => {
     const rows = [];
     subjectDetails.forEach(({ subject, detail }) => {
       (detail?.events || []).forEach((event) => {
-        const matchesChild = selectedStudentId
-          ? (
-            (event?.child_id && String(event.child_id) === String(selectedStudentId))
-            || (Array.isArray(event?.child_ids) && event.child_ids.some((id) => String(id) === String(selectedStudentId)))
-          )
-          : true;
-        if (!matchesChild) return;
+        if (!eventMatchesChildIds(event, resolvedActiveChildIds)) return;
         const dayDate = getEventStartYmd(event);
         if (!dayDate) return;
         const day = new Date(`${dayDate}T12:00:00`);
@@ -644,7 +763,7 @@ export default function ProgressTab({
       });
     });
     return rows;
-  }, [subjectDetails, selectedStudentId, academicYearStartDate, academicYearEndDate]);
+  }, [subjectDetails, resolvedActiveChildIds, academicYearStartDate, academicYearEndDate]);
   const attendanceRecordsListUI = useMemo(() => {
     const attendanceByEventId = new Map();
     const recordPreviewByEventId = new Map();
@@ -709,7 +828,6 @@ export default function ProgressTab({
           day_date: dayKey,
           minutes: eventMinutes,
           title: String(event?.title || 'Lesson').trim() || 'Lesson',
-          subjectName: String(event?.subjectName || '').trim() || null,
           statusLabel,
           statusTone,
           sortTs: Number.isFinite(tsMs) ? tsMs : 0,
@@ -739,7 +857,6 @@ export default function ProgressTab({
           day_date: dayKey,
           minutes: normalizeMinutes(attendanceMeta?.minutes, 60),
           title: String(preview?.title || preview?.subjectName || 'Lesson').trim() || 'Lesson',
-          subjectName: String(preview?.subjectName || 'Subject').trim() || 'Subject',
           statusLabel,
           statusTone,
           sortTs: Number.isFinite(tsMs) ? tsMs : 0,
@@ -771,7 +888,6 @@ export default function ProgressTab({
           day_date: dayKey,
           minutes: nextMinutes,
           title,
-          subjectName: String(record?.subjectName || 'Subject').trim() || 'Subject',
           statusLabel: nextLabel,
           statusTone: nextTone,
           sortTs: Number.isFinite(tsMs) ? tsMs : 0,
@@ -787,6 +903,19 @@ export default function ProgressTab({
     return [...eventRows, ...orphanRows, ...recordOnlyRowsByKey.values()]
       .sort((a, b) => Number(a.sortTs || 0) - Number(b.sortTs || 0));
   }, [attendanceRecordsForUI, attendanceEvents]);
+  const attendanceListStateByEventId = useMemo(() => {
+    const map = new Map();
+    (attendanceRecordsListUI || []).forEach((record) => {
+      const eventId = String(record?.event_id || '').trim();
+      if (!eventId) return;
+      map.set(eventId, {
+        isAttended: String(record?.statusTone || '').toLowerCase() === 'attended',
+        dayDate: String(record?.day_date || '').slice(0, 10),
+        canToggle: !!record?.event_id && !!record?.day_date,
+      });
+    });
+    return map;
+  }, [attendanceRecordsListUI]);
   const attendanceEventById = useMemo(() => {
     const map = new Map();
     (attendanceEvents || []).forEach((event) => {
@@ -815,9 +944,73 @@ export default function ProgressTab({
         if (id != null && String(id).trim()) ids.push(String(id));
       });
     }
-    if (!ids.length && selectedStudentId) ids.push(String(selectedStudentId));
-    return [...new Set(ids.filter(Boolean))];
-  }, [selectedStudentId]);
+    let resolved = [...new Set(ids.filter(Boolean))];
+    if (!resolved.length && primaryChildIdForActions) resolved = [String(primaryChildIdForActions)];
+    if (resolvedActiveChildIds.length > 0) {
+      resolved = resolved.filter((id) => resolvedActiveChildIds.includes(String(id)));
+    }
+    if (!resolved.length && primaryChildIdForActions) resolved = [String(primaryChildIdForActions)];
+    return resolved;
+  }, [primaryChildIdForActions, resolvedActiveChildIds]);
+  const resolvedActiveSubjectIds = useMemo(() => {
+    const allIds = (filteredSubjects || [])
+      .map((subject) => String(subject?.id || '').trim())
+      .filter(Boolean);
+    if (!allIds.length) return [];
+    if (Array.isArray(activeSubjectIds) && activeSubjectIds.length > 0) {
+      const selectedSet = new Set(activeSubjectIds.map((id) => String(id)));
+      const valid = allIds.filter((id) => selectedSet.has(id));
+      return valid.length > 0 ? valid : allIds;
+    }
+    return allIds;
+  }, [filteredSubjects, activeSubjectIds]);
+  const allEventsAggregate = useMemo(() => {
+    const activeSet = new Set(resolvedActiveSubjectIds.map(String));
+    const events = [];
+    const eventOutcomes = [];
+    const materials = [];
+    const eventAttachmentMaterials = [];
+    const assignmentsByEventId = {};
+    const materialIds = new Set();
+
+    subjectDetails.forEach(({ subject, detail }) => {
+      const subjectId = String(subject?.id || '').trim();
+      if (!subjectId || !activeSet.has(subjectId)) return;
+      (detail?.events || []).forEach((event) => {
+        events.push({
+          ...event,
+          subject_id: event?.subject_id || subject.id,
+        });
+      });
+      (detail?.eventOutcomes || []).forEach((outcome) => {
+        eventOutcomes.push(outcome);
+      });
+      (detail?.materials || []).forEach((material) => {
+        const materialId = String(material?.id || '').trim();
+        if (!materialId || materialIds.has(materialId)) return;
+        materialIds.add(materialId);
+        materials.push(material);
+      });
+      (detail?.eventAttachmentMaterials || []).forEach((material) => {
+        const materialId = String(material?.id || '').trim();
+        if (!materialId || materialIds.has(materialId)) return;
+        materialIds.add(materialId);
+        eventAttachmentMaterials.push(material);
+      });
+      Object.entries(detail?.assignmentsByEventId || {}).forEach(([eventId, assignments]) => {
+        if (!eventId) return;
+        assignmentsByEventId[eventId] = assignments;
+      });
+    });
+
+    return {
+      events,
+      eventOutcomes,
+      materials,
+      eventAttachmentMaterials,
+      assignmentsByEventId,
+    };
+  }, [subjectDetails, resolvedActiveSubjectIds]);
   const handleOpenEventDetails = (eventId, initialEvent = null) => {
     if (!eventId) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -866,12 +1059,15 @@ export default function ProgressTab({
       eventType: 'Lesson',
       date: new Date(`${normKey}T12:00:00`),
     };
-    if (selectedStudentId) {
-      detail.childId = String(selectedStudentId);
-      detail.childIds = [String(selectedStudentId)];
+    if (resolvedActiveChildIds.length > 0) {
+      detail.childIds = resolvedActiveChildIds.map(String);
+      detail.childId = detail.childIds[0] || null;
+    } else if (primaryChildIdForActions) {
+      detail.childId = String(primaryChildIdForActions);
+      detail.childIds = [String(primaryChildIdForActions)];
     }
     window.dispatchEvent(new CustomEvent('openTaskModal', { detail }));
-  }, [selectedStudentId]);
+  }, [primaryChildIdForActions, resolvedActiveChildIds]);
   const getEventMinutes = useCallback((event) => {
     const durationMinutes = Number(event?.duration_minutes);
     if (Number.isFinite(durationMinutes) && durationMinutes > 0) return Math.round(durationMinutes);
@@ -882,16 +1078,18 @@ export default function ProgressTab({
     }
     return 60;
   }, []);
-  const handleToggleEventAttendanceForDate = useCallback(async (dateKey, eventId) => {
+  const handleToggleEventAttendanceForDate = useCallback(async (dateKey, eventId, eventFallback = null) => {
     const normKey = String(dateKey || '').slice(0, 10);
     const eid = String(eventId || '').trim();
-    if (!familyId || !selectedStudentId || !normKey || !eid) return;
-    const event = attendanceEventById.get(eid);
+    if (!familyId || !normKey || !eid) return;
+    const event = attendanceEventById.get(eid) || eventFallback;
     if (!event?.id) return;
+    const targetChildIds = resolveChildIdsForAttendanceEvent(event);
+    if (!targetChildIds.length) return;
     const existingRows = (attendanceRecordsForUI || []).filter((row) => (
       String(row?.eventId || '') === eid
       && String(row?.dayDate || '').slice(0, 10) === normKey
-      && (!row?.childId || String(row.childId) === String(selectedStudentId))
+      && (!row?.childId || targetChildIds.includes(String(row.childId)))
     ));
     const hasPresent = existingRows.some((row) => ['present', 'partial'].includes(String(row?.status || '').toLowerCase()));
     const todayYmd = new Date().toISOString().slice(0, 10);
@@ -899,7 +1097,6 @@ export default function ProgressTab({
     // Future unmark should return to Upcoming (no explicit attendance row), not Absent.
     const nextStatus = hasPresent ? (isFutureDate ? null : 'absent') : 'present';
     const minutes = getEventMinutes(event);
-    const targetChildIds = resolveChildIdsForAttendanceEvent(event);
     const subjectMatch = subjectDetails.find(({ subject }) => String(subject?.id || '') === String(event?.subject_id || event?.subjectId || ''));
     if (targetChildIds.length > 0) {
       if (nextStatus == null) {
@@ -988,7 +1185,28 @@ export default function ProgressTab({
       }
       console.warn('[ProgressTab] Failed toggling attendance:', err);
     }
-  }, [familyId, selectedStudentId, attendanceEventById, attendanceRecordsForUI, getEventMinutes, onRefreshSubjectDetail, subjectDetails, resolveChildIdsForAttendanceEvent, attendanceLogIdByEventDayChild]);
+  }, [familyId, attendanceEventById, attendanceRecordsForUI, getEventMinutes, onRefreshSubjectDetail, subjectDetails, resolveChildIdsForAttendanceEvent, attendanceLogIdByEventDayChild]);
+  const resolveAllEventsAttendanceState = useCallback((event) => {
+    const eventId = String(event?.id || '').trim();
+    if (!eventId) {
+      return { isAttended: false, canToggle: false, dayDate: '' };
+    }
+    const cached = attendanceListStateByEventId.get(eventId);
+    if (cached) return cached;
+    const tsRaw = event?.start_ts || event?.due_ts || event?.end_ts || null;
+    const dayDate = tsRaw ? String(tsRaw).slice(0, 10) : '';
+    return {
+      isAttended: false,
+      canToggle: !!dayDate,
+      dayDate,
+    };
+  }, [attendanceListStateByEventId]);
+  const handleAllEventsAttendanceToggle = useCallback((event) => {
+    const state = resolveAllEventsAttendanceState(event);
+    const eventId = String(event?.id || '').trim();
+    if (!eventId || !state?.dayDate || state.canToggle === false) return;
+    handleToggleEventAttendanceForDate(state.dayDate, eventId, event);
+  }, [resolveAllEventsAttendanceState, handleToggleEventAttendanceForDate]);
   const canMarkAttendanceForDateKey = useCallback((dateKey) => {
     const normKey = String(dateKey || '').slice(0, 10);
     if (!normKey) return false;
@@ -1072,13 +1290,7 @@ export default function ProgressTab({
       (detail?.eventOutcomes || []).forEach((outcome) => {
         if (!outcome?.grade) return;
         const event = (detail?.events || []).find((e) => String(e?.id) === String(outcome?.event_id));
-        const eventMatchesChild = selectedStudentId
-          ? (
-            (event?.child_id && String(event.child_id) === String(selectedStudentId))
-            || (Array.isArray(event?.child_ids) && event.child_ids.some((id) => String(id) === String(selectedStudentId)))
-            || !event
-          )
-          : true;
+        const eventMatchesChild = !event || eventMatchesChildIds(event, resolvedActiveChildIds);
         if (!eventMatchesChild) return;
         const when = event?.end_ts || event?.start_ts || outcome?.created_at;
         if (!when) return;
@@ -1097,13 +1309,7 @@ export default function ProgressTab({
 
       (detail?.events || []).forEach((event) => {
         if (!event?.grade || byEvent.has(String(event.id))) return;
-        const matchesChild = selectedStudentId
-          ? (
-            (event?.child_id && String(event.child_id) === String(selectedStudentId))
-            || (Array.isArray(event?.child_ids) && event.child_ids.some((id) => String(id) === String(selectedStudentId)))
-          )
-          : true;
-        if (!matchesChild) return;
+        if (!eventMatchesChildIds(event, resolvedActiveChildIds)) return;
         rows.push({
           id: `event-grade-${event.id}`,
           subjectId: subject.id,
@@ -1117,11 +1323,7 @@ export default function ProgressTab({
       });
 
       (detail?.grades || []).forEach((grade) => {
-        if (
-          selectedStudentId
-          && grade?.child_id
-          && String(grade.child_id) !== String(selectedStudentId)
-        ) return;
+        if (!recordMatchesChildIds(grade, resolvedActiveChildIds)) return;
         const percentFromScore = (
           grade?.score != null && grade?.possible != null && Number(grade.possible) > 0
         ) ? Math.round((Number(grade.score) / Number(grade.possible)) * 100) : null;
@@ -1143,7 +1345,7 @@ export default function ProgressTab({
     });
     rows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
     return rows;
-  }, [subjectDetails, selectedStudentId]);
+  }, [subjectDetails, resolvedActiveChildIds]);
 
   const learningGoalsBySubject = useMemo(() => {
     return subjectDetails.map(({ subject, detail }) => {
@@ -1151,13 +1353,7 @@ export default function ProgressTab({
       if (!units.length) {
         const byUnit = new Map();
         (detail?.events || []).forEach((event) => {
-          const matchesChild = selectedStudentId
-            ? (
-              (event?.child_id && String(event.child_id) === String(selectedStudentId))
-              || (Array.isArray(event?.child_ids) && event.child_ids.some((id) => String(id) === String(selectedStudentId)))
-            )
-            : true;
-          if (!matchesChild) return;
+          if (!eventMatchesChildIds(event, resolvedActiveChildIds)) return;
           const unitTitle = String(
             event?.unit_name || event?.curriculum_unit_title || event?.unit || event?.unit_topic || 'General'
           ).trim();
@@ -1176,7 +1372,7 @@ export default function ProgressTab({
         units,
       };
     });
-  }, [subjectDetails, selectedStudentId]);
+  }, [subjectDetails, resolvedActiveChildIds]);
   const overviewStats = useMemo(() => {
     const scheduledDaySet = new Set((attendanceEvents || []).map((event) => getEventStartYmd(event)).filter(Boolean));
     const scheduledDays = scheduledDaySet.size;
@@ -1264,15 +1460,10 @@ export default function ProgressTab({
         subjectTargetsRaw && typeof subjectTargetsRaw[sid] === 'object' ? subjectTargetsRaw[sid] : null;
       const yearSubjectTargetEntry =
         yearSubjectTargetsById && typeof yearSubjectTargetsById[sid] === 'object' ? yearSubjectTargetsById[sid] : null;
-      const subjectEvents = (detail?.events || []).filter((event) => {
-        const matchesChild = selectedStudentId
-          ? (
-            (event?.child_id && String(event.child_id) === String(selectedStudentId))
-            || (Array.isArray(event?.child_ids) && event.child_ids.some((id) => String(id) === String(selectedStudentId)))
-          )
-          : true;
-        return matchesChild && String(event?.status || '').toLowerCase() !== 'canceled';
-      });
+      const subjectEvents = (detail?.events || []).filter((event) => (
+        eventMatchesChildIds(event, resolvedActiveChildIds)
+        && String(event?.status || '').toLowerCase() !== 'canceled'
+      ));
       const completedDaySet = new Set();
       const upcomingDaySet = new Set();
       const projectedDaySet = new Set();
@@ -1442,7 +1633,7 @@ export default function ProgressTab({
         paceLabel,
       };
     }).filter((row) => row.id);
-  }, [subjectDetails, selectedStudentId, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays, familyTargetScope, familyOverallTargetDays, yearSubjectTargetsById]);
+  }, [subjectDetails, resolvedActiveChildIds, attendanceRecordsForUI, gradeRows, learningGoalsBySubject, selectedStudent?.name, academicYearStartDate, academicYearEndDate, familyDefaultTargetDays, familyTargetScope, familyOverallTargetDays, yearSubjectTargetsById]);
   const savedProfileGrade = useMemo(() => {
     const raw = selectedStudentRecord?.grade
       ?? selectedStudentRecord?.grade_level
@@ -1468,15 +1659,56 @@ export default function ProgressTab({
     () => `${savedProfileGradeLabel || 'No saved grade'} - ${subjectsForYearLabel}`,
     [savedProfileGradeLabel, subjectsForYearLabel]
   );
-  const progressDisplayName = selectedStudent?.name || 'Student';
+  const aggregateChildLabel = useMemo(() => {
+    if (resolvedActiveChildIds.length === 0 || resolvedActiveChildIds.length >= allChildIds.length) {
+      return null;
+    }
+    const names = resolvedActiveChildIds
+      .map((id) => childNameById[id] || null)
+      .filter(Boolean);
+    if (names.length === 0) return null;
+    if (names.length === 1) return names[0];
+    if (names.length === 2) return `${names[0]} & ${names[1]}`;
+    return names.join(', ');
+  }, [resolvedActiveChildIds, allChildIds.length, childNameById]);
+  const progressDisplayName = aggregateChildLabel || selectedStudent?.name || 'Student';
+  const showAggregateChildScope = resolvedActiveChildIds.length !== 1;
   const progressHeaderTitle = isChildView ? `${progressDisplayName} - Your Progress` : `${progressDisplayName}'s Progress`;
   const subjectsSectionTitle = isChildView ? 'Your Subjects' : `${progressDisplayName}'s Subjects`;
   const attendanceSectionTitle = isChildView
     ? 'Your Attendance - All Subjects'
-    : `${progressDisplayName}'s Attendance - All Subjects`;
+    : (showAggregateChildScope
+      ? 'Attendance - All Subjects'
+      : `${progressDisplayName}'s Attendance - All Subjects`);
   const gradesSectionTitle = isChildView
     ? 'Your Grades - All Subjects'
-    : `${progressDisplayName}'s Grades - All Subjects`;
+    : (showAggregateChildScope
+      ? 'Grades - All Subjects'
+      : `${progressDisplayName}'s Grades - All Subjects`);
+  const showFullProgressChrome = sectionsMode === 'full';
+  const hasAggregateSubjectScope = (filteredSubjects || []).length > 0;
+  const showAttendanceGradesSections = sectionsMode === 'attendanceGradesOnly'
+    ? hasAggregateSubjectScope
+    : sectionsMode === 'full' && subjectProgressRows.length > 0;
+  const showAllEventsSection = (
+    sectionsMode === 'attendanceGradesOnly' || sectionsMode === 'allEventsOnly'
+  ) && hasAggregateSubjectScope;
+  const allEventsProgressSummary = useMemo(() => {
+    if (!showAllEventsSection || !planProgressContext?.rows?.length) return null;
+    const metrics = aggregatePlanProgressMetrics(planProgressContext.rows, {
+      yearTargetsDisplayRows: planProgressContext.yearTargetsDisplayRows || [],
+      subjectIds: resolvedActiveSubjectIds,
+    });
+    const status = getPlanProgressStatusFromMetrics(metrics, { hasCadence: metrics.hasCadence });
+    return {
+      summaryLine: formatPlanProgressSummary(metrics),
+      ...status,
+    };
+  }, [showAllEventsSection, planProgressContext, resolvedActiveSubjectIds]);
+  const allEventsGapSection = useMemo(() => {
+    if (!showAllEventsSection || typeof planProgressContext?.renderAllEventsGap !== 'function') return null;
+    return planProgressContext.renderAllEventsGap(resolvedActiveSubjectIds);
+  }, [showAllEventsSection, planProgressContext, resolvedActiveSubjectIds]);
   const learningHighlights = useMemo(() => {
     const now = Date.now();
     const futureUnits = new Set();
@@ -1601,11 +1833,9 @@ export default function ProgressTab({
 
   const isWeb = Platform.OS === 'web';
   const canEditChildButton = typeof onEditChild === 'function' && !!selectedStudentRecord;
-  return (
-    <View style={styles.page}>
-      <View style={styles.progressShell}>
-        <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} showsVerticalScrollIndicator={false}>
-        {!hideYearHeader ? (
+  const progressMainContent = (
+        <>
+        {showFullProgressChrome && !hideYearHeader ? (
           <View style={styles.headerRow}>
             <View style={styles.yearHeaderNavShell}>
               <TouchableOpacity style={styles.yearHeaderNavBtn} onPress={() => setSelectedAcademicYearStart((prev) => prev - 1)}>
@@ -1619,7 +1849,7 @@ export default function ProgressTab({
           </View>
         ) : null}
 
-        {!isChildView ? (
+        {showFullProgressChrome && !isChildView ? (
           <View style={styles.progressHeader}>
             <View style={[styles.progressHeaderTop, !isWeb && styles.progressHeaderTopStacked]}>
               <View style={styles.progressHeaderTitleSection}>
@@ -1653,6 +1883,7 @@ export default function ProgressTab({
             </View>
           </View>
         ) : null}
+        {showFullProgressChrome ? (
         <View style={[styles.section, styles.subjectsSection]}>
           <Text style={styles.sectionTitle}>{subjectsSectionTitle}</Text>
           {subjectProgressRows.length === 0 ? (
@@ -1677,9 +1908,10 @@ export default function ProgressTab({
             </View>
           )}
         </View>
-        {subjectProgressRows.length > 0 ? (
+        ) : null}
+        {showAttendanceGradesSections ? (
           <>
-            <View style={styles.section}>
+            <View style={[styles.section, embeddedInScrollView && styles.sectionEmbedded]}>
               <View style={styles.attendanceSectionHeader}>
                 <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>{attendanceSectionTitle}</Text>
                 <View style={styles.sectionHeaderActions}>
@@ -1761,7 +1993,14 @@ export default function ProgressTab({
                               <Text style={styles.attendanceItemDate}>{formatDate(record.day_date)}</Text>
                               <View style={styles.progressAttendanceTitleWrap}>
                                 <Text style={styles.attendanceItemTitle}>{record?.title || 'Lesson'}</Text>
-                                <Text style={styles.progressAttendanceSubjectText}>{record?.subjectName || 'Subject'}</Text>
+                                <Text style={styles.progressAttendanceSubjectText}>
+                                  {formatAttendanceEventSubline(
+                                    event,
+                                    childNameById,
+                                    event ? resolveChildIdsForAttendanceEvent(event) : [],
+                                    record?.minutes
+                                  )}
+                                </Text>
                               </View>
                               <View style={styles.attendanceItemStatusWrap}>
                                 <View
@@ -1783,7 +2022,6 @@ export default function ProgressTab({
                                   {statusLabel}
                                 </Text>
                               </View>
-                              <Text style={styles.attendanceItemMinutes}>{record.minutes} min</Text>
                             </TouchableOpacity>
                             </View>
                           );
@@ -1805,7 +2043,9 @@ export default function ProgressTab({
                     </>
                   ) : (
                     <Text style={styles.emptyStateText}>
-                      Attendance appears once you add an event attached to this child.
+                      {sectionsMode === 'attendanceGradesOnly'
+                        ? 'Attendance appears once you add events for the selected children.'
+                        : 'Attendance appears once you add an event attached to this child.'}
                     </Text>
                   )
                 ) : (
@@ -1813,7 +2053,7 @@ export default function ProgressTab({
                 )}
               </View>
             </View>
-            <View style={styles.section}>
+            <View style={[styles.section, embeddedInScrollView && styles.sectionEmbedded]}>
               <View style={styles.gradesSectionHeader}>
                 <View style={styles.gradesSectionTitleRow}>
                   <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>{gradesSectionTitle}</Text>
@@ -1877,18 +2117,101 @@ export default function ProgressTab({
                     })}
                   </View>
                 ) : (
-                  <Text style={styles.emptyStateText}>
-                    Grades appear once events for this child are graded.
-                  </Text>
+                    <Text style={styles.emptyStateText}>
+                      {sectionsMode === 'attendanceGradesOnly'
+                        ? 'Grades appear once events for the selected children are graded.'
+                        : 'Grades appear once events for this child are graded.'}
+                    </Text>
                 )}
               </View>
             </View>
           </>
         ) : null}
+        {showAllEventsSection ? (
+          <View style={[styles.section, embeddedInScrollView && styles.sectionEmbedded]}>
+            <View style={styles.allEventsSectionHeader}>
+              <View style={styles.allEventsTitleRow}>
+                <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>All Events</Text>
+                {typeof onOpenExportModal === 'function' ? (
+                  <TouchableOpacity
+                    style={styles.allEventsExportButton}
+                    onPress={onOpenExportModal}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Export subjects data"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Download size={18} color="rgba(15,23,42,0.7)" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              {(allEventsProgressSummary?.summaryLine || allEventsGapSection?.gapCell) ? (
+                <View style={styles.allEventsProgressMetaRow}>
+                  {allEventsProgressSummary?.summaryLine ? (
+                    <Text style={styles.allEventsProgressMetric}>{allEventsProgressSummary.summaryLine}</Text>
+                  ) : null}
+                  {allEventsProgressSummary?.showStatusChip ? (
+                    <View
+                      style={[
+                        styles.allEventsProgressChip,
+                        allEventsProgressSummary.statusTone === 'behind' && styles.allEventsProgressChipBehind,
+                        allEventsProgressSummary.statusTone === 'ahead' && styles.allEventsProgressChipAhead,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.allEventsProgressChipText,
+                          allEventsProgressSummary.statusTone === 'behind' && styles.allEventsProgressChipTextBehind,
+                          allEventsProgressSummary.statusTone === 'ahead' && styles.allEventsProgressChipTextAhead,
+                        ]}
+                      >
+                        {allEventsProgressSummary.statusLabel}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {allEventsGapSection?.gapCell || null}
+                </View>
+              ) : null}
+              {allEventsGapSection?.expandedRow || null}
+            </View>
+            <View style={styles.progressSectionBody}>
+              <SubjectAllEventsSection
+                events={allEventsAggregate.events}
+                eventOutcomes={allEventsAggregate.eventOutcomes}
+                materials={allEventsAggregate.materials}
+                eventAttachmentMaterials={allEventsAggregate.eventAttachmentMaterials}
+                assignmentsByEventId={allEventsAggregate.assignmentsByEventId}
+                isParentViewer={!isChildView}
+                children={children}
+                onEventPress={(event) => handleOpenEventDetails(event?.id, event)}
+                onEventRightClick={handleEventContextMenu}
+                resolveEventAttendanceState={resolveAllEventsAttendanceState}
+                onToggleEventAttendance={canManageAttendance ? handleAllEventsAttendanceToggle : undefined}
+                onAttachmentPress={(_material, event) => {
+                  if (event?.id) handleOpenEventDetails(event.id, event);
+                }}
+                onMessageAboutAssignment={(event) => handleOpenEventDetails(event?.id, event)}
+                onSubmittalAction={(event) => handleOpenEventDetails(event?.id, event)}
+                canManageEvents={canManageAttendance}
+              />
+            </View>
+          </View>
+        ) : null}
 
+        </>
+  );
 
-        </ScrollView>
-      </View>
+  return (
+    <View style={embeddedInScrollView ? styles.pageEmbedded : styles.page}>
+      {embeddedInScrollView ? (
+        <View style={styles.contentInnerEmbedded}>{progressMainContent}</View>
+      ) : (
+        <View style={styles.progressShell}>
+          <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} showsVerticalScrollIndicator={false}>
+            {progressMainContent}
+          </ScrollView>
+        </View>
+      )}
       <SubjectPastEventsAttendanceModal
         visible={!!attendanceModalSubjectId}
         onClose={() => setAttendanceModalSubjectId(null)}
@@ -1995,6 +2318,27 @@ export default function ProgressTab({
 
 const styles = StyleSheet.create({
   page: { flex: 1, backgroundColor: '#FFFFFF' },
+  pageEmbedded: {
+    width: '100%',
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      flexShrink: 0,
+      position: 'relative',
+    }),
+  },
+  contentInnerEmbedded: {
+    width: '100%',
+    paddingTop: 0,
+    paddingBottom: 0,
+  },
+  sectionEmbedded: {
+    marginTop: 0,
+    marginBottom: 28,
+    paddingHorizontal: 0,
+  },
   progressShell: { flex: 1, flexDirection: 'row', alignItems: 'stretch' },
   content: { flex: 1 },
   contentInner: { paddingTop: 12, paddingBottom: 20 },
@@ -2198,6 +2542,54 @@ const styles = StyleSheet.create({
   subjectsSection: { marginTop: 30 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1F2937', marginBottom: 16, ...WEB_HEADING_FONT },
   attendanceSectionHeader: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 10 },
+  allEventsSectionHeader: { marginBottom: 10 },
+  allEventsTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  allEventsExportButton: {
+    padding: 4,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  allEventsProgressMetaRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  allEventsProgressMetric: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1F2937',
+    ...WEB_BODY_FONT,
+  },
+  allEventsProgressChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  allEventsProgressChipBehind: {
+    borderColor: '#FDBA74',
+    backgroundColor: '#FFF7ED',
+  },
+  allEventsProgressChipAhead: {
+    borderColor: '#6EE7B7',
+    backgroundColor: '#ECFDF5',
+  },
+  allEventsProgressChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    ...WEB_BODY_FONT,
+  },
+  allEventsProgressChipTextBehind: {
+    color: '#C2410C',
+  },
+  allEventsProgressChipTextAhead: {
+    color: '#047857',
+  },
   gradesSectionHeader: { marginBottom: 10 },
   gradesSectionTitleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   gradesHeaderAddButton: { marginLeft: 'auto' },
@@ -2298,7 +2690,6 @@ const styles = StyleSheet.create({
   attendanceItemStatusUpcoming: { color: '#86b5e6', fontWeight: '600' },
   attendanceShowMoreBtn: { marginTop: 12, paddingVertical: 10, paddingHorizontal: 14, alignSelf: 'flex-start', borderRadius: 8, backgroundColor: '#F3F4F6', ...(Platform.OS === 'web' && { cursor: 'pointer' }) },
   attendanceShowMoreText: { fontSize: 14, fontWeight: '500', color: '#4F46E5', ...WEB_HEADING_FONT },
-  attendanceItemMinutes: { fontSize: 12, color: '#6B7280', width: 50, textAlign: 'right', ...WEB_BODY_FONT },
   gradeList: { gap: 8 },
   gradeItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, backgroundColor: '#F9FAFB', borderRadius: 8 },
   gradeItemContent: { flex: 1 },

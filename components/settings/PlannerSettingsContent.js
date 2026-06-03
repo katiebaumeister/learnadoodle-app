@@ -741,7 +741,6 @@ export default function PlannerSettingsContent({
       normalizedLockedSchoolYearLabel || '',
       selectedYearLabel || '',
       initialDataYearLabel || '',
-      initialDataSignature,
     ].join('::');
     if (appliedInitialDataKeyRef.current === initialDataApplyKey) return;
     appliedInitialDataKeyRef.current = initialDataApplyKey;
@@ -1176,13 +1175,26 @@ export default function PlannerSettingsContent({
         };
         const { error: settingsErr } = await saveFamilyPlannerSettings(familyId, settingsPayload, selectedSchoolYearLabel);
         if (settingsErr) throw settingsErr;
-        const { error: exErr } = await syncFamilyHolidayBreakExclusions(
+        const syncResult = await syncFamilyHolidayBreakExclusions(
           familyId,
           s.customHolidays,
           s.customBreaks,
           selectedSchoolYearLabel
         );
-        if (exErr) throw exErr;
+        if (syncResult?.error) throw syncResult.error;
+        const syncedCustomHolidays = Array.isArray(syncResult?.customHolidays)
+          ? syncResult.customHolidays
+          : (Array.isArray(s.customHolidays) ? s.customHolidays : []);
+        const syncedCustomBreaks = Array.isArray(syncResult?.customBreaks)
+          ? syncResult.customBreaks
+          : (Array.isArray(s.customBreaks) ? s.customBreaks : []);
+        setCustomHolidays(syncedCustomHolidays);
+        setCustomBreaks(syncedCustomBreaks);
+        stateRef.current = {
+          ...(stateRef.current || {}),
+          customHolidays: syncedCustomHolidays,
+          customBreaks: syncedCustomBreaks,
+        };
         // Persist per-subject pacing targets from current modal state.
         const subjectTargetEntries = Array.isArray(visibleSubjects)
           ? visibleSubjects.map((subj) => {
@@ -1209,7 +1221,6 @@ export default function PlannerSettingsContent({
         }
         showSaved();
         if (embeddedInModal) setHasPendingModalSave(false);
-        loadDefaults(); // refresh to get new exclusion ids
         onSave?.();
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
@@ -1226,7 +1237,7 @@ export default function PlannerSettingsContent({
         setSaving(false);
       }
     },
-    [familyId, onSave, toast, loadDefaults, readOnly, selectedSchoolYearLabel, visibleSubjects, embeddedInModal]
+    [familyId, onSave, toast, readOnly, selectedSchoolYearLabel, visibleSubjects, embeddedInModal]
   );
 
   const queuePersist = useCallback((delayMs = 300) => {

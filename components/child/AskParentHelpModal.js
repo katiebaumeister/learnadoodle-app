@@ -79,6 +79,8 @@ export default function AskParentHelpModal({
   assignment = null,
   /** Event context when opened from event details (may or may not have a linked assignment) */
   eventContext = null,
+  titleOverride = null,
+  ctaTextOverride = null,
 }) {
   const [reasonId, setReasonId] = useState('understand');
   const [note, setNote] = useState('');
@@ -318,7 +320,7 @@ export default function AskParentHelpModal({
             contentContainerStyle={styles.scrollContent}
           >
             <Text style={styles.contextTitle} numberOfLines={1}>
-              {contextHeaderLine}
+              {titleOverride || contextHeaderLine}
             </Text>
 
             {/* Zone 2 — decision (chips) */}
@@ -382,7 +384,7 @@ export default function AskParentHelpModal({
                     <View style={styles.ctaIconWrap}>
                       <Send size={12} color="#5B6880" />
                     </View>
-                    <Text style={styles.ctaText}>Send to parent</Text>
+                    <Text style={styles.ctaText}>{ctaTextOverride || 'Send to parent'}</Text>
                   </View>
                 )}
               </TouchableOpacity>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, FlatList, TouchableOpacity, Platform, StyleSheet, Alert } from 'react-native';
 import { Calendar, CalendarDays, List, Archive, Trash2, Plus, CheckCircle2, Circle } from 'lucide-react';
 import { addDays, isSameDay, startOfToday } from './utils/date';
@@ -22,6 +22,7 @@ export default function TasksView({
   preloadedTrashEvents = null,
   plannerHolidaysCache = {},
   plannerExclusions = [],
+  plannerShellVisible = true,
 }) {
   const isDoneStatus = useCallback((statusValue) => {
     const normalized = String(statusValue || '').trim().toLowerCase();
@@ -40,7 +41,7 @@ export default function TasksView({
   const buildSyntheticHolidayId = useCallback((dateYmd, label, holidayType) => {
     const safeDate = String(dateYmd || '').slice(0, 10);
     const safeLabel = String(label || '').trim();
-    const labelSlug = safeLabel.replace(/\s+/g, '-').slice(0, 30) || 'holiday';
+    const labelSlug = safeLabel.toLowerCase().replace(/\s+/g, '-').slice(0, 30) || 'holiday';
     const typeSlug = String(normalizeHolidayType(holidayType) || 'CUSTOM_HOLIDAY').toLowerCase();
     return `holiday-${typeSlug}-${safeDate}-${labelSlug}`;
   }, [normalizeHolidayType]);
@@ -65,6 +66,31 @@ export default function TasksView({
     if (!ymd) return null;
     return `${ymd}T12:00:00.000Z`;
   }, []);
+  const buildHolidayDedupKey = useCallback((ev) => {
+    if (!ev || typeof ev !== 'object') return '';
+    const holidayType = normalizeHolidayType(ev?.holiday_type || ev?.holidayType || ev?.data?.holiday_type);
+    const eventType = normalizeEventTypeLower(ev);
+    const isHolidayLike =
+      eventType === 'holiday' ||
+      eventType === 'break' ||
+      holidayType === 'CUSTOM_BREAK' ||
+      holidayType === 'CUSTOM_HOLIDAY' ||
+      holidayType === 'GLOBAL_HOLIDAY';
+    if (!isHolidayLike) return '';
+    const dateYmd =
+      String(ev?.date_local || ev?.date || '').slice(0, 10) ||
+      String(resolveEventDateValue(ev) || '').slice(0, 10);
+    if (!dateYmd) return '';
+    const fallbackLabel = holidayType === 'CUSTOM_BREAK' || eventType === 'break' ? 'break' : 'day off';
+    const label = String(ev?.title || ev?.name || ev?.label || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ') || fallbackLabel;
+    const normalizedType =
+      holidayType ||
+      (eventType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY');
+    return `holiday:${normalizedType}:${dateYmd}:${label}`;
+  }, [normalizeHolidayType, normalizeEventTypeLower, resolveEventDateValue]);
   const expandPlannerExclusionsForRange = useCallback((rangeStart, rangeEnd) => {
     if (!(rangeStart instanceof Date) || Number.isNaN(rangeStart.getTime())) return [];
     if (!(rangeEnd instanceof Date) || Number.isNaN(rangeEnd.getTime())) return [];
@@ -789,22 +815,24 @@ export default function TasksView({
         ...(Array.isArray(sectionEvents) ? sectionEvents : []),
         ...sectionRangeEvents,
       ].filter(Boolean);
-      const byId = new Map();
+      const byKey = new Map();
       merged.forEach((ev) => {
+        const holidayKey = buildHolidayDedupKey(ev);
         const id = String(ev?.id || '');
-        if (!id) return;
-        const existing = byId.get(id);
+        const dedupeKey = holidayKey || (id ? `id:${id}` : '');
+        if (!dedupeKey) return;
+        const existing = byKey.get(dedupeKey);
         if (!existing) {
-          byId.set(id, ev);
+          byKey.set(dedupeKey, ev);
           return;
         }
         const existingHasDate = !!resolveEventDateValue(existing);
         const incomingHasDate = !!resolveEventDateValue(ev);
         if (!existingHasDate && incomingHasDate) {
-          byId.set(id, ev);
+          byKey.set(dedupeKey, ev);
         }
       });
-      return Array.from(byId.values());
+      return Array.from(byKey.values());
     })();
     
     switch (section) {
@@ -1256,7 +1284,9 @@ export default function TasksView({
 
   const denseListRef = useRef(null);
   const prevActiveSectionRef = useRef(activeSection);
+  const prevPlannerShellVisibleRef = useRef(plannerShellVisible);
   const [allOpenVersion, setAllOpenVersion] = useState(0);
+  const [listVisibilityEpoch, setListVisibilityEpoch] = useState(0);
   const allWindowExpandAtRef = useRef({ past: 0, future: 0 });
   const hasCenteredAllRef = useRef(false);
   const denseTodayIndex = useMemo(
@@ -1300,6 +1330,33 @@ export default function TasksView({
     if (denseTodayIndex < 0) return;
     hasCenteredAllRef.current = true;
   }, [activeSection, denseTodayIndex, groupedDenseRows.length]);
+
+  const recenterDenseList = useCallback(() => {
+    if (!isDenseCalendarSection || denseTodayIndex < 0) return;
+    const target = Math.max(0, denseTodayIndex);
+    denseListRef.current?.scrollToIndex?.({ index: target, animated: false, viewPosition: 0 });
+  }, [isDenseCalendarSection, denseTodayIndex]);
+
+  useLayoutEffect(() => {
+    const wasVisible = prevPlannerShellVisibleRef.current;
+    prevPlannerShellVisibleRef.current = plannerShellVisible;
+    if (!plannerShellVisible || wasVisible) return;
+    setListVisibilityEpoch((value) => value + 1);
+  }, [plannerShellVisible]);
+
+  useLayoutEffect(() => {
+    if (!plannerShellVisible || !isDenseCalendarSection) return;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        recenterDenseList();
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [plannerShellVisible, isDenseCalendarSection, listVisibilityEpoch, recenterDenseList]);
 
   const maybeExpandAllPast = useCallback(() => {
     if (activeSection !== 'all') return;
@@ -1498,7 +1555,7 @@ export default function TasksView({
         ) : isDenseCalendarSection ? (
           <View style={styles.tasksList}>
             <FlatList
-              key={activeSection === 'all' ? `all-${allOpenVersion}` : `dense-${activeSection}`}
+              key={activeSection === 'all' ? `all-${allOpenVersion}-${listVisibilityEpoch}` : `dense-${activeSection}-${listVisibilityEpoch}`}
               ref={denseListRef}
               style={styles.tasksList}
               data={groupedDenseRows}
@@ -1546,7 +1603,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
-      height: '100vh',
+      minHeight: 0,
+      height: '100%',
       overflow: 'hidden',
     }),
   },
@@ -1623,6 +1681,7 @@ const styles = StyleSheet.create({
   },
   mainContent: {
     flex: 1,
+    flexDirection: 'column',
     padding: 24,
     ...(Platform.OS === 'web' && {
       minHeight: 0,
@@ -1680,6 +1739,7 @@ const styles = StyleSheet.create({
   tasksList: {
     flex: 1,
     minHeight: 0,
+    alignSelf: 'stretch',
     ...(Platform.OS === 'web' && {
       overflowY: 'auto',
     }),

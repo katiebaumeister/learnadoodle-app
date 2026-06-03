@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import {
   Search,
-  HelpCircle,
   Plus,
   X,
   ChevronLeft,
@@ -40,7 +39,6 @@ import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
 import ProgressTab from './ProgressTab';
 import { useToast } from '../Toast';
-import HelpPopover from '../planner/HelpPopover';
 import PlannerSettingsContent from '../settings/PlannerSettingsContent';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
 
@@ -258,6 +256,7 @@ export default function SubjectsPage({
   const [selectedModeFilter, setSelectedModeFilter] = useState(() => readStoredSubjectsMode(modeStorageKey) || 'view');
   const [selectedYearFilter, setSelectedYearFilter] = useState(() => getCurrentSchoolYear());
   const [selectedTermFilter, setSelectedTermFilter] = useState(ALL_TERMS_FILTER);
+  const [selectedCourseSubjectIds, setSelectedCourseSubjectIds] = useState([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [pendingScheduleModalRequest, setPendingScheduleModalRequest] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
@@ -271,13 +270,6 @@ export default function SubjectsPage({
   const [attendanceByChildForCompliance, setAttendanceByChildForCompliance] = useState(null); // { [childId]: { daysPresent } }
   const loadingRef = useRef(false);
   const preloadingRef = useRef(false);
-  const helpButtonRef = useRef(null);
-  const exportButtonRef = useRef(null);
-  const helpPopoverCloseTimerRef = useRef(null);
-  const [showHelpPopover, setShowHelpPopover] = useState(false);
-  const [helpPopoverPosition, setHelpPopoverPosition] = useState({ top: 0, left: 0 });
-  const [showExportHint, setShowExportHint] = useState(false);
-  const [exportHintPosition, setExportHintPosition] = useState({ top: 0, left: 0 });
   const [showSubjectsExportModal, setShowSubjectsExportModal] = useState(false);
   const [showPlanningPreferencesModal, setShowPlanningPreferencesModal] = useState(false);
   const [planningPreferencesSchoolYearLabel, setPlanningPreferencesSchoolYearLabel] = useState(null);
@@ -398,60 +390,6 @@ export default function SubjectsPage({
       setSubjectsExportFormat('pdf');
     }
   }, [subjectsExportType, subjectsExportFormat]);
-
-  const clearHelpPopoverCloseTimer = useCallback(() => {
-    if (helpPopoverCloseTimerRef.current) {
-      clearTimeout(helpPopoverCloseTimerRef.current);
-      helpPopoverCloseTimerRef.current = null;
-    }
-  }, []);
-
-  const updateHelpPopoverPosition = useCallback(() => {
-    if (Platform.OS === 'web' && helpButtonRef.current) {
-      const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
-      if (node && typeof node.getBoundingClientRect === 'function') {
-        const rect = node.getBoundingClientRect();
-        setHelpPopoverPosition({
-          top: rect.bottom + 4,
-          left: rect.left,
-        });
-      }
-    }
-  }, []);
-
-  const openHelpPopover = useCallback(() => {
-    clearHelpPopoverCloseTimer();
-    updateHelpPopoverPosition();
-    setShowHelpPopover(true);
-  }, [clearHelpPopoverCloseTimer, updateHelpPopoverPosition]);
-
-  const openExportHint = useCallback(() => {
-    if (Platform.OS === 'web' && exportButtonRef.current) {
-      const node = exportButtonRef.current._nativeNode || exportButtonRef.current;
-      if (node && typeof node.getBoundingClientRect === 'function') {
-        const rect = node.getBoundingClientRect();
-        setExportHintPosition({
-          top: rect.bottom + 8,
-          left: rect.left - 30,
-        });
-      }
-    }
-    setShowExportHint(true);
-  }, []);
-
-  const closeExportHint = useCallback(() => {
-    setShowExportHint(false);
-  }, []);
-
-  const scheduleHelpPopoverClose = useCallback(() => {
-    clearHelpPopoverCloseTimer();
-    helpPopoverCloseTimerRef.current = setTimeout(() => {
-      setShowHelpPopover(false);
-      helpPopoverCloseTimerRef.current = null;
-    }, 120);
-  }, [clearHelpPopoverCloseTimer]);
-
-  useEffect(() => () => clearHelpPopoverCloseTimer(), [clearHelpPopoverCloseTimer]);
 
   // Update local cache when prop changes
   useEffect(() => {
@@ -957,6 +895,46 @@ export default function SubjectsPage({
     });
   }, [isChildView]);
 
+  const allCourseSubjectIds = useMemo(
+    () => (filteredSubjects || []).map((subject) => String(subject?.id || '').trim()).filter(Boolean),
+    [filteredSubjects]
+  );
+
+  useEffect(() => {
+    setSelectedCourseSubjectIds((prev) => {
+      const prevSet = new Set((Array.isArray(prev) ? prev : []).map(String));
+      if (!allCourseSubjectIds.length) return [];
+      const retained = allCourseSubjectIds.filter((id) => prevSet.has(id));
+      return retained.length > 0 ? retained : allCourseSubjectIds;
+    });
+  }, [allCourseSubjectIds.join('|')]);
+
+  const effectiveCoursesSubjectIds = useMemo(() => {
+    if (!allCourseSubjectIds.length) return [];
+    const selectedSet = new Set(
+      (Array.isArray(selectedCourseSubjectIds) ? selectedCourseSubjectIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)
+    );
+    const valid = allCourseSubjectIds.filter((id) => selectedSet.has(id));
+    return valid.length > 0 ? valid : allCourseSubjectIds;
+  }, [allCourseSubjectIds, selectedCourseSubjectIds]);
+
+  const toggleCourseSubjectFilter = useCallback((subjectId) => {
+    const safeId = String(subjectId || '').trim();
+    if (!safeId) return;
+    setSelectedCourseSubjectIds((prev) => {
+      const current = Array.isArray(prev)
+        ? prev.map((id) => String(id || '').trim()).filter(Boolean)
+        : [];
+      const exists = current.includes(safeId);
+      if (exists) {
+        return current.length <= 1 ? current : current.filter((id) => id !== safeId);
+      }
+      return [...current, safeId];
+    });
+  }, []);
+
   const handleSubjectClick = useCallback((subject, sectionOverride = null, materialId = null, progressAction = null) => {
     if (!subject?.id) return;
     const sectionId = sectionOverride || detectedSectionFromSearch || null;
@@ -1037,6 +1015,41 @@ export default function SubjectsPage({
     }
     if (onAddSubject) onAddSubject(detail);
   }, [selectedCoursesYear, effectiveSubjectPrefillTerm, prefilledSubjectChildIds, onAddSubject]);
+  const openAddEventWithCurrentHeaders = useCallback(() => {
+    const detail = {
+      eventType: 'Lesson',
+      date: new Date(),
+    };
+    if (effectiveCoursesChildIds.length > 0) {
+      detail.childIds = effectiveCoursesChildIds.map(String);
+      detail.childId = detail.childIds[0] || null;
+    } else if (prefilledSubjectChildIds.length > 0) {
+      detail.childIds = prefilledSubjectChildIds.map(String);
+      detail.childId = detail.childIds[0] || null;
+    }
+    const preferredSubjectId = (
+      effectiveCoursesSubjectIds.length === 1
+        ? effectiveCoursesSubjectIds[0]
+        : (effectiveCoursesSubjectIds[0] || filteredSubjects[0]?.id || null)
+    );
+    if (preferredSubjectId) {
+      detail.subjectId = preferredSubjectId;
+    }
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openTaskModal', { detail }));
+      return;
+    }
+    if (onAddEvent && preferredSubjectId) {
+      const subject = (filteredSubjects || []).find((entry) => String(entry?.id) === String(preferredSubjectId));
+      if (subject) onAddEvent(subject);
+    }
+  }, [
+    effectiveCoursesChildIds,
+    prefilledSubjectChildIds,
+    effectiveCoursesSubjectIds,
+    filteredSubjects,
+    onAddEvent,
+  ]);
   const emptyStateYearTermLabel = useMemo(() => {
     const termLabel = selectedTermFilter === ALL_TERMS_FILTER
       ? 'All terms'
@@ -1470,7 +1483,7 @@ export default function SubjectsPage({
     familyId,
   ]);
   const renderCoursesHeaderFilters = useCallback((options = {}) => {
-    const { showTermRow = true, showChildrenRow = true } = options;
+    const { showTermRow = true, showChildrenRow = true, showSubjectRow = true } = options;
     return (
     <>
       {showChildrenRow && showInlineChildrenFilters ? (
@@ -1578,6 +1591,41 @@ export default function SubjectsPage({
           </View>
         </View>
       ) : null}
+
+      {showSubjectRow && allCourseSubjectIds.length > 0 ? (
+        <View style={[styles.filterRow, styles.filterRowBelowTerm]}>
+          <Text style={styles.filterLabel}>Subjects</Text>
+          <View style={styles.filterChipsWrap}>
+            <View style={styles.filterChecklist}>
+              {filteredSubjects.map((subject) => {
+                const subjectIdString = String(subject?.id || '').trim();
+                if (!subjectIdString) return null;
+                const isActive = effectiveCoursesSubjectIds.includes(subjectIdString);
+                return (
+                  <TouchableOpacity
+                    key={subject.id}
+                    style={[
+                      styles.filterOptionChip,
+                      isActive && styles.filterOptionChipActive,
+                    ]}
+                    onPress={() => toggleCourseSubjectFilter(subject.id)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterOptionChipText,
+                        isActive && styles.filterOptionChipTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {subject.name || 'Subject'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      ) : null}
     </>
   );
   }, [
@@ -1590,6 +1638,10 @@ export default function SubjectsPage({
     safeChildren,
     registeredTerms,
     selectedTermFilter,
+    filteredSubjects,
+    allCourseSubjectIds,
+    effectiveCoursesSubjectIds,
+    toggleCourseSubjectFilter,
   ]);
 
   const selectedChildFilterForCards = useMemo(() => {
@@ -1963,6 +2015,12 @@ export default function SubjectsPage({
   }, [canShowChildScheduleTab, canShowChildProgressTab]);
 
   useEffect(() => {
+    if (!isChildView && selectedModeFilter !== 'view') {
+      setSelectedModeFilter('view');
+    }
+  }, [isChildView, selectedModeFilter]);
+
+  useEffect(() => {
     if (selectedModeFilter === 'plan' && !canShowChildScheduleTab) {
       setSelectedModeFilter(canShowChildProgressTab ? 'progress' : 'view');
       return;
@@ -2255,102 +2313,63 @@ export default function SubjectsPage({
           )}
         </View>
         {(!isChildView || isSelfManagedStudentViewer) && (
-          <View style={styles.headerModeWrap}>
+          <View style={[styles.headerModeWrap, !isChildView && styles.headerModeWrapNoPicker]}>
             <View style={styles.headerModeControls}>
-              <View style={styles.modeSegmentedControl}>
-                <TouchableOpacity
-                  style={[
-                    styles.modeSegment,
-                    selectedModeFilter === 'view' && styles.modeSegmentActive,
-                  ]}
-                  onPress={() => handleModeFilterChange('view')}
-                >
-                  <Text
+              {isChildView && isSelfManagedStudentViewer ? (
+                <View style={styles.modeSegmentedControl}>
+                  <TouchableOpacity
                     style={[
-                      styles.modeSegmentText,
-                      selectedModeFilter === 'view' && styles.modeSegmentTextActive,
+                      styles.modeSegment,
+                      selectedModeFilter === 'view' && styles.modeSegmentActive,
                     ]}
-                    numberOfLines={1}
+                    onPress={() => handleModeFilterChange('view')}
                   >
-                    Subjects
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.modeSegment,
-                    selectedModeFilter === 'progress' && styles.modeSegmentActive,
-                  ]}
-                  onPress={() => handleModeFilterChange('progress')}
-                >
-                  <Text
+                    <Text
+                      style={[
+                        styles.modeSegmentText,
+                        selectedModeFilter === 'view' && styles.modeSegmentTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Subjects
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
                     style={[
-                      styles.modeSegmentText,
-                      selectedModeFilter === 'progress' && styles.modeSegmentTextActive,
+                      styles.modeSegment,
+                      selectedModeFilter === 'progress' && styles.modeSegmentActive,
                     ]}
-                    numberOfLines={1}
+                    onPress={() => handleModeFilterChange('progress')}
                   >
-                    Progress
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.modeSegment,
-                    selectedModeFilter === 'plan' && styles.modeSegmentActive,
-                  ]}
-                  onPress={() => handleModeFilterChange('plan')}
-                >
-                  <Text
+                    <Text
+                      style={[
+                        styles.modeSegmentText,
+                        selectedModeFilter === 'progress' && styles.modeSegmentTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Progress
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
                     style={[
-                      styles.modeSegmentText,
-                      selectedModeFilter === 'plan' && styles.modeSegmentTextActive,
+                      styles.modeSegment,
+                      selectedModeFilter === 'plan' && styles.modeSegmentActive,
                     ]}
-                    numberOfLines={1}
+                    onPress={() => handleModeFilterChange('plan')}
                   >
-                    Schedule
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              <TouchableOpacity
-                ref={helpButtonRef}
-                onPress={() => {
-                  if (showHelpPopover) {
-                    clearHelpPopoverCloseTimer();
-                    setShowHelpPopover(false);
-                    return;
-                  }
-                  openHelpPopover();
-                }}
-                style={styles.helpButton}
-                {...(Platform.OS === 'web' && {
-                  cursor: 'pointer',
-                  onMouseEnter: () => {
-                    openHelpPopover();
-                  },
-                  onMouseLeave: () => {
-                    scheduleHelpPopoverClose();
-                  },
-                })}
-              >
-                <HelpCircle size={22} color="rgba(15,23,42,0.7)" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                ref={exportButtonRef}
-                style={styles.exportHeaderButton}
-                onPress={() => {
-                  closeExportHint();
-                  openSubjectsExportModal();
-                }}
-                activeOpacity={0.8}
-                accessibilityRole="button"
-                accessibilityLabel="Export subjects data"
-                {...(Platform.OS === 'web' ? {
-                  cursor: 'pointer',
-                  onMouseEnter: openExportHint,
-                  onMouseLeave: closeExportHint,
-                } : {})}
-              >
-                <Download size={20} color="rgba(15,23,42,0.7)" />
-              </TouchableOpacity>
+                    <Text
+                      style={[
+                        styles.modeSegmentText,
+                        selectedModeFilter === 'plan' && styles.modeSegmentTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Schedule
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
             </View>
           </View>
         )}
@@ -2441,13 +2460,10 @@ export default function SubjectsPage({
               </View>
             )}
           </View>
-          {/* Show + NEW when subject management is allowed (includes self-managed students). */}
-          {canManageSubjectsActions && (
+          {canManageAttendanceActions && (
             <TouchableOpacity
               style={styles.newButton}
-              onPress={() => {
-                openAddSubjectWithCurrentHeaders();
-              }}
+              onPress={openAddEventWithCurrentHeaders}
               activeOpacity={0.8}
               {...(Platform.OS === 'web' && {
                 cursor: 'pointer',
@@ -2459,24 +2475,6 @@ export default function SubjectsPage({
         </View>
       </View>
       <View style={styles.divider} />
-      {showExportHint && Platform.OS === 'web' && (
-        <View style={[styles.exportHintTooltip, { top: exportHintPosition.top, left: exportHintPosition.left }]}>
-          <Text style={styles.exportHintTooltipText}>Export Subjects data</Text>
-        </View>
-      )}
-      {showHelpPopover && Platform.OS === 'web' && (
-        <HelpPopover
-          visible={showHelpPopover}
-          onClose={() => {
-            clearHelpPopoverCloseTimer();
-            setShowHelpPopover(false);
-          }}
-          position={helpPopoverPosition}
-          onMouseEnter={clearHelpPopoverCloseTimer}
-          onMouseLeave={scheduleHelpPopoverClose}
-          descriptionText={"Subjects is your family's subject overview page. Use Progress for child-level attendance, grades, and learning achieved, and Schedule for viewing subject schedules and how they compare to saved targets."}
-        />
-      )}
       {renderPlanningPreferencesModal()}
       {renderSubjectsExportModal()}
 
@@ -2496,6 +2494,7 @@ export default function SubjectsPage({
             onPendingScheduleModalHandled={() => setPendingScheduleModalRequest(null)}
             onDone={() => setSelectedModeFilter('view')}
             onOpenPlannerSettings={openPlanningPreferencesModal}
+            homeSections="yearTargets"
             onOpenSubject={(subjectId) => {
               const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
               if (match) {
@@ -2567,27 +2566,43 @@ export default function SubjectsPage({
             contentContainerStyle={styles.subjectsListContent}
             showsVerticalScrollIndicator={false}
           >
-            {(filteredSubjects || []).filter(s => s?.id).map((subject) => (
-              <SubjectOverviewCard
-                key={subject.id}
-                subject={subject}
-                children={safeChildren}
-                selectedChildFilter={selectedChildFilterForCards}
-                onCardClick={handleSubjectClick}
-                onNeedsHelpPress={(s) => openSubjectToSection(s.id, 'needs-help-section')}
-                onNavigateToPlanner={handleNavigateToPlanner}
-                onAddSyllabus={handleAddSyllabus}
-                onAddEvent={handleAddEvent}
-                onAddMaterial={onAddMaterial}
-                searchPreviewSectionId={activeSearchPreviewSectionId}
-                searchPreviewData={subjectDetailCache[subject.id] || null}
-                searchPreviewTokens={searchTokens}
-                onSearchPreviewMaterialPress={(s, materialId) =>
-                  handleSubjectClick(s, 'materials-section', materialId)
-                }
-                isSearchResultCompact={Boolean(searchQuery.trim())}
-              />
-            ))}
+            <SubjectsPlanBuilder
+              familyId={familyId}
+              planningMode={planningMode}
+              selectedYearFilter={selectedYearFilter}
+              selectedTermFilter={selectedTermFilter}
+              children={safeChildren}
+              visibleSubjects={filteredSubjects}
+              allSubjects={subjects}
+              onOpenPlannerSettings={openPlanningPreferencesModal}
+              homeSections="footerOnly"
+              embeddedInScrollView
+              embeddedFooter={(planProgressContext) => (
+                <ProgressTab
+                  familyId={familyId}
+                  children={safeChildren}
+                  filteredSubjects={filteredSubjects}
+                  subjectDetailCache={subjectDetailCache}
+                  selectedChildFilter={selectedChildFilter}
+                  selectedYearFilter={selectedYearFilter}
+                  hideYearHeader
+                  sectionsMode="allEventsOnly"
+                  embeddedInScrollView
+                  activeChildIds={effectiveCoursesChildIds}
+                  activeSubjectIds={effectiveCoursesSubjectIds}
+                  planProgressContext={planProgressContext}
+                  onOpenExportModal={openSubjectsExportModal}
+                  onRefreshSubjectDetail={refreshSubjectDetailById}
+                  canManageAttendance={canManageAttendanceActions}
+                  onOpenSubject={(subjectId, options = null) => {
+                    const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
+                    if (match) {
+                      handleSubjectClick(match, null, null, options?.action || null);
+                    }
+                  }}
+                />
+              )}
+            />
           </ScrollView>
         </View>
       )}
@@ -2677,14 +2692,6 @@ const styles = StyleSheet.create({
     gap: 12,
     flexShrink: 0,
   },
-  exportHeaderButton: {
-    padding: 4,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  helpButton: {
-    padding: 4,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
   headerModeWrap: {
     flex: 1,
     alignItems: 'center',
@@ -2692,6 +2699,10 @@ const styles = StyleSheet.create({
     minWidth: 0,
     position: 'relative',
     zIndex: 220,
+  },
+  headerModeWrapNoPicker: {
+    flex: 0,
+    justifyContent: 'flex-end',
   },
   headerModeControls: {
     flexDirection: 'row',
@@ -2795,22 +2806,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 24,
     position: 'relative',
     zIndex: 10,
-  },
-  exportHintTooltip: {
-    position: 'fixed',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: 'rgba(15,23,42,0.92)',
-    zIndex: 10020,
-    pointerEvents: 'none',
-  },
-  exportHintTooltipText: {
-    fontSize: 14,
-    color: '#FFFFFF',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   exportModalBackdrop: {
     flex: 1,
@@ -3374,6 +3369,10 @@ const styles = StyleSheet.create({
     marginTop: 0,
     marginBottom: 8,
   },
+  filterRowBelowTerm: {
+    marginTop: 0,
+    marginBottom: 8,
+  },
   childTermFilterRowSpacing: {
     marginTop: 24,
     paddingTop: 4,
@@ -3672,6 +3671,58 @@ const styles = StyleSheet.create({
   },
   subjectsListContent: {
     paddingBottom: 40,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'stretch',
+    }),
+  },
+  subjectsCardsSection: {
+    width: '100%',
+  },
+  subjectsSectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+    marginTop: 0,
+  },
+  subjectsSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  sectionHeaderActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 34,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  sectionHeaderActionButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  subjectsSectionDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginBottom: 16,
   },
   progressCard: {
     backgroundColor: '#FFFFFF',

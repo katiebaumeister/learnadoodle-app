@@ -13,6 +13,7 @@ import {
 } from '../assets/imageAssetMap';
 
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
+const SHOW_MATERIALS_IN_SIDEBAR = false;
 
 const SIDEBAR_BRAND_LOGO = LEARNADOODLE_LOGO_ASSET;
 const SIDEBAR_ICON_SOURCES = SIDEBAR_ICON_ASSETS;
@@ -40,6 +41,7 @@ const CHILD_SECTIONS = [
 
 export default function LeftRail({
   topActive,
+  messagesPaneOpen = false,
   onSelectTop,
   childrenList = [],
   activeChildId,
@@ -128,14 +130,15 @@ export default function LeftRail({
     () => {
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
+        { key: 'messages', label: 'Messages', icon: MessageSquare },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
-        { key: 'subjects', label: 'Subjects', icon: Brain },
+        { key: 'subjects', label: 'Learning', icon: Brain },
         { key: 'materials', label: 'Materials', icon: BookOpen },
         { key: 'profile', label: 'Settings', icon: UserCircle },
         // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
         // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
         // { key: 'subjects', label: 'Learning', icon: null }, // Hidden from sidebar
-      ];
+      ].filter((item) => SHOW_MATERIALS_IN_SIDEBAR || item.key !== 'materials');
 
       // Same sidebar structure for learner roles; content is child-scoped in WebContent
       if (userRole === 'child' || userRole === 'student') {
@@ -152,7 +155,7 @@ export default function LeftRail({
           { key: 'home', label: 'Home', icon: Home },
           { key: 'tutor-students', label: 'My students', icon: Users },
           { key: 'planner', label: 'Planner', icon: CalendarDays },
-          { key: 'materials', label: 'Materials', icon: BookOpen },
+          ...(SHOW_MATERIALS_IN_SIDEBAR ? [{ key: 'materials', label: 'Materials', icon: BookOpen }] : []),
         ];
       } else {
         // Parents see everything except archived items
@@ -240,7 +243,8 @@ export default function LeftRail({
         <View style={styles.sectionGroup}>
           {topNavItems.map((item) => {
             const Icon = item.icon;
-            const active = topActive === item.key;
+            const isMessages = item.key === 'messages';
+            const active = topActive === item.key || (isMessages && messagesPaneOpen);
             const isHovered = hoveredItem === item.key && !active;
             const isHome = item.key === 'home';
             const isPlanner = item.key === 'planner';
@@ -307,6 +311,14 @@ export default function LeftRail({
                         imageKey: 'planner',
                         source: SIDEBAR_ICON_SOURCES.planner,
                         imageStyle: styles.plannerIcon,
+                      })}
+                    </View>
+                  ) : isMessages ? (
+                    <View style={styles.plannerIconContainer}>
+                      {renderStableSidebarImage({
+                        imageKey: 'messages',
+                        source: SIDEBAR_ICON_SOURCES.messages,
+                        imageStyle: styles.messagesIcon,
                       })}
                     </View>
                   ) : isNew ? (
@@ -691,6 +703,10 @@ const styles = StyleSheet.create({
   plannerIcon: {
     width: 46, // Slightly smaller than container to prevent cropping
     height: 46,
+  },
+  messagesIcon: {
+    width: 58,
+    height: 58,
   },
   newIconContainer: {
     width: 48,

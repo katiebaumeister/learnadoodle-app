@@ -62,12 +62,20 @@ import {
 } from './SubjectSectionDrilldownPanels';
 import { supabase } from '../../lib/supabase';
 import SubjectProgressPlanSection from './SubjectProgressPlanSection';
+import AssignmentMessageModal from './AssignmentMessageModal';
+import AssignmentSubmittalRequestModal from './AssignmentSubmittalRequestModal';
+import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
+import SubmitForReviewModal from '../child/SubmitForReviewModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import MaterialDetailsModal from '../materials/MaterialDetailsModal';
 import { archiveMaterial } from '../../lib/services/materialsClient';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_PROGRESS = false;
+const SHOW_SUBJECT_ATTENDANCE_SECTION = false;
+const SHOW_SUBJECT_GRADES_SECTION = false;
+const SHOW_SUBJECT_MATERIALS_SECTION = false;
+const SHOW_SUBJECT_UNITS_LESSONS_SECTION = false;
 const WEEKDAY_PLURALS = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -447,6 +455,10 @@ export default function SubjectDetailPage({
   const [exportTooltipKey, setExportTooltipKey] = useState(null);
   const [exportTooltipPos, setExportTooltipPos] = useState({ x: 0, y: 0 });
   const [helpModalAssignment, setHelpModalAssignment] = useState(null);
+  const [messageModalContext, setMessageModalContext] = useState(null);
+  const [submittalRequestContext, setSubmittalRequestContext] = useState(null);
+  const [reviewAssignment, setReviewAssignment] = useState(null);
+  const [submitModalContext, setSubmitModalContext] = useState(null);
   const [assignedDetailAssignment, setAssignedDetailAssignment] = useState(null);
   const [showMaterialDocViewer, setShowMaterialDocViewer] = useState(false);
   const [materialDocViewerUrl, setMaterialDocViewerUrl] = useState('');
@@ -733,6 +745,7 @@ export default function SubjectDetailPage({
   // Extract data
   const subject = subjectData?.subject;
   const materials = subjectData?.materials || [];
+  const eventAttachmentMaterials = subjectData?.eventAttachmentMaterials || [];
   const upcomingItems = subjectData?.upcomingItems || [];
   const overdueItems = subjectData?.overdueItems || [];
   const nextItem = subjectData?.nextItem;
@@ -873,22 +886,22 @@ export default function SubjectDetailPage({
     if (autoOpenedProgressActionRef.current === actionKey) return;
     autoOpenedProgressActionRef.current = actionKey;
     const t = setTimeout(() => {
-      if (action === 'attendance_edit') {
+      if (action === 'attendance_edit' && SHOW_SUBJECT_ATTENDANCE_SECTION) {
         scrollToSection('attendance-section');
         setShowPastEventsAttendanceModal(true);
         return;
       }
-      if (action === 'grades_add') {
+      if (action === 'grades_add' && SHOW_SUBJECT_GRADES_SECTION) {
         scrollToSection('grades-section');
         setShowPastEventsGradesModal(true);
         return;
       }
-      if (action === 'learning_goals_add') {
+      if (action === 'learning_goals_add' && SHOW_SUBJECT_UNITS_LESSONS_SECTION) {
         scrollToSection('learning-goals-section');
         openLearningGoalsMethodModal();
         return;
       }
-      if (action === 'learning_goals_edit') {
+      if (action === 'learning_goals_edit' && SHOW_SUBJECT_UNITS_LESSONS_SECTION) {
         scrollToSection('learning-goals-section');
         openSubjectUnitsEditor();
       }
@@ -918,6 +931,10 @@ export default function SubjectDetailPage({
       setHighlightedMaterialId(null);
       materialHighlightTimeoutRef.current = null;
     }, 2200);
+    if (!SHOW_SUBJECT_MATERIALS_SECTION) {
+      handleMaterialChipPress(matched);
+      return undefined;
+    }
     scrollToSection('materials-section');
     const t = setTimeout(() => {
       handleMaterialChipPress(matched);
@@ -1659,8 +1676,61 @@ export default function SubjectDetailPage({
   const assignmentAttentionByEventId = subjectData?.assignmentAttentionByEventId;
   const assignmentsNeedingHelp = subjectData?.assignmentsNeedingHelp || [];
   const assignmentsAssignedToStudent = subjectData?.assignmentsAssignedToStudent || [];
+  const assignmentsByEventId = subjectData?.assignmentsByEventId || {};
   const isParentViewer =
     session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
+
+  const openEventWorkflow = useCallback((event, {
+    parentFocus = null,
+    childFocus = null,
+    sendOnly = false,
+    submissionViewOnly = false,
+    assignment = null,
+  } = {}) => {
+    if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    window.dispatchEvent(
+      new CustomEvent('openEventModal', {
+        detail: {
+          eventId: event.id,
+          initialEvent: event,
+          parentEventFocus: parentFocus,
+          childEventFocus: childFocus,
+          sendOnlyMode: sendOnly,
+          submissionViewOnly,
+          assignment,
+        },
+      })
+    );
+  }, []);
+
+  const handleMessageAboutAssignment = useCallback((event, assignment) => {
+    setMessageModalContext({ event, assignment: assignment || null });
+  }, []);
+
+  const handleSubmittalAction = useCallback((event, assignment, viewOnly = false) => {
+    const status = String(assignment?.status || '').trim().toLowerCase();
+    const reviewStatus = String(assignment?.review_status || '').trim().toLowerCase();
+    const isReviewed =
+      reviewStatus === 'reviewed' ||
+      reviewStatus === 'approved' ||
+      status === 'reviewed' ||
+      status === 'accepted';
+    const isSubmitted = status === 'submitted' && !isReviewed;
+
+    if (isParentViewer) {
+      if (assignment && (isSubmitted || isReviewed || viewOnly)) {
+        setReviewAssignment(assignment);
+      } else {
+        setSubmittalRequestContext({ event, assignment: assignment || null });
+      }
+      return;
+    }
+    setSubmitModalContext({ event, assignment: assignment || null, viewOnly });
+  }, [isParentViewer]);
+
+  const refreshSubjectAfterAssignmentWorkflow = useCallback(() => {
+    loadSubjectDetail({ silent: true });
+  }, [loadSubjectDetail]);
 
   const attendanceTargetGuidance = useMemo(() => {
     if (!attendanceTargetProgress || attendanceTargetProgress.mode !== 'days') return null;
@@ -2099,6 +2169,10 @@ export default function SubjectDetailPage({
       onEditSubject?.(initialEvent.subject_id || initialEvent.subjectId);
     }
   }, [onEditSubject]);
+  const handleSubjectEventPress = useCallback((event) => {
+    if (!event?.id) return;
+    handleOpenEventDetails(event.id, event);
+  }, [handleOpenEventDetails]);
   const handleEventContextMenu = useCallback((event, nativeEvent) => {
     if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
     nativeEvent?.preventDefault?.();
@@ -2264,6 +2338,36 @@ export default function SubjectDetailPage({
       return null;
     }
   }, []);
+
+  const handleSubjectEventComplete = useCallback(async (event) => {
+    if (!event?.id) return;
+    const isCurrentlyDone = String(event?.status || '').trim().toLowerCase() === 'done';
+    const newStatus = isCurrentlyDone ? 'scheduled' : 'done';
+    setSubjectData((prev) => {
+      if (!prev) return prev;
+      const nextEvents = (prev.events || []).map((ev) => (
+        String(ev?.id) === String(event.id) ? { ...ev, status: newStatus } : ev
+      ));
+      const nextProgress = computeProgressPercentFromEventsAndAttendance(nextEvents, prev.attendanceRecords || []);
+      return { ...prev, events: nextEvents, progressPercent: nextProgress };
+    });
+    try {
+      await runEventStatusBestEffort(event.id, newStatus);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('eventAttendancePatched', {
+            detail: { eventId: cleanPlannerEventId(String(event.id)), status: newStatus },
+          })
+        );
+        window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: true } }));
+      }
+      await loadSubjectDetail({ silent: true });
+    } catch (err) {
+      console.warn('[SubjectDetailPage] Failed toggling event completion:', err);
+      toast.push(err?.message || 'Could not update event status.', 'error');
+      await loadSubjectDetail({ silent: true });
+    }
+  }, [runEventStatusBestEffort, loadSubjectDetail, toast]);
 
   const emitPlannerAttendanceSync = useCallback((patchedAttendances = [], dateKey = null) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -2947,7 +3051,7 @@ export default function SubjectDetailPage({
           </View>
         ) : null}
 
-        {/* Materials Snapshot */}
+        {SHOW_SUBJECT_MATERIALS_SECTION ? (
         <View id="materials-section" style={styles.section}>
           <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials</Text>
@@ -3050,6 +3154,7 @@ export default function SubjectDetailPage({
             </View>
           )}
         </View>
+        ) : null}
 
         {SHOW_SUBJECT_PROGRESS ? (
           <View id="progress-section" style={styles.section}>
@@ -3068,7 +3173,7 @@ export default function SubjectDetailPage({
           </View>
         ) : null}
 
-        {/* Section 2: Units and Lessons */}
+        {SHOW_SUBJECT_UNITS_LESSONS_SECTION ? (
         <View id="learning-goals-section" style={styles.section}>
           <View style={styles.attendanceSectionHeader}>
             <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Units and Lessons</Text>
@@ -3145,8 +3250,10 @@ export default function SubjectDetailPage({
             ) : null}
           </View>
         </View>
+        ) : null}
 
-        {/* Section 3: Attendance */}
+        {/* Section 3: All Events moved to main Learning screen (ProgressTab) */}
+        {SHOW_SUBJECT_ATTENDANCE_SECTION ? (
         <View id="attendance-section" style={styles.section}>
             <>
               <View style={styles.attendanceSectionHeader}>
@@ -3290,8 +3397,9 @@ export default function SubjectDetailPage({
               )}
             </>
           </View>
+        ) : null}
 
-        {/* Section 4: Grades */}
+        {SHOW_SUBJECT_GRADES_SECTION ? (
         <View id="grades-section" style={styles.section}>
           <View style={styles.gradesSectionHeader}>
             <View style={styles.gradesSectionTitleRow}>
@@ -3421,6 +3529,7 @@ export default function SubjectDetailPage({
             </View>
           )}
         </View>
+        ) : null}
 
       </ScrollView>
       <Modal
@@ -3669,6 +3778,77 @@ export default function SubjectDetailPage({
           loadSubjectDetail({ silent: true });
         }}
       />
+      <AssignmentMessageModal
+        visible={!!messageModalContext}
+        onClose={() => setMessageModalContext(null)}
+        onSent={() => {
+          setMessageModalContext(null);
+          refreshSubjectAfterAssignmentWorkflow();
+        }}
+        familyId={familyId}
+        event={messageModalContext?.event || null}
+        assignment={messageModalContext?.assignment || null}
+        isParentViewer={isParentViewer}
+        children={children}
+        subjectId={subject?.id || null}
+        assignedChildIds={assignedChildren}
+      />
+      <AssignmentSubmittalRequestModal
+        visible={!!submittalRequestContext}
+        onClose={() => setSubmittalRequestContext(null)}
+        onRequested={() => {
+          setSubmittalRequestContext(null);
+          refreshSubjectAfterAssignmentWorkflow();
+        }}
+        familyId={familyId}
+        event={submittalRequestContext?.event || null}
+        assignment={submittalRequestContext?.assignment || null}
+        subjectId={subject?.id || null}
+        assignedChildIds={assignedChildren}
+        children={children}
+        materials={materials}
+        eventAttachmentMaterials={eventAttachmentMaterials}
+        onOpenAttachment={handleMaterialChipPress}
+      />
+      <AssignmentReviewModal
+        visible={!!reviewAssignment}
+        assignment={reviewAssignment}
+        onClose={() => setReviewAssignment(null)}
+        onReviewed={() => {
+          setReviewAssignment(null);
+          refreshSubjectAfterAssignmentWorkflow();
+        }}
+      />
+      {submitModalContext ? (
+        <SubmitForReviewModal
+          visible
+          onClose={() => setSubmitModalContext(null)}
+          onSubmitted={() => {
+            setSubmitModalContext(null);
+            refreshSubjectAfterAssignmentWorkflow();
+          }}
+          familyId={familyId}
+          childId={
+            submitModalContext?.assignment?.child_id ||
+            session?.child_id ||
+            assignedChildren[0] ||
+            null
+          }
+          assignment={submitModalContext?.assignment || null}
+          eventContext={
+            submitModalContext?.event?.id
+              ? {
+                  id: submitModalContext.event.id,
+                  title: submitModalContext.event.title,
+                  start_ts: submitModalContext.event.start_ts,
+                  end_ts: submitModalContext.event.end_ts,
+                  subject_id: submitModalContext.event.subject_id || subject?.id || null,
+                }
+              : null
+          }
+          viewOnly={!!submitModalContext?.viewOnly}
+        />
+      ) : null}
       <AssignmentDetailModal
         visible={!!assignedDetailAssignment}
         assignment={assignedDetailAssignment}

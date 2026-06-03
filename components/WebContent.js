@@ -78,9 +78,33 @@ function normalizeExclusionType(value) {
 function buildSyntheticHolidayId(dateYmd, label, holidayType) {
   const safeDate = String(dateYmd || '').slice(0, 10);
   const safeLabel = String(label || '').trim();
-  const labelSlug = safeLabel.replace(/\s+/g, '-').slice(0, 30) || 'holiday';
+  const labelSlug = safeLabel.toLowerCase().replace(/\s+/g, '-').slice(0, 30) || 'holiday';
   const typeSlug = String(normalizeHolidayType(holidayType) || 'CUSTOM_HOLIDAY').toLowerCase();
   return `holiday-${typeSlug}-${safeDate}-${labelSlug}`;
+}
+
+function buildHolidayDedupKey(eventLike) {
+  if (!eventLike || typeof eventLike !== 'object') return '';
+  const holidayType = normalizeHolidayType(eventLike.holiday_type || eventLike.holidayType);
+  const eventType = String(eventLike.event_type || eventLike.type || '').trim().toLowerCase();
+  const isHolidayLike =
+    eventType === 'holiday' ||
+    eventType === 'break' ||
+    holidayType === 'CUSTOM_BREAK' ||
+    holidayType === 'CUSTOM_HOLIDAY' ||
+    holidayType === 'GLOBAL_HOLIDAY';
+  if (!isHolidayLike) return '';
+  const dateYmd = String(eventLike.date_local || eventLike.date || '').slice(0, 10);
+  if (!dateYmd) return '';
+  const fallbackLabel = holidayType === 'CUSTOM_BREAK' || eventType === 'break' ? 'break' : 'day off';
+  const label = String(eventLike.title || eventLike.name || eventLike.label || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ') || fallbackLabel;
+  const normalizedType =
+    holidayType ||
+    (eventType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY');
+  return `holiday:${normalizedType}:${dateYmd}:${label}`;
 }
 
 function isSyntheticPlannerExclusionEvent(eventLike) {
@@ -9983,12 +10007,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       });
       return mapped;
     })();
-    const byId = new Map();
+    const byKey = new Map();
     [...calendarEventList, ...holidayEvents, ...exclusionHolidayEvents].forEach((ev) => {
-      if (!ev?.id) return;
-      byId.set(String(ev.id), ev);
+      if (!ev) return;
+      const holidayKey = buildHolidayDedupKey(ev);
+      const fallbackKey = ev?.id ? `id:${String(ev.id)}` : '';
+      const dedupeKey = holidayKey || fallbackKey;
+      if (!dedupeKey) return;
+      byKey.set(dedupeKey, ev);
     });
-    return Array.from(byId.values());
+    return Array.from(byKey.values());
   }, [plannerDate, calendarDataCache, calendarEvents, plannerHolidaysCache, plannerSpilloverEventsByDate, plannerExclusionsCache]);
 
   const renderPlannerContent = () => {
@@ -9999,9 +10027,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           flex: 1,
           minHeight: 0,
           ...(Platform.OS === 'web' && {
-            minHeight: 'min(70vh, 560px)',
             display: 'flex',
             flexDirection: 'column',
+            height: '100%',
           }),
         }}
       >
@@ -10029,6 +10057,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
           />
         ) : null}
+        <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
         <CenterPane
         date={date}
         events={plannerEventsForMonth}
@@ -10184,7 +10214,10 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         preloadedBacklogEvents={plannerPreloadedBacklog}
         preloadedTrashEvents={plannerPreloadedTrash}
         plannerAttendanceSnapshot={plannerAttendanceSnapshot}
+        plannerShellVisible={isPlannerShellTab}
       />
+      </View>
+      </View>
       </View>
     );
   };
@@ -10224,7 +10257,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       <ParentHomeScreen
         familyId={fid}
         family={propFamily}
-        hideRailOnboardingCards={options.hideRailOnboardingCards === true}
         onInitialDataReady={onHomeInitialDataReady}
         onNavigate={onTabChange}
         onOpenEvent={(event) => {
@@ -10390,9 +10422,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               />
             );
           }
-          return renderParentHomeCommon(homeFamilyIdForContent, {
-            hideRailOnboardingCards: propSession?.role_flags?.isChild === true,
-          });
+          return renderParentHomeCommon(homeFamilyIdForContent);
         }
         if (isChild && hasAccessibleChildren) {
           return (
@@ -10404,7 +10434,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           );
         }
         if (isChild) {
-          return renderParentHomeCommon(homeFamilyIdForContent, { hideRailOnboardingCards: true });
+          return renderParentHomeCommon(homeFamilyIdForContent);
         }
         if (isTutor) {
           return (
@@ -10652,21 +10682,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   const isPlannerShellTab =
     activeTab === 'planner' || activeTab === 'calendar' || activeTab === 'ai-planner';
   const innerContent = renderContent(persistPlannerWeb);
-  const hiddenPlannerLayerStyle =
-    Platform.OS === 'web'
-      ? {
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          right: 0,
-          bottom: 0,
-          opacity: 0,
-          zIndex: 0,
-          overflow: 'hidden',
-          width: '100%',
-          height: '100%',
-        }
-      : {};
 
   return (
     <>
@@ -10674,11 +10689,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         {persistPlannerWeb ? (
           <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
             <View
-              style={
-                isPlannerShellTab
-                  ? { flex: 1, minHeight: 0, zIndex: 1 }
-                  : hiddenPlannerLayerStyle
-              }
+              style={{
+                flex: 1,
+                minHeight: 0,
+                zIndex: 0,
+                ...(Platform.OS === 'web' && !isPlannerShellTab ? { opacity: 0 } : {}),
+              }}
               pointerEvents={isPlannerShellTab ? 'auto' : 'none'}
             >
               {renderPlannerContent()}
@@ -10686,9 +10702,11 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             {!isPlannerShellTab && innerContent != null ? (
               <View
                 style={{
-                  flex: 1,
+                  ...(Platform.OS === 'web'
+                    ? { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }
+                    : { flex: 1 }),
                   minHeight: 0,
-                  zIndex: 1,
+                  zIndex: 2,
                   backgroundColor: '#fff',
                 }}
               >

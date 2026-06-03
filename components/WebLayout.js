@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, HelpCircle, Download, Bell } from 'lucide-react';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, Download, Bell } from 'lucide-react';
 import { getChildColorFromAvatar } from '../utils/avatarColors';
 import { useAuth } from '../contexts/AuthContext';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
@@ -58,7 +58,6 @@ import PlanWeekModal from './planner/modals/PlanWeekModal';
 import BuildCurriculumModal from './planner/modals/BuildCurriculumModal';
 import ProgressForecastModal from './planner/modals/ProgressForecastModal';
 import SchedulingAssistant from './planner/SchedulingAssistant';
-import HelpPopover from './planner/HelpPopover';
 import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
 import OnboardingModal from './onboarding/OnboardingModal';
 import ExplorerTourOverlay from './onboarding/ExplorerTourOverlay';
@@ -68,6 +67,7 @@ import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressP
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
 import AppLoader, { ensureWebShellImagesLoaded } from './AppLoader';
 import RebalanceModal from './year/RebalanceModal';
+import FamilyMessagesPane from './messages/FamilyMessagesPane';
 import { preloadProviderConnectionLogos } from '../lib/preloadConnectedAccountAssets';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 import { cleanPlannerEventId } from '../lib/utils/recurringEventUtils';
@@ -211,6 +211,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   activeTabRef.current = activeTab;
   const [activeSubtab, setActiveSubtab] = useState(null);
   const [activeTopNav, setActiveTopNav] = useState('home');
+  const [isMessagesPaneOpen, setIsMessagesPaneOpen] = useState(false);
   const [activeChildId, setActiveChildId] = useState(null);
   const [activeChildSection, setActiveChildSection] = useState('affirmation');
   const [showSyllabusUpload, setShowSyllabusUpload] = useState(false);
@@ -637,16 +638,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [filterDropdownPosition, setFilterDropdownPosition] = useState({ top: 0, left: 0 });
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
   const topToolbarFiltersButtonRef = useRef(null);
-  const helpButtonRef = useRef(null);
   const conflictNotificationsButtonRef = useRef(null);
   const conflictNotificationsPopoverRef = useRef(null);
   const conflictNotificationsCloseTimerRef = useRef(null);
-  const [showHelpPopover, setShowHelpPopover] = useState(false);
   const [showConflictNotificationsPopover, setShowConflictNotificationsPopover] = useState(false);
   const [dismissedConflictNotifications, setDismissedConflictNotifications] = useState([]);
-  const [helpPopoverPosition, setHelpPopoverPosition] = useState({ top: 0, left: 0 });
-  const helpPopoverRef = useRef(null);
-  const helpPopoverCloseTimerRef = useRef(null);
   const [showPlannerSettingsPopover, setShowPlannerSettingsPopover] = useState(false);
   const [plannerSettingsPopoverPosition, setPlannerSettingsPopoverPosition] = useState({ top: 0, left: 0 });
   const settingsButtonRef = useRef(null);
@@ -702,13 +698,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return Array.from(found).sort((a, b) => a.localeCompare(b));
   }, [session?.connected_accounts, session?.integrations, session?.provider_connections]);
 
-  const clearHelpPopoverCloseTimer = useCallback(() => {
-    if (helpPopoverCloseTimerRef.current) {
-      clearTimeout(helpPopoverCloseTimerRef.current);
-      helpPopoverCloseTimerRef.current = null;
-    }
-  }, []);
-
   const clearConflictNotificationsCloseTimer = useCallback(() => {
     if (conflictNotificationsCloseTimerRef.current) {
       clearTimeout(conflictNotificationsCloseTimerRef.current);
@@ -730,35 +719,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }, 140);
   }, [clearConflictNotificationsCloseTimer]);
 
-  const updateHelpPopoverPosition = useCallback(() => {
-    if (Platform.OS === 'web' && helpButtonRef.current) {
-      const node = helpButtonRef.current._nativeNode || helpButtonRef.current;
-      if (node && typeof node.getBoundingClientRect === 'function') {
-        const rect = node.getBoundingClientRect();
-        setHelpPopoverPosition({
-          top: rect.bottom + 4,
-          left: rect.left,
-        });
-      }
-    }
-  }, []);
-
-  const openHelpPopover = useCallback(() => {
-    clearHelpPopoverCloseTimer();
-    updateHelpPopoverPosition();
-    setShowPlannerSettingsPopover(false);
-    setShowHelpPopover(true);
-  }, [clearHelpPopoverCloseTimer, updateHelpPopoverPosition]);
-
-  const scheduleHelpPopoverClose = useCallback(() => {
-    clearHelpPopoverCloseTimer();
-    helpPopoverCloseTimerRef.current = setTimeout(() => {
-      setShowHelpPopover(false);
-      helpPopoverCloseTimerRef.current = null;
-    }, 120);
-  }, [clearHelpPopoverCloseTimer]);
-
-  useEffect(() => () => clearHelpPopoverCloseTimer(), [clearHelpPopoverCloseTimer]);
   useEffect(() => () => clearConflictNotificationsCloseTimer(), [clearConflictNotificationsCloseTimer]);
 
   useEffect(() => {
@@ -1195,24 +1155,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       };
     }
   }, [showFiltersDropdown]);
-
-  // Handle click outside Help popover
-  useEffect(() => {
-    if (showHelpPopover && Platform.OS === 'web' && typeof document !== 'undefined') {
-      const handleClickOutside = (event) => {
-        const buttonNode = helpButtonRef.current?._nativeNode || helpButtonRef.current;
-        const popoverNode = helpPopoverRef.current?._nativeNode || helpPopoverRef.current;
-        const target = event.target;
-        const isInsideButton = buttonNode && (buttonNode === target || buttonNode.contains(target));
-        const isInsidePopover = popoverNode && (popoverNode === target || popoverNode.contains(target));
-        if (!isInsideButton && !isInsidePopover) {
-          setShowHelpPopover(false);
-        }
-      };
-      document.addEventListener('click', handleClickOutside, true);
-      return () => document.removeEventListener('click', handleClickOutside, true);
-    }
-  }, [showHelpPopover]);
 
   // Handle click outside conflict notifications popover
   useEffect(() => {
@@ -2475,6 +2417,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     const checkUrlRoute = () => {
       if (isPageReload()) {
         window.history.replaceState({}, '', '/');
+        setIsMessagesPaneOpen(false);
         setActiveTab('home');
         setActiveTopNav((prev) => (prev === 'family' ? prev : 'home'));
         return;
@@ -2508,6 +2451,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const view = urlParams.get('view');
         if (view) {
           setCurrentView(view);
+        }
+      } else if (pathname === '/messages') {
+        if (!isFamilyShellTab(activeTabRef.current)) {
+          setIsMessagesPaneOpen(true);
+          setActiveTopNav('messages');
         }
       } else if (pathname === '/materials' || pathname === '/library') {
         if (pathname === '/materials') {
@@ -3283,6 +3231,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
           handleTabChange('planner');
           break;
+        case 'messages':
+          setIsMessagesPaneOpen((prev) => !prev);
+          break;
         case 'new':
           handleTabChange('settings', 'profile');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -3503,7 +3454,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   // Also ensure right tool is closed when planner first opens
   useEffect(() => {
     const prevTab = prevActiveTabRef.current;
-    const enteringPlanner = activeTab === 'planner' && prevTab !== 'planner';
+    const enteringPlanner = activeTab === 'planner' && prevTab !== activeTab;
     if (activeTab !== 'calendar' && activeTab !== 'planner') {
       setActiveRightTool(null);
     } else if (enteringPlanner) {
@@ -3666,9 +3617,25 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         <PlannerDiffProvider>
         <AppShell
           disabled={onboardingBlocked}
-          flushToEdge={activeTopNav === 'planner'}
+          flushToEdge={activeTab === 'planner' || activeTab === 'calendar'}
+          leftPane={{
+            visible: isMessagesPaneOpen,
+            width: 340,
+            content: (
+              <FamilyMessagesPane
+                familyId={familyId}
+                viewerRole={resolvedShellUserRole || 'parent'}
+                viewerChildId={session?.child_id || null}
+                currentUserId={authUserId}
+                children={children}
+                active={isMessagesPaneOpen}
+                placement="left"
+              />
+            ),
+          }}
           sidebar={{
             topActive: activeTopNav,
+            messagesPaneOpen: isMessagesPaneOpen,
             onSelectTop: handleTopSelect,
             childrenList: children,
             activeChildId: activeChildId,
@@ -3816,24 +3783,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     justifyContent: 'center',
                   }}
                 >
-                  {/* Help popover - Planner & Calendar FAQs */}
-                  {showHelpPopover && Platform.OS === 'web' && (
-                    <View
-                      ref={helpPopoverRef}
-                      onMouseEnter={clearHelpPopoverCloseTimer}
-                      onMouseLeave={scheduleHelpPopoverClose}
-                    >
-                      <HelpPopover
-                        visible={showHelpPopover}
-                        onClose={() => {
-                          clearHelpPopoverCloseTimer();
-                          setShowHelpPopover(false);
-                        }}
-                        position={helpPopoverPosition}
-                        helpForumHref="/help/faqs"
-                      />
-                    </View>
-                  )}
                   {/* Planner Settings popover - mini Planning Preferences */}
                   {showPlannerSettingsPopover && Platform.OS === 'web' && (
                     <View ref={plannerSettingsPopoverRef}>
@@ -4339,32 +4288,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     })}
                   </View>
                   
-                  {/* Help + Export icons - right of Filters (hidden for learner child accounts) */}
+                  {/* Export icons - right of Filters (hidden for learner child accounts) */}
                   {showPlannerHeaderQuickActions ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0, position: 'relative' }}>
-                    <TouchableOpacity
-                      ref={helpButtonRef}
-                      onPress={() => {
-                        if (showHelpPopover) {
-                          clearHelpPopoverCloseTimer();
-                          setShowHelpPopover(false);
-                          return;
-                        }
-                        openHelpPopover();
-                      }}
-                      style={{ padding: 4 }}
-                      {...(Platform.OS === 'web' && {
-                        cursor: 'pointer',
-                        onMouseEnter: () => {
-                          openHelpPopover();
-                        },
-                        onMouseLeave: () => {
-                          scheduleHelpPopoverClose();
-                        },
-                      })}
-                    >
-                      <HelpCircle size={22} color="rgba(15,23,42,0.7)" />
-                    </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => {
                         setTooltip({ visible: false, text: '', x: 0, y: 0 });

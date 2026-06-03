@@ -19,7 +19,6 @@ import TodayScheduleCard from './TodayScheduleCard';
 import BacklogCard from './BacklogCard';
 import AssignmentsNeedingAttentionCard from './AssignmentsNeedingAttentionCard';
 import EmptyStateCard from './EmptyStateCard';
-import EmbeddedNotificationCenter from '../parent/EmbeddedNotificationCenter';
 import ParentDigestModal from './ParentDigestModal';
 import NextRecommendedActionRow from './NextRecommendedActionRow';
 import { colors } from '../../theme/colors';
@@ -111,7 +110,6 @@ export default function ParentHomeScreen({
   onAddMaterial,
   onAddSubject,
   onAddChild,
-  hideRailOnboardingCards = false,
   onInitialDataReady = null,
 }) {
   const session = useSession();
@@ -440,17 +438,6 @@ export default function ParentHomeScreen({
     };
   }, [familyId]);
 
-  /** Must stay above any early return (Rules of Hooks). */
-  const handleInviteChildFromRail = useCallback(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const n = Array.isArray(homeData?.children) ? homeData.children.length : 0;
-    if (n === 0) {
-      window.dispatchEvent(new CustomEvent('openAddChildModal'));
-      return;
-    }
-    window.dispatchEvent(new CustomEvent('openInviteChildModal'));
-  }, [homeData?.children]);
-
   const loadNotificationCount = async () => {
     try {
       // Get actual count of assignments needing attention
@@ -728,20 +715,6 @@ export default function ParentHomeScreen({
     </View>
   );
 
-  const railContent = (
-    <View style={styles.railContent}>
-      <EmbeddedNotificationCenter
-        familyId={familyId}
-        childInviteSummariesFromApi={family?.child_invite_summaries ?? null}
-        limit={5}
-        onViewAll={() => onNavigate?.('review-inbox')}
-        onInviteChild={handleInviteChildFromRail}
-        onGoToPlanner={() => onNavigate?.('planner')}
-        hideOnboardingCards={hideRailOnboardingCards}
-      />
-    </View>
-  );
-
   // Calculate most active subject for digest
   const subjectCounts = {};
   (effectiveHomeData.learning || []).forEach(event => {
@@ -760,7 +733,7 @@ export default function ParentHomeScreen({
     <>
       <RoleHomeShell
         main={mainContent}
-        rail={railContent}
+        rail={null}
       />
       <ParentDigestModal
         visible={showParentDigest}
@@ -1004,18 +977,6 @@ const styles = StyleSheet.create({
       height: '100%',
       flex: 1,
       minHeight: 0,
-    }),
-    ...(Platform.OS !== 'web' && {
-      gap: 20,
-    }),
-  },
-  railContent: {
-    ...(Platform.OS === 'web' && {
-      display: 'flex',
-      flexDirection: 'column',
-      width: '100%',
-      height: '100%',
-      alignSelf: 'stretch',
     }),
     ...(Platform.OS !== 'web' && {
       gap: 20,
