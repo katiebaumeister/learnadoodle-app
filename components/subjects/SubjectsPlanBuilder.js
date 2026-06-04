@@ -7361,6 +7361,17 @@ export default function SubjectsPlanBuilder({
       </View>
     );
 
+    const savedTargetPrefix = isOverallRow
+      ? `Gap is based on saved overall planning preferences: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`
+      : `Gap is based on saved ${String(row?.name || 'subject')} attendance goal of ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`;
+    const gapSummaryLine = (() => {
+      if (!(isInline && fixGapInPanelHeader)) return savedTargetPrefix;
+      if (suggestedDaysText) {
+        return `${savedTargetPrefix}. ${suggestedDaysText} or change goal in Planning Preferences.`;
+      }
+      return `${savedTargetPrefix}. Change goal in Planning Preferences.`;
+    })();
+
     const fixGapButton = suggestedDaysText ? (
       <TouchableOpacity
         onPress={() => fixYearTargetGap({
@@ -7417,9 +7428,7 @@ export default function SubjectsPlanBuilder({
         <View style={styles.yearTargetsExpandedSuggestionContainer}>
           <View style={styles.yearTargetsSavedTargetRow}>
             <Text style={styles.yearTargetsSavedTargetText}>
-              {isOverallRow
-                ? `Gap is based on saved overall planning preferences: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`
-                : `Gap is based on saved ${String(row?.name || 'subject')} attendance goal of ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`}
+              {isInline && fixGapInPanelHeader ? gapSummaryLine : savedTargetPrefix}
             </Text>
             {!isInline ? (
               <TouchableOpacity
@@ -7454,11 +7463,7 @@ export default function SubjectsPlanBuilder({
             </View>
           ) : null}
           {suggestedDaysText ? (
-            isInline && fixGapInPanelHeader ? (
-              <Text style={styles.yearTargetsPredictiveSuggestionLine}>
-                {suggestedDaysText}
-              </Text>
-            ) : !isInline ? (
+            isInline && fixGapInPanelHeader ? null : !isInline ? (
               <View style={styles.yearTargetsExpandedSuggestionLineRow}>
                 <Text style={styles.yearTargetsPredictiveSuggestionLine}>
                   {suggestedDaysText}

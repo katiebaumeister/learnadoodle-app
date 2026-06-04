@@ -303,7 +303,7 @@ export default function PlannerEventsListTable({
         recenterDenseList();
       });
     });
-    const retryMs = embedded ? [120, 320, 520] : [120];
+    const retryMs = embedded ? [120, 320] : [120];
     const timers = retryMs.map((ms) => setTimeout(() => recenterDenseList(), ms));
     return () => {
       cancelAnimationFrame(raf1);
@@ -320,6 +320,11 @@ export default function PlannerEventsListTable({
     recenterDenseList,
     embedded,
   ]);
+
+  useLayoutEffect(() => {
+    if (!embedded || shouldAnchorToToday) return;
+    denseListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+  }, [embedded, shouldAnchorToToday, listRefreshEpoch, listVisibilityEpoch, groupedDenseRows.length]);
 
   const maybeExpandAllPast = useCallback(() => {
     const now = Date.now();
@@ -610,7 +615,7 @@ export default function PlannerEventsListTable({
         keyExtractor={(item) => String(item?.key || '')}
         renderItem={renderDenseListItem}
         {...(stickyHeaderIndices.length > 0 ? { stickyHeaderIndices } : {})}
-        {...(shouldAnchorToToday && denseTodayIndex >= 0
+        {...(shouldAnchorToToday && denseTodayIndex >= 0 && !(embedded && Platform.OS === 'web')
           ? { initialScrollIndex: denseTodayIndex }
           : {})}
         getItemLayout={(_, index) => {

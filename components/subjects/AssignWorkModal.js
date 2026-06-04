@@ -323,7 +323,7 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    maxWidth: 520,
+    maxWidth: 720,
     maxHeight: '90%',
     borderRadius: 20,
     backgroundColor: '#FFFFFF',

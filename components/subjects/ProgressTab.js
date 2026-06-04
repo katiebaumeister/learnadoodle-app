@@ -1692,6 +1692,11 @@ export default function ProgressTab({
   const showAllEventsSection = sectionsMode === 'allEventsOnly' && hasAggregateSubjectScope;
   const useLearningFillLayout = embeddedInScrollView && sectionsMode === 'allEventsOnly' && Platform.OS === 'web';
   const { height: windowHeight } = useWindowDimensions();
+  const attendanceListMaxHeight = useMemo(() => {
+    if (!useLearningFillLayout) return 480;
+    if (!Number.isFinite(windowHeight) || windowHeight <= 0) return 520;
+    return Math.min(560, Math.max(320, windowHeight - 420));
+  }, [useLearningFillLayout, windowHeight]);
   const detailLoadAttemptedRef = useRef(new Set());
   useEffect(() => {
     if (!showAllEventsSection || typeof onRefreshSubjectDetail !== 'function') return;
@@ -1864,14 +1869,11 @@ export default function ProgressTab({
     await Promise.all(ids.map((id) => onRefreshSubjectDetail?.(id)));
   }, [onRefreshSubjectDetail, subjectDetails]);
 
-  useEffect(() => {
-    if (displayedSummaryPanel === 'attendance') {
-      setAttendanceScrollEpoch((epoch) => epoch + 1);
-    }
-  }, [displayedSummaryPanel, plannerListRefreshEpoch, attendancePlannerListEvents?.length]);
-
   const attendancePanelInner = (
-    <View style={styles.attendancePlannerListWrap}>
+    <View style={[
+      styles.attendancePlannerListWrap,
+      useLearningFillLayout && styles.attendancePlannerListWrapLearning,
+    ]}>
       <PlannerEventsListTable
         events={attendancePlannerListEvents}
         children={children}
@@ -1882,11 +1884,11 @@ export default function ProgressTab({
         onEventComplete={canManageAttendance ? handleAllEventsAttendanceToggle : undefined}
         resolveEventCompleted={(event) => resolveAllEventsAttendanceState(event)?.isAttended === true}
         listRefreshEpoch={plannerListRefreshEpoch}
-        scrollToTodayEpoch={attendanceScrollEpoch}
         embedded
-        fillViewport={useLearningFillLayout}
-        maxListHeight={useLearningFillLayout ? undefined : 480}
-        plannerShellVisible={displayedSummaryPanel === 'attendance'}
+        fillViewport={false}
+        maxListHeight={attendanceListMaxHeight}
+        scrollToToday={false}
+        plannerShellVisible={false}
       />
     </View>
   );
@@ -2033,7 +2035,7 @@ export default function ProgressTab({
     const fillLayout = options.fillLayout === true;
     const panelStyle = [
       styles.summaryExpandPanel,
-      fillLayout && styles.summaryExpandPanelFill,
+      fillLayout && panelKey !== 'attendance' && styles.summaryExpandPanelFill,
     ];
     if (panelKey === 'attendance') {
       return (
@@ -2042,9 +2044,7 @@ export default function ProgressTab({
             <Text style={styles.summaryExpandPanelTitle}>Attendance</Text>
             {renderAttendanceHeaderActions()}
           </View>
-          <View style={fillLayout ? styles.summaryExpandPanelBody : undefined}>
-            {attendancePanelInner}
-          </View>
+          {attendancePanelInner}
         </View>
       );
     }
@@ -2092,7 +2092,7 @@ export default function ProgressTab({
         <View style={panelStyle}>
           <View style={styles.summaryExpandPanelHeader}>
             <View style={styles.summaryExpandPanelHeaderMain}>
-              <Text style={styles.summaryExpandPanelTitle}>Learning goals</Text>
+              <Text style={styles.summaryExpandPanelTitle}>Planning goals</Text>
               {allEventsProgressSummary?.summaryLine ? (
                 <Text style={styles.summaryExpandPanelSubtitle}>{allEventsProgressSummary.summaryLine}</Text>
               ) : null}
@@ -2321,7 +2321,7 @@ export default function ProgressTab({
                 )}
                 {renderClickableSummaryBox(
                   'learning_goals',
-                  'Learning Goals',
+                  'Planning goals',
                   allEventsProgressSummary?.summaryLine || 'No targets yet',
                   learningGoalsGapLabel,
                   { compactValue: true, metaAccent: !!learningGoalsGapLabel }
@@ -2746,6 +2746,11 @@ const styles = StyleSheet.create({
       display: 'flex',
       flexDirection: 'column',
     }),
+  },
+  attendancePlannerListWrapLearning: {
+    flex: 0,
+    flexGrow: 0,
+    minHeight: undefined,
   },
   subjectRowItem: {
     borderWidth: 1,
