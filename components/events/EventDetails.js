@@ -41,6 +41,7 @@ import {
 import ConfirmDialog from '../ConfirmDialog';
 import { destructiveButtonStyles, destructiveIconColor } from '../ui/destructiveButtonStyles';
 import { findFirstConflictEvent } from '../../lib/utils/conflictDetection';
+import { getEventTypeChipTextColor } from '../planner/plannerListTableUtils';
 import { useAnchoredDropdownPosition } from '../../hooks/useAnchoredDropdownPosition';
 import {
   isPartOfRecurringSeries,
@@ -5417,7 +5418,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 <Text
                   style={[
                     styles.dropdownOptionText,
-                    isSelected && styles.dropdownOptionTextActive,
+                    isSelected && { color: getEventTypeChipTextColor(type), fontWeight: '700' },
                   ]}
                 >
                   {type}

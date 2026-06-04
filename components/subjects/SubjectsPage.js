@@ -31,7 +31,7 @@ import { generateAttendanceReport } from '../../lib/services/attendanceClient';
 import { exportCurriculumPlan, exportReportCard } from '../../lib/services/exportClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
-import { sourceForChild } from '../ui/ChildAvatarCluster';
+import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
 import { useSession } from '../../contexts/SessionContext';
 import { useOptionalFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
@@ -273,6 +273,7 @@ export default function SubjectsPage({
   const loadingRef = useRef(false);
   const preloadingRef = useRef(false);
   const [showSubjectsExportModal, setShowSubjectsExportModal] = useState(false);
+  const [learningHeaderPickerKind, setLearningHeaderPickerKind] = useState(null);
   const [showPlanningPreferencesModal, setShowPlanningPreferencesModal] = useState(false);
   const [planningPreferencesSchoolYearLabel, setPlanningPreferencesSchoolYearLabel] = useState(null);
   const [planningPreferencesInitialDataByYear, setPlanningPreferencesInitialDataByYear] = useState({});
@@ -2088,6 +2089,215 @@ export default function SubjectsPage({
     }
   }, [selectedModeFilter, canShowChildScheduleTab, canShowChildProgressTab]);
 
+  const canEditChildFromHeader = canShowEditChildButton && typeof onEditChild === 'function';
+  const canEditSubjectFromHeader = canShowEditSubjectButton && canManageSubjectsActions && typeof onEditSubject === 'function';
+  const showLearningHeaderEditActions = !isChildView && (canEditChildFromHeader || canEditSubjectFromHeader);
+
+  const childNameById = useMemo(() => {
+    const map = {};
+    safeChildren.forEach((child) => {
+      const id = String(child?.id || '').trim();
+      if (!id) return;
+      map[id] = child?.first_name || child?.name || child?.full_name || child?.display_name || 'Student';
+    });
+    return map;
+  }, [safeChildren]);
+
+  const headerSubjectPickerOptions = useMemo(
+    () => (filteredSubjects || []).map((subject) => {
+      const candidateChildIds = []
+        .concat(
+          Array.isArray(subject?.assignedChildren) ? subject.assignedChildren : [],
+          Array.isArray(subject?.assigned_children) ? subject.assigned_children : [],
+          Array.isArray(subject?.child_ids) ? subject.child_ids : [],
+          Array.isArray(subject?.childIds) ? subject.childIds : []
+        )
+        .map((id) => String(id || '').trim())
+        .filter(Boolean);
+      const childIds = Array.from(new Set(candidateChildIds));
+      const studentLabel = childIds
+        .map((childId) => childNameById[childId] || null)
+        .filter(Boolean)
+        .join(', ');
+      return {
+        id: subject.id,
+        name: subject?.name || 'Subject',
+        childIds,
+        studentLabel,
+      };
+    }),
+    [filteredSubjects, childNameById]
+  );
+
+  const closeLearningHeaderPicker = useCallback(() => {
+    setLearningHeaderPickerKind(null);
+  }, []);
+
+  const openChildEditPicker = useCallback(() => {
+    if (!canEditChildFromHeader) return;
+    if (safeChildren.length === 0) {
+      toast.push('No children to edit', 'error');
+      return;
+    }
+    if (safeChildren.length === 1) {
+      onEditChild(safeChildren[0]);
+      return;
+    }
+    setLearningHeaderPickerKind('child');
+  }, [canEditChildFromHeader, onEditChild, safeChildren, toast]);
+
+  const openSubjectEditPicker = useCallback(() => {
+    if (!canEditSubjectFromHeader) return;
+    if (headerSubjectPickerOptions.length === 0) {
+      toast.push('No subjects to edit', 'error');
+      return;
+    }
+    if (headerSubjectPickerOptions.length === 1) {
+      const match = (filteredSubjects || []).find(
+        (subject) => String(subject?.id) === String(headerSubjectPickerOptions[0]?.id)
+      );
+      if (match) onEditSubject(match);
+      return;
+    }
+    setLearningHeaderPickerKind('subject');
+  }, [canEditSubjectFromHeader, filteredSubjects, headerSubjectPickerOptions, onEditSubject, toast]);
+
+  const handleLearningHeaderPickerSelect = useCallback((id) => {
+    const kind = learningHeaderPickerKind;
+    setLearningHeaderPickerKind(null);
+    if (!id || !kind) return;
+    if (kind === 'child') {
+      const child = safeChildren.find((row) => String(row?.id) === String(id));
+      if (child) onEditChild(child);
+      return;
+    }
+    if (kind === 'subject') {
+      const subject = (filteredSubjects || []).find((row) => String(row?.id) === String(id));
+      if (subject) onEditSubject(subject);
+    }
+  }, [filteredSubjects, learningHeaderPickerKind, onEditChild, onEditSubject, safeChildren]);
+
+  const learningHeaderPickerCopy = learningHeaderPickerKind === 'child'
+    ? {
+      title: 'Choose a child to edit',
+      subtitle: 'Pick the student whose profile you want to update.',
+    }
+    : {
+      title: 'Choose a subject to edit',
+      subtitle: 'Pick the subject you want to update.',
+    };
+
+  const renderLearningHeaderPickerModal = () => (
+    <Modal
+      visible={!!learningHeaderPickerKind}
+      transparent
+      animationType="none"
+      onRequestClose={closeLearningHeaderPicker}
+    >
+      <TouchableOpacity
+        style={styles.learningPickerBackdrop}
+        activeOpacity={1}
+        onPress={closeLearningHeaderPicker}
+      >
+        <TouchableOpacity style={styles.learningPickerCard} activeOpacity={1} onPress={() => {}}>
+          <View style={styles.learningPickerHeader}>
+            <View style={styles.learningPickerHeaderTextWrap}>
+              <Text style={styles.learningPickerTitle}>{learningHeaderPickerCopy.title}</Text>
+              <Text style={styles.learningPickerSubtitle}>{learningHeaderPickerCopy.subtitle}</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.learningPickerClose}
+              onPress={closeLearningHeaderPicker}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+            >
+              <X size={20} color="#6b7280" />
+            </TouchableOpacity>
+          </View>
+          {learningHeaderPickerKind === 'child' ? (
+            safeChildren.length > 0 ? (
+              <View style={styles.learningPickerList}>
+                {safeChildren.map((child, index) => (
+                  <TouchableOpacity
+                    key={`learning-child-picker-${child.id}`}
+                    style={[
+                      styles.learningPickerItem,
+                      index === safeChildren.length - 1 && styles.learningPickerItemLast,
+                    ]}
+                    onPress={() => handleLearningHeaderPickerSelect(child.id)}
+                    activeOpacity={0.75}
+                    {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                  >
+                    <View style={styles.learningPickerItemLeading}>
+                      <Image
+                        source={sourceForChild(child)}
+                        style={styles.learningPickerChildAvatar}
+                        resizeMode="cover"
+                      />
+                      <Text style={styles.learningPickerItemText}>
+                        {child?.first_name || child?.name || 'Student'}
+                      </Text>
+                    </View>
+                    <ChevronRight size={16} color="#6b7280" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.learningPickerEmptyWrap}>
+                <Text style={styles.learningPickerEmptyText}>No children available.</Text>
+              </View>
+            )
+          ) : headerSubjectPickerOptions.length > 0 ? (
+            <View style={styles.learningPickerList}>
+              {headerSubjectPickerOptions.map((option, index) => (
+                <TouchableOpacity
+                  key={`learning-subject-picker-${option.id}`}
+                  style={[
+                    styles.learningPickerItem,
+                    index === headerSubjectPickerOptions.length - 1 && styles.learningPickerItemLast,
+                  ]}
+                  onPress={() => handleLearningHeaderPickerSelect(option.id)}
+                  activeOpacity={0.75}
+                  {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                >
+                  <View style={styles.learningPickerItemTextWrap}>
+                    <Text style={styles.learningPickerItemText}>{option.name}</Text>
+                    {option.studentLabel ? (
+                      <View style={styles.learningPickerStudentsRow}>
+                        <ChildAvatarCluster
+                          childIds={option.childIds || []}
+                          familyChildren={safeChildren}
+                          size={28}
+                          overlap={-8}
+                        />
+                        <Text style={styles.learningPickerStudentsText}>{option.studentLabel}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <ChevronRight size={16} color="#6b7280" />
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.learningPickerEmptyWrap}>
+              <Text style={styles.learningPickerEmptyText}>No subjects available.</Text>
+            </View>
+          )}
+          <View style={styles.learningPickerActions}>
+            <TouchableOpacity
+              style={styles.learningPickerCancelBtn}
+              onPress={closeLearningHeaderPicker}
+              activeOpacity={0.85}
+              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+            >
+              <Text style={styles.learningPickerCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+
   const renderSubjectsExportModal = () => (
     <Modal
       visible={showSubjectsExportModal}
@@ -2326,6 +2536,7 @@ export default function SubjectsPage({
         />
         {renderPlanningPreferencesModal()}
         {renderSubjectsExportModal()}
+        {renderLearningHeaderPickerModal()}
       </>
     );
   }
@@ -2370,6 +2581,34 @@ export default function SubjectsPage({
             <Text style={styles.headerTitle}>{subjectsHeaderTitle}</Text>
           )}
         </View>
+        {showLearningHeaderEditActions ? (
+          <View style={styles.headerActions}>
+            {canEditChildFromHeader ? (
+              <TouchableOpacity
+                style={styles.headerEditPill}
+                onPress={openChildEditPicker}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Edit children"
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <Text style={styles.headerEditPillText}>Edit children</Text>
+              </TouchableOpacity>
+            ) : null}
+            {canEditSubjectFromHeader ? (
+              <TouchableOpacity
+                style={styles.headerEditPill}
+                onPress={openSubjectEditPicker}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Edit subjects"
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <Text style={styles.headerEditPillText}>Edit subjects</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
         {(!isChildView || isSelfManagedStudentViewer) && (
           <View style={[styles.headerModeWrap, !isChildView && styles.headerModeWrapNoPicker]}>
             <View style={styles.headerModeControls}>
@@ -2497,6 +2736,7 @@ export default function SubjectsPage({
       </View>
       {renderPlanningPreferencesModal()}
       {renderSubjectsExportModal()}
+      {renderLearningHeaderPickerModal()}
 
       {/* Content */}
       {selectedModeFilter === 'plan' ? (
@@ -2751,8 +2991,170 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
     flexShrink: 0,
+    marginLeft: 'auto',
+  },
+  headerEditPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  headerEditPillText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningPickerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  learningPickerCard: {
+    width: '100%',
+    maxWidth: 460,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 32,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
+    }),
+  },
+  learningPickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  learningPickerHeaderTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  learningPickerClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  learningPickerTitle: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningPickerSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    color: '#6b7280',
+  },
+  learningPickerList: {
+    marginTop: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  learningPickerItem: {
+    minHeight: 56,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  learningPickerItemLast: {
+    borderBottomWidth: 0,
+  },
+  learningPickerItemLeading: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  learningPickerChildAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+  },
+  learningPickerItemTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  learningPickerItemText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningPickerStudentsRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
+  },
+  learningPickerStudentsText: {
+    flex: 1,
+    minWidth: 0,
+    fontWeight: '400',
+    fontSize: 14,
+    color: '#94A3B8',
+  },
+  learningPickerEmptyWrap: {
+    marginTop: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    backgroundColor: '#FFFFFF',
+  },
+  learningPickerEmptyText: {
+    fontSize: 14,
+    color: '#6B7280',
+    lineHeight: 22,
+  },
+  learningPickerActions: {
+    marginTop: 18,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+  },
+  learningPickerCancelBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: '#F3F4F6',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  learningPickerCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
   },
   headerModeWrap: {
     flex: 1,

@@ -350,3 +350,8 @@ export function getPlannerEventTypeColors(event) {
   if (eventType === 'exam' || eventType === 'assessment') return { chipBg: '#FCE7F3', chipText: '#BE185D' };
   return { chipBg: '#F2F4F7', chipText: '#6B7280' };
 }
+
+/** Label color for event-type filter chips (matches planner list chips). */
+export function getEventTypeChipTextColor(eventType) {
+  return getPlannerEventTypeColors({ event_type: eventType }).chipText;
+}

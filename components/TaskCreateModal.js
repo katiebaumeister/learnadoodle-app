@@ -18,6 +18,7 @@ import {
   resolveLearnerChild,
   sharedConflictBannerStyles as cb,
 } from './planner/conflictBannerShared';
+import { getEventTypeChipTextColor } from './planner/plannerListTableUtils';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
@@ -3871,7 +3872,7 @@ export default function TaskCreateModal({
                     <Text
                       style={[
                         styles.dropdownOptionText,
-                        isSelected && styles.dropdownOptionTextActive,
+                        isSelected && { color: getEventTypeChipTextColor(type), fontWeight: '700' },
                       ]}
                     >
                       {type}
