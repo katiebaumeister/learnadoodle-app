@@ -14,12 +14,12 @@ import {
 } from 'react-native';
 import { CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Download, Edit2, Plus, X } from 'lucide-react';
 import PlannerEventsListTable from '../planner/PlannerEventsListTable';
-// Archived: month calendar + attendance key — see ./archived/SubjectAttendanceMonthPanelArchived.js
+import SubjectAttendanceMonthPanelArchived, {
+  SubjectAttendanceSummaryKeyArchived,
+} from './archived/SubjectAttendanceMonthPanelArchived';
 import MarkAllAttendedModal from './MarkAllAttendedModal';
 import AssignWorkModal from './AssignWorkModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
-import SubjectAllEventsSection from './SubjectAllEventsSection';
-import { dispatchOpenReviewForAssignment } from '../../lib/openAssignmentWorkflow';
 import {
   aggregatePlanProgressMetrics,
   formatPlanProgressSummary,
@@ -613,7 +613,7 @@ export default function ProgressTab({
     }
   };
 
-  const defaultExpandedSummaryPanel = sectionsMode === 'allEventsOnly' ? 'attendance' : null;
+  const defaultExpandedSummaryPanel = sectionsMode === 'allEventsOnly' ? 'learning_log' : null;
   const [expandedSummaryPanel, setExpandedSummaryPanel] = useState(defaultExpandedSummaryPanel);
   const [displayedSummaryPanel, setDisplayedSummaryPanel] = useState(defaultExpandedSummaryPanel);
   const summaryPanelAnim = useRef(new Animated.Value(defaultExpandedSummaryPanel ? 1 : 0)).current;
@@ -1033,10 +1033,6 @@ export default function ProgressTab({
       onOpenSubject?.(initialEvent.subject_id || initialEvent.subjectId);
     }
   };
-  const handleReviewCenterAssignmentPress = useCallback((assignment) => {
-    if (!assignment) return;
-    dispatchOpenReviewForAssignment(assignment);
-  }, []);
   const handleEventContextMenu = useCallback((event, nativeEvent) => {
     if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
     nativeEvent?.preventDefault?.();
@@ -1777,13 +1773,13 @@ export default function ProgressTab({
       } else {
         planProgressContext?.collapseAllEventsAggregateGap?.();
       }
-      if (expandedSummaryPanel === 'attendance' && panelChanged) {
+      if (expandedSummaryPanel === 'learning_log' && panelChanged) {
         setTimeout(() => setAttendanceScrollEpoch((epoch) => epoch + 1), 260);
       }
       if (suppressSummaryPanelOpenAnimationRef.current) {
         suppressSummaryPanelOpenAnimationRef.current = false;
         summaryPanelAnim.setValue(1);
-        if (expandedSummaryPanel === 'attendance') {
+        if (expandedSummaryPanel === 'learning_log') {
           setTimeout(() => setAttendanceScrollEpoch((epoch) => epoch + 1), 320);
         }
       } else if (panelChanged) {
@@ -1875,7 +1871,7 @@ export default function ProgressTab({
     await Promise.all(ids.map((id) => onRefreshSubjectDetail?.(id)));
   }, [onRefreshSubjectDetail, subjectDetails]);
 
-  const attendancePanelInner = (
+  const learningLogPanelInner = (
     <View style={[
       styles.attendancePlannerListWrap,
       useLearningFillLayout && styles.attendancePlannerListWrapLearning,
@@ -1897,6 +1893,19 @@ export default function ProgressTab({
         scrollToToday
         scrollToTodayEpoch={attendanceScrollEpoch}
         plannerShellVisible={false}
+      />
+    </View>
+  );
+
+  const attendancePanelInner = (
+    <View style={styles.attendanceMonthPanelWrap}>
+      <SubjectAttendanceSummaryKeyArchived />
+      <SubjectAttendanceMonthPanelArchived
+        attendanceRecordsForUI={attendanceRecordsForUI}
+        attendanceEvents={attendanceEvents}
+        onOpenEventDetails={handleOpenEventDetails}
+        onToggleEventAttendance={canManageAttendance ? handleToggleEventAttendanceForDate : undefined}
+        onAddEventForDate={handleOpenAddEventForDate}
       />
     </View>
   );
@@ -2043,7 +2052,7 @@ export default function ProgressTab({
     const fillLayout = options.fillLayout === true;
     const panelStyle = [
       styles.summaryExpandPanel,
-      fillLayout && panelKey !== 'attendance' && styles.summaryExpandPanelFill,
+      fillLayout && panelKey !== 'learning_log' && styles.summaryExpandPanelFill,
     ];
     if (panelKey === 'attendance') {
       return (
@@ -2074,24 +2083,7 @@ export default function ProgressTab({
             <Text style={styles.summaryExpandPanelTitle}>Learning Log</Text>
             {renderLearningLogHeaderActions()}
           </View>
-          <SubjectAllEventsSection
-            events={allEventsAggregate.events}
-            eventOutcomes={allEventsAggregate.eventOutcomes}
-            materials={allEventsAggregate.materials}
-            eventAttachmentMaterials={allEventsAggregate.eventAttachmentMaterials}
-            children={children}
-            assignmentsByEventId={allEventsAggregate.assignmentsByEventId}
-            reviewCenterMode
-            onAssignmentPress={handleReviewCenterAssignmentPress}
-            onEventPress={(event) => handleOpenEventDetails(event?.id, event)}
-            onEventRightClick={handleEventContextMenu}
-            resolveEventAttendanceState={resolveAllEventsAttendanceState}
-            onToggleEventAttendance={canManageAttendance ? handleAllEventsAttendanceToggle : undefined}
-            onAttachmentPress={(_material, event) => {
-              if (event?.id) handleOpenEventDetails(event.id, event);
-            }}
-            canManageEvents={canManageAttendance}
-          />
+          {learningLogPanelInner}
         </View>
       );
     }
@@ -2310,18 +2302,6 @@ export default function ProgressTab({
             ]}>
               <View style={styles.overviewSummaryGrid}>
                 {renderClickableSummaryBox(
-                  'attendance',
-                  'Attendance',
-                  overviewStats.attendanceRate == null ? 'No data' : `${overviewStats.attendanceRate}%`,
-                  `${overviewStats.completedDays} attended · ${attendanceDayCounts.absent} unattended`
-                )}
-                {renderClickableSummaryBox(
-                  'grades',
-                  'Grades',
-                  overviewStats.gradeAverage == null ? 'No grades' : `${overviewStats.gradeAverage}%`,
-                  `${gradeRows.length} recorded grade${gradeRows.length === 1 ? '' : 's'}`
-                )}
-                {renderClickableSummaryBox(
                   'learning_log',
                   'Learning Log',
                   String(submittedArtifactsCount),
@@ -2333,6 +2313,18 @@ export default function ProgressTab({
                   allEventsProgressSummary?.summaryLine || 'No targets yet',
                   learningGoalsGapLabel,
                   { compactValue: true, metaAccent: !!learningGoalsGapLabel }
+                )}
+                {renderClickableSummaryBox(
+                  'attendance',
+                  'Attendance',
+                  overviewStats.attendanceRate == null ? 'No data' : `${overviewStats.attendanceRate}%`,
+                  `${overviewStats.completedDays} attended · ${attendanceDayCounts.absent} unattended`
+                )}
+                {renderClickableSummaryBox(
+                  'grades',
+                  'Grades',
+                  overviewStats.gradeAverage == null ? 'No grades' : `${overviewStats.gradeAverage}%`,
+                  `${gradeRows.length} recorded grade${gradeRows.length === 1 ? '' : 's'}`
                 )}
               </View>
               {renderSummaryExpandPanel()}
@@ -2757,6 +2749,10 @@ const styles = StyleSheet.create({
   },
   attendancePlannerListWrapLearning: {
     flexShrink: 0,
+  },
+  attendanceMonthPanelWrap: {
+    width: '100%',
+    minWidth: 0,
   },
   subjectRowItem: {
     borderWidth: 1,
