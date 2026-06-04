@@ -1,11 +1,6 @@
-import React, { useMemo, useCallback, useState } from 'react';
-import { View, Text, TouchableOpacity, Platform, StyleSheet, ScrollView, Alert, Modal } from 'react-native';
-import { Check, ClipboardList, Hand, MessageCircle, X } from 'lucide-react';
-import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
-import { getChildIdsFromEvent, dispatchAssignmentRefreshEvents } from '../../lib/assignmentWorkflowClient';
-import AssignmentMessageModal from './AssignmentMessageModal';
-import AssignmentSubmittalRequestModal from './AssignmentSubmittalRequestModal';
-import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
+import React, { useMemo, useCallback } from 'react';
+import { View, Text, TouchableOpacity, Platform, StyleSheet, ScrollView } from 'react-native';
+import { Check } from 'lucide-react';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import {
   formatEventTypeLabel,
@@ -14,6 +9,13 @@ import {
   resolveChildIdsForEvent,
   getPlannerEventTypeColors,
 } from '../planner/plannerListTableUtils';
+import {
+  getGradeColumnLabel,
+  getSubmissionColumnLabel,
+  getWorkStatusLabel,
+  isWorkProducingEventType,
+  primaryAssignmentForEvent,
+} from '../../lib/workEventHelpers';
 const ALL_EVENTS_MAX_VISIBLE_ROWS = 5;
 const ALL_EVENTS_ROW_GAP = 8;
 const ALL_EVENTS_ROW_HEIGHT = 56;
@@ -121,115 +123,17 @@ function formatEventGradeLabel(gradeInfo) {
   return '';
 }
 
-function pickAssignmentForEvent(event, assignments = []) {
-  if (!Array.isArray(assignments) || assignments.length === 0) return null;
-  const childId = String(
-    event?.child_id || event?.childId || (Array.isArray(event?.child_ids) ? event.child_ids[0] : '') || ''
-  ).trim();
-  if (childId) {
-    const match = assignments.find((row) => String(row?.child_id || '') === childId);
-    if (match) return match;
+function TableHeader({ reviewCenterMode = false }) {
+  if (reviewCenterMode) {
+    return (
+      <View style={styles.tableHeaderRow}>
+        <Text style={[styles.tableHeaderCell, styles.colReviewEvent]}>Event</Text>
+        <Text style={[styles.tableHeaderCell, styles.colReviewStatus]}>Status</Text>
+        <Text style={[styles.tableHeaderCell, styles.colReviewSubmission]}>Submission</Text>
+        <Text style={[styles.tableHeaderCell, styles.colReviewGrade]}>Grade</Text>
+      </View>
+    );
   }
-  return assignments[0];
-}
-
-function renderActionHintPortal(actionHint) {
-  if (Platform.OS !== 'web' || !actionHint?.text || typeof document === 'undefined') {
-    return null;
-  }
-  let ReactDOM;
-  try {
-    ReactDOM = require('react-dom');
-  } catch {
-    return null;
-  }
-  if (!ReactDOM?.createPortal) return null;
-  return ReactDOM.createPortal(
-    <View
-      pointerEvents="none"
-      style={[
-        styles.eventActionHint,
-        {
-          left: actionHint.x,
-          top: actionHint.y,
-        },
-      ]}
-    >
-      <Text style={styles.eventActionHintText}>{actionHint.text}</Text>
-    </View>,
-    document.body
-  );
-}
-
-function EventActionIconButton({
-  Icon,
-  label,
-  hint,
-  onPress,
-  onDisabledPress,
-  onShowHint,
-  onHideHint,
-  disabled = false,
-  allowDisabledPress = false,
-  active = false,
-  urgent = false,
-}) {
-  const hintText = String(hint || label || '').trim();
-  const canPressWhenDisabled = disabled && allowDisabledPress;
-  const touchDisabled = disabled && !allowDisabledPress;
-  const iconColor = disabled
-    ? '#CBD5E1'
-    : urgent
-      ? '#EA580C'
-      : active
-        ? '#16A34A'
-        : '#5B6880';
-
-  const handleMouseEnter = useCallback((e) => {
-    if (Platform.OS !== 'web' || !hintText) return;
-    onShowHint?.(hintText, e);
-  }, [hintText, onShowHint]);
-
-  const handleMouseLeave = useCallback(() => {
-    if (Platform.OS !== 'web') return;
-    onHideHint?.();
-  }, [onHideHint]);
-
-  return (
-    <TouchableOpacity
-      style={[
-        styles.eventActionIconBtn,
-        disabled && styles.eventActionIconBtnDisabled,
-        canPressWhenDisabled && styles.eventActionIconBtnDisabledPressable,
-        urgent && !disabled && styles.eventActionIconBtnUrgent,
-        active && !disabled && styles.eventActionIconBtnActive,
-      ]}
-      onPress={(ev) => {
-        ev?.stopPropagation?.();
-        if (disabled) {
-          if (canPressWhenDisabled) onDisabledPress?.();
-          return;
-        }
-        onPress?.();
-      }}
-      disabled={touchDisabled}
-      activeOpacity={0.75}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      {...(Platform.OS === 'web' && {
-        cursor: canPressWhenDisabled || !disabled ? 'pointer' : 'default',
-        title: hintText,
-        onMouseEnter: handleMouseEnter,
-        onMouseLeave: handleMouseLeave,
-      })}
-    >
-      <Icon size={15} color={iconColor} strokeWidth={2.1} />
-    </TouchableOpacity>
-  );
-}
-
-function TableHeader() {
   return (
     <View style={styles.tableHeaderRow}>
       <Text style={[styles.tableHeaderCell, styles.colLeadingSpacer]}>Attendance</Text>
@@ -237,7 +141,6 @@ function TableHeader() {
       <Text style={[styles.tableHeaderCell, styles.colUnits]}>Units</Text>
       <Text style={[styles.tableHeaderCell, styles.colGrade]}>Grade</Text>
       <Text style={[styles.tableHeaderCell, styles.colAttachments]}>Attachments</Text>
-      <Text style={[styles.tableHeaderCell, styles.colSubmittals]}>Actions</Text>
     </View>
   );
 }
@@ -247,10 +150,10 @@ export default function SubjectAllEventsSection({
   eventOutcomes = [],
   materials = [],
   eventAttachmentMaterials = [],
-  assignmentsByEventId = {},
-  familyId = null,
-  isParentViewer = true,
   children = [],
+  assignmentsByEventId = {},
+  reviewCenterMode = false,
+  onAssignmentPress = null,
   onEventPress,
   onEventRightClick,
   onEventComplete,
@@ -259,74 +162,6 @@ export default function SubjectAllEventsSection({
   onAttachmentPress,
   canManageEvents = true,
 }) {
-  const [modalEvent, setModalEvent] = useState(null);
-  const [modalAssignment, setModalAssignment] = useState(null);
-  const [showNudgeModal, setShowNudgeModal] = useState(false);
-  const [showSubmittalModal, setShowSubmittalModal] = useState(false);
-  const [showHelpModal, setShowHelpModal] = useState(false);
-  const [showHelpUnavailableModal, setShowHelpUnavailableModal] = useState(false);
-  const [actionHint, setActionHint] = useState(null);
-
-  const showActionHint = useCallback((text, event) => {
-    if (Platform.OS !== 'web' || !text) return;
-    const node = event?.currentTarget || event?.target;
-    if (!node || typeof node.getBoundingClientRect !== 'function') return;
-    const rect = node.getBoundingClientRect();
-    setActionHint({
-      text,
-      x: rect.left + rect.width / 2,
-      y: rect.bottom,
-    });
-  }, []);
-
-  const hideActionHint = useCallback(() => {
-    if (Platform.OS !== 'web') return;
-    setActionHint(null);
-  }, []);
-
-  const closeModals = useCallback(() => {
-    setShowNudgeModal(false);
-    setShowSubmittalModal(false);
-    setShowHelpModal(false);
-    setModalEvent(null);
-    setModalAssignment(null);
-  }, []);
-
-  const handleWorkflowComplete = useCallback(() => {
-    dispatchAssignmentRefreshEvents();
-    closeModals();
-  }, [closeModals]);
-
-  const openWorkflow = useCallback((event, assignment, kind) => {
-    if (!familyId) return;
-    const childIds = getChildIdsFromEvent(event);
-    if (childIds.length === 0) {
-      const message = 'Select a student on this event first.';
-      if (Platform.OS === 'web') window.alert(message);
-      else Alert.alert('Student required', message);
-      return;
-    }
-    setModalEvent(event);
-    setModalAssignment(assignment || null);
-    if (kind === 'nudge') {
-      setShowNudgeModal(true);
-      return;
-    }
-    if (kind === 'submittal') {
-      setShowSubmittalModal(true);
-      return;
-    }
-    if (kind === 'help') {
-      if (!assignment?.need_help) return;
-      setShowHelpModal(true);
-    }
-  }, [familyId]);
-
-  const modalChildIds = useMemo(
-    () => getChildIdsFromEvent(modalEvent),
-    [modalEvent]
-  );
-
   const materialById = useMemo(() => {
     const map = new Map();
     [...(materials || []), ...(eventAttachmentMaterials || [])].forEach((material) => {
@@ -365,14 +200,71 @@ export default function SubjectAllEventsSection({
       if (event.is_backlog === true) return false;
       if (event.deleted || event.deleted_at) return false;
       if (String(event?.status || '').toLowerCase() === 'canceled') return false;
-      return !!resolveEventDateValue(event);
+      if (!resolveEventDateValue(event)) return false;
+      if (reviewCenterMode && !isWorkProducingEventType(event.event_type)) return false;
+      return true;
     });
     return rows.sort((a, b) => {
       const aDate = new Date(resolveEventDateValue(a) || 0).getTime();
       const bDate = new Date(resolveEventDateValue(b) || 0).getTime();
       return aDate - bDate;
     });
-  }, [events]);
+  }, [events, reviewCenterMode]);
+
+  const renderReviewRow = useCallback((event) => {
+    const eventId = String(event?.id || '');
+    const assignment = primaryAssignmentForEvent(assignmentsByEventId, eventId);
+    const workSpec = event?.work_spec || {};
+    const statusLabel = getWorkStatusLabel(assignment);
+    const submissionLabel = getSubmissionColumnLabel(assignment);
+    const gradeLabel = getGradeColumnLabel(assignment, workSpec);
+    const typeLabel = formatEventTypeLabel(event);
+    const { chipBg, chipText } = getPlannerEventTypeColors(event);
+    const handlePress = () => {
+      if (assignment && typeof onAssignmentPress === 'function') {
+        onAssignmentPress(assignment, event);
+        return;
+      }
+      onEventPress?.(event);
+    };
+
+    return (
+      <TouchableOpacity
+        key={eventId || Math.random()}
+        style={styles.reviewCardRow}
+        onPress={handlePress}
+        activeOpacity={0.75}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <View style={[styles.tableCell, styles.colReviewEvent]}>
+          <Text style={styles.eventTitle} numberOfLines={1}>
+            {String(event?.title || 'Untitled')}
+          </Text>
+          <View style={styles.eventSublineRow}>
+            <View style={[styles.eventTypeChip, { backgroundColor: chipBg }]}>
+              <Text style={[styles.eventTypeChipText, { color: chipText }]} numberOfLines={1}>
+                {typeLabel}
+              </Text>
+            </View>
+            <Text style={styles.eventSublineMeta} numberOfLines={1}>
+              {formatRowDate(event)}
+            </Text>
+          </View>
+        </View>
+        <View style={[styles.tableCell, styles.colReviewStatus]}>
+          <Text style={styles.cellText} numberOfLines={1}>{statusLabel}</Text>
+        </View>
+        <View style={[styles.tableCell, styles.colReviewSubmission]}>
+          <Text style={styles.cellText} numberOfLines={1}>{submissionLabel}</Text>
+        </View>
+        <View style={[styles.tableCell, styles.colReviewGrade]}>
+          <Text style={[styles.cellText, styles.gradeText]} numberOfLines={1}>
+            {gradeLabel}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  }, [assignmentsByEventId, onAssignmentPress, onEventPress]);
 
   const cappedListHeight = useMemo(() => {
     const rowCount = Math.min(
@@ -441,10 +333,6 @@ export default function SubjectAllEventsSection({
       : '';
     const { chipBg, chipText } = getPlannerEventTypeColors(event);
     const eventId = String(event?.id || '');
-    const linkedAssignments = assignmentsByEventId?.[eventId] || [];
-    const assignment = pickAssignmentForEvent(event, linkedAssignments);
-    const canRespondHelp = assignment?.need_help === true;
-    const showParentActions = isParentViewer && !!familyId;
     const handleRowContextMenu = (nativeEvent) => {
       if (Platform.OS !== 'web' || typeof window === 'undefined' || !onEventRightClick) return;
       nativeEvent?.preventDefault?.();
@@ -561,60 +449,17 @@ export default function SubjectAllEventsSection({
         <View style={[styles.tableCell, styles.colAttachments]}>
           {renderAttachmentLinks(event)}
         </View>
-
-        <View style={[styles.tableCell, styles.colSubmittals]}>
-          {showParentActions ? (
-            <View style={styles.eventActionsRow}>
-              <EventActionIconButton
-                Icon={Hand}
-                label="Nudge student"
-                hint="Nudge student"
-                onShowHint={showActionHint}
-                onHideHint={hideActionHint}
-                onPress={() => openWorkflow(event, assignment, 'nudge')}
-              />
-              <EventActionIconButton
-                Icon={ClipboardList}
-                label="Request submit"
-                hint="Request submit"
-                onShowHint={showActionHint}
-                onHideHint={hideActionHint}
-                onPress={() => openWorkflow(event, assignment, 'submittal')}
-              />
-              <EventActionIconButton
-                Icon={MessageCircle}
-                label="Respond to help"
-                hint="Respond to help"
-                onShowHint={showActionHint}
-                onHideHint={hideActionHint}
-                disabled={!canRespondHelp}
-                allowDisabledPress
-                onDisabledPress={() => setShowHelpUnavailableModal(true)}
-                urgent={canRespondHelp}
-                onPress={() => openWorkflow(event, assignment, 'help')}
-              />
-            </View>
-          ) : (
-            <Text style={styles.emptyCellText}>—</Text>
-          )}
-        </View>
       </View>
     );
   }, [
-    assignmentsByEventId,
     canManageEvents,
     children,
     gradeByEventId,
-    isParentViewer,
     onEventComplete,
     onToggleEventAttendance,
     resolveEventAttendanceState,
     onEventPress,
     onEventRightClick,
-    familyId,
-    openWorkflow,
-    showActionHint,
-    hideActionHint,
     renderAttachmentLinks,
   ]);
 
@@ -622,7 +467,9 @@ export default function SubjectAllEventsSection({
     return (
       <View style={styles.emptyStateBox}>
         <Text style={styles.emptyStateText}>
-          Nothing to see here! Add some events to get started
+          {reviewCenterMode
+            ? 'No assignments, projects, or exams yet.'
+            : 'Nothing to see here! Add some events to get started'}
         </Text>
       </View>
     );
@@ -631,96 +478,28 @@ export default function SubjectAllEventsSection({
   return (
     <View style={styles.container}>
       <View style={styles.tableScrollWrap}>
-        <TableHeader />
+        <TableHeader reviewCenterMode={reviewCenterMode} />
         <ScrollView
           style={[
             styles.eventListScroll,
             cappedListHeight > 0 && { height: cappedListHeight },
           ]}
-          contentContainerStyle={styles.eventList}
+          contentContainerStyle={[
+            styles.eventList,
+            reviewCenterMode && styles.reviewEventList,
+          ]}
           scrollEnabled={shouldScrollEvents}
           showsVerticalScrollIndicator={shouldScrollEvents}
           nestedScrollEnabled
           {...(Platform.OS === 'web' && {
             tabIndex: 0,
-            onScroll: hideActionHint,
-            onMouseLeave: hideActionHint,
           })}
         >
-          {filteredEvents.map((event) => renderEventRow(event))}
+          {reviewCenterMode
+            ? filteredEvents.map((event) => renderReviewRow(event))
+            : filteredEvents.map((event) => renderEventRow(event))}
         </ScrollView>
       </View>
-
-      <AssignmentMessageModal
-        visible={showNudgeModal}
-        onClose={closeModals}
-        onSent={handleWorkflowComplete}
-        familyId={familyId}
-        event={modalEvent}
-        assignment={modalAssignment}
-        isParentViewer
-        children={children}
-        assignedChildIds={modalChildIds}
-        subjectId={modalEvent?.subject_id || modalAssignment?.related_subject || null}
-      />
-
-      <AssignmentSubmittalRequestModal
-        visible={showSubmittalModal}
-        onClose={closeModals}
-        onRequested={handleWorkflowComplete}
-        familyId={familyId}
-        event={modalEvent}
-        assignment={modalAssignment}
-        children={children}
-        assignedChildIds={modalChildIds}
-        subjectId={modalEvent?.subject_id || modalAssignment?.related_subject || null}
-        materials={materials}
-        eventAttachmentMaterials={eventAttachmentMaterials}
-        onOpenAttachment={onAttachmentPress}
-      />
-
-      <RespondToHelpRequestModal
-        visible={showHelpModal}
-        assignment={modalAssignment}
-        onClose={closeModals}
-        onResponded={handleWorkflowComplete}
-      />
-
-      {renderActionHintPortal(actionHint)}
-
-      <Modal
-        visible={showHelpUnavailableModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowHelpUnavailableModal(false)}
-      >
-        <View style={comingSoonModalStyles.overlay}>
-          <View style={comingSoonModalStyles.content}>
-            <TouchableOpacity
-              style={comingSoonModalStyles.close}
-              onPress={() => setShowHelpUnavailableModal(false)}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <X size={24} color="#64748b" />
-            </TouchableOpacity>
-            <Text style={comingSoonModalStyles.title}>No help request yet</Text>
-            <Text style={comingSoonModalStyles.body}>
-              Your student has not asked for help on this assignment yet. Try sending a nudge instead.
-            </Text>
-            <TouchableOpacity
-              style={comingSoonModalStyles.button}
-              onPress={() => setShowHelpUnavailableModal(false)}
-              activeOpacity={0.8}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -749,7 +528,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingBottom: 8,
-    minWidth: 980,
+    minWidth: 872,
   },
   tableHeaderCell: {
     fontSize: 11,
@@ -768,7 +547,7 @@ const styles = StyleSheet.create({
   },
   eventList: {
     gap: ALL_EVENTS_ROW_GAP,
-    minWidth: 980,
+    minWidth: 872,
   },
   eventCardRow: {
     flexDirection: 'row',
@@ -837,72 +616,39 @@ const styles = StyleSheet.create({
   colAttachments: {
     flex: 1.1,
     minWidth: 0,
-    paddingRight: 8,
-  },
-  colSubmittals: {
-    flex: 1,
-    minWidth: 108,
     paddingRight: 0,
   },
-  eventActionsRow: {
+  colReviewEvent: {
+    flex: 2,
+    minWidth: 0,
+  },
+  colReviewStatus: {
+    flex: 1,
+    minWidth: 0,
+  },
+  colReviewSubmission: {
+    flex: 1,
+    minWidth: 0,
+  },
+  colReviewGrade: {
+    flex: 0.8,
+    minWidth: 0,
+    paddingRight: 0,
+  },
+  reviewEventList: {
+    minWidth: 720,
+  },
+  reviewCardRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    flexWrap: 'nowrap',
-  },
-  eventActionIconBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.28)',
+    gap: 12,
+    minWidth: 720,
+    minHeight: ALL_EVENTS_ROW_HEIGHT,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     backgroundColor: '#F9FAFB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  eventActionIconBtnDisabled: {
-    opacity: 0.38,
-  },
-  eventActionIconBtnDisabledPressable: {
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  eventActionIconBtnUrgent: {
-    borderColor: 'rgba(234, 88, 12, 0.35)',
-    backgroundColor: '#FFF7ED',
-  },
-  eventActionIconBtnActive: {
-    borderColor: 'rgba(22, 163, 74, 0.3)',
-    backgroundColor: '#F0FDF4',
-  },
-  eventActionHint: {
-    position: 'fixed',
-    zIndex: 100001,
-    maxWidth: 240,
-    backgroundColor: 'rgba(15, 23, 42, 0.92)',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginTop: 6,
-    transform: [{ translateX: -50 }],
-    pointerEvents: 'none',
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 12px rgba(15, 23, 42, 0.2)',
-    }),
-  },
-  eventActionHintText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#FFFFFF',
-    textAlign: 'center',
-    ...WEB_BODY_FONT,
-    ...(Platform.OS === 'web' && {
-      whiteSpace: 'nowrap',
-    }),
+    borderRadius: 8,
+    overflow: 'hidden',
   },
   attendancePlaceholder: {
     width: 24,

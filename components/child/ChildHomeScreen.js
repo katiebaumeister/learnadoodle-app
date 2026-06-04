@@ -12,6 +12,7 @@ import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import RoleHomeShell from '../home/RoleHomeShell';
 import TodayScheduleCard from '../home/TodayScheduleCard';
+import UpcomingWorkCard from './UpcomingWorkCard';
 import ChildHomeRightRail from './ChildHomeRightRail';
 import { applyChildFilter } from '../../lib/queryFilters';
 import { colors } from '../../theme/colors';
@@ -297,6 +298,8 @@ export default function ChildHomeScreen({
           hideSubjectDot={isSelfManagedStudent}
         />
       </View>
+
+      <UpcomingWorkCard familyId={safeFamilyId} childId={safeChildId} />
     </View>
   );
 

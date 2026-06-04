@@ -9,6 +9,7 @@ import { colors } from '../theme/colors';
 import { designTokens } from '../theme/designTokens';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
+import { destructiveButtonStyles } from './ui/destructiveButtonStyles';
 import { DEFAULT_CHILD_PROFILE, normalizeChildProfile } from '../lib/permissions/userPermissionProfiles';
 
 /** Normalize DB row for client lists (name + avatar for color chips). */
@@ -810,8 +811,8 @@ export default function EditChildModal({
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
-                  styles.disconnectConfirmDestructiveBtn,
-                  unlinkingLogin && styles.disconnectConfirmDestructiveBtnDisabled,
+                  destructiveButtonStyles.buttonCompact,
+                  unlinkingLogin && destructiveButtonStyles.buttonDisabled,
                 ]}
                 onPress={() => {
                   setDisconnectConfirmOpen(false);
@@ -821,7 +822,10 @@ export default function EditChildModal({
                 activeOpacity={0.8}
                 {...(Platform.OS === 'web' && { cursor: unlinkingLogin ? 'not-allowed' : 'pointer' })}
               >
-                <Text style={styles.disconnectConfirmDestructiveText}>
+                <Text style={[
+                  destructiveButtonStyles.buttonTextCompact,
+                  unlinkingLogin && destructiveButtonStyles.buttonTextDisabled,
+                ]}>
                   {unlinkingLogin ? 'Disconnecting…' : 'Disconnect'}
                 </Text>
               </TouchableOpacity>
@@ -859,8 +863,8 @@ export default function EditChildModal({
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
-                  styles.disconnectConfirmDestructiveBtn,
-                  deleting && styles.disconnectConfirmDestructiveBtnDisabled,
+                  destructiveButtonStyles.buttonCompact,
+                  deleting && destructiveButtonStyles.buttonDisabled,
                 ]}
                 onPress={() => {
                   void performPermanentDelete();
@@ -869,7 +873,10 @@ export default function EditChildModal({
                 activeOpacity={0.8}
                 {...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' })}
               >
-                <Text style={styles.disconnectConfirmDestructiveText}>
+                <Text style={[
+                  destructiveButtonStyles.buttonTextCompact,
+                  deleting && destructiveButtonStyles.buttonTextDisabled,
+                ]}>
                   {deleting ? 'Deleting…' : `Delete ${childName}`}
                 </Text>
               </TouchableOpacity>
@@ -1237,20 +1244,20 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   deleteButton: {
-    backgroundColor: colors.redBold || '#dc2626',
+    backgroundColor: colors.redSoft,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 6,
     alignItems: 'center',
   },
   deleteButtonDisabled: {
-    backgroundColor: colors.redSoft || '#fef2f2',
+    backgroundColor: colors.redSoft,
     opacity: 0.5,
   },
   deleteButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#ffffff',
+    color: colors.redBold,
   },
   footer: {
     flexDirection: 'row',
@@ -1361,7 +1368,7 @@ const styles = StyleSheet.create({
     }),
   },
   disconnectConfirmDestructiveBtn: {
-    backgroundColor: colors.redBold || '#dc2626',
+    backgroundColor: colors.redSoft,
     paddingVertical: 10,
     paddingHorizontal: 18,
     borderRadius: 8,
@@ -1376,7 +1383,7 @@ const styles = StyleSheet.create({
   disconnectConfirmDestructiveText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#ffffff',
+    color: colors.redBold,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

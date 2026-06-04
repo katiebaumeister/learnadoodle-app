@@ -9,29 +9,26 @@ import {
   Platform,
   Image,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
-import { ArrowLeft, ArrowUp, Hand, ClipboardList, MessageCircle } from 'lucide-react';
+import { ArrowLeft, ArrowUp, Calendar, Paperclip, Plus, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
+import { createFileMaterial } from '../../lib/services/materialsClient';
 import {
   ASSIGNMENT_SELECT,
   buildSendPayload,
-  deriveDmWorkflowActions,
+  formatChatEventDateLabel,
+  isDirectMessageRecipient,
   isUnifiedMessageMine,
+  markDirectMessagesRead,
   mergeUnifiedStream,
+  messageMatchesParticipant,
   resolveAssignmentChildContext,
   resolveLinkedEventId,
 } from '../../lib/familyDmClient';
-import { dispatchAssignmentRefreshEvents } from '../../lib/assignmentWorkflowClient';
-import AssignmentMessageModal from '../subjects/AssignmentMessageModal';
-import AssignmentSubmittalRequestModal from '../subjects/AssignmentSubmittalRequestModal';
-import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
-import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
+import DmAttachEventModal from './DmAttachEventModal';
 import MessagesPaneCloseButton from './MessagesPaneCloseButton';
-
-const EVENT_SELECT = 'id, title, start_ts, end_ts, subject_id, child_id, child_ids, materials_attachment_ids, material_id';
 
 function avatarSourceForParticipant(participant) {
   if (!participant) return resolveBundledAvatarSource('prof1');
@@ -54,109 +51,16 @@ function formatMessageTime(createdAt) {
   });
 }
 
-async function loadEventForAssignment(assignment) {
-  const eventId = resolveLinkedEventId(assignment);
-  if (!eventId) return null;
-  const { data, error } = await supabase
-    .from('events')
-    .select(EVENT_SELECT)
-    .eq('id', eventId)
-    .maybeSingle();
-  if (error) {
-    console.warn('[FamilyDmChat] loadEventForAssignment:', error.message);
-    return null;
-  }
-  return data;
-}
-
-function renderWorkflowHintPortal(actionHint) {
-  if (Platform.OS !== 'web' || !actionHint?.text || typeof document === 'undefined') {
-    return null;
-  }
-  let ReactDOM;
-  try {
-    ReactDOM = require('react-dom');
-  } catch {
-    return null;
-  }
-  if (!ReactDOM?.createPortal) return null;
-  return ReactDOM.createPortal(
-    <View
-      pointerEvents="none"
-      style={[
-        styles.workflowActionHint,
-        {
-          left: actionHint.x,
-          top: actionHint.y,
-        },
-      ]}
-    >
-      <Text style={styles.workflowActionHintText}>{actionHint.text}</Text>
-    </View>,
-    document.body
-  );
-}
-
-function WorkflowActionIconButton({
-  Icon,
-  label,
-  hint,
-  onPress,
-  onShowHint,
-  onHideHint,
-  disabled = false,
-  allowDisabledPress = false,
-  urgent = false,
-}) {
-  const hintText = String(hint || label || '').trim();
-  const canPressWhenDisabled = disabled && allowDisabledPress;
-  const touchDisabled = disabled && !allowDisabledPress;
-  const iconColor = disabled
-    ? '#CBD5E1'
-    : urgent
-      ? '#EA580C'
-      : '#5B6880';
-
-  const handleMouseEnter = useCallback((e) => {
-    if (Platform.OS !== 'web' || !hintText) return;
-    onShowHint?.(hintText, e);
-  }, [hintText, onShowHint]);
-
-  const handleMouseLeave = useCallback(() => {
-    if (Platform.OS !== 'web') return;
-    onHideHint?.();
-  }, [onHideHint]);
-
-  return (
-    <TouchableOpacity
-      style={[
-        styles.workflowActionIconBtn,
-        disabled && styles.workflowActionIconBtnDisabled,
-        canPressWhenDisabled && styles.workflowActionIconBtnDisabledPressable,
-        urgent && !disabled && styles.workflowActionIconBtnUrgent,
-      ]}
-      onPress={() => {
-        if (disabled) {
-          if (canPressWhenDisabled) onPress?.();
-          return;
-        }
-        onPress?.();
-      }}
-      disabled={touchDisabled}
-      activeOpacity={0.75}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      {...(Platform.OS === 'web' && {
-        cursor: canPressWhenDisabled || !disabled ? 'pointer' : 'default',
-        title: hintText,
-        onMouseEnter: handleMouseEnter,
-        onMouseLeave: handleMouseLeave,
-      })}
-    >
-      <Icon size={15} color={iconColor} strokeWidth={2.1} />
-    </TouchableOpacity>
-  );
+function formatEventChipWhen(event) {
+  const startRaw = event?.start_ts || event?.start_local;
+  if (!startRaw) return '';
+  const start = new Date(startRaw);
+  if (Number.isNaN(start.getTime())) return '';
+  return start.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
 export default function FamilyDmChat({
@@ -172,49 +76,22 @@ export default function FamilyDmChat({
 }) {
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState([]);
-  const [assignments, setAssignments] = useState([]);
   const [composerText, setComposerText] = useState('');
   const [sending, setSending] = useState(false);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [pendingEvent, setPendingEvent] = useState(null);
+  const [pendingMaterial, setPendingMaterial] = useState(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
   const scrollRef = useRef(null);
   const scrollToBottomOnLoadRef = useRef(true);
-  const [workflowActionHint, setWorkflowActionHint] = useState(null);
-
-  const showWorkflowActionHint = useCallback((text, event) => {
-    if (Platform.OS !== 'web' || !text) return;
-    const node = event?.currentTarget || event?.target;
-    if (!node || typeof node.getBoundingClientRect !== 'function') return;
-    const rect = node.getBoundingClientRect();
-    setWorkflowActionHint({
-      text,
-      x: rect.left + rect.width / 2,
-      y: rect.bottom,
-    });
-  }, []);
-
-  const hideWorkflowActionHint = useCallback(() => {
-    if (Platform.OS !== 'web') return;
-    setWorkflowActionHint(null);
-  }, []);
-
-  const [showNudgeModal, setShowNudgeModal] = useState(false);
-  const [showSubmittalModal, setShowSubmittalModal] = useState(false);
-  const [showHelpModal, setShowHelpModal] = useState(false);
-  const [showReviewModal, setShowReviewModal] = useState(false);
-  const [modalAssignment, setModalAssignment] = useState(null);
-  const [modalEvent, setModalEvent] = useState(null);
 
   const childCtx = useMemo(
     () => resolveAssignmentChildContext(participant, viewerRole, viewerChildId),
     [participant, viewerChildId, viewerRole]
   );
 
-  const workflowActions = useMemo(
-    () => deriveDmWorkflowActions(assignments, { viewerRole }),
-    [assignments, viewerRole]
-  );
-
-  const showWorkflowBar = !!childCtx?.childId
-    && (viewerRole === 'parent' || viewerRole === 'tutor');
+  const canAttachEvent = Boolean(childCtx?.childId && familyId);
 
   const childInviteGate = useMemo(() => {
     if (participant?.type !== 'child') return null;
@@ -242,10 +119,62 @@ export default function FamilyDmChat({
     }));
   }, [childInviteGate?.childId, participant?.id]);
 
+  const enrichMessages = useCallback(async (unified, assignmentList) => {
+    const eventIds = new Set();
+    const materialIds = new Set();
+
+    unified.forEach((msg) => {
+      if (msg.linkedEventId) eventIds.add(msg.linkedEventId);
+      if (msg.materialId) materialIds.add(msg.materialId);
+    });
+    assignmentList.forEach((assignment) => {
+      const linked = resolveLinkedEventId(assignment);
+      if (linked) eventIds.add(linked);
+    });
+
+    let eventMetaById = new Map();
+    if (eventIds.size > 0) {
+      const { data: eventRows } = await supabase
+        .from('events')
+        .select('id, title, start_ts, end_ts, event_type')
+        .in('id', [...eventIds]);
+      eventMetaById = new Map(
+        (eventRows || []).map((row) => [String(row.id), row]),
+      );
+    }
+
+    let materialMetaById = new Map();
+    if (materialIds.size > 0) {
+      const { data: materialRows } = await supabase
+        .from('materials')
+        .select('id, title, mime, url, provider_url, storage_path')
+        .in('id', [...materialIds]);
+      materialMetaById = new Map(
+        (materialRows || []).map((row) => [String(row.id), row]),
+      );
+    }
+
+    return unified.map((msg) => {
+      const next = { ...msg };
+      if (msg.linkedEventId && eventMetaById.has(msg.linkedEventId)) {
+        next.eventAttachment = eventMetaById.get(msg.linkedEventId);
+      }
+      if (msg.materialId && materialMetaById.has(msg.materialId)) {
+        next.materialAttachment = materialMetaById.get(msg.materialId);
+      }
+      if (msg.actionLink?.linkedEventId && eventMetaById.has(String(msg.actionLink.linkedEventId))) {
+        next.actionLink = {
+          ...msg.actionLink,
+          eventAttachment: eventMetaById.get(String(msg.actionLink.linkedEventId)),
+        };
+      }
+      return next;
+    });
+  }, []);
+
   const loadMessages = useCallback(async () => {
     if (!familyId || !currentUserId || !participant) {
       setMessages([]);
-      setAssignments([]);
       setLoading(false);
       return;
     }
@@ -253,7 +182,7 @@ export default function FamilyDmChat({
     try {
       const dmPromise = supabase
         .from('family_direct_messages')
-        .select('id, sender_user_id, recipient_child_id, recipient_user_id, body, created_at')
+        .select('id, sender_user_id, recipient_child_id, recipient_user_id, body, linked_event_id, material_id, created_at, read_at')
         .eq('family_id', familyId)
         .order('created_at', { ascending: false })
         .limit(300);
@@ -281,25 +210,64 @@ export default function FamilyDmChat({
       }
 
       const assignmentList = Array.isArray(assignmentRows) ? assignmentRows : [];
-      setAssignments(assignmentList);
+      const dmList = Array.isArray(dmRows) ? dmRows : [];
+
+      const unreadForMe = dmList
+        .filter((row) => messageMatchesParticipant(row, participant, currentUserId, viewerChildId))
+        .filter((row) => String(row.sender_user_id) !== String(currentUserId))
+        .filter((row) => !row.read_at)
+        .filter((row) => isDirectMessageRecipient(row, currentUserId, viewerChildId));
+
+      if (unreadForMe.length > 0) {
+        try {
+          const markedAt = new Date().toISOString();
+          await markDirectMessagesRead(unreadForMe.map((row) => row.id));
+          unreadForMe.forEach((row) => {
+            row.read_at = markedAt;
+          });
+        } catch (markErr) {
+          console.warn('[FamilyDmChat] mark read:', markErr?.message || markErr);
+        }
+      }
+
+      const linkedEventIds = [...new Set(
+        assignmentList.map(resolveLinkedEventId).filter(Boolean),
+      )];
+      let eventDatesById = new Map();
+      if (linkedEventIds.length > 0) {
+        const { data: eventRows, error: eventError } = await supabase
+          .from('events')
+          .select('id, start_ts')
+          .in('id', linkedEventIds);
+        if (eventError) {
+          console.warn('[FamilyDmChat] linked event dates unavailable:', eventError.message);
+        } else {
+          eventDatesById = new Map(
+            (eventRows || [])
+              .filter((row) => row?.id && row?.start_ts)
+              .map((row) => [String(row.id), row.start_ts]),
+          );
+        }
+      }
 
       const unified = mergeUnifiedStream({
-        directMessages: Array.isArray(dmRows) ? dmRows : [],
+        directMessages: dmList,
         assignments: assignmentList,
         participant,
         currentUserId,
         viewerRole,
         viewerChildId,
+        eventDatesById,
       });
-      setMessages(unified);
+      const enriched = await enrichMessages(unified, assignmentList);
+      setMessages(enriched);
     } catch (error) {
       console.error('[FamilyDmChat] loadMessages exception:', error);
       setMessages([]);
-      setAssignments([]);
     } finally {
       setLoading(false);
     }
-  }, [childCtx?.childId, currentUserId, familyId, participant, viewerChildId, viewerRole]);
+  }, [childCtx?.childId, currentUserId, enrichMessages, familyId, participant, viewerChildId, viewerRole]);
 
   useEffect(() => {
     loadMessages();
@@ -336,51 +304,36 @@ export default function FamilyDmChat({
     const refresh = () => { loadMessages(); };
     window.addEventListener('childAssignmentsNeedRefresh', refresh);
     window.addEventListener('parentAssignmentsNeedRefresh', refresh);
+    const onVisible = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        loadMessages();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       window.removeEventListener('childAssignmentsNeedRefresh', refresh);
       window.removeEventListener('parentAssignmentsNeedRefresh', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [loadMessages]);
 
-  const handleWorkflowComplete = useCallback(() => {
-    dispatchAssignmentRefreshEvents();
-    loadMessages();
-  }, [loadMessages]);
-
-  const openAssignmentWorkflow = useCallback(async (assignment, kind) => {
-    if (!assignment) {
-      const message = 'No schoolwork found yet. Add an assignment from the planner first.';
-      if (Platform.OS === 'web') window.alert(message);
-      else Alert.alert('Schoolwork needed', message);
-      return;
-    }
-    const event = await loadEventForAssignment(assignment);
-    if ((kind === 'nudge' || kind === 'submittal') && !event) {
-      const message = 'Link this assignment to a planner event to send a nudge or request a submittal.';
-      if (Platform.OS === 'web') window.alert(message);
-      else Alert.alert('Planner event needed', message);
-      return;
-    }
-    setModalAssignment(assignment);
-    setModalEvent(event);
-    if (kind === 'nudge') setShowNudgeModal(true);
-    else if (kind === 'submittal') setShowSubmittalModal(true);
-    else if (kind === 'help') setShowHelpModal(true);
-    else if (kind === 'grade') setShowReviewModal(true);
-  }, []);
-
-  const closeModals = useCallback(() => {
-    setShowNudgeModal(false);
-    setShowSubmittalModal(false);
-    setShowHelpModal(false);
-    setShowReviewModal(false);
-    setModalAssignment(null);
-    setModalEvent(null);
-  }, []);
+  const canSend = Boolean(
+    composerText.trim() || pendingEvent?.id || pendingMaterial?.id,
+  );
 
   const handleSend = useCallback(async () => {
-    const payload = buildSendPayload(familyId, participant, composerText, currentUserId);
-    if (!payload || sending) return;
+    if (!canSend || sending) return;
+    const payload = buildSendPayload(
+      familyId,
+      participant,
+      composerText,
+      currentUserId,
+      {
+        linkedEventId: pendingEvent?.id || null,
+        materialId: pendingMaterial?.id || null,
+      },
+    );
+    if (!payload) return;
     setSending(true);
     try {
       const { error } = await supabase.from('family_direct_messages').insert(payload);
@@ -389,6 +342,9 @@ export default function FamilyDmChat({
         return;
       }
       setComposerText('');
+      setPendingEvent(null);
+      setPendingMaterial(null);
+      setShowAttachMenu(false);
       scrollToBottomOnLoadRef.current = true;
       await loadMessages();
     } catch (error) {
@@ -396,7 +352,112 @@ export default function FamilyDmChat({
     } finally {
       setSending(false);
     }
-  }, [composerText, currentUserId, familyId, loadMessages, participant, sending]);
+  }, [
+    canSend,
+    composerText,
+    currentUserId,
+    familyId,
+    loadMessages,
+    participant,
+    pendingEvent?.id,
+    pendingMaterial?.id,
+    sending,
+  ]);
+
+  const pickFile = useCallback(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined' || uploadingFile) return;
+    setShowAttachMenu(false);
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,.pdf,.doc,.docx,.txt,video/*';
+    input.onchange = async (e) => {
+      const file = e?.target?.files?.[0];
+      if (!file || !familyId) return;
+      setUploadingFile(true);
+      try {
+        const lastDotIndex = file.name.lastIndexOf('.');
+        const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const filePath = `${familyId}/${crypto.randomUUID()}_${safeFileName}`;
+        const { error: uploadError } = await supabase.storage
+          .from('evidence')
+          .upload(filePath, file, {
+            upsert: false,
+            contentType: file.type,
+            metadata: { family_id: familyId },
+          });
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage.from('evidence').getPublicUrl(filePath);
+        const mat = await createFileMaterial({
+          familyId,
+          storagePath: filePath,
+          title: file.name || 'Attachment',
+          mime: file.type || 'application/octet-stream',
+          bytes: file.size || 0,
+          childId: childCtx?.childId || null,
+          url: publicUrl,
+        });
+        setPendingMaterial({ id: mat?.id, title: file.name || 'Attachment' });
+      } catch (err) {
+        console.error('[FamilyDmChat] file upload:', err);
+      } finally {
+        setUploadingFile(false);
+      }
+    };
+    input.click();
+  }, [childCtx?.childId, familyId, uploadingFile]);
+
+  const openEventAttachment = useCallback((eventId) => {
+    if (!eventId || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('openEventModal', {
+      detail: { eventId: String(eventId), schedulingMode: true },
+    }));
+  }, []);
+
+  const openMaterialAttachment = useCallback(async (material) => {
+    if (!material) return;
+    const url = material.url || material.provider_url || null;
+    if (url && Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (material.id) {
+      const { data } = await supabase
+        .from('materials')
+        .select('url, provider_url')
+        .eq('id', material.id)
+        .maybeSingle();
+      const resolved = data?.url || data?.provider_url || null;
+      if (resolved && Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.open(resolved, '_blank', 'noopener,noreferrer');
+      }
+    }
+  }, []);
+
+  const openStreamActionLink = useCallback((actionLink) => {
+    if (!actionLink || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const { kind, linkedEventId, assignment } = actionLink;
+    if (kind === 'submission' && linkedEventId) {
+      const isParentViewer = viewerRole === 'parent' || viewerRole === 'tutor';
+      if (isParentViewer && assignment) {
+        window.dispatchEvent(new CustomEvent('openReviewForAssignment', { detail: { assignment } }));
+        return;
+      }
+      window.dispatchEvent(new CustomEvent('openEventModal', {
+        detail: {
+          eventId: String(linkedEventId),
+          childEventFocus: 'submission',
+          assignment,
+          childId: childCtx?.childId || assignment?.child_id || null,
+          submissionViewOnly: false,
+        },
+      }));
+      return;
+    }
+    if (linkedEventId) {
+      openEventAttachment(linkedEventId);
+    }
+  }, [childCtx?.childId, openEventAttachment, viewerRole]);
 
   const avatarSource = useMemo(
     () => avatarSourceForParticipant(participant),
@@ -404,7 +465,52 @@ export default function FamilyDmChat({
   );
 
   const firstMessageAt = messages[0]?.createdAt || null;
-  const assignedChildIds = childCtx?.childId ? [childCtx.childId] : [];
+
+  const seenOnMessageId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.source !== 'dm') continue;
+      if (!isUnifiedMessageMine(message, viewerRole, currentUserId)) continue;
+      return message.readAt ? message.id : null;
+    }
+    return null;
+  }, [messages, viewerRole, currentUserId]);
+
+  const renderEventChip = (event, onPress) => {
+    if (!event) return null;
+    const title = String(event.title || 'Event').trim() || 'Event';
+    const when = formatEventChipWhen(event) || formatChatEventDateLabel(event.start_ts) || '';
+    return (
+      <TouchableOpacity
+        style={styles.eventChip}
+        onPress={onPress}
+        activeOpacity={0.8}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Calendar size={14} color="#2563EB" />
+        <View style={styles.chipTextWrap}>
+          <Text style={styles.chipTitle} numberOfLines={1}>{title}</Text>
+          {when ? <Text style={styles.chipMeta} numberOfLines={1}>{when}</Text> : null}
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderMaterialChip = (material, onPress) => {
+    if (!material) return null;
+    const title = String(material.title || 'Attachment').trim() || 'Attachment';
+    return (
+      <TouchableOpacity
+        style={styles.materialChip}
+        onPress={onPress}
+        activeOpacity={0.8}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Paperclip size={14} color="#475569" />
+        <Text style={styles.chipTitle} numberOfLines={1}>{title}</Text>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -439,7 +545,7 @@ export default function FamilyDmChat({
             <Image source={avatarSource} style={styles.introAvatar} />
             <Text style={styles.introName}>{participant?.name}</Text>
             {!childInviteGate ? (
-              <Text style={styles.introHint}>Nudges, help, submissions, and messages in one place</Text>
+              <Text style={styles.introHint}>Send messages here</Text>
             ) : null}
           </View>
 
@@ -488,26 +594,49 @@ export default function FamilyDmChat({
               : (String(participant?.name || '').trim() || 'Student');
             const timeLabel = formatMessageTime(message.createdAt);
             const metaLabel = timeLabel ? `${senderName} · ${timeLabel}` : senderName;
+            const actionLink = message.actionLink || null;
+            const actionIsLink = actionLink?.kind === 'submission';
+            const hasBody = Boolean(String(displayBody || '').trim());
+            const hasEventChip = Boolean(message.eventAttachment);
+            const hasMaterialChip = Boolean(message.materialAttachment);
+            const hasAction = Boolean(actionLink?.label);
+            const showBubble = hasBody || hasEventChip || hasMaterialChip || hasAction;
+
             return (
               <View
                 key={message.id}
                 style={[styles.messageRow, isMine ? styles.messageRowMine : styles.messageRowOther]}
               >
                 <Text style={styles.senderLabel}>{metaLabel}</Text>
-                <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
-                  {message.assignmentTitle ? (
-                    <Text style={styles.assignmentTitle}>
-                      {message.assignmentTitle}
-                    </Text>
-                  ) : null}
-                  {message.kindLabel ? (
-                    <Text style={styles.kindLabel}>
-                      {message.kindLabel}
-                    </Text>
-                  ) : null}
-                  <Text style={styles.bubbleText}>{displayBody}</Text>
-                </View>
-                {isMine && message.source === 'dm' ? (
+                {showBubble ? (
+                  <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
+                    {hasBody ? (
+                      <Text style={styles.bubbleText}>{displayBody}</Text>
+                    ) : null}
+                    {hasEventChip ? renderEventChip(
+                      message.eventAttachment,
+                      () => openEventAttachment(message.linkedEventId),
+                    ) : null}
+                    {hasMaterialChip ? renderMaterialChip(
+                      message.materialAttachment,
+                      () => openMaterialAttachment(message.materialAttachment),
+                    ) : null}
+                    {hasAction ? (
+                      actionIsLink ? (
+                        <TouchableOpacity
+                          onPress={() => openStreamActionLink(actionLink)}
+                          activeOpacity={0.7}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={styles.actionInBubbleLink}>{actionLink.label}</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <Text style={styles.actionInBubble}>{actionLink.label}</Text>
+                      )
+                    ) : null}
+                  </View>
+                ) : null}
+                {isMine && message.source === 'dm' && message.id === seenOnMessageId ? (
                   <Text style={styles.seenLabel}>Seen</Text>
                 ) : null}
               </View>
@@ -516,112 +645,129 @@ export default function FamilyDmChat({
         </ScrollView>
       )}
 
-      {showWorkflowBar && !childInviteGate ? (
-        <View style={styles.actionsRow}>
-          <WorkflowActionIconButton
-            Icon={Hand}
-            label="Nudge student"
-            hint="Nudge student"
-            onShowHint={showWorkflowActionHint}
-            onHideHint={hideWorkflowActionHint}
-            onPress={() => openAssignmentWorkflow(workflowActions.primaryAssignment, 'nudge')}
-          />
-          <WorkflowActionIconButton
-            Icon={ClipboardList}
-            label={workflowActions.gradeSubmittal ? 'Grade submittal' : 'Request submit'}
-            hint={workflowActions.gradeSubmittal ? 'Grade submittal' : 'Request submit'}
-            urgent={!!workflowActions.gradeSubmittal}
-            onShowHint={showWorkflowActionHint}
-            onHideHint={hideWorkflowActionHint}
-            onPress={() => {
-              if (workflowActions.gradeSubmittal) {
-                openAssignmentWorkflow(workflowActions.gradeSubmittal, 'grade');
-                return;
-              }
-              openAssignmentWorkflow(workflowActions.primaryAssignment, 'submittal');
-            }}
-          />
-          <WorkflowActionIconButton
-            Icon={MessageCircle}
-            label="Respond to help"
-            hint="Respond to help"
-            disabled={!workflowActions.respondHelp}
-            allowDisabledPress
-            urgent={!!workflowActions.respondHelp}
-            onShowHint={showWorkflowActionHint}
-            onHideHint={hideWorkflowActionHint}
-            onPress={() => {
-              if (workflowActions.respondHelp) {
-                openAssignmentWorkflow(workflowActions.respondHelp, 'help');
-              }
-            }}
-          />
-        </View>
-      ) : null}
-
       {!childInviteGate ? (
-        <View style={styles.composerRow}>
-          <TextInput
-            value={composerText}
-            onChangeText={setComposerText}
-            placeholder="Type a message..."
-            placeholderTextColor="#94A3B8"
-            style={styles.composerInput}
-            multiline
-            maxLength={2000}
-          />
-          <TouchableOpacity
-            style={[styles.sendButton, (!composerText.trim() || sending) && styles.sendButtonDisabled]}
-            onPress={handleSend}
-            disabled={!composerText.trim() || sending}
-            activeOpacity={0.8}
-            {...(Platform.OS === 'web' && { cursor: !composerText.trim() || sending ? 'default' : 'pointer' })}
-          >
-            <ArrowUp size={16} color="#FFFFFF" />
-          </TouchableOpacity>
+        <View style={styles.composerWrap}>
+          {(pendingEvent || pendingMaterial) ? (
+            <View style={styles.pendingAttachments}>
+              {pendingEvent ? (
+                <View style={styles.pendingChipRow}>
+                  {renderEventChip(pendingEvent, () => setShowEventModal(true))}
+                  <TouchableOpacity
+                    onPress={() => setPendingEvent(null)}
+                    style={styles.pendingRemove}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <X size={14} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+              {pendingMaterial ? (
+                <View style={styles.pendingChipRow}>
+                  {renderMaterialChip(pendingMaterial, () => openMaterialAttachment(pendingMaterial))}
+                  <TouchableOpacity
+                    onPress={() => setPendingMaterial(null)}
+                    style={styles.pendingRemove}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <X size={14} color="#64748B" />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
+          <View style={styles.composerRow}>
+            <View style={styles.attachWrap}>
+              <TouchableOpacity
+                style={styles.attachButton}
+                onPress={() => setShowAttachMenu((prev) => !prev)}
+                activeOpacity={0.8}
+                disabled={uploadingFile}
+                {...(Platform.OS === 'web' && { cursor: uploadingFile ? 'default' : 'pointer' })}
+              >
+                {uploadingFile ? (
+                  <ActivityIndicator size="small" color="#64748B" />
+                ) : (
+                  <Plus size={18} color="#64748B" />
+                )}
+              </TouchableOpacity>
+              {showAttachMenu ? (
+                <View style={styles.attachMenu}>
+                  {canAttachEvent ? (
+                    <TouchableOpacity
+                      style={styles.attachMenuItem}
+                      onPress={() => {
+                        setShowAttachMenu(false);
+                        setShowEventModal(true);
+                      }}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Calendar size={16} color="#334155" />
+                      <Text style={styles.attachMenuText}>Event</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  <TouchableOpacity
+                    style={styles.attachMenuItem}
+                    onPress={pickFile}
+                    disabled={uploadingFile}
+                    {...(Platform.OS === 'web' && { cursor: uploadingFile ? 'default' : 'pointer' })}
+                  >
+                    <Paperclip size={16} color="#334155" />
+                    <Text style={styles.attachMenuText}>Photo or file</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
+
+            <TextInput
+              value={composerText}
+              onChangeText={setComposerText}
+              placeholder="Type a message..."
+              placeholderTextColor="#94A3B8"
+              style={styles.composerInput}
+              multiline
+              maxLength={2000}
+              returnKeyType="send"
+              blurOnSubmit={false}
+              onSubmitEditing={() => {
+                if (canSend && !sending) handleSend();
+              }}
+              {...(Platform.OS === 'web' && {
+                onKeyDown: (e) => {
+                  if ((e.key === 'Enter' || e.keyCode === 13) && !e.shiftKey) {
+                    e.preventDefault();
+                    if (canSend && !sending) handleSend();
+                  }
+                },
+              })}
+              onKeyPress={Platform.OS === 'web' ? undefined : (e) => {
+                const key = e.nativeEvent?.key;
+                if (key === 'Enter' && !e.shiftKey && canSend && !sending) {
+                  handleSend();
+                }
+              }}
+            />
+            <TouchableOpacity
+              style={[styles.sendButton, (!canSend || sending) && styles.sendButtonDisabled]}
+              onPress={handleSend}
+              disabled={!canSend || sending}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && { cursor: !canSend || sending ? 'default' : 'pointer' })}
+            >
+              <ArrowUp size={16} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
         </View>
       ) : null}
 
-      <AssignmentMessageModal
-        visible={showNudgeModal}
-        onClose={closeModals}
-        onSent={handleWorkflowComplete}
+      <DmAttachEventModal
+        visible={showEventModal}
+        onClose={() => setShowEventModal(false)}
+        onSelect={(event) => setPendingEvent(event)}
         familyId={familyId}
-        event={modalEvent}
-        assignment={modalAssignment}
-        isParentViewer
+        childId={childCtx?.childId || null}
         children={familyChildren}
-        assignedChildIds={assignedChildIds}
-        subjectId={modalEvent?.subject_id || modalAssignment?.related_subject || null}
       />
-
-      <AssignmentSubmittalRequestModal
-        visible={showSubmittalModal}
-        onClose={closeModals}
-        onRequested={handleWorkflowComplete}
-        familyId={familyId}
-        event={modalEvent}
-        assignment={modalAssignment}
-        children={familyChildren}
-        assignedChildIds={assignedChildIds}
-        subjectId={modalEvent?.subject_id || modalAssignment?.related_subject || null}
-      />
-
-      <RespondToHelpRequestModal
-        visible={showHelpModal}
-        assignment={modalAssignment}
-        onClose={closeModals}
-        onResponded={handleWorkflowComplete}
-      />
-
-      <AssignmentReviewModal
-        visible={showReviewModal}
-        assignment={modalAssignment}
-        onClose={closeModals}
-        onReviewed={handleWorkflowComplete}
-      />
-
-      {renderWorkflowHintPortal(workflowActionHint)}
     </View>
   );
 }
@@ -779,7 +925,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    gap: 4,
+    gap: 8,
+    minWidth: 48,
   },
   bubbleMine: {
     backgroundColor: '#FFFFFF',
@@ -787,92 +934,133 @@ const styles = StyleSheet.create({
   bubbleOther: {
     backgroundColor: '#F8FAFC',
   },
-  assignmentTitle: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#5AAEF2',
-  },
-  kindLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-    color: '#5AAEF2',
-  },
   bubbleText: {
     fontSize: 14,
     color: '#0F172A',
     lineHeight: 20,
   },
-  seenLabel: {
-    fontSize: 11,
-    color: '#94A3B8',
+  actionInBubble: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: '#64748B',
+    lineHeight: 18,
   },
-  actionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+  actionInBubbleLink: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: '#2563EB',
+    lineHeight: 18,
   },
-  workflowActionIconBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.28)',
-    backgroundColor: '#F9FAFB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  workflowActionIconBtnDisabled: {
-    opacity: 0.38,
-  },
-  workflowActionIconBtnDisabledPressable: {
-    opacity: 0.38,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  workflowActionHint: {
-    position: 'fixed',
-    zIndex: 100001,
-    maxWidth: 240,
-    backgroundColor: 'rgba(15, 23, 42, 0.92)',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginTop: 6,
-    transform: [{ translateX: -50 }],
-    pointerEvents: 'none',
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 12px rgba(15, 23, 42, 0.2)',
-    }),
-  },
-  workflowActionHintText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#FFFFFF',
-    textAlign: 'center',
-    ...(Platform.OS === 'web' && {
-      whiteSpace: 'nowrap',
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  workflowActionIconBtnUrgent: {
-    borderColor: 'rgba(234, 88, 12, 0.35)',
-    backgroundColor: '#FFF7ED',
-  },
-  composerRow: {
+  eventChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    maxWidth: 260,
+  },
+  materialChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    maxWidth: 260,
+  },
+  chipTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  chipTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0F172A',
+    flexShrink: 1,
+  },
+  chipMeta: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
+  },
+  seenLabel: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 4,
+  },
+  composerWrap: {
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  pendingAttachments: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    gap: 6,
+  },
+  pendingChipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+  },
+  pendingRemove: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  composerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
+  },
+  attachWrap: {
+    position: 'relative',
+  },
+  attachButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  attachMenu: {
+    position: 'absolute',
+    bottom: 44,
+    left: 0,
+    minWidth: 160,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingVertical: 6,
+    zIndex: 20,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 4px 16px rgba(15, 23, 42, 0.12)',
+    }),
+  },
+  attachMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  attachMenuText: {
+    fontSize: 14,
+    color: '#334155',
   },
   composerInput: {
     flex: 1,

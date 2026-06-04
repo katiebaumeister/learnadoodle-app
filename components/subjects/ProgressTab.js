@@ -14,6 +14,7 @@ import { SubjectAttendanceMonthDrilldown } from './SubjectSectionDrilldownPanels
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import SubjectAllEventsSection from './SubjectAllEventsSection';
+import { dispatchOpenReviewForAssignment } from '../../lib/openAssignmentWorkflow';
 import {
   aggregatePlanProgressMetrics,
   formatPlanProgressSummary,
@@ -1025,6 +1026,10 @@ export default function ProgressTab({
       onOpenSubject?.(initialEvent.subject_id || initialEvent.subjectId);
     }
   };
+  const handleReviewCenterAssignmentPress = useCallback((assignment) => {
+    if (!assignment) return;
+    dispatchOpenReviewForAssignment(assignment);
+  }, []);
   const handleEventContextMenu = useCallback((event, nativeEvent) => {
     if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
     nativeEvent?.preventDefault?.();
@@ -2211,7 +2216,7 @@ export default function ProgressTab({
             <View style={styles.allEventsSectionHeader}>
               <View style={styles.allEventsTitleRow}>
                 <View style={styles.allEventsTitleLeft}>
-                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>All Events</Text>
+                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Work review</Text>
                   {typeof onOpenExportModal === 'function' ? (
                     <TouchableOpacity
                       style={styles.allEventsExportButton}
@@ -2233,10 +2238,10 @@ export default function ProgressTab({
                 eventOutcomes={allEventsAggregate.eventOutcomes}
                 materials={allEventsAggregate.materials}
                 eventAttachmentMaterials={allEventsAggregate.eventAttachmentMaterials}
-                assignmentsByEventId={allEventsAggregate.assignmentsByEventId}
-                familyId={familyId}
-                isParentViewer={!isChildView}
                 children={children}
+                assignmentsByEventId={allEventsAggregate.assignmentsByEventId}
+                reviewCenterMode
+                onAssignmentPress={handleReviewCenterAssignmentPress}
                 onEventPress={(event) => handleOpenEventDetails(event?.id, event)}
                 onEventRightClick={handleEventContextMenu}
                 resolveEventAttendanceState={resolveAllEventsAttendanceState}

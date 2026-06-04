@@ -13,7 +13,7 @@
  *   <DropdownItem icon={Trash} label="Delete" onPress={handleDelete} />
  * </Dropdown>
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { View, StyleSheet, Platform, Modal, TouchableOpacity, Text } from 'react-native';
 import { colors, shadows } from '../../theme/colors';
 
@@ -27,11 +27,14 @@ export default function Dropdown({
   maxHeight = 400,
   width = 200,
 }) {
-  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [position, setPosition] = useState(null);
   const dropdownRef = useRef(null);
   
-  useEffect(() => {
-    if (!visible || !triggerRef?.current || Platform.OS !== 'web') return;
+  useLayoutEffect(() => {
+    if (!visible || !triggerRef?.current || Platform.OS !== 'web') {
+      setPosition(null);
+      return undefined;
+    }
     
     const updatePosition = () => {
       if (!triggerRef.current) return;
@@ -139,7 +142,7 @@ export default function Dropdown({
     };
   }, [visible, onClose, triggerRef]);
   
-  if (!visible) return null;
+  if (!visible || !position) return null;
   
   if (Platform.OS === 'web') {
     // Use portal for web to escape stacking context issues

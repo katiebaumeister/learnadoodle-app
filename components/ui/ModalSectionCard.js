@@ -11,6 +11,7 @@ export function ModalSectionCard({
   children,
   accent = '#7C70F4',
   allowOverflow = false,
+  hideChevron = false,
 }) {
   return (
     <View style={[styles.wrap, allowOverflow && styles.wrapOverflowVisible]}>
@@ -25,11 +26,13 @@ export function ModalSectionCard({
           </View>
         </View>
 
-        {expanded ? (
-          <ChevronUp size={18} color="#98A2B3" />
-        ) : (
-          <ChevronDown size={18} color="#98A2B3" />
-        )}
+        {!hideChevron ? (
+          expanded ? (
+            <ChevronUp size={18} color="#98A2B3" />
+          ) : (
+            <ChevronDown size={18} color="#98A2B3" />
+          )
+        ) : null}
       </TouchableOpacity>
 
       {expanded ? <View style={styles.body}>{children}</View> : null}

@@ -28,8 +28,10 @@ import AddChildModal from './AddChildModal';
 import InviteChildModal from './InviteChildModal';
 import AddSubjectModal from './AddSubjectModal';
 import EditChildModal from './EditChildModal';
-import AskParentHelpModal from './child/AskParentHelpModal';
 import SubmitForReviewModal from './child/SubmitForReviewModal';
+import RespondToHelpRequestModal from './parent/RespondToHelpRequestModal';
+import WorkReviewModal from './assignments/WorkReviewModal';
+import { runSendNudgeForEvent } from '../lib/openAssignmentWorkflow';
 import { linkedSummariesFromFamilyApiMembers } from '../lib/services/childInviteStatus';
 import PlanYearWizard from './year/PlanYearWizard';
 import PlanYearModal from './planner/PlanYearModal';
@@ -228,26 +230,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [addSubjectPrefill, setAddSubjectPrefill] = useState({ schoolYear: null, schoolTerm: null, childIds: [] });
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
-  const [showDirectAskParentHelpModal, setShowDirectAskParentHelpModal] = useState(false);
-  const [directHelpAssignment, setDirectHelpAssignment] = useState(null);
-  const [directHelpEventContext, setDirectHelpEventContext] = useState(null);
-  const [directHelpChildId, setDirectHelpChildId] = useState(null);
   const [showDirectSubmitForReviewModal, setShowDirectSubmitForReviewModal] = useState(false);
   const [directSubmitAssignment, setDirectSubmitAssignment] = useState(null);
   const [directSubmitEventContext, setDirectSubmitEventContext] = useState(null);
   const [directSubmitChildId, setDirectSubmitChildId] = useState(null);
   const [directSubmitViewOnly, setDirectSubmitViewOnly] = useState(false);
+  const [showDirectHelpModal, setShowDirectHelpModal] = useState(false);
+  const [directHelpAssignment, setDirectHelpAssignment] = useState(null);
+  const [showDirectReviewModal, setShowDirectReviewModal] = useState(false);
+  const [directReviewAssignment, setDirectReviewAssignment] = useState(null);
   const [eventModalEventId, setEventModalEventId] = useState(null);
   const [eventModalInitialEvent, setEventModalInitialEvent] = useState(null);
-  /** null | 'help' | 'submission' — parent review inbox opens event details + matching modal */
-  const [eventModalParentFocus, setEventModalParentFocus] = useState(null);
-  const [eventModalChildFocus, setEventModalChildFocus] = useState(null);
-  /** Plan "Dates with events" row edit → open EventModal in edit form, not read-only details */
+  /** Plan "Dates with events" row edit → open EventModal in edit form */
   const [eventModalSchedulingMode, setEventModalSchedulingMode] = useState(false);
   /** 'single' | 'series' */
   const [eventModalEditScope, setEventModalEditScope] = useState('single');
-  /** true = open only the Send to student modal (no EventDetails shell) */
-  const [eventModalSendOnlyMode, setEventModalSendOnlyMode] = useState(false);
   /** Planner chip warning → open EventModal with top conflict banner (Auto reschedule / Ignore) */
   const [eventModalOpenConflictResolution, setEventModalOpenConflictResolution] = useState(false);
   const [eventModalConflictResolutionContext, setEventModalConflictResolutionContext] = useState(null);
@@ -2633,7 +2630,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           ? false
           : (typeof requestedSchedulingMode === 'boolean' ? requestedSchedulingMode : true);
       const editScope = detail.editScope === 'series' ? 'series' : 'single';
-      const sendOnlyMode = !!detail.sendOnlyMode;
       const openConflictResolution = !!detail.openConflictResolution;
       let conflictResolutionContext = detail.conflictResolutionContext || null;
       if (!conflictResolutionContext && openConflictResolution && Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2656,6 +2652,39 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
       if (!eventId) {
         console.warn('[WebLayout] openEventModal event received but no eventId provided');
+        return;
+      }
+
+      if (detail.sendOnlyMode || detail.parentEventFocus === 'send') {
+        (async () => {
+          try {
+            const resolvedFamilyId = familyId || sessionRef.current?.family_id || null;
+            if (!resolvedFamilyId) throw new Error('Missing family');
+            const { childCount } = await runSendNudgeForEvent({
+              familyId: resolvedFamilyId,
+              eventId,
+              initialEvent,
+            });
+            Alert.alert(
+              'Nudge sent',
+              `Reminder sent to ${childCount} student${childCount === 1 ? '' : 's'}.`,
+            );
+          } catch (err) {
+            Alert.alert('Could not send nudge', err?.message || 'Try again.');
+          }
+        })();
+        return;
+      }
+
+      if (detail.parentEventFocus === 'help' && detail.assignment) {
+        setDirectHelpAssignment(detail.assignment);
+        setShowDirectHelpModal(true);
+        return;
+      }
+
+      if (detail.parentEventFocus === 'submission' && detail.assignment) {
+        setDirectReviewAssignment(detail.assignment);
+        setShowDirectReviewModal(true);
         return;
       }
 
@@ -2690,10 +2719,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           } : { id: eventId };
 
           if (childEventFocus === 'help') {
-            setDirectHelpAssignment(detail.assignment || null);
-            setDirectHelpEventContext(eventContext);
-            setDirectHelpChildId(resolvedChildId);
-            setShowDirectAskParentHelpModal(true);
             return;
           }
 
@@ -2707,33 +2732,66 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         return;
       }
 
-      // Open the event modal
       setEventModalEventId(eventId);
       setEventModalInitialEvent(initialEvent);
       setEventModalSchedulingMode(schedulingMode);
       setEventModalEditScope(editScope);
-      setEventModalSendOnlyMode(sendOnlyMode);
       setEventModalOpenConflictResolution(openConflictResolution);
       setEventModalConflictResolutionContext(conflictResolutionContext);
-      setEventModalParentFocus(
-        parentEventFocus === 'help' || parentEventFocus === 'submission' || parentEventFocus === 'send'
-          ? parentEventFocus
-          : null
-      );
-      setEventModalChildFocus(
-        childEventFocus === 'help' || childEventFocus === 'submission'
-          ? childEventFocus
-          : null
-      );
       setShowEventModal(true);
     };
     
+    const handleOpenNudgeForEvent = (event) => {
+      const detail = event.detail || {};
+      const eventId = detail.eventId;
+      if (!eventId) return;
+      (async () => {
+        try {
+          const resolvedFamilyId = familyId || sessionRef.current?.family_id || null;
+          if (!resolvedFamilyId) throw new Error('Missing family');
+          const { childCount } = await runSendNudgeForEvent({
+            familyId: resolvedFamilyId,
+            eventId,
+            initialEvent: detail.initialEvent || null,
+            childIds: detail.childIds || null,
+            note: detail.note || null,
+          });
+          Alert.alert(
+            'Nudge sent',
+            `Reminder sent to ${childCount} student${childCount === 1 ? '' : 's'}.`,
+          );
+        } catch (err) {
+          Alert.alert('Could not send nudge', err?.message || 'Try again.');
+        }
+      })();
+    };
+
+    const handleOpenHelpForAssignment = (event) => {
+      const assignment = event.detail?.assignment || null;
+      if (!assignment) return;
+      setDirectHelpAssignment(assignment);
+      setShowDirectHelpModal(true);
+    };
+
+    const handleOpenReviewForAssignment = (event) => {
+      const assignment = event.detail?.assignment || null;
+      if (!assignment) return;
+      setDirectReviewAssignment(assignment);
+      setShowDirectReviewModal(true);
+    };
+    
     window.addEventListener('openEventModal', handleOpenEventModal);
+    window.addEventListener('openNudgeForEvent', handleOpenNudgeForEvent);
+    window.addEventListener('openHelpForAssignment', handleOpenHelpForAssignment);
+    window.addEventListener('openReviewForAssignment', handleOpenReviewForAssignment);
     
     return () => {
       window.removeEventListener('openEventModal', handleOpenEventModal);
+      window.removeEventListener('openNudgeForEvent', handleOpenNudgeForEvent);
+      window.removeEventListener('openHelpForAssignment', handleOpenHelpForAssignment);
+      window.removeEventListener('openReviewForAssignment', handleOpenReviewForAssignment);
     };
-  }, [activeTab, denyFamilyEventEdit]);
+  }, [activeTab, denyFamilyEventEdit, familyId]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -5314,26 +5372,44 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         />
       ) : null}
 
-      {showDirectAskParentHelpModal ? (
-        <AskParentHelpModal
+      {showDirectHelpModal && directHelpAssignment ? (
+        <RespondToHelpRequestModal
           visible
+          assignment={directHelpAssignment}
           onClose={() => {
-            setShowDirectAskParentHelpModal(false);
+            setShowDirectHelpModal(false);
             setDirectHelpAssignment(null);
-            setDirectHelpEventContext(null);
-            setDirectHelpChildId(null);
           }}
-          onSent={() => {
+          onResponded={() => {
+            setShowDirectHelpModal(false);
+            setDirectHelpAssignment(null);
             if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
+              window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
               window.dispatchEvent(new CustomEvent('refreshRightRail'));
               window.dispatchEvent(new CustomEvent('refreshCalendar'));
             }
           }}
-          familyId={familyId}
-          childId={directHelpChildId || session?.child_id || activeChildId || null}
-          assignment={directHelpAssignment}
-          eventContext={directHelpEventContext}
+        />
+      ) : null}
+
+      {showDirectReviewModal && directReviewAssignment ? (
+        <WorkReviewModal
+          visible
+          assignment={directReviewAssignment}
+          onClose={() => {
+            setShowDirectReviewModal(false);
+            setDirectReviewAssignment(null);
+          }}
+          onReviewed={() => {
+            setShowDirectReviewModal(false);
+            setDirectReviewAssignment(null);
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
+              window.dispatchEvent(new CustomEvent('refreshRightRail'));
+              window.dispatchEvent(new CustomEvent('refreshCalendar'));
+              window.dispatchEvent(new CustomEvent('refreshSubjects'));
+            }
+          }}
         />
       ) : null}
 
@@ -5346,7 +5422,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         editScope={eventModalEditScope}
         openConflictResolution={eventModalOpenConflictResolution}
         conflictResolutionContext={eventModalConflictResolutionContext}
-        sendOnlyMode={eventModalSendOnlyMode}
         onOpenConflictResolutionConsumed={() => setEventModalOpenConflictResolution(false)}
         familyId={familyId}
         children={children}
@@ -5354,21 +5429,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         denyFamilyEventEdit={denyFamilyEventEdit}
         preloadedAcademicYears={preloadedAcademicYears}
         preloadedSubjects={fullSubjects}
-        preloadedFamilyAssignments={preloadedFamilyAssignments}
         familyMembers={familyMembersForEventing}
-        parentEventFocus={eventModalParentFocus}
-        onParentEventFocusConsumed={() => setEventModalParentFocus(null)}
-        childEventFocus={eventModalChildFocus}
-        onChildEventFocusConsumed={() => setEventModalChildFocus(null)}
         onClose={() => {
           setShowEventModal(false);
           setEventModalEventId(null);
           setEventModalInitialEvent(null);
-          setEventModalParentFocus(null);
-          setEventModalChildFocus(null);
           setEventModalSchedulingMode(false);
           setEventModalEditScope('single');
-          setEventModalSendOnlyMode(false);
           setEventModalOpenConflictResolution(false);
           setEventModalConflictResolutionContext(null);
         }}

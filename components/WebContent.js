@@ -6122,7 +6122,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             detail: {
               eventId: ev?.id,
               initialEvent: ev,
-              schedulingMode: false,
+              schedulingMode: true,
               editScope: 'single',
               childEventFocus: focus,
             },
@@ -6134,11 +6134,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       if (isChildViewer && isRestrictedChild) {
         if (schoolworkEvent) {
           if (!hideChildHelpAndSubmissionActions) {
-            menuItems.push({
-              text: 'Ask for help',
-              iconKey: 'send',
-              action: () => openChildEventModal('help'),
-            });
             menuItems.push({
               text: 'Submit for review',
               iconKey: 'send',
@@ -6175,11 +6170,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         if (isChildViewer && schoolworkEvent) {
           if (!hideChildHelpAndSubmissionActions) {
             menuItems.push({
-              text: 'Ask for help',
-              iconKey: 'send',
-              action: () => openChildEventModal('help'),
-            });
-            menuItems.push({
               text: 'Submit for review',
               iconKey: 'send',
               action: () => openChildEventModal('submission'),
@@ -6190,12 +6180,10 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
             text: 'Send to student',
             iconKey: 'send',
             action: () => {
-              window.dispatchEvent(new CustomEvent('openEventModal', {
+              window.dispatchEvent(new CustomEvent('openNudgeForEvent', {
                 detail: {
                   eventId: ev?.id,
                   initialEvent: ev,
-                  parentEventFocus: 'send',
-                  sendOnlyMode: true,
                 },
               }));
             },

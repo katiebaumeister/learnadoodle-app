@@ -18,8 +18,7 @@ import {
 import { X, Mail } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { updateAssignment } from '../../lib/services/assignmentsClient';
-import { getChildHelpMessageHistory, inferHelpSenderRole } from '../../lib/assignmentHelpHistory';
-import { extractStudentHelpReason } from '../tutor/tutorHelpUtils';
+import { inferHelpSenderRole } from '../../lib/assignmentHelpHistory';
 import { useToast } from '../Toast';
 import { LD, shellShadow, fontDisplay } from './parentModalTheme';
 
@@ -38,48 +37,43 @@ function dispatchRightRailRefreshEvents() {
   window.dispatchEvent(new CustomEvent('refreshCalendar'));
 }
 
-/** One line: event title · type · date · time (or assignment + subject/due if no event) */
-function buildContextHeadline(linkedEvent, assignment, subjectName) {
+function displayAssignmentTitle(raw) {
+  if (!raw || typeof raw !== 'string') return 'Schoolwork';
+  const t = raw.replace(/^Help:\s*/i, '').trim();
+  return t || 'Schoolwork';
+}
+
+/** Event title · type · date */
+function buildContextHeadline(linkedEvent, assignment) {
   const fallbackTitle = displayAssignmentTitle(assignment?.title);
   const eventTitle = (linkedEvent?.title && linkedEvent.title.trim()) || fallbackTitle || 'Schoolwork';
 
   if (linkedEvent?.start_ts) {
     const start = new Date(linkedEvent.start_ts);
-    if (Number.isNaN(start.getTime())) return eventTitle;
-    const end = linkedEvent.end_ts ? new Date(linkedEvent.end_ts) : null;
-    const dateStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const fmt = (d) =>
-      d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    const typeLabel = linkedEvent.event_type || 'Lesson';
-    const startsAtMidnight = start.getHours() === 0 && start.getMinutes() === 0;
-    const endIsValid = !!(end && !Number.isNaN(end.getTime()));
-    const endsAtMidnight = endIsValid && end.getHours() === 0 && end.getMinutes() === 0;
-    const endsAtEndOfDay = endIsValid && end.getHours() === 23 && end.getMinutes() === 59;
-    const noSavedTime = startsAtMidnight && (!endIsValid || endsAtMidnight || endsAtEndOfDay);
-    if (noSavedTime) {
+    if (!Number.isNaN(start.getTime())) {
+      const dateStr = start.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+      const typeLabel = linkedEvent.event_type || 'Lesson';
       return `${eventTitle} · ${typeLabel} · ${dateStr}`;
     }
-    const timePart = endIsValid ? `${fmt(start)}–${fmt(end)}` : fmt(start);
-    return `${eventTitle} · ${typeLabel} · ${dateStr} · ${timePart}`;
   }
 
-  const parts = [eventTitle];
-  if (subjectName) parts.push(subjectName);
   if (assignment?.due_date) {
     const d = new Date(assignment.due_date);
     if (!Number.isNaN(d.getTime())) {
-      parts.push(
-        `Due ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
-      );
+      const dateStr = d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+      return `${eventTitle} · ${dateStr}`;
     }
   }
-  return parts.join(' · ');
-}
 
-function displayAssignmentTitle(raw) {
-  if (!raw || typeof raw !== 'string') return 'Schoolwork';
-  const t = raw.replace(/^Help:\s*/i, '').trim();
-  return t || 'Schoolwork';
+  return eventTitle;
 }
 
 export default function RespondToHelpRequestModal({ visible, assignment, onClose, onResponded }) {
@@ -131,27 +125,10 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
     assignment?.child?.name ||
     'your child';
 
-  const subjectName = assignment?.subject?.name || null;
-
   const contextHeadline = useMemo(
-    () => buildContextHeadline(linkedEvent, assignment, subjectName),
-    [linkedEvent, assignment, subjectName]
+    () => buildContextHeadline(linkedEvent, assignment),
+    [linkedEvent, assignment],
   );
-
-  const helpLines = assignment ? getChildHelpMessageHistory(assignment) : [];
-  let quotedNotes = helpLines
-    .map((h) => {
-      const body = (h.note || '').trim();
-      const reason = (h.reason || '').trim();
-      if (body) return body;
-      if (reason) return reason;
-      return null;
-    })
-    .filter(Boolean);
-  if (quotedNotes.length === 0 && assignment) {
-    const fb = extractStudentHelpReason(assignment);
-    if (fb) quotedNotes = [fb];
-  }
 
   const threadLines = useMemo(() => {
     const raw = assignment?.help_message_log;
@@ -278,8 +255,6 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
 
   if (!assignment) return null;
 
-  const signOffName = childName === 'your child' ? 'Student' : childName;
-
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
       <View style={styles.modalOverlay}>
@@ -318,19 +293,9 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
                 showsVerticalScrollIndicator
                 bounces={Platform.OS !== 'web'}
               >
-                <Text style={styles.contextHeadline}>{contextHeadline}</Text>
-                {quotedNotes.length > 0 ? (
-                  <View style={styles.quoteBlock}>
-                    {quotedNotes.map((line, i) => (
-                      <Text key={i} style={styles.quote}>
-                        “{line}”
-                      </Text>
-                    ))}
-                  </View>
-                ) : null}
+                <Text style={styles.eventTitle}>{contextHeadline}</Text>
                 {threadLines.length > 0 ? (
                   <View style={styles.threadBlock}>
-                    <Text style={styles.threadLabel}>Conversation history</Text>
                     {threadLines.map((line, i) => (
                       <Text key={`thread-${i}`} style={styles.threadLine}>
                         {line}
@@ -338,7 +303,6 @@ export default function RespondToHelpRequestModal({ visible, assignment, onClose
                     ))}
                   </View>
                 ) : null}
-                <Text style={styles.signOff}>– {signOffName}</Text>
               </ScrollView>
             </View>
 
@@ -465,53 +429,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#D6DCE8',
   },
-  /** Scroll long student messages without growing the modal */
+  /** Scroll long threads without growing the modal */
   contextScroll: {
     maxHeight: 260,
   },
-  contextHeadline: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#5B6880',
-    lineHeight: 21,
-    ...fontDisplay('500'),
-  },
-  quoteBlock: {
-    marginTop: 12,
-  },
-  quote: {
-    fontSize: 14,
-    fontWeight: '400',
-    fontStyle: 'italic',
-    color: '#5B6880',
-    lineHeight: 21,
-    marginBottom: 4,
+  eventTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 22,
+    ...fontDisplay('600'),
   },
   threadBlock: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#D6DCE8',
+    marginTop: 12,
     gap: 6,
-  },
-  threadLabel: {
-    fontSize: 12,
-    color: '#5B6880',
-    ...fontDisplay('600'),
   },
   threadLine: {
     fontSize: 12,
     lineHeight: 17,
     color: '#5B6880',
     ...fontDisplay('400'),
-  },
-  signOff: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#5B6880',
-    marginTop: 10,
-    textAlign: 'right',
-    lineHeight: 19,
   },
   /** Medium: card → response */
   blockResponse: {

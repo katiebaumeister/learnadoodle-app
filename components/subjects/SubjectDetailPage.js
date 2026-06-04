@@ -1688,16 +1688,39 @@ export default function SubjectDetailPage({
     assignment = null,
   } = {}) => {
     if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (sendOnly || parentFocus === 'send') {
+      window.dispatchEvent(new CustomEvent('openNudgeForEvent', {
+        detail: { eventId: event.id, initialEvent: event },
+      }));
+      return;
+    }
+    if (parentFocus === 'help' && assignment) {
+      window.dispatchEvent(new CustomEvent('openHelpForAssignment', { detail: { assignment } }));
+      return;
+    }
+    if (parentFocus === 'submission' && assignment) {
+      window.dispatchEvent(new CustomEvent('openReviewForAssignment', { detail: { assignment } }));
+      return;
+    }
+    if (childFocus === 'submission') {
+      window.dispatchEvent(new CustomEvent('openEventModal', {
+        detail: {
+          eventId: event.id,
+          initialEvent: event,
+          schedulingMode: true,
+          childEventFocus: 'submission',
+          submissionViewOnly,
+          assignment,
+        },
+      }));
+      return;
+    }
     window.dispatchEvent(
       new CustomEvent('openEventModal', {
         detail: {
           eventId: event.id,
           initialEvent: event,
-          parentEventFocus: parentFocus,
-          childEventFocus: childFocus,
-          sendOnlyMode: sendOnly,
-          submissionViewOnly,
-          assignment,
+          schedulingMode: true,
         },
       })
     );
@@ -2108,7 +2131,7 @@ export default function SubjectDetailPage({
     if (eid && Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('openEventModal', {
-          detail: { eventId: eid, initialEvent: null, parentEventFocus: null },
+          detail: { eventId: eid, initialEvent: null, schedulingMode: true },
         })
       );
       return;

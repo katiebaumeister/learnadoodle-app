@@ -19,6 +19,7 @@ import { getMaterial } from '../../lib/services/materialsClient';
 import { normalizeMaterial, normalizeUpload, roleLabel as getRoleLabel } from '../../lib/docs/roles';
 import MaterialScheduleLinksSection from './MaterialScheduleLinksSection';
 import ConfirmDialog from '../ConfirmDialog';
+import { destructiveButtonStyles, destructiveIconColor } from '../ui/destructiveButtonStyles';
 
 const FG = '#111827';
 const SUB = '#6b7280';
@@ -449,10 +450,10 @@ export default function MaterialDetailsModal({
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => setShowDeleteConfirm(true)}
-                  style={styles.deleteButton}
+                  style={destructiveButtonStyles.buttonCompact}
                 >
-                  <Trash2 size={16} color="#FFFFFF" />
-                  <Text style={styles.deleteButtonText}>Delete</Text>
+                  <Trash2 size={16} color={destructiveIconColor} />
+                  <Text style={destructiveButtonStyles.buttonTextCompact}>Delete</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.editButton}
@@ -770,26 +771,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   editButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
-    }),
-  },
-  deleteButton: {
-    minHeight: 42,
-    borderRadius: 14,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#EF4444',
-    backgroundColor: '#EF4444',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  deleteButtonText: {
     fontSize: 15,
     fontWeight: '700',
     color: '#FFFFFF',

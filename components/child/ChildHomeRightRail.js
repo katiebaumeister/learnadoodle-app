@@ -13,7 +13,6 @@ import {
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { getAssignments } from '../../lib/services/assignmentsClient';
-import AskParentHelpModal from './AskParentHelpModal';
 import {
   formatSchoolEventTypeLabel,
   isSchoolWorkEventType,
@@ -23,7 +22,6 @@ import { colors } from '../../theme/colors';
 import { useToast } from '../Toast';
 
 const TABS = [
-  { id: 'help', label: 'Discussions' },
   { id: 'submissions', label: 'Submissions' },
   { id: 'coming_up', label: 'Coming up' },
 ];
@@ -150,16 +148,13 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   const toast = useToast();
   const session = useSession();
   const initialRailCache = readRailCacheSnapshot(familyId, childId);
-  const [selectedSection, setSelectedSection] = useState('help');
+  const [selectedSection, setSelectedSection] = useState('coming_up');
   const [assignments, setAssignments] = useState(() => initialRailCache.data?.assignments || []);
   const [upcomingEvents, setUpcomingEvents] = useState(() => initialRailCache.data?.upcomingEvents || []);
   const [loadingAssignments, setLoadingAssignments] = useState(() => !initialRailCache.data?.assignmentsLoaded);
   const [loadingUpcomingEvents, setLoadingUpcomingEvents] = useState(() => !initialRailCache.data?.upcomingLoaded);
   const [upcomingLoaded, setUpcomingLoaded] = useState(() => initialRailCache.data?.upcomingLoaded === true);
   const [linkedEventsLoading, setLinkedEventsLoading] = useState(false);
-  const [helpModalOpen, setHelpModalOpen] = useState(false);
-  const [helpModalAssignment, setHelpModalAssignment] = useState(null);
-  const [helpModalEvent, setHelpModalEvent] = useState(null);
   const [linkedEventsById, setLinkedEventsById] = useState(() => initialRailCache.data?.linkedEventsById || {});
   const railCacheKeyRef = useRef(initialRailCache.key);
   const selectedSectionRef = useRef(selectedSection);
@@ -551,12 +546,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       .slice(0, LIMIT);
   }, [correspondenceAssignments]);
 
-  const openHelpForAssignment = (a) => {
-    setHelpModalEvent(null);
-    setHelpModalAssignment(a);
-    setHelpModalOpen(true);
-  };
-
   const openSubmitForAssignment = (assignment) => {
     const linkedEventId = linkedEventIdForAssignment(assignment);
     if (!linkedEventId || Platform.OS !== 'web' || typeof window === 'undefined') {
@@ -680,19 +669,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
     </View>
   );
 
-  const renderAssignmentHelpRow = (a, ctaLabel = 'Ask for help') => {
-    const metaLine = assignmentEventMetaLine(a);
-    return renderUnifiedHelpRow({
-      rowKey: a.id,
-      title: a.title || 'Schoolwork',
-      metaLine,
-      onCta: () => openHelpForAssignment(a),
-      ctaLabel: a?.need_help ? 'Asked for help' : ctaLabel,
-      ctaDisabled: false,
-      ctaDone: !!a.need_help,
-    });
-  };
-
   const renderBody = () => {
     if (selectedSection === 'submissions') {
       if (loadingAssignments) {
@@ -764,39 +740,6 @@ export default function ChildHomeRightRail({ familyId, childId }) {
       );
     }
 
-    if (selectedSection === 'help') {
-      if (loadingAssignments) {
-        return (
-          <View style={styles.bodyFill}>
-            <Text style={styles.mutedSmall}>Loading…</Text>
-          </View>
-        );
-      }
-      const helpRows = correspondenceAssignments.slice(0, LIMIT);
-      const hasAny = helpRows.length > 0;
-
-      return (
-        <View style={styles.helpColumn}>
-          {!hasAny ? (
-            <View style={[styles.bodyFill, styles.emptyCenter]}>
-              <View style={styles.emptyBlock}>
-                <Text style={styles.emptyTitle}>No correspondence yet</Text>
-                <Text style={styles.emptyHint}>
-                  Start a message from an assignment and your conversation history will show here.
-                </Text>
-              </View>
-            </View>
-          ) : (
-            <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
-              <View style={styles.helpSection}>
-                {helpRows.map((a) => renderAssignmentHelpRow(a))}
-              </View>
-            </ScrollView>
-          )}
-        </View>
-      );
-    }
-
     /* coming up */
     if (loadingUpcomingEvents) {
       return (
@@ -850,54 +793,29 @@ export default function ChildHomeRightRail({ familyId, childId }) {
   };
 
   return (
-    <>
-      <View style={styles.outer}>
-        <View style={styles.container}>
-          <View style={styles.tabs}>
-            {TABS.map((tab) => {
-              const active = selectedSection === tab.id;
-              return (
-                <TouchableOpacity
-                  key={tab.id}
-                  style={[styles.tab, active && styles.tabActive]}
-                  onPress={() => setSelectedSection(tab.id)}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.tabInner}>
-                    <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab.label}</Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <View style={styles.bodyScrollWrap}>{renderBody()}</View>
+    <View style={styles.outer}>
+      <View style={styles.container}>
+        <View style={styles.tabs}>
+          {TABS.map((tab) => {
+            const active = selectedSection === tab.id;
+            return (
+              <TouchableOpacity
+                key={tab.id}
+                style={[styles.tab, active && styles.tabActive]}
+                onPress={() => setSelectedSection(tab.id)}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <View style={styles.tabInner}>
+                  <Text style={[styles.tabText, active && styles.tabTextActive]}>{tab.label}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
         </View>
-      </View>
 
-      <AskParentHelpModal
-        visible={helpModalOpen}
-        onClose={() => {
-          setHelpModalOpen(false);
-          setHelpModalAssignment(null);
-          setHelpModalEvent(null);
-        }}
-        onSent={() => {
-          toast.push('Sent to your parent', 'success');
-          loadData({ includeUpcoming: selectedSection === 'coming_up' || upcomingLoaded, silent: true });
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
-            window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
-            window.dispatchEvent(new CustomEvent('refreshRightRail'));
-            window.dispatchEvent(new CustomEvent('refreshCalendar'));
-          }
-        }}
-        familyId={familyId}
-        childId={childId}
-        assignment={helpModalAssignment}
-        eventContext={helpModalEvent}
-      />
-    </>
+        <View style={styles.bodyScrollWrap}>{renderBody()}</View>
+      </View>
+    </View>
   );
 }
 

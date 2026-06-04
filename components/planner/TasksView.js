@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, FlatList, TouchableOpacity, Platform, StyleSheet, Alert, Modal } from 'react-native';
-import { Calendar, CalendarDays, List, Archive, Trash2, Plus, Hand, ClipboardList, MessageCircle, X } from 'lucide-react';
+import { View, Text, ScrollView, FlatList, TouchableOpacity, Platform, StyleSheet, Alert } from 'react-native';
+import { Calendar, CalendarDays, List, Archive, Trash2, Plus } from 'lucide-react';
 import { addDays, isSameDay, startOfToday } from './utils/date';
 import EventChip from '../calendar/EventChip';
 import CompletionRing from '../calendar/CompletionRing';
@@ -9,12 +9,6 @@ import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { supabase } from '../../lib/supabase';
 import { permanentlyDeleteAllTrashEvents } from '../../lib/services/plannerClientWithOffline';
 import { getHolidaysForRange } from '../../lib/services/academicYearClient';
-import { ASSIGNMENT_SELECT } from '../../lib/familyDmClient';
-import { dispatchAssignmentRefreshEvents, getChildIdsFromEvent } from '../../lib/assignmentWorkflowClient';
-import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
-import AssignmentMessageModal from '../subjects/AssignmentMessageModal';
-import AssignmentSubmittalRequestModal from '../subjects/AssignmentSubmittalRequestModal';
-import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
 import {
   formatEventTypeLabel,
   formatTimeRangeLabel,
@@ -24,127 +18,10 @@ import {
   getEventMaterialIds,
   resolveMaterialDisplayLabel,
   formatEventGradeLabel,
-  pickAssignmentForEvent,
-  mergeAssignmentsByEventId,
   getPlannerEventTypeColors,
 } from './plannerListTableUtils';
 
-const WEB_BODY_FONT = Platform.OS === 'web'
-  ? { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
-  : {};
-
-function renderPlannerListActionHint(actionHint) {
-  if (Platform.OS !== 'web' || !actionHint?.text || typeof document === 'undefined') return null;
-  let ReactDOM;
-  try {
-    ReactDOM = require('react-dom');
-  } catch {
-    return null;
-  }
-  if (!ReactDOM?.createPortal) return null;
-  return ReactDOM.createPortal(
-    <View
-      pointerEvents="none"
-      style={{
-        position: 'fixed',
-        zIndex: 100001,
-        maxWidth: 240,
-        backgroundColor: 'rgba(15, 23, 42, 0.92)',
-        borderRadius: 6,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        marginTop: 6,
-        left: actionHint.x,
-        top: actionHint.y,
-        transform: [{ translateX: -50 }],
-      }}
-    >
-      <Text style={{ fontSize: 12, fontWeight: '500', color: '#FFFFFF', textAlign: 'center', ...WEB_BODY_FONT }}>
-        {actionHint.text}
-      </Text>
-    </View>,
-    document.body
-  );
-}
-
-function PlannerListActionButton({
-  Icon,
-  label,
-  hint,
-  onPress,
-  onShowHint,
-  onHideHint,
-  disabled = false,
-  allowDisabledPress = false,
-  urgent = false,
-}) {
-  const hintText = String(hint || label || '').trim();
-  const canPressWhenDisabled = disabled && allowDisabledPress;
-  const touchDisabled = disabled && !allowDisabledPress;
-  const iconColor = disabled ? '#CBD5E1' : urgent ? '#EA580C' : '#5B6880';
-
-  const handleMouseEnter = useCallback((e) => {
-    if (Platform.OS !== 'web' || !hintText) return;
-    onShowHint?.(hintText, e);
-  }, [hintText, onShowHint]);
-
-  const handleMouseLeave = useCallback(() => {
-    if (Platform.OS !== 'web') return;
-    onHideHint?.();
-  }, [onHideHint]);
-
-  return (
-    <TouchableOpacity
-      style={[
-        plannerListActionStyles.actionBtn,
-        disabled && plannerListActionStyles.actionBtnDisabled,
-        urgent && !disabled && plannerListActionStyles.actionBtnUrgent,
-      ]}
-      onPress={() => {
-        if (disabled) {
-          if (canPressWhenDisabled) onPress?.();
-          return;
-        }
-        onPress?.();
-      }}
-      disabled={touchDisabled}
-      activeOpacity={0.75}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      {...(Platform.OS === 'web' && {
-        cursor: canPressWhenDisabled || !disabled ? 'pointer' : 'default',
-        title: hintText,
-        onMouseEnter: handleMouseEnter,
-        onMouseLeave: handleMouseLeave,
-      })}
-    >
-      <Icon size={15} color={iconColor} strokeWidth={2.1} />
-    </TouchableOpacity>
-  );
-}
-
-const plannerListActionStyles = StyleSheet.create({
-  actionBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.28)',
-    backgroundColor: '#F9FAFB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  actionBtnDisabled: {
-    opacity: 0.38,
-  },
-  actionBtnUrgent: {
-    borderColor: 'rgba(234, 88, 12, 0.35)',
-    backgroundColor: '#FFF7ED',
-  },
-});
-
-export default function TasksView({ 
+export default function TasksView({
   events = [], 
   onEventPress, 
   onEventRightClick, 
@@ -165,7 +42,7 @@ export default function TasksView({
   }, []);
   const DENSE_DATE_HEADER_HEIGHT = 32;
   const DENSE_EVENT_ROW_HEIGHT = 64;
-  const DENSE_TABLE_MIN_WIDTH = 980;
+  const DENSE_TABLE_MIN_WIDTH = 872;
   const normalizeHolidayType = useCallback((value) => {
     const raw = String(value || '').trim().toUpperCase();
     if (raw === 'BREAK') return 'CUSTOM_BREAK';
@@ -407,15 +284,7 @@ export default function TasksView({
   );
   const [allPastMonths, setAllPastMonths] = useState(1);
   const [allFutureMonths, setAllFutureMonths] = useState(2);
-  const [assignmentsByEventId, setAssignmentsByEventId] = useState({});
   const [materialById, setMaterialById] = useState(() => new Map());
-  const [actionHint, setActionHint] = useState(null);
-  const [showNudgeModal, setShowNudgeModal] = useState(false);
-  const [showSubmittalModal, setShowSubmittalModal] = useState(false);
-  const [showHelpModal, setShowHelpModal] = useState(false);
-  const [showHelpUnavailableModal, setShowHelpUnavailableModal] = useState(false);
-  const [modalEvent, setModalEvent] = useState(null);
-  const [modalAssignment, setModalAssignment] = useState(null);
   const sectionAllStart = useMemo(
     () => {
       if (allPastMonths <= 0) {
@@ -1283,78 +1152,6 @@ export default function TasksView({
   };
 
   const isDenseCalendarSection = ['today', 'tomorrow', 'thismonth', 'nextmonth', 'all'].includes(activeSection);
-  const canShowPlannerActions = !!familyIdProp && !!onEventComplete;
-
-  const showActionHint = useCallback((text, event) => {
-    if (Platform.OS !== 'web' || !text) return;
-    const node = event?.currentTarget || event?.target;
-    if (!node || typeof node.getBoundingClientRect !== 'function') return;
-    const rect = node.getBoundingClientRect();
-    setActionHint({ text, x: rect.left + rect.width / 2, y: rect.bottom });
-  }, []);
-
-  const hideActionHint = useCallback(() => {
-    if (Platform.OS !== 'web') return;
-    setActionHint(null);
-  }, []);
-
-  const closeWorkflowModals = useCallback(() => {
-    setShowNudgeModal(false);
-    setShowSubmittalModal(false);
-    setShowHelpModal(false);
-    setModalEvent(null);
-    setModalAssignment(null);
-  }, []);
-
-  const handleWorkflowComplete = useCallback(() => {
-    dispatchAssignmentRefreshEvents();
-    closeWorkflowModals();
-  }, [closeWorkflowModals]);
-
-  const openWorkflow = useCallback((event, assignment, kind) => {
-    if (!familyIdProp) return;
-    if (getChildIdsFromEvent(event).length === 0) {
-      const message = 'Select a student on this event first.';
-      if (Platform.OS === 'web') window.alert(message);
-      else Alert.alert('Student required', message);
-      return;
-    }
-    setModalEvent(event);
-    setModalAssignment(assignment || null);
-    if (kind === 'nudge') setShowNudgeModal(true);
-    else if (kind === 'submittal') setShowSubmittalModal(true);
-    else if (kind === 'help') setShowHelpModal(true);
-  }, [familyIdProp]);
-
-  const modalChildIds = useMemo(() => getChildIdsFromEvent(modalEvent), [modalEvent]);
-
-  useEffect(() => {
-    if (!familyIdProp || !isDenseCalendarSection) {
-      setAssignmentsByEventId({});
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('assignments')
-          .select(ASSIGNMENT_SELECT)
-          .eq('family_id', familyIdProp)
-          .order('updated_at', { ascending: false })
-          .limit(500);
-        if (cancelled) return;
-        if (error) {
-          console.warn('[TasksView] assignments load:', error.message);
-          setAssignmentsByEventId({});
-          return;
-        }
-        setAssignmentsByEventId(mergeAssignmentsByEventId(data || []));
-      } catch (err) {
-        if (!cancelled) console.warn('[TasksView] assignments load:', err);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [familyIdProp, isDenseCalendarSection, currentEvents.length]);
 
   useEffect(() => {
     if (!isDenseCalendarSection) {
@@ -1403,7 +1200,6 @@ export default function TasksView({
       <Text style={[styles.denseTableHeaderCell, styles.denseColUnits]}>Units</Text>
       <Text style={[styles.denseTableHeaderCell, styles.denseColGrade]}>Grade</Text>
       <Text style={[styles.denseTableHeaderCell, styles.denseColAttachments]}>Attachments</Text>
-      <Text style={[styles.denseTableHeaderCell, styles.denseColActions]}>Actions</Text>
     </View>
   ), []);
 
@@ -1657,9 +1453,6 @@ export default function TasksView({
     const { chipBg, chipText } = getPlannerEventTypeColors(event);
     const unitLessonLabel = getEventUnitLessonLabel(event);
     const gradeLabel = formatEventGradeLabel(event);
-    const linkedAssignments = assignmentsByEventId?.[eventId] || [];
-    const assignment = pickAssignmentForEvent(event, linkedAssignments);
-    const canRespondHelp = assignment?.need_help === true;
     const materialIds = getEventMaterialIds(event);
 
     const handleRowContextMenu = (nativeEvent) => {
@@ -1789,60 +1582,16 @@ export default function TasksView({
             </View>
           )}
         </View>
-
-        <View style={styles.denseColActions}>
-          {canShowPlannerActions ? (
-            <View style={styles.denseActionsRow}>
-              <PlannerListActionButton
-                Icon={Hand}
-                label="Nudge student"
-                hint="Nudge student"
-                onShowHint={showActionHint}
-                onHideHint={hideActionHint}
-                onPress={() => openWorkflow(event, assignment, 'nudge')}
-              />
-              <PlannerListActionButton
-                Icon={ClipboardList}
-                label="Request submit"
-                hint="Request submit"
-                onShowHint={showActionHint}
-                onHideHint={hideActionHint}
-                onPress={() => openWorkflow(event, assignment, 'submittal')}
-              />
-              <PlannerListActionButton
-                Icon={MessageCircle}
-                label="Respond to help"
-                hint="Respond to help"
-                onShowHint={showActionHint}
-                onHideHint={hideActionHint}
-                disabled={!canRespondHelp}
-                allowDisabledPress
-                onPress={() => {
-                  if (canRespondHelp) openWorkflow(event, assignment, 'help');
-                  else setShowHelpUnavailableModal(true);
-                }}
-                urgent={canRespondHelp}
-              />
-            </View>
-          ) : (
-            <Text style={styles.denseEmptyCellText}>—</Text>
-          )}
-        </View>
       </View>
     );
   }, [
     activeSection,
-    assignmentsByEventId,
-    canShowPlannerActions,
     children,
-    hideActionHint,
     isDoneStatus,
     materialById,
     onEventComplete,
     onEventPress,
     onEventRightClick,
-    openWorkflow,
-    showActionHint,
   ]);
 
   const renderDenseListItem = useCallback(({ item }) => {
@@ -1972,59 +1721,6 @@ export default function TasksView({
           </ScrollView>
         )}
       </View>
-
-      <AssignmentMessageModal
-        visible={showNudgeModal}
-        onClose={closeWorkflowModals}
-        onSent={handleWorkflowComplete}
-        familyId={familyIdProp}
-        event={modalEvent}
-        assignment={modalAssignment}
-        isParentViewer
-        children={children}
-        assignedChildIds={modalChildIds}
-        subjectId={modalEvent?.subject_id || modalAssignment?.related_subject || null}
-      />
-      <AssignmentSubmittalRequestModal
-        visible={showSubmittalModal}
-        onClose={closeWorkflowModals}
-        onRequested={handleWorkflowComplete}
-        familyId={familyIdProp}
-        event={modalEvent}
-        assignment={modalAssignment}
-        children={children}
-        assignedChildIds={modalChildIds}
-        subjectId={modalEvent?.subject_id || modalAssignment?.related_subject || null}
-      />
-      <RespondToHelpRequestModal
-        visible={showHelpModal}
-        assignment={modalAssignment}
-        onClose={closeWorkflowModals}
-        onResponded={handleWorkflowComplete}
-      />
-      {renderPlannerListActionHint(actionHint)}
-      <Modal
-        visible={showHelpUnavailableModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowHelpUnavailableModal(false)}
-      >
-        <View style={comingSoonModalStyles.overlay}>
-          <View style={comingSoonModalStyles.content}>
-            <TouchableOpacity
-              style={comingSoonModalStyles.close}
-              onPress={() => setShowHelpUnavailableModal(false)}
-              activeOpacity={0.7}
-            >
-              <X size={18} color="#64748B" />
-            </TouchableOpacity>
-            <Text style={comingSoonModalStyles.title}>Respond to help</Text>
-            <Text style={comingSoonModalStyles.body}>
-              The student has not asked for help on this assignment yet.
-            </Text>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -2185,7 +1881,7 @@ const styles = StyleSheet.create({
     }),
   },
   denseListContent: {
-    minWidth: 980,
+    minWidth: 872,
   },
   denseTableHeaderRow: {
     flexDirection: 'row',
@@ -2196,7 +1892,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
-    minWidth: 980,
+    minWidth: 872,
     flexShrink: 0,
     zIndex: 10,
     ...(Platform.OS === 'web' && {
@@ -2238,7 +1934,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
-    minWidth: 980,
+    minWidth: 872,
   },
   denseRowDone: {
     opacity: 0.72,
@@ -2275,11 +1971,7 @@ const styles = StyleSheet.create({
     flex: 1.1,
     minWidth: 0,
     justifyContent: 'center',
-  },
-  denseColActions: {
-    flex: 1,
-    minWidth: 108,
-    justifyContent: 'center',
+    paddingRight: 0,
   },
   denseEventTitle: {
     fontSize: 14,
@@ -2349,11 +2041,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  denseActionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
   },
   taskItem: {
     marginBottom: 8,

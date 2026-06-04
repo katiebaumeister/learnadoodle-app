@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, Platform } from 'react-native';
 import { Trash2 } from 'lucide-react';
 import { designTokens } from '../theme/designTokens';
+import { destructiveButtonStyles, destructiveIconColor } from './ui/destructiveButtonStyles';
 
 const { colors: tok, fonts, radius } = designTokens;
 const primary = tok.primary;
@@ -46,12 +47,20 @@ function DialogContent({ title, message, confirmLabel, cancelLabel, destructive,
           <Text style={styles.cancelButtonText}>{cancelLabel}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.confirmButton, destructive && styles.confirmButtonDestructive]}
+          style={[
+            styles.confirmButton,
+            destructive && destructiveButtonStyles.buttonCompact,
+            destructive && styles.confirmButtonDestructive,
+          ]}
           onPress={onConfirm}
           activeOpacity={0.85}
         >
-          {destructive ? <Trash2 size={14} color="#FFFFFF" strokeWidth={2.25} /> : null}
-          <Text style={[styles.confirmButtonText, destructive && styles.confirmButtonTextDestructive]}>
+          {destructive ? <Trash2 size={14} color={destructiveIconColor} strokeWidth={2.25} /> : null}
+          <Text style={[
+            styles.confirmButtonText,
+            destructive && destructiveButtonStyles.buttonTextCompact,
+            destructive && styles.confirmButtonTextDestructive,
+          ]}>
             {confirmLabel}
           </Text>
         </TouchableOpacity>
@@ -234,7 +243,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   confirmButtonDestructive: {
-    backgroundColor: '#dc2626',
+    backgroundColor: destructiveButtonStyles.buttonCompact.backgroundColor,
+    minWidth: 96,
   },
   confirmButtonText: {
     fontSize: 15,
@@ -243,6 +253,6 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'web' ? FONT_MODAL_BUTTON : fonts.sans,
   },
   confirmButtonTextDestructive: {
-    color: '#FFFFFF',
+    color: destructiveButtonStyles.buttonTextCompact.color,
   },
 });

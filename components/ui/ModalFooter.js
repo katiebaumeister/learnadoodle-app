@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Check, Sparkles, Trash2 } from 'lucide-react';
+import { destructiveButtonStyles, destructiveIconColor } from './destructiveButtonStyles';
 
 export function ModalFooter({
   mode = 'add',
@@ -30,10 +31,10 @@ export function ModalFooter({
           <TouchableOpacity
             onPress={onDelete}
             disabled={loading}
-            style={[styles.deleteButton, loading && styles.deleteButtonDisabled]}
+            style={[destructiveButtonStyles.button, loading && destructiveButtonStyles.buttonDisabled]}
           >
-            <Trash2 size={17} color="#DC2626" />
-            <Text style={[styles.deleteButtonText, loading && styles.deleteButtonTextDisabled]}>
+            <Trash2 size={17} color={destructiveIconColor} />
+            <Text style={[destructiveButtonStyles.buttonText, loading && destructiveButtonStyles.buttonTextDisabled]}>
               {destructiveLabel}
             </Text>
           </TouchableOpacity>
@@ -101,31 +102,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", sans-serif',
     }),
-  },
-  deleteButton: {
-    height: 50,
-    paddingHorizontal: 18,
-    borderRadius: 16,
-    backgroundColor: '#FEF2F2',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  deleteButtonDisabled: {
-    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
-  },
-  deleteButtonText: {
-    color: '#B91C1C',
-    fontWeight: '700',
-    fontSize: 16,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
-    }),
-  },
-  deleteButtonTextDisabled: {
-    opacity: 0.8,
   },
   primary: {
     height: 50,

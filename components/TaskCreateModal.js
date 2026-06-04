@@ -30,6 +30,14 @@ import {
   updateExclusion,
 } from '../lib/services/plannerSettingsClient';
 import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
+import WorkDetailsSection from './events/WorkDetailsSection';
+import { ensureAssignmentsForEvent } from '../lib/workAssignmentClient';
+import {
+  computeSuggestedStartDate,
+  defaultWorkSpec,
+  isWorkProducingEventType,
+  parseWorkSpec,
+} from '../lib/workEventHelpers';
 
 const BG = '#ffffff';
 const FG = '#111827';
@@ -385,6 +393,7 @@ export default function TaskCreateModal({
   const [submitting, setSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
   const [validationBanner, setValidationBanner] = useState('');
+  const ignoreRecurrenceValidationRef = useRef(false);
   const [placement, setPlacement] = useState(defaultPlacement || 'calendar');
   const [showCalendarPicker, setShowCalendarPicker] = useState(false);
   const [activeDatePickerField, setActiveDatePickerField] = useState('start');
@@ -449,6 +458,7 @@ export default function TaskCreateModal({
   
   // New academic and metadata fields
   const [eventType, setEventType] = useState('Lesson'); // Default to "Lesson" for new events
+  const [workSpec, setWorkSpec] = useState(() => defaultWorkSpec('Assignment'));
   const [subjectIds, setSubjectIds] = useState(defaultSubjectId ? [defaultSubjectId] : []);
   const [subjectId, setSubjectId] = useState(defaultSubjectId || null);
   const [unit, setUnit] = useState('');
@@ -2599,7 +2609,7 @@ export default function TaskCreateModal({
           : 'Select at least one assignee';
     }
 
-    if (isRecurring && placement === 'calendar') {
+    if (!ignoreRecurrenceValidationRef.current && isRecurring && placement === 'calendar') {
       if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
         errors.recurrenceWeekdays = 'Select at least one weekday';
       }
@@ -2631,6 +2641,9 @@ export default function TaskCreateModal({
   };
 
   const validateFields = ({ showBanner = false } = {}) => {
+    if (showBanner) {
+      ignoreRecurrenceValidationRef.current = false;
+    }
     const errors = computeFieldErrors();
     setValidationErrors(errors);
     if (showBanner) {
@@ -2641,9 +2654,29 @@ export default function TaskCreateModal({
 
   const isFormValid = () => Object.keys(computeFieldErrors()).length === 0;
 
+  const clearRecurrenceValidation = useCallback(() => {
+    ignoreRecurrenceValidationRef.current = true;
+    setValidationErrors((prev) => {
+      if (!prev.recurrenceEnd && !prev.recurrenceWeekdays && !prev.recurrenceInterval) return prev;
+      const next = { ...prev };
+      delete next.recurrenceEnd;
+      delete next.recurrenceWeekdays;
+      delete next.recurrenceInterval;
+      return next;
+    });
+    setValidationBanner((prevBanner) => {
+      if (!prevBanner) return prevBanner;
+      const nextErrors = computeFieldErrors();
+      return Object.keys(nextErrors).length > 0
+        ? buildValidationBannerMessage(nextErrors)
+        : '';
+    });
+  }, [buildValidationBannerMessage]);
+
   useEffect(() => {
     if (!validationBanner) return;
     const currentErrors = computeFieldErrors();
+    setValidationErrors(currentErrors);
     if (Object.keys(currentErrors).length === 0) {
       setValidationBanner('');
       return;
@@ -2673,6 +2706,7 @@ export default function TaskCreateModal({
   ]);
 
   const handleDismiss = useCallback(() => {
+    ignoreRecurrenceValidationRef.current = false;
     setValidationErrors({});
     setValidationBanner('');
     setPercentValidationError(null);
@@ -3512,6 +3546,9 @@ export default function TaskCreateModal({
           curriculum_unit_title: unit.trim() || null,
           lesson: lesson.trim() || null,
         };
+        if (isWorkProducingEventType(eventType)) {
+          updatePayload.work_spec = parseWorkSpec(workSpec, eventType);
+        }
         await supabase
           .from('events')
           .update(updatePayload)
@@ -3526,6 +3563,20 @@ export default function TaskCreateModal({
               };
             }
           });
+
+        if (isWorkProducingEventType(eventType)) {
+          try {
+            await ensureAssignmentsForEvent({
+              familyId: userFamilyId,
+              event: { ...data, ...updatePayload },
+              childIds: assigneeIds,
+              workSpec: updatePayload.work_spec,
+              userId: authUser?.id || null,
+            });
+          } catch (assignErr) {
+            console.warn('[TaskCreateModal] ensureAssignmentsForEvent:', assignErr);
+          }
+        }
         if (typeof window !== 'undefined' && placement === 'calendar') {
           window.dispatchEvent(new CustomEvent('refreshCalendar'));
         }
@@ -3797,6 +3848,14 @@ export default function TaskCreateModal({
                       applyEventTypeSelection(type);
                       if (validationErrors.eventType) {
                         setValidationErrors({ ...validationErrors, eventType: null });
+                      }
+                      if (
+                        validationBanner
+                        || validationErrors.recurrenceEnd
+                        || validationErrors.recurrenceWeekdays
+                        || validationErrors.recurrenceInterval
+                      ) {
+                        clearRecurrenceValidation();
                       }
                     }}
                     style={[
@@ -4347,13 +4406,19 @@ export default function TaskCreateModal({
                               setIsRecurring(value);
                               setShowRecurringSection(value);
                               if (value) {
+                                ignoreRecurrenceValidationRef.current = false;
                                 if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
                                   const defaultDay = dueDate instanceof Date ? dueDate.getDay() : new Date().getDay();
                                   setRecurrenceWeekdays([defaultDay]);
                                   setIsRecurrenceWeekdayAutofilled(true);
                                 }
-                              } else if (validationErrors.recurrenceEnd) {
-                                setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                              } else if (
+                                validationBanner
+                                || validationErrors.recurrenceEnd
+                                || validationErrors.recurrenceWeekdays
+                                || validationErrors.recurrenceInterval
+                              ) {
+                                clearRecurrenceValidation();
                               }
                             }}
                             trackColor={{ false: BORDER, true: '#AECBFA' }}
@@ -4854,8 +4919,13 @@ export default function TaskCreateModal({
                               key={endType}
                               onPress={() => {
                                 setRecurrenceEndType(endType);
-                                if (validationErrors.recurrenceEnd) {
-                                  setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                                if (
+                                  validationBanner
+                                  || validationErrors.recurrenceEnd
+                                  || validationErrors.recurrenceWeekdays
+                                  || validationErrors.recurrenceInterval
+                                ) {
+                                  clearRecurrenceValidation();
                                 }
                               }}
                               style={[
@@ -4988,14 +5058,30 @@ export default function TaskCreateModal({
                         </View>
                       ) : null}
                     </View>
-                    {validationErrors.recurrenceEnd ? (
-                      <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.recurrenceEnd}</Text>
-                    ) : null}
                   </View>
                 )}
               </View>
             )}
           </SafeView>
+
+            <WorkDetailsSection
+              eventType={eventType}
+              workSpec={workSpec}
+              onChange={setWorkSpec}
+              suggestedStartPreview={(() => {
+                if (!isWorkProducingEventType(eventType)) return null;
+                const spec = parseWorkSpec(workSpec, eventType);
+                if (spec.suggested_start_mode === 'custom') return null;
+                const ymd = computeSuggestedStartDate(
+                  { date_local: dueDate ? toYmd(dueDate) : null, start_ts: dueDate?.toISOString?.() || null },
+                  spec
+                );
+                if (!ymd) return null;
+                const d = new Date(`${ymd}T12:00:00`);
+                if (Number.isNaN(d.getTime())) return ymd;
+                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+              })()}
+            />
 
             {/* Academic Details Section - after Schedule time */}
             {!hideLearningDetailsSection ? (

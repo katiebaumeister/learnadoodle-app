@@ -2251,8 +2251,8 @@ const styles = StyleSheet.create({
     borderColor: '#10B981',
   },
   deleteEventsButton: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#EF4444',
+    backgroundColor: colors.redSoft,
+    borderColor: colors.redBold,
   },
   eventActionButtonDisabled: {
     opacity: 0.5,
@@ -2271,7 +2271,7 @@ const styles = StyleSheet.create({
     color: '#10B981',
   },
   deleteEventsButtonText: {
-    color: '#EF4444',
+    color: colors.redBold,
   },
   unscheduledLessonsWrap: {
     marginTop: 14,

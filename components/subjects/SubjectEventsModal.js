@@ -1,6 +1,7 @@
 import React from 'react';
 import { Modal, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Check, CheckCircle2, Trash2, X } from 'lucide-react';
+import { colors } from '../../theme/colors';
 
 function fallbackFormatEventDateTime(ts) {
   const d = new Date(ts || '');
@@ -227,7 +228,7 @@ export default function SubjectEventsModal({
                 activeOpacity={0.85}
                 disabled={!hasAnyEvents || deletingAllEvents || typeof onDeleteAllEvents !== 'function'}
               >
-                <Trash2 size={17} color={!hasAnyEvents || deletingAllEvents || typeof onDeleteAllEvents !== 'function' ? '#94A3B8' : '#DC2626'} strokeWidth={2} />
+                <Trash2 size={17} color={!hasAnyEvents || deletingAllEvents || typeof onDeleteAllEvents !== 'function' ? '#94A3B8' : colors.redBold} strokeWidth={2} />
                 <Text
                   style={[
                     styles.subjectEventsFooterDeleteButtonText,
@@ -386,9 +387,8 @@ const styles = StyleSheet.create({
     height: 42,
     flex: 1,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    backgroundColor: '#FFFFFF',
+    borderWidth: 0,
+    backgroundColor: colors.redSoft,
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
@@ -397,14 +397,13 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   subjectEventsFooterDeleteButtonDisabled: {
-    borderColor: '#E2E8F0',
     backgroundColor: '#F1F5F9',
     opacity: 0.58,
   },
   subjectEventsFooterDeleteButtonText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#DC2626',
+    color: colors.redBold,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

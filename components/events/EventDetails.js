@@ -8,7 +8,7 @@ import {
   mapChildrenForConflict,
   sharedConflictBannerStyles as cb,
 } from '../planner/conflictBannerShared';
-import { Clock, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2, Send, Mail } from 'lucide-react';
+import { Clock, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2 } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { formatDate, apiRequest, pushEventToGoogleCalendar, getFamilyMembers } from '../../lib/apiClient';
@@ -27,18 +27,20 @@ import { STRINGS } from '../../lib/i18n/strings';
 import { getAcademicYear } from '../../lib/services/academicYearClient';
 import { dropPlanYearFullDataCacheEntry, dropPlanEditListTimesCacheEntry } from '../../lib/planEditListCache';
 import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
-import AskParentHelpModal from '../child/AskParentHelpModal';
-import SubmitForReviewModal from '../child/SubmitForReviewModal';
-import StudentHelpHistoryModal from '../child/StudentHelpHistoryModal';
-import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
-import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
-import TutorEventHelpPanel from '../tutor/TutorEventHelpPanel';
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
+import WorkDetailsSection from './WorkDetailsSection';
+import { ensureAssignmentsForEvent } from '../../lib/workAssignmentClient';
+import {
+  computeSuggestedStartDate,
+  isWorkProducingEventType,
+  parseWorkSpec,
+} from '../../lib/workEventHelpers';
 import ConfirmDialog from '../ConfirmDialog';
-import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
+import { destructiveButtonStyles, destructiveIconColor } from '../ui/destructiveButtonStyles';
 import { findFirstConflictEvent } from '../../lib/utils/conflictDetection';
+import { useAnchoredDropdownPosition } from '../../hooks/useAnchoredDropdownPosition';
 import {
   isPartOfRecurringSeries,
   isPlanYearBlockSeries,
@@ -1033,7 +1035,7 @@ function ChipRow({ children, style }) {
   return <View style={style}>{safeChildren}</View>;
 }
 
-export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, editScope = 'single', readOnly = false, readOnlyReason = null, preloadedAcademicYears = null, preloadedSubjects = null, preloadedFamilyAssignments = null, viewerRole = null, parentEventFocus = null, onParentEventFocusConsumed, childEventFocus = null, onChildEventFocusConsumed, openConflictResolution = false, conflictResolutionContext = null, onOpenConflictResolutionConsumed, sendOnlyMode = false }) {
+export default function EventDetails({ event, onEventUpdated, onEventDeleted, familyMembers = [], onEventPatched, familyId, onEditingChange, onClose, initialSchedulingMode = false, editScope = 'single', readOnly = false, readOnlyReason = null, preloadedAcademicYears = null, preloadedSubjects = null, viewerRole = null, openConflictResolution = false, conflictResolutionContext = null, onOpenConflictResolutionConsumed }) {
   const { width: viewportWidth } = useWindowDimensions();
   const session = useSession();
   const { user: authUser } = useAuth();
@@ -1045,7 +1047,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const isSeriesEditScope = editScope === 'series' && isSeriesGroupEvent;
   const hasPersistedEventId = Boolean(event?.id);
   const isSingleSeriesOccurrenceEdit = isSeriesGroupEvent && !isSeriesEditScope;
-  const [editing, setEditing] = useState(initialSchedulingMode);
+  const [editing, setEditing] = useState(() => !readOnly);
   const [saving, setSaving] = useState(false);
   const [schedulingBacklog, setSchedulingBacklog] = useState(initialSchedulingMode); // State for "Add to schedule" mode
 
@@ -1080,7 +1082,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
   const materialDropdownRef = useRef(null);
   const materialButtonRef = useRef(null);
-  const [materialDropdownPosition, setMaterialDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
 
   // PDF viewer state
   const [showPdfViewer, setShowPdfViewer] = useState(false);
@@ -1090,19 +1091,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   // Subject dropdown refs and position for portal
   const subjectButtonRef = useRef(null);
   const subjectDropdownRef = useRef(null);
-  const [subjectDropdownPosition, setSubjectDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
   const lessonButtonRef = useRef(null);
   const lessonDropdownRef = useRef(null);
   const [showLessonDropdown, setShowLessonDropdown] = useState(false);
-  const [lessonDropdownPosition, setLessonDropdownPosition] = useState({ top: 0, left: 0, width: 200, maxHeight: 220 });
   const startTimeButtonRef = useRef(null);
   const startTimeDropdownRef = useRef(null);
   const endTimeButtonRef = useRef(null);
   const endTimeDropdownRef = useRef(null);
   const [showStartTimeDropdown, setShowStartTimeDropdown] = useState(false);
   const [showEndTimeDropdown, setShowEndTimeDropdown] = useState(false);
-  const [startTimeDropdownPosition, setStartTimeDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
-  const [endTimeDropdownPosition, setEndTimeDropdownPosition] = useState({ top: 0, left: 0, width: 200 });
   const [lessonOptions, setLessonOptions] = useState([]);
   const [loadingLessonOptions, setLoadingLessonOptions] = useState(false);
   
@@ -1110,6 +1107,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [eventType, setEventType] = useState(() =>
     normalizeEventTypeForDisplay(event?.event_type || 'Lesson')
   );
+  const [workSpec, setWorkSpec] = useState(() => parseWorkSpec(event?.work_spec, event?.event_type));
   const [placement, setPlacement] = useState('calendar'); // 'calendar' or 'backlog'
   const [showCalendarPicker, setShowCalendarPicker] = useState(false);
   const [calendarViewMonth, setCalendarViewMonth] = useState(new Date());
@@ -1156,6 +1154,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
   const [showGoalDropdown, setShowGoalDropdown] = useState(false);
+  const materialDropdownLayout = useAnchoredDropdownPosition(showMaterialDropdown, materialButtonRef, { matchTriggerWidth: true });
+  const subjectDropdownLayout = useAnchoredDropdownPosition(showSubjectDropdown, subjectButtonRef, { minWidth: 200 });
+  const lessonDropdownLayout = useAnchoredDropdownPosition(showLessonDropdown, lessonButtonRef, { minWidth: 200, flip: true });
+  const startTimeDropdownLayout = useAnchoredDropdownPosition(showStartTimeDropdown, startTimeButtonRef, { minWidth: 150, maxHeight: 220 });
+  const endTimeDropdownLayout = useAnchoredDropdownPosition(showEndTimeDropdown, endTimeButtonRef, { minWidth: 150, maxHeight: 220 });
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
   const familyMembersSignature = useMemo(
     () =>
@@ -1236,46 +1239,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [checkingPercent, setCheckingPercent] = useState(false);
   const [loadingStandards, setLoadingStandards] = useState(false);
   const [standardsMastery, setStandardsMastery] = useState({}); // Map of standard_id -> mastery_level
-  const [showAskParentHelpModal, setShowAskParentHelpModal] = useState(false);
-  const [showSubmitForReviewModal, setShowSubmitForReviewModal] = useState(false);
-  /** Assignment row linked to this event (if any), for child "Asked" / ask-another flow */
-  const [eventLinkedHelpAssignment, setEventLinkedHelpAssignment] = useState(null);
-  /** False until the first linked-assignment fetch finishes for this event+child (avoids Ask → Asked flash). Refresh keeps prior row until the new fetch completes. */
-  const [linkedHelpReady, setLinkedHelpReady] = useState(false);
-  const linkedHelpFetchSeq = useRef(0);
-  /** When set, modal uses assignment path (follow-up); when null, uses eventContext (first ask) */
-  const [askHelpModalAssignment, setAskHelpModalAssignment] = useState(null);
-  const [submitModalAssignment, setSubmitModalAssignment] = useState(null);
-  const [showStudentHelpHistoryModal, setShowStudentHelpHistoryModal] = useState(false);
-  const [parentLinkedAssignments, setParentLinkedAssignments] = useState([]);
-  const [parentLinkedReady, setParentLinkedReady] = useState(false);
-  const parentLinkedFetchSeq = useRef(0);
-  const [showParentHelpModal, setShowParentHelpModal] = useState(false);
-  const [parentHelpModalAssignment, setParentHelpModalAssignment] = useState(null);
-  const [showParentSubmissionModal, setShowParentSubmissionModal] = useState(false);
-  const [parentSubmissionModalAssignment, setParentSubmissionModalAssignment] = useState(null);
-  const [showSendToStudentModal, setShowSendToStudentModal] = useState(false);
-  const [sendToStudentNote, setSendToStudentNote] = useState('');
-  const [sendToStudentSubmitting, setSendToStudentSubmitting] = useState(false);
-  const [sendToStudentInlineError, setSendToStudentInlineError] = useState('');
-  const [invitedAssigneeIds, setInvitedAssigneeIds] = useState([]);
-  const [childInviteSummaries, setChildInviteSummaries] = useState(() => {
-    const seed = {};
-    (familyMembers || []).forEach((m) => {
-      const sid =
-        m?.child_id != null ? String(m.child_id)
-        : m?.id != null ? String(m.id)
-        : '';
-      if (!sid) return;
-      const raw = String(m?.invite_status || '').trim().toLowerCase();
-      const status = raw === 'connected' ? 'accepted' : raw;
-      if (!status) return;
-      seed[sid] = { invite_status: status };
-    });
-    return seed;
-  });
-  const [inviteEligibilityReady, setInviteEligibilityReady] = useState(false);
-  const [showSendInviteClarification, setShowSendInviteClarification] = useState(false);
 
   const applySubjectSelection = useCallback((nextSubjectIds) => {
     const normalized = Array.from(
@@ -1358,60 +1321,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   }, [familyId, subjectIds, subjects]);
 
   useEffect(() => {
-    if (showLessonDropdown && Platform.OS === 'web' && lessonButtonRef.current) {
-      const updatePosition = () => {
-        if (lessonButtonRef.current) {
-          const node = lessonButtonRef.current._nativeNode || lessonButtonRef.current;
-          if (node && typeof node.getBoundingClientRect === 'function') {
-            const rect = node.getBoundingClientRect();
-            const dropdownMaxHeight = 300;
-            const spaceBelow = window.innerHeight - rect.bottom;
-            const spaceAbove = rect.top;
-            let top;
-            let maxHeight;
-            if (spaceBelow < 200 && spaceAbove > spaceBelow) {
-              top = rect.top - Math.min(dropdownMaxHeight, Math.max(spaceAbove - 10, 140));
-              maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceAbove - 10, 140));
-            } else {
-              top = rect.bottom + 4;
-              maxHeight = Math.min(dropdownMaxHeight, Math.max(spaceBelow - 10, 140));
-            }
-            const newPosition = {
-              top,
-              left: rect.left,
-              width: Math.max(rect.width, 200),
-              maxHeight,
-            };
-            setLessonDropdownPosition((prev) => {
-              if (
-                prev?.top === newPosition.top &&
-                prev?.left === newPosition.left &&
-                prev?.width === newPosition.width &&
-                prev?.maxHeight === newPosition.maxHeight
-              ) {
-                return prev;
-              }
-              return newPosition;
-            });
-          }
-        }
-      };
-
-      const timeoutId = setTimeout(updatePosition, 0);
-      if (typeof window !== 'undefined') {
-        window.addEventListener('scroll', updatePosition, true);
-        window.addEventListener('resize', updatePosition);
-        return () => {
-          clearTimeout(timeoutId);
-          window.removeEventListener('scroll', updatePosition, true);
-          window.removeEventListener('resize', updatePosition);
-        };
-      }
-      return () => clearTimeout(timeoutId);
-    }
-  }, [showLessonDropdown]);
-
-  useEffect(() => {
     if (Platform.OS !== 'web' || !showLessonDropdown) return;
     const handleLessonClickOutside = (event) => {
       const buttonNode = lessonButtonRef.current?._nativeNode || lessonButtonRef.current;
@@ -1424,50 +1333,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     document.addEventListener('mousedown', handleLessonClickOutside);
     return () => document.removeEventListener('mousedown', handleLessonClickOutside);
   }, [showLessonDropdown]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !showStartTimeDropdown || !startTimeButtonRef.current) return undefined;
-    const updatePosition = () => {
-      const node = startTimeButtonRef.current?._nativeNode || startTimeButtonRef.current;
-      if (!node || typeof node.getBoundingClientRect !== 'function') return;
-      const rect = node.getBoundingClientRect();
-      setStartTimeDropdownPosition((prev) => {
-        const next = { top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 150) };
-        if (prev?.top === next.top && prev?.left === next.left && prev?.width === next.width) return prev;
-        return next;
-      });
-    };
-    const timeoutId = setTimeout(updatePosition, 0);
-    window.addEventListener('scroll', updatePosition, true);
-    window.addEventListener('resize', updatePosition);
-    return () => {
-      clearTimeout(timeoutId);
-      window.removeEventListener('scroll', updatePosition, true);
-      window.removeEventListener('resize', updatePosition);
-    };
-  }, [showStartTimeDropdown]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !showEndTimeDropdown || !endTimeButtonRef.current) return undefined;
-    const updatePosition = () => {
-      const node = endTimeButtonRef.current?._nativeNode || endTimeButtonRef.current;
-      if (!node || typeof node.getBoundingClientRect !== 'function') return;
-      const rect = node.getBoundingClientRect();
-      setEndTimeDropdownPosition((prev) => {
-        const next = { top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 150) };
-        if (prev?.top === next.top && prev?.left === next.left && prev?.width === next.width) return prev;
-        return next;
-      });
-    };
-    const timeoutId = setTimeout(updatePosition, 0);
-    window.addEventListener('scroll', updatePosition, true);
-    window.addEventListener('resize', updatePosition);
-    return () => {
-      clearTimeout(timeoutId);
-      window.removeEventListener('scroll', updatePosition, true);
-      window.removeEventListener('resize', updatePosition);
-    };
-  }, [showEndTimeDropdown]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || (!showStartTimeDropdown && !showEndTimeDropdown)) return undefined;
@@ -1505,1038 +1370,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
   }, [editing]);
 
-  const isParentView = useMemo(
-    () => session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true,
-    [session?.role_flags?.isParent, session?.role_flags?.isChild]
-  );
   const showPermissionViewOnlyPill =
     readOnly &&
     readOnlyReason === 'permissions' &&
     session?.role_flags?.isChild === true;
 
-  const helpChildId = useMemo(
-    () => event?.child_id || (assigneeIds.length > 0 ? assigneeIds[0] : null) || session?.child_id,
-    [event?.child_id, assigneeIds, session?.child_id]
-  );
-
-  const acceptedInvitedAssigneeIdsFromMembers = useMemo(() => {
-    if (!assigneeIds?.length || !familyMembers?.length) return [];
-    const wanted = new Set(assigneeIds.map((id) => String(id)));
-    const accepted = new Set();
-    (familyMembers || []).forEach((m) => {
-      const inviteStatusRaw = String(m?.invite_status || '').trim().toLowerCase();
-      // "connected" is a valid accepted/linked state for existing child accounts.
-      const inviteStatus = inviteStatusRaw === 'connected' ? 'accepted' : inviteStatusRaw;
-      if (inviteStatus !== 'accepted') return;
-      const role = String(m?.member_role || m?.role || '').toLowerCase();
-      if (role && role !== 'child' && role !== 'student') return;
-      if (m?.child_id != null && wanted.has(String(m.child_id))) {
-        accepted.add(String(m.child_id));
-      }
-      let scope = m?.child_scope;
-      if (typeof scope === 'string') {
-        try { scope = JSON.parse(scope); } catch (_) { scope = []; }
-      }
-      if (Array.isArray(scope)) {
-        scope.forEach((id) => {
-          const sid = String(id);
-          if (wanted.has(sid)) accepted.add(sid);
-        });
-      }
-      if (m?.id != null && wanted.has(String(m.id)) && inviteStatus === 'accepted') {
-        accepted.add(String(m.id));
-      }
-    });
-    return [...accepted];
-  }, [assigneeIds, familyMembers]);
-
-  useEffect(() => {
-    const seed = {};
-    (familyMembers || []).forEach((m) => {
-      const sid =
-        m?.child_id != null ? String(m.child_id)
-        : m?.id != null ? String(m.id)
-        : '';
-      if (!sid) return;
-      const raw = String(m?.invite_status || '').trim().toLowerCase();
-      const status = raw === 'connected' ? 'accepted' : raw;
-      if (!status) return;
-      seed[sid] = { invite_status: status };
-    });
-    if (Object.keys(seed).length === 0) return;
-    setChildInviteSummaries((prev) => {
-      if (prev && Object.keys(prev).length > 0) return prev;
-      return seed;
-    });
-  }, [familyMembers]);
-
-  const sendToStudentTargetLabel = useMemo(() => {
-    if (!assigneeIds?.length) return 'No assignees selected';
-    const names = assigneeIds
-      .map((id) => {
-        const member = (familyMembers || []).find((m) => String(m.id) === String(id));
-        return (member?.name || member?.first_name || '').trim();
-      })
-      .filter(Boolean);
-    if (names.length === 0) {
-      return assigneeIds.length === 1 ? '1 student' : `${assigneeIds.length} students`;
-    }
-    if (names.length === 1) return names[0];
-    if (names.length === 2) return `${names[0]} and ${names[1]}`;
-    return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
-  }, [assigneeIds, familyMembers]);
-
-  useEffect(() => {
-    if (!isParentView || !familyId || assigneeIds.length === 0) {
-      setInvitedAssigneeIds([]);
-      setChildInviteSummaries({});
-      setInviteEligibilityReady(true);
-      return;
-    }
-    if (acceptedInvitedAssigneeIdsFromMembers.length > 0) {
-      setInvitedAssigneeIds((prev) => {
-        const prevKey = [...new Set((prev || []).map(String))].sort().join('|');
-        const nextKey = [...new Set(acceptedInvitedAssigneeIdsFromMembers.map(String))].sort().join('|');
-        return prevKey === nextKey ? prev : acceptedInvitedAssigneeIdsFromMembers;
-      });
-      setInviteEligibilityReady(true);
-      return;
-    }
-    setInviteEligibilityReady(false);
-    let cancelled = false;
-    (async () => {
-      try {
-        let rows = [];
-        let inviteSummaries = {};
-        if (Platform.OS === 'web') {
-          const { data, error } = await getFamilyMembers();
-          if (!cancelled && !error) {
-            inviteSummaries =
-              data?.child_invite_summaries && typeof data.child_invite_summaries === 'object'
-                ? data.child_invite_summaries
-                : {};
-            rows = Array.isArray(data?.members)
-              ? data.members.filter((m) => {
-                  const role = String(m?.member_role || m?.role || '').toLowerCase();
-                  return role === 'child' || role === 'student';
-                })
-              : [];
-          }
-        } else {
-          const { data, error } = await supabase
-            .from('family_members')
-            .select('child_id, child_scope, member_role, invite_status')
-            .eq('family_id', familyId)
-            .in('invite_status', ['accepted', 'connected']);
-          if (!cancelled && !error) rows = Array.isArray(data) ? data : [];
-        }
-        if (cancelled) return;
-        const wanted = new Set(assigneeIds.map(String));
-        const invited = new Set();
-        Object.entries(inviteSummaries || {}).forEach(([childId, summary]) => {
-          const sid = String(childId || '').trim();
-          if (!sid || !wanted.has(sid)) return;
-          const raw = String(summary?.invite_status || '').trim().toLowerCase();
-          const status = raw === 'connected' ? 'accepted' : raw;
-          if (status === 'accepted') invited.add(sid);
-        });
-        (rows || []).forEach((m) => {
-          if (m?.child_id != null && wanted.has(String(m.child_id))) invited.add(String(m.child_id));
-          if (m?.id != null && wanted.has(String(m.id))) invited.add(String(m.id));
-          let scope = m?.child_scope;
-          if (typeof scope === 'string') {
-            try { scope = JSON.parse(scope); } catch (_) { scope = []; }
-          }
-          if (Array.isArray(scope)) {
-            scope.forEach((id) => {
-              const sid = String(id);
-              if (wanted.has(sid)) invited.add(sid);
-            });
-          }
-        });
-        if (!cancelled) {
-          setInvitedAssigneeIds((prev) => {
-            const prevKey = [...new Set((prev || []).map(String))].sort().join('|');
-            const nextIds = [...invited];
-            const nextKey = [...new Set(nextIds.map(String))].sort().join('|');
-            return prevKey === nextKey ? prev : nextIds;
-          });
-          setChildInviteSummaries((prev) => {
-            const prevKey = JSON.stringify(prev || {});
-            const nextKey = JSON.stringify(inviteSummaries || {});
-            return prevKey === nextKey ? prev : (inviteSummaries || {});
-          });
-          setInviteEligibilityReady(true);
-        }
-      } catch (_) {
-        if (!cancelled) {
-          setInvitedAssigneeIds([]);
-          setChildInviteSummaries({});
-          setInviteEligibilityReady(true);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isParentView, familyId, assigneeIds, acceptedInvitedAssigneeIdsFromMembers]);
-
-  const effectiveInvitedAssigneeIds = useMemo(() => {
-    const fromState = [...new Set((invitedAssigneeIds || []).map(String))];
-    if (fromState.length > 0 || inviteEligibilityReady) return fromState;
-    return [...new Set((acceptedInvitedAssigneeIdsFromMembers || []).map(String))];
-  }, [invitedAssigneeIds, inviteEligibilityReady, acceptedInvitedAssigneeIdsFromMembers]);
-
-  const sendEligibleAssigneeIds = useMemo(() => {
-    const invitedSet = new Set((effectiveInvitedAssigneeIds || []).map(String));
-    return (assigneeIds || []).map(String).filter((id) => invitedSet.has(id));
-  }, [assigneeIds, effectiveInvitedAssigneeIds]);
-
-  const sendBlockedAssigneeIds = useMemo(() => {
-    const invitedSet = new Set((effectiveInvitedAssigneeIds || []).map(String));
-    return (assigneeIds || []).map(String).filter((id) => !invitedSet.has(id));
-  }, [assigneeIds, effectiveInvitedAssigneeIds]);
-
-  const assigneeInviteStatusMap = useMemo(() => {
-    const statusById = new Map();
-    Object.entries(childInviteSummaries || {}).forEach(([childId, summary]) => {
-      const sid = String(childId || '').trim();
-      if (!sid) return;
-      const rawBase = String(summary?.invite_status || '').trim().toLowerCase();
-      const raw = rawBase === 'connected' ? 'accepted' : rawBase;
-      const status = raw === 'accepted' || raw === 'pending' ? raw : 'none';
-      statusById.set(sid, status);
-    });
-    (familyMembers || []).forEach((m) => {
-      const statusRawBase = String(m?.invite_status || '').trim().toLowerCase();
-      const statusRaw = statusRawBase === 'connected' ? 'accepted' : statusRawBase;
-      const status = statusRaw === 'accepted' || statusRaw === 'pending' ? statusRaw : 'none';
-      const applyStatus = (id) => {
-        if (id == null) return;
-        const key = String(id);
-        const prev = statusById.get(key);
-        // Keep strongest state if duplicates exist.
-        if (prev === 'accepted') return;
-        if (status === 'accepted' || !prev || (prev === 'none' && status === 'pending')) {
-          statusById.set(key, status);
-        }
-      };
-      applyStatus(m?.id);
-      applyStatus(m?.child_id);
-      let scope = m?.child_scope;
-      if (typeof scope === 'string') {
-        try { scope = JSON.parse(scope); } catch (_) { scope = []; }
-      }
-      if (Array.isArray(scope)) scope.forEach((id) => applyStatus(id));
-    });
-    return statusById;
-  }, [familyMembers, childInviteSummaries]);
-
-  const sendPendingAssigneeIds = useMemo(
-    () => sendBlockedAssigneeIds.filter((id) => assigneeInviteStatusMap.get(String(id)) === 'pending'),
-    [sendBlockedAssigneeIds, assigneeInviteStatusMap]
-  );
-  const sendNeedsInviteAssigneeIds = useMemo(
-    () => sendBlockedAssigneeIds.filter((id) => assigneeInviteStatusMap.get(String(id)) !== 'pending'),
-    [sendBlockedAssigneeIds, assigneeInviteStatusMap]
-  );
-
-  const hasInvitedAssignee = sendEligibleAssigneeIds.length > 0;
-
-  const formatAssigneeNameList = useCallback((ids = []) => {
-    const names = (Array.isArray(ids) ? ids : [])
-      .map((id) => {
-        const member = (familyMembers || []).find((m) => String(m?.id) === String(id));
-        return String(member?.name || member?.first_name || '').trim();
-      })
-      .filter(Boolean);
-    if (names.length === 0) return '';
-    if (names.length === 1) return names[0];
-    if (names.length === 2) return `${names[0]} and ${names[1]}`;
-    return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
-  }, [familyMembers]);
-
-  const sendInviteClarificationText = useMemo(() => {
-    const invitedCount = sendEligibleAssigneeIds.length;
-    const blockedCount = sendBlockedAssigneeIds.length;
-    if (invitedCount <= 0 && blockedCount > 0) {
-      const pendingNames = formatAssigneeNameList(sendPendingAssigneeIds);
-      const needsInviteNames = formatAssigneeNameList(sendNeedsInviteAssigneeIds);
-      if (sendPendingAssigneeIds.length > 0 && sendNeedsInviteAssigneeIds.length === 0) {
-        const pendingVerb = sendPendingAssigneeIds.length === 1 ? 'has' : 'have';
-        return pendingNames
-          ? `${pendingNames} ${pendingVerb} not accepted the invite yet. Sending will unlock after acceptance.`
-          : 'Invite not yet accepted. Sending will unlock after acceptance.';
-      }
-      if (sendPendingAssigneeIds.length > 0 && sendNeedsInviteAssigneeIds.length > 0) {
-        const pendingVerb = sendPendingAssigneeIds.length === 1 ? 'has' : 'have';
-        const pendingPart = pendingNames
-          ? `${pendingNames} ${pendingVerb} not accepted yet`
-          : 'Some students have not accepted yet';
-        const invitePart = needsInviteNames
-          ? `invite ${needsInviteNames}`
-          : 'invite the remaining students';
-        return `${pendingPart}, and ${invitePart} before sending this assignment.`;
-      }
-      return needsInviteNames
-        ? `Invite ${needsInviteNames} before sending this assignment`
-        : 'Invite the assigned students before sending this assignment';
-    }
-    if (invitedCount > 0 && blockedCount > 0) {
-      const invitedNames = formatAssigneeNameList(sendEligibleAssigneeIds);
-      const pendingNames = formatAssigneeNameList(sendPendingAssigneeIds);
-      const needsInviteNames = formatAssigneeNameList(sendNeedsInviteAssigneeIds);
-      if (invitedNames && pendingNames && needsInviteNames) {
-        return `This will send to ${invitedNames}. ${pendingNames} still need to accept, and invite ${needsInviteNames} before sending to them.`;
-      }
-      if (invitedNames && pendingNames) {
-        const pendingVerb = sendPendingAssigneeIds.length === 1 ? 'needs' : 'need';
-        return `This will send to ${invitedNames}. ${pendingNames} still ${pendingVerb} to accept ${sendPendingAssigneeIds.length === 1 ? 'the' : 'their'} invite.`;
-      }
-      if (invitedNames && needsInviteNames) {
-        return `This will send to ${invitedNames}. Invite ${needsInviteNames} before sending to them.`;
-      }
-      const blockedNames = formatAssigneeNameList(sendBlockedAssigneeIds);
-      if (invitedNames && blockedNames) {
-        return `This will send to ${invitedNames}. Invite not yet accepted for ${blockedNames}.`;
-      }
-      return 'Some assigned students still need an invite before they can receive this assignment';
-    }
-    return '';
-  }, [sendEligibleAssigneeIds, sendBlockedAssigneeIds, sendPendingAssigneeIds, sendNeedsInviteAssigneeIds, formatAssigneeNameList]);
-
-  const openInviteChildModalForSend = useCallback(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const preferredChildId = sendBlockedAssigneeIds[0] || assigneeIds[0] || null;
-    window.dispatchEvent(
-      new CustomEvent('openInviteChildModal', {
-        detail: { childId: preferredChildId || null },
-      })
-    );
-  }, [sendBlockedAssigneeIds, assigneeIds]);
-
-  const loadEventLinkedHelpAssignment = useCallback(async () => {
-    const et = event?.event_type || eventType;
-    if (!familyId || !helpChildId || !event?.id || !session?.role_flags?.isChild) {
-      setEventLinkedHelpAssignment((prev) => (prev == null ? prev : null));
-      setLinkedHelpReady((prev) => (prev ? prev : true));
-      return;
-    }
-    if (!isSchoolWorkEventType(et)) {
-      setEventLinkedHelpAssignment((prev) => (prev == null ? prev : null));
-      setLinkedHelpReady((prev) => (prev ? prev : true));
-      return;
-    }
-    const mySeq = linkedHelpFetchSeq.current;
-    try {
-      const { data: rows, error } = await supabase
-        .from('assignments')
-        .select('id, need_help, title, description, linked_event_ids, updated_at, help_message_log')
-        .eq('family_id', familyId)
-        .eq('child_id', helpChildId)
-        .order('updated_at', { ascending: false })
-        .limit(200);
-      if (mySeq !== linkedHelpFetchSeq.current) return;
-      if (error) {
-        return;
-      }
-      const match = (rows || []).find((r) => assignmentRowLinksEventId(r, event.id)) || null;
-      setEventLinkedHelpAssignment((prev) => {
-        const prevId = prev?.id ? String(prev.id) : '';
-        const nextId = match?.id ? String(match.id) : '';
-        return prevId === nextId ? prev : match;
-      });
-    } catch {
-      if (mySeq !== linkedHelpFetchSeq.current) return;
-    } finally {
-      if (mySeq === linkedHelpFetchSeq.current) {
-        setLinkedHelpReady((prev) => (prev ? prev : true));
-      }
-    }
-  }, [familyId, helpChildId, event?.id, event?.event_type, eventType, session?.role_flags?.isChild]);
-
-  const loadEventLinkedParentAssignments = useCallback(async () => {
-    const et = event?.event_type || eventType;
-    if (!familyId || !event?.id || !isParentView) {
-      setParentLinkedAssignments((prev) => (prev.length === 0 ? prev : []));
-      setParentLinkedReady((prev) => (prev ? prev : true));
-      return;
-    }
-    if (!isSchoolWorkEventType(et)) {
-      setParentLinkedAssignments((prev) => (prev.length === 0 ? prev : []));
-      setParentLinkedReady((prev) => (prev ? prev : true));
-      return;
-    }
-    const mySeq = parentLinkedFetchSeq.current;
-    try {
-      const { data: rows, error } = await supabase
-        .from('assignments')
-        .select(
-          '*, child:child_id (id, first_name, avatar), subject:related_subject (id, name)'
-        )
-        .eq('family_id', familyId)
-        .order('updated_at', { ascending: false })
-        .limit(200);
-      if (mySeq !== parentLinkedFetchSeq.current) return;
-      if (error) {
-        return;
-      }
-      const matches = (rows || []).filter((r) => assignmentRowLinksEventId(r, event.id));
-      setParentLinkedAssignments((prev) => (sameAssignmentTrackingList(prev, matches) ? prev : matches));
-    } catch {
-      if (mySeq !== parentLinkedFetchSeq.current) return;
-    } finally {
-      if (mySeq === parentLinkedFetchSeq.current) {
-        setParentLinkedReady((prev) => (prev ? prev : true));
-      }
-    }
-  }, [familyId, event?.id, event?.event_type, eventType, isParentView]);
-
-  useEffect(() => {
-    linkedHelpFetchSeq.current += 1;
-    const et = event?.event_type || eventType;
-    if (!familyId || !event?.id || !session?.role_flags?.isChild) {
-      setEventLinkedHelpAssignment((prev) => (prev == null ? prev : null));
-      setLinkedHelpReady((prev) => (prev ? prev : true));
-      return;
-    }
-    if (!helpChildId || !isSchoolWorkEventType(et)) {
-      setEventLinkedHelpAssignment((prev) => (prev == null ? prev : null));
-      setLinkedHelpReady((prev) => (prev ? prev : true));
-      return;
-    }
-    if (preloadedFamilyAssignments === null) {
-      setEventLinkedHelpAssignment((prev) => (prev == null ? prev : null));
-      setLinkedHelpReady((prev) => (prev ? false : prev));
-      return;
-    }
-    const match =
-      preloadedFamilyAssignments.find(
-        (r) => String(r.child_id) === String(helpChildId) && assignmentRowLinksEventId(r, event.id)
-      ) || null;
-    setEventLinkedHelpAssignment((prev) => {
-      const prevId = prev?.id ? String(prev.id) : '';
-      const nextId = match?.id ? String(match.id) : '';
-      return prevId === nextId ? prev : match;
-    });
-    setLinkedHelpReady((prev) => (prev ? prev : true));
-  }, [event?.id, helpChildId, preloadedFamilyAssignments, session?.role_flags?.isChild, familyId, event?.event_type, eventType]);
-
-  useEffect(() => {
-    loadEventLinkedHelpAssignment();
-  }, [loadEventLinkedHelpAssignment, preloadedFamilyAssignments]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = () => loadEventLinkedHelpAssignment();
-    window.addEventListener('childAssignmentsNeedRefresh', handler);
-    return () => window.removeEventListener('childAssignmentsNeedRefresh', handler);
-  }, [loadEventLinkedHelpAssignment]);
-
-  useEffect(() => {
-    parentLinkedFetchSeq.current += 1;
-    const et = event?.event_type || eventType;
-    if (!isParentView || !familyId || !event?.id) {
-      setParentLinkedAssignments((prev) => (prev.length === 0 ? prev : []));
-      setParentLinkedReady((prev) => (prev ? prev : true));
-      return;
-    }
-    if (!isSchoolWorkEventType(et)) {
-      setParentLinkedAssignments((prev) => (prev.length === 0 ? prev : []));
-      setParentLinkedReady((prev) => (prev ? prev : true));
-      return;
-    }
-    if (preloadedFamilyAssignments === null) {
-      setParentLinkedAssignments((prev) => (prev.length === 0 ? prev : []));
-      setParentLinkedReady((prev) => (prev ? false : prev));
-      return;
-    }
-    const matches = preloadedFamilyAssignments.filter((r) => assignmentRowLinksEventId(r, event.id));
-    setParentLinkedAssignments((prev) => (sameAssignmentTrackingList(prev, matches) ? prev : matches));
-    setParentLinkedReady((prev) => (prev ? prev : true));
-  }, [event?.id, event?.event_type, eventType, preloadedFamilyAssignments, isParentView, familyId]);
-
-  useEffect(() => {
-    loadEventLinkedParentAssignments();
-  }, [loadEventLinkedParentAssignments, preloadedFamilyAssignments]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = () => loadEventLinkedParentAssignments();
-    window.addEventListener('parentAssignmentsNeedRefresh', handler);
-    return () => window.removeEventListener('parentAssignmentsNeedRefresh', handler);
-  }, [loadEventLinkedParentAssignments]);
-
-  const sendTrackingSummary = useMemo(() => {
-    const linkedAssignments = Array.isArray(parentLinkedAssignments) ? parentLinkedAssignments : [];
-    const sentAssignments = linkedAssignments.filter((assignment) => assignment?.assigned_by != null);
-
-    const nameForAssignment = (assignment) => {
-      const childId = assignment?.child_id;
-      const joinedName = assignment?.child?.first_name || assignment?.child?.name || '';
-      if (joinedName && String(joinedName).trim()) return String(joinedName).trim();
-      const member = (familyMembers || []).find((m) => String(m?.id) === String(childId));
-      return (member?.name || member?.first_name || 'student').trim();
-    };
-
-    const formatWhen = (value) => {
-      if (!value) return 'Date unknown';
-      const parsed = new Date(value);
-      if (Number.isNaN(parsed.getTime())) return 'Date unknown';
-      const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const target = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
-      const diffDays = Math.round((today.getTime() - target.getTime()) / (24 * 60 * 60 * 1000));
-      const time = parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-      if (diffDays === 0) return `today at ${time}`;
-      if (diffDays === 1) return `yesterday at ${time}`;
-      const date = parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      return `${date} at ${time}`;
-    };
-
-    const parseHelpLog = (rawLog) => {
-      if (Array.isArray(rawLog)) return rawLog;
-      if (typeof rawLog === 'string') {
-        try {
-          const parsed = JSON.parse(rawLog);
-          return Array.isArray(parsed) ? parsed : [];
-        } catch (_) {
-          return [];
-        }
-      }
-      return [];
-    };
-
-    const assigneeSet = new Set((assigneeIds || []).map((id) => String(id)));
-    const candidateStudents = (familyMembers || []).filter((member) => assigneeSet.has(String(member?.id)));
-    const sharedCount = sentAssignments.length;
-    const totalCount = candidateStudents.length;
-    const ctaLabel = sharedCount > 0
-      ? 'Send again to students'
-      : (totalCount > 1 ? 'Send to students' : 'Send to student');
-    const historyItems = [];
-    sentAssignments.forEach((assignment) => {
-      const studentName = nameForAssignment(assignment);
-      const helpLog = parseHelpLog(assignment?.help_message_log);
-      let hasParentSendLog = false;
-      helpLog.forEach((entry) => {
-        const senderRole = String(entry?.sender_role || '').trim().toLowerCase();
-        const reason = String(entry?.reason || '').trim().toLowerCase();
-        const body = String(entry?.body || entry?.message || entry?.note || '').trim();
-        const tsRaw = entry?.created_at || entry?.timestamp || assignment?.updated_at || assignment?.created_at || null;
-        const ts = new Date(tsRaw || 0).getTime();
-        if (!Number.isFinite(ts) || ts <= 0) return;
-        if (senderRole === 'parent' && reason === 'sent_assignment') {
-          hasParentSendLog = true;
-          const hasCustomMessage = body && body !== '[Sent assignment]';
-          historyItems.push({
-            ts,
-            kind: 'parent_send',
-            studentName,
-            when: formatWhen(tsRaw),
-            message: hasCustomMessage ? body : null,
-            line: hasCustomMessage
-              ? `Sent to ${studentName} at ${formatWhen(tsRaw)} — "${body}"`
-              : `Sent to ${studentName} at ${formatWhen(tsRaw)}`,
-          });
-          return;
-        }
-        if (senderRole === 'child' && body) {
-          historyItems.push({
-            ts,
-            kind: 'child_reply',
-            studentName,
-            when: formatWhen(tsRaw),
-            message: body,
-            line: `${studentName} replied at ${formatWhen(tsRaw)} — "${body}"`,
-          });
-        }
-      });
-      if (!hasParentSendLog) {
-        const fallbackTsRaw = assignment?.updated_at || assignment?.created_at || null;
-        const fallbackTs = new Date(fallbackTsRaw || 0).getTime();
-        if (Number.isFinite(fallbackTs) && fallbackTs > 0) {
-          historyItems.push({
-            ts: fallbackTs,
-            kind: 'parent_send',
-            studentName,
-            when: formatWhen(fallbackTsRaw),
-            message: null,
-            line: `Sent to ${studentName} at ${formatWhen(fallbackTsRaw)}`,
-          });
-        }
-      }
-      const status = String(assignment?.status || '').trim().toLowerCase();
-      if (status === 'submitted' || status === 'reviewed' || status === 'accepted') {
-        const submittedTsRaw = assignment?.submitted_at || assignment?.updated_at || null;
-        const submittedTs = new Date(submittedTsRaw || 0).getTime();
-        if (Number.isFinite(submittedTs) && submittedTs > 0) {
-          historyItems.push({
-            ts: submittedTs,
-            kind: 'child_returned',
-            studentName,
-            when: formatWhen(submittedTsRaw),
-            message: null,
-            line: `${studentName} sent work back at ${formatWhen(submittedTsRaw)}`,
-          });
-        }
-      }
-    });
-    const historyLines = historyItems
-      .sort((a, b) => a.ts - b.ts)
-      .filter((item, index, arr) => index === arr.findIndex((other) => (
-        other.ts === item.ts && other.line === item.line
-      )))
-      .map((item) => item.line);
-    const latestByTime = [...historyItems]
-      .filter((item) => item && Number.isFinite(item.ts))
-      .sort((a, b) => b.ts - a.ts);
-    const latestFeedback = latestByTime.find((item) => item.kind === 'child_reply' || item.kind === 'child_returned') || null;
-    const latestSent = latestByTime.find((item) => item.kind === 'parent_send') || null;
-    const latestSendBatchNames = (() => {
-      if (!latestSent) return [];
-      const BATCH_WINDOW_MS = 90 * 1000;
-      const sameBatch = latestByTime.filter((item) => (
-        item.kind === 'parent_send'
-        && Math.abs(Number(item.ts || 0) - Number(latestSent.ts || 0)) <= BATCH_WINDOW_MS
-        && String(item.message || '') === String(latestSent.message || '')
-      ));
-      return [...new Set(
-        sameBatch
-          .map((item) => String(item.studentName || '').trim())
-          .filter(Boolean)
-      )].sort((a, b) => a.localeCompare(b));
-    })();
-    const latestStatusLine = latestFeedback
-      ? (
-          latestFeedback.kind === 'child_reply' && latestFeedback.message
-            ? `${latestFeedback.studentName || 'Student'} sent back on ${latestFeedback.when} with message: "${latestFeedback.message}"`
-            : `${latestFeedback.studentName || 'Student'} sent back on ${latestFeedback.when}`
-        )
-      : (latestSent
-          ? `Last sent to ${(latestSendBatchNames.length > 0 ? latestSendBatchNames.join(', ') : (latestSent.studentName || 'student'))} on ${latestSent.when}`
-          : null);
-
-    return {
-      hasShared: sentAssignments.length > 0,
-      sharedCount,
-      totalCount,
-      ctaLabel,
-      historyLines,
-      latestStatusLine,
-    };
-  }, [parentLinkedAssignments, familyMembers, assigneeIds]);
-
-  useEffect(() => {
-    if (!showSendToStudentModal) {
-      setShowSendInviteClarification(false);
-    }
-  }, [showSendToStudentModal]);
-
-  useEffect(() => {
-    if (!parentLinkedReady || !parentEventFocus) return;
-    const helpA = parentLinkedAssignments.find((a) => a.need_help);
-    const subA = parentLinkedAssignments.find(
-      (a) =>
-        a.status === 'submitted' &&
-        (a.review_status == null || a.review_status === 'needs_revision')
-    );
-    if (parentEventFocus === 'help') {
-      if (helpA) {
-        setParentHelpModalAssignment(helpA);
-        setShowParentHelpModal(true);
-      }
-      onParentEventFocusConsumed?.();
-    } else if (parentEventFocus === 'submission') {
-      if (subA) {
-        setParentSubmissionModalAssignment(subA);
-        setShowParentSubmissionModal(true);
-      }
-      onParentEventFocusConsumed?.();
-    } else if (parentEventFocus === 'send') {
-      setShowSendToStudentModal(true);
-      onParentEventFocusConsumed?.();
-    }
-  }, [parentLinkedReady, parentEventFocus, parentLinkedAssignments, onParentEventFocusConsumed]);
-
-  useEffect(() => {
-    if (!childEventFocus) return;
-    if (childEventFocus === 'help') {
-      setAskHelpModalAssignment(eventLinkedHelpAssignment || null);
-      setShowAskParentHelpModal(true);
-      onChildEventFocusConsumed?.();
-      return;
-    }
-    if (childEventFocus === 'submission') {
-      setSubmitModalAssignment(eventLinkedHelpAssignment || null);
-      setShowSubmitForReviewModal(true);
-      onChildEventFocusConsumed?.();
-    }
-  }, [childEventFocus, eventLinkedHelpAssignment, onChildEventFocusConsumed]);
-
-  // Validation
-  const [validationErrors, setValidationErrors] = useState({});
-  const [validationBanner, setValidationBanner] = useState('');
-  
-  // Conflict warning state
-  const [conflictWarning, setConflictWarning] = useState(null); // { event: {...}, message: "..." }
-  const [shouldAutoAdjust, setShouldAutoAdjust] = useState(false); // Flag for "Adjust automatically"
-  const [shouldAllowOverlaps, setShouldAllowOverlaps] = useState(false); // Flag for "Save anyway"
-
-  /** Planner chip warning → open modal: top banner (not Quick Reschedule directly) */
-  const [chipConflictBannerDismissed, setChipConflictBannerDismissed] = useState(false);
-  const [chipConflictMessage, setChipConflictMessage] = useState(null);
-  const [chipConflictSuggestion, setChipConflictSuggestion] = useState(null);
-  const [chipConflictLoading, setChipConflictLoading] = useState(false);
-  const onEditingChangeRef = useRef(onEditingChange);
-  const lastHydratedEventSignatureRef = useRef(null);
-  const lastMaterialsLoadKeyRef = useRef('');
-  const lastSubjectsLoadKeyRef = useRef('');
-  const lastChipConflictHydrationKeyRef = useRef('');
-  const loggedInvalidAcademicYearIdsRef = useRef(new Set());
-
-  const editConflictEnterOp = useRef(new Animated.Value(0)).current;
-  const editConflictEnterY = useRef(new Animated.Value(5)).current;
-  const chipConflictEnterOp = useRef(new Animated.Value(0)).current;
-  const chipConflictEnterY = useRef(new Animated.Value(5)).current;
-
-  useEffect(() => {
-    onEditingChangeRef.current = onEditingChange;
-  }, [onEditingChange]);
-
-  const logInvalidAcademicYearIdOnce = useCallback((source, rawAcademicYearId) => {
-    if (!__DEV__) return;
-    const value = String(rawAcademicYearId ?? '').trim();
-    if (!value) return;
-    const key = `${source}:${value}`;
-    if (loggedInvalidAcademicYearIdsRef.current.has(key)) return;
-    loggedInvalidAcademicYearIdsRef.current.add(key);
-    console.warn('[EventDetails] Skipping academic_years query for non-UUID academic_year_id:', {
-      source,
-      academic_year_id: rawAcademicYearId,
-      event_id: event?.id || null,
-    });
-  }, [event?.id]);
-
-  useEffect(() => {
-    setChipConflictBannerDismissed((prev) => (prev ? false : prev));
-    setChipConflictMessage((prev) => (prev == null ? prev : null));
-    setChipConflictSuggestion((prev) => (prev == null ? prev : null));
-    setChipConflictLoading((prev) => (prev ? false : prev));
-    lastChipConflictHydrationKeyRef.current = '';
-  }, [event?.id, conflictResolutionSignature]);
-
-  useEffect(() => {
-    const shouldHydrateFromContext =
-      openConflictResolution ||
-      !!conflictResolutionContext?.conflictEvent ||
-      !!conflictResolutionContext?.conflictMessage;
-    if (!shouldHydrateFromContext || chipConflictBannerDismissed || !event?.id) return;
-
-    const hydrationKey = `${String(event.id)}:${conflictResolutionSignature}:${openConflictResolution ? 'open' : 'closed'}`;
-    if (lastChipConflictHydrationKeyRef.current === hydrationKey) return;
-    lastChipConflictHydrationKeyRef.current = hydrationKey;
-
-    const contextMessage = conflictResolutionContext?.conflictMessage;
-    const contextConflictEvent = conflictResolutionContext?.conflictEvent;
-    if (contextMessage) {
-      setChipConflictMessage((prev) => (prev === contextMessage ? prev : contextMessage));
-    } else if (contextConflictEvent?.title) {
-      const who = assigneeLabelForConflict(assigneeIds, familyMembers);
-      const lead = who ? `${who} — ` : '';
-      const nextMsg = `${lead}${contextConflictEvent.title} (${formatConflictMetaFromEvent(contextConflictEvent).replace(' · ', ', ')})`;
-      setChipConflictMessage((prev) => (prev === nextMsg ? prev : nextMsg));
-    }
-
-    if (conflictResolutionContext?.suggestedChange) {
-      setChipConflictSuggestion((prev) => {
-        const prevSig = prev
-          ? `${String(prev.newStart || prev.new_start || '')}|${String(prev.newEnd || prev.new_end || '')}`
-          : '';
-        const next = conflictResolutionContext.suggestedChange;
-        const nextSig = `${String(next.newStart || next.new_start || '')}|${String(next.newEnd || next.new_end || '')}`;
-        return prevSig === nextSig ? prev : next;
-      });
-    } else if (contextMessage || contextConflictEvent) {
-      setChipConflictSuggestion((prev) => (prev == null ? prev : null));
-    }
-
-    setChipConflictLoading((prev) => (prev ? false : prev));
-  }, [
-    event?.id,
-    openConflictResolution,
-    chipConflictBannerDismissed,
-    conflictResolutionSignature,
-    assigneeIdsSignature,
-    familyMembersSignature,
-  ]);
-
-  const mergeDescriptionWithNote = (prev, note) => {
-    const n = (note || '').trim();
-    if (!n) return prev || null;
-    const p = (prev || '').trim();
-    return p ? `${p}\n\n${n}` : n;
-  };
-
-  const appendAssignmentSendLogQuiet = useCallback(async (assignmentId, noteText = '') => {
-    if (!assignmentId) return;
-    const body = String(noteText || '').trim() || '[Sent assignment]';
-    try {
-      const { error } = await supabase.rpc('append_assignment_help_message', {
-        p_assignment_id: assignmentId,
-        p_body: body,
-        p_reason: 'sent_assignment',
-      });
-      if (error) {
-        console.warn('[EventDetails] append_assignment_help_message:', error.message || error);
-      }
-    } catch (e) {
-      console.warn('[EventDetails] append_assignment_help_message', e);
-    }
-  }, []);
-
-  const closeSendToStudentModal = useCallback(() => {
-    if (sendToStudentSubmitting) return;
-    setShowSendToStudentModal(false);
-    setSendToStudentNote('');
-    setSendToStudentInlineError('');
-    if (sendOnlyMode) {
-      onClose?.();
-    }
-  }, [sendToStudentSubmitting, sendOnlyMode, onClose]);
-
-  const sendWorkToStudents = useCallback(
-    async (note) => {
-      setSendToStudentInlineError('');
-      const targetAssigneeIds = (sendEligibleAssigneeIds || []).map(String).filter(Boolean);
-      if (!familyId || !event?.id || assigneeIds.length === 0) {
-        setSendToStudentInlineError('Choose at least one student and save the event first.');
-        return;
-      }
-      if (targetAssigneeIds.length === 0) {
-        setSendToStudentInlineError(
-          sendInviteClarificationText || 'Invite the assigned students before sending this assignment.',
-        );
-        return;
-      }
-      const uid = authUser?.id;
-      if (!uid) {
-        toast.push('You must be signed in.', 'error');
-        return;
-      }
-      if (!isSchoolWorkEventType(event?.event_type || eventType)) {
-        toast.push('This only applies to schoolwork-style events.', 'info');
-        return;
-      }
-      setSendToStudentSubmitting(true);
-      try {
-        const eventIdStr = String(event.id);
-        const dueTs = event.due_ts || event.end_ts || event.start_ts;
-        const dueStr = dueTs ? new Date(dueTs).toISOString().split('T')[0] : null;
-        const titleBase = (draftTitle || event.title || 'Schoolwork').trim().slice(0, 200);
-
-        for (const childId of targetAssigneeIds) {
-          const { data: rows, error: findErr } = await supabase
-            .from('assignments')
-            .select('id, title, description, linked_event_ids, need_help')
-            .eq('family_id', familyId)
-            .eq('child_id', childId)
-            .order('updated_at', { ascending: false })
-            .limit(200);
-
-          if (findErr) throw findErr;
-
-          const linked =
-            (rows || []).find((r) => assignmentRowLinksEventId(r, eventIdStr)) || null;
-
-          const noteTrim = (note || '').trim();
-          let linkedAssignmentId = null;
-
-          if (linked?.id) {
-            const baseUpdates = {
-              assigned_by: uid,
-              status: 'not_started',
-            };
-            if (isChildHelpAssignment(linked)) {
-              baseUpdates.title = titleBase;
-              baseUpdates.need_help = false;
-            }
-            if (noteTrim) {
-              baseUpdates.description = mergeDescriptionWithNote(linked.description, noteTrim);
-            }
-            const { error: upErr } = await updateAssignment(linked.id, baseUpdates);
-            if (upErr) throw upErr;
-            linkedAssignmentId = linked.id;
-          } else {
-            const { data: createdAssignment, error: insErr } = await createAssignment({
-              family_id: familyId,
-              child_id: childId,
-              title: titleBase,
-              description: noteTrim || null,
-              assigned_by: uid,
-              related_subject: subjectId || null,
-              due_date: dueStr,
-              status: 'not_started',
-              linked_event_ids: [eventIdStr],
-              need_help: false,
-            });
-            if (insErr) throw insErr;
-            linkedAssignmentId = createdAssignment?.id || null;
-          }
-          await appendAssignmentSendLogQuiet(linkedAssignmentId, noteTrim);
-        }
-
-        const blockedCount = Math.max(0, Number(assigneeIds.length || 0) - Number(targetAssigneeIds.length || 0));
-        toast.push(
-          blockedCount > 0
-            ? `Sent to ${targetAssigneeIds.length} student${targetAssigneeIds.length === 1 ? '' : 's'}. ${blockedCount} need invite access first.`
-            : 'Sent to student',
-          'success'
-        );
-        setSendToStudentInlineError('');
-        setShowSendToStudentModal(false);
-        setSendToStudentNote('');
-        if (sendOnlyMode) {
-          onClose?.();
-        }
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
-          window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
-          window.dispatchEvent(new CustomEvent('refreshRightRail'));
-          window.dispatchEvent(new CustomEvent('refreshCalendar'));
-        }
-        await loadEventLinkedParentAssignments();
-      } catch (e) {
-        console.error('[EventDetails] sendWorkToStudents', e);
-        toast.push(e?.message || 'Could not send', 'error');
-      } finally {
-        setSendToStudentSubmitting(false);
-      }
-    },
-    [familyId, event, assigneeIds, sendEligibleAssigneeIds, sendInviteClarificationText, authUser?.id, draftTitle, eventType, subjectId, toast, sendOnlyMode, onClose, appendAssignmentSendLogQuiet, loadEventLinkedParentAssignments]
-  );
-
-  const startPeriod = useMemo(() => {
-    if (!draftStartTime) return null;
-    const upper = draftStartTime.toUpperCase();
-    if (upper.includes('AM') && !upper.includes('PM')) return 'AM';
-    if (upper.includes('PM')) return 'PM';
-    return null;
-  }, [draftStartTime]);
-
-  const endPeriod = useMemo(() => {
-    if (!draftEndTime) return null;
-    const upper = draftEndTime.toUpperCase();
-    if (upper.includes('AM') && !upper.includes('PM')) return 'AM';
-    if (upper.includes('PM')) return 'PM';
-    return null;
-  }, [draftEndTime]);
-
-  const statusOptions = useMemo(() => {
-    const current = normalizeStatus(event?.status);
-    return Array.from(new Set([...STATUS_BASE, current].filter(Boolean)));
-  }, [event?.status]);
-  const headerAttendanceChip = useMemo(() => {
-    const normalizedStatus = normalizeStatus(draftStatus || event?.status);
-
-    if (normalizedStatus === 'done') {
-      return { label: 'ATTENDED', dotStyle: styles.headerStatusDotAttended };
-    }
-
-    let startDate = null;
-    const draftStart = combineDateTime(draftDate, draftStartTime);
-    if (draftStart && !Number.isNaN(draftStart.getTime())) {
-      startDate = draftStart;
-    } else {
-      const fallbackStart = event?.start_ts || event?.start || event?.start_local || null;
-      const parsedFallback = fallbackStart ? new Date(fallbackStart) : null;
-      if (parsedFallback && !Number.isNaN(parsedFallback.getTime())) {
-        startDate = parsedFallback;
-      }
-    }
-
-    if (startDate && startDate.getTime() > Date.now()) {
-      return { label: 'UPCOMING', dotStyle: styles.headerStatusDotUpcoming };
-    }
-
-    return { label: 'UNATTENDED', dotStyle: styles.headerStatusDotUnattended };
-  }, [draftStatus, event?.status, draftDate, draftStartTime, event?.start_ts, event?.start, event?.start_local]);
-  const currentHolidayType = useMemo(
-    () => String(event?.holiday_type || event?.holidayType || '').toUpperCase(),
-    [event?.holiday_type, event?.holidayType]
-  );
-  const isDaysOffOrBreakEvent = useMemo(() => {
-    const normalizedEventType = String(eventType || '').trim().toLowerCase();
-    return (
-      currentHolidayType === 'CUSTOM_HOLIDAY' ||
-      currentHolidayType === 'CUSTOM_BREAK' ||
-      normalizedEventType === 'day off' ||
-      normalizedEventType === 'break'
-    );
-  }, [currentHolidayType, eventType]);
-  const shouldHideAttendanceChip = isDaysOffOrBreakEvent || currentHolidayType === 'GLOBAL_HOLIDAY';
-  const hideScheduleTimeControls = isDaysOffOrBreakEvent;
-  const hideLearningDetailsSection = isDaysOffOrBreakEvent;
-  const showBreakEndDateField = placement === 'calendar' && normalizeEventTypeForDisplay(eventType) === 'Break';
-  const isClassDayEventType = useMemo(
-    () => normalizeEventTypeForDisplay(eventType) === 'Class Day',
-    [eventType]
-  );
-  const useCompactRepeatGrid = useMemo(
-    () => (Platform.OS === 'web' ? viewportWidth < 1200 : viewportWidth < 900),
-    [viewportWidth]
-  );
-  const academicSectionTitle = 'Learning details';
-  // Helper functions matching TaskCreateModal
-  const showAcademicFields = () => {
-    return eventType && ['Lesson', 'Activity', 'Assignment', 'Class Day', 'Scheduled Class Day', 'Schedule Block', 'ClassDay'].includes(eventType);
-  };
-
-  const showLocationFields = () => {
-    return eventType && ['Appointment', 'Activity'].includes(eventType);
-  };
-
-  const buildValidationBannerMessage = useCallback((errors) => {
-    const messagesByKey = {
-      title: 'enter an event name',
-      eventType: 'select an event type',
-      date: 'choose a date',
-      assignee: 'select at least one assignee',
-      time: 'enter a start time',
-      endDate: 'set a valid end date',
-      recurrenceWeekdays: 'choose at least one repeat day',
-      recurrenceEnd: 'set a valid recurrence end',
-    };
-    const orderedKeys = ['title', 'eventType', 'date', 'assignee', 'time', 'endDate', 'recurrenceWeekdays', 'recurrenceEnd'];
-    const missing = orderedKeys
-      .filter((key) => Boolean(errors?.[key]))
-      .map((key) => messagesByKey[key])
-      .filter(Boolean);
-    if (missing.length === 0) return '';
-    if (missing.length === 1) return `Please ${missing[0]} before saving.`;
-    if (missing.length === 2) return `Please ${missing[0]} and ${missing[1]} before saving.`;
-    return `Please ${missing.slice(0, -1).join(', ')}, and ${missing[missing.length - 1]} before saving.`;
-  }, []);
-
-  /** Academic year row for this event's plan — local list first, then shell preload (stable Add to plan? / banners). */
-  const resolvedAcademicYearRow = useMemo(() => {
-    if (!academicYearId) return null;
-    const fromState = academicYears.find((a) => a.id === academicYearId);
-    if (fromState) return fromState;
-    if (Array.isArray(preloadedAcademicYears)) {
-      return preloadedAcademicYears.find((a) => a.id === academicYearId) || null;
-    }
-    return null;
-  }, [academicYearId, academicYears, preloadedAcademicYears]);
-
-  const recurrenceSavedTermEnd = useMemo(() => {
-    const ymd = String(resolvedAcademicYearRow?.end_date || '').slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
-    const parsed = new Date(`${ymd}T00:00:00`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }, [resolvedAcademicYearRow]);
-
-  const validateFields = ({ showBanner = false } = {}) => {
+  const computeFieldErrors = useCallback(() => {
     const errors = {};
     
     if (!draftTitle.trim()) {
@@ -2559,7 +1398,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       errors.assignee = 'At least one assignee is required';
     }
 
-    if (isRecurring && placement === 'calendar' && !isSingleSeriesOccurrenceEdit) {
+    if (!ignoreRecurrenceValidationRef.current && isRecurring && placement === 'calendar' && !isSingleSeriesOccurrenceEdit) {
       if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
         errors.recurrenceWeekdays = 'Select at least one weekday';
       }
@@ -2578,6 +1417,31 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       }
     }
 
+    return errors;
+  }, [
+    draftTitle,
+    dueDate,
+    eventType,
+    showBreakEndDateField,
+    eventEndDate,
+    assigneeIds,
+    isRecurring,
+    placement,
+    isSingleSeriesOccurrenceEdit,
+    recurrenceType,
+    recurrenceWeekdays,
+    recurrenceEndType,
+    recurrenceEndAfter,
+    recurrenceEndAfterText,
+    recurrenceEndDate,
+    recurrenceSavedTermEnd,
+  ]);
+
+  const validateFields = ({ showBanner = false } = {}) => {
+    if (showBanner) {
+      ignoreRecurrenceValidationRef.current = false;
+    }
+    const errors = computeFieldErrors();
     setValidationErrors(errors);
     if (showBanner) {
       setValidationBanner(Object.keys(errors).length > 0 ? buildValidationBannerMessage(errors) : '');
@@ -2585,31 +1449,28 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return Object.keys(errors).length === 0;
   };
 
-  const isFormValid = () => {
-    if (!draftTitle.trim()) return false;
-    if (assigneeIds.length === 0) return false;
-    if (!dueDate) return false;
-    if (!eventType) return false;
-    const isMultiDayEvent = MULTI_DAY_EVENT_TYPES.includes(normalizeEventTypeForDisplay(eventType));
-    if (isMultiDayEvent && placement === 'calendar' && eventEndDate && eventEndDate < dueDate) return false;
-    if (isRecurring && placement === 'calendar' && !isSingleSeriesOccurrenceEdit) {
-      if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) return false;
-      if (recurrenceEndType === 'after') {
-        const fromNum = recurrenceEndAfter != null ? Number(recurrenceEndAfter) : NaN;
-        const fromText = recurrenceEndAfterText ? parseInt(recurrenceEndAfterText, 10) : NaN;
-        const countValue =
-          Number.isFinite(fromNum) && fromNum >= 1 ? fromNum : fromText;
-        if (!Number.isFinite(countValue) || countValue < 1) return false;
-      } else if (recurrenceEndType === 'on' && !recurrenceEndDate) {
-        return false;
-      } else if (recurrenceEndType === 'term_end' && !recurrenceSavedTermEnd) {
-        return false;
-      }
-    }
-    return true;
-  };
+  const isFormValid = () => Object.keys(computeFieldErrors()).length === 0;
+
+  const clearRecurrenceValidation = useCallback(() => {
+    ignoreRecurrenceValidationRef.current = true;
+    setValidationErrors((prev) => {
+      if (!prev.recurrenceEnd && !prev.recurrenceWeekdays) return prev;
+      const next = { ...prev };
+      delete next.recurrenceEnd;
+      delete next.recurrenceWeekdays;
+      return next;
+    });
+    setValidationBanner((prevBanner) => {
+      if (!prevBanner) return prevBanner;
+      const nextErrors = computeFieldErrors();
+      return Object.keys(nextErrors).length > 0
+        ? buildValidationBannerMessage(nextErrors)
+        : '';
+    });
+  }, [buildValidationBannerMessage, computeFieldErrors]);
 
   const handleDismissEventModal = useCallback(() => {
+    ignoreRecurrenceValidationRef.current = false;
     setValidationErrors({});
     setValidationBanner('');
     setPercentValidationError(null);
@@ -2618,11 +1479,17 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   useEffect(() => {
     if (!validationBanner) return;
-    if (isFormValid()) {
+    const currentErrors = computeFieldErrors();
+    setValidationErrors(currentErrors);
+    if (Object.keys(currentErrors).length === 0) {
       setValidationBanner('');
+      return;
     }
+    setValidationBanner(buildValidationBannerMessage(currentErrors));
   }, [
     validationBanner,
+    computeFieldErrors,
+    buildValidationBannerMessage,
     draftTitle,
     dueDate,
     eventEndDate,
@@ -2640,6 +1507,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     recurrenceEndDate,
     recurrenceSavedTermEnd,
   ]);
+
+  useEffect(() => {
+    if (!isDaysOffOrBreakEvent) return;
+    if (!isRecurring) return;
+    setIsRecurring(false);
+  }, [isDaysOffOrBreakEvent, isRecurring]);
 
   useEffect(() => {
     if (!dueDate) return;
@@ -2675,14 +1548,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       onEditingChangeRef.current?.(!!shouldOpenInEditMode);
       return;
     }
-    if (shouldOpenInEditMode) {
-      setEditing(true);
-      if (initialSchedulingMode || event?._openInEditMode) {
-        setSchedulingBacklog(true);
-        setPlacement('calendar');
-      }
-      // Also notify parent that we're in editing mode
-      onEditingChangeRef.current?.(true);
+    setEditing(true);
+    onEditingChangeRef.current?.(true);
+    if (initialSchedulingMode || event?._openInEditMode) {
+      setSchedulingBacklog(true);
+      setPlacement('calendar');
     }
   }, [readOnly, initialSchedulingMode, event?._openInEditMode]);
 
@@ -2766,29 +1636,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   };
 
   const handleMaterialDropdownToggle = () => {
-    const willShow = !showMaterialDropdown;
-    
-    if (willShow && Platform.OS === 'web' && materialButtonRef.current) {
-      // Calculate position before showing dropdown
-      const node = materialButtonRef.current._nativeNode || materialButtonRef.current;
-      if (node && typeof node.getBoundingClientRect === 'function') {
-        const rect = node.getBoundingClientRect();
-        const dropdownMaxHeight = 300;
-        
-        // Position below the button (like subject dropdown)
-        const top = rect.bottom + 4;
-        
-        const newPosition = {
-          top: top,
-          left: rect.left,
-          width: rect.width, // Match the selector box width exactly
-          maxHeight: dropdownMaxHeight,
-        };
-        setMaterialDropdownPosition(newPosition);
-      }
-    }
-    
-    setShowMaterialDropdown(willShow);
+    setShowMaterialDropdown((prev) => !prev);
   };
 
   const handleAttachStandards = async (standards) => {
@@ -2863,99 +1711,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   useEffect(() => {
     onEditingChangeRef.current?.(editing);
   }, [editing]);
-
-  // Update material dropdown position on scroll/resize when visible
-  useEffect(() => {
-    if (showMaterialDropdown && Platform.OS === 'web' && materialButtonRef.current) {
-      const updatePosition = () => {
-        if (materialButtonRef.current) {
-          const node = materialButtonRef.current._nativeNode || materialButtonRef.current;
-          if (node && typeof node.getBoundingClientRect === 'function') {
-            const rect = node.getBoundingClientRect();
-            const dropdownMaxHeight = 300;
-            
-            // Position below the button (like subject dropdown)
-            const top = rect.bottom + 4;
-            
-            const newPosition = {
-              top: top,
-              left: rect.left,
-              width: rect.width, // Match the selector box width exactly
-              maxHeight: dropdownMaxHeight,
-            };
-            setMaterialDropdownPosition((prev) => {
-              if (
-                prev?.top === newPosition.top &&
-                prev?.left === newPosition.left &&
-                prev?.width === newPosition.width &&
-                prev?.maxHeight === newPosition.maxHeight
-              ) {
-                return prev;
-              }
-              return newPosition;
-            });
-          }
-        }
-      };
-      
-      // Update on scroll/resize
-      if (typeof window !== 'undefined') {
-        window.addEventListener('scroll', updatePosition, true);
-        window.addEventListener('resize', updatePosition);
-        
-        return () => {
-          window.removeEventListener('scroll', updatePosition, true);
-          window.removeEventListener('resize', updatePosition);
-        };
-      }
-    }
-  }, [showMaterialDropdown]);
-
-  // Calculate subject dropdown position when it opens
-  useEffect(() => {
-    if (showSubjectDropdown && Platform.OS === 'web' && subjectButtonRef.current) {
-      const updatePosition = () => {
-        if (subjectButtonRef.current) {
-          const node = subjectButtonRef.current._nativeNode || subjectButtonRef.current;
-          if (node && typeof node.getBoundingClientRect === 'function') {
-            const rect = node.getBoundingClientRect();
-            const newPosition = {
-              top: rect.bottom + 4,
-              left: rect.left,
-              width: Math.max(rect.width, 200),
-            };
-            setSubjectDropdownPosition((prev) => {
-              if (
-                prev?.top === newPosition.top &&
-                prev?.left === newPosition.left &&
-                prev?.width === newPosition.width
-              ) {
-                return prev;
-              }
-              return newPosition;
-            });
-          }
-        }
-      };
-      
-      // Use setTimeout to ensure DOM is ready after state update
-      const timeoutId = setTimeout(updatePosition, 0);
-      
-      // Update on scroll/resize
-      if (typeof window !== 'undefined') {
-        window.addEventListener('scroll', updatePosition, true);
-        window.addEventListener('resize', updatePosition);
-        
-        return () => {
-          clearTimeout(timeoutId);
-          window.removeEventListener('scroll', updatePosition, true);
-          window.removeEventListener('resize', updatePosition);
-        };
-      }
-      
-      return () => clearTimeout(timeoutId);
-    }
-  }, [showSubjectDropdown]);
 
   useEffect(() => {
     if (!event) return;
@@ -3155,6 +1910,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     
     // Event type (display class day variants consistently as "Class Day")
     setEventType(normalizeEventTypeForDisplay(event.event_type || 'Lesson', event?.holiday_type || event?.holidayType));
+    setWorkSpec(parseWorkSpec(event?.work_spec, event?.event_type || event.event_type));
     
     // Academic fields
     applySubjectSelection(extractSubjectIdsFromEvent(event));
@@ -5167,6 +3923,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         instructor: (instructor && instructor.trim()) ? instructor.trim() : null,
         goal_link: goalLink || null,
         recurrence_rule: recurrenceRule ? JSON.stringify(recurrenceRule) : null,
+        work_spec: isWorkProducingEventType(persistedEventType)
+          ? parseWorkSpec(workSpec, persistedEventType)
+          : {},
       };
       // Preserve optional-time semantics:
       // - Blank start time => flexible/timeless row (editable when reopened)
@@ -6122,6 +4881,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       const afterEventRow = data?.[0] || { ...event, ...cleanUpdates };
       emitMaterialLinkageEventsIfChangedWeb(familyId, event, afterEventRow);
 
+      if (familyId && isWorkProducingEventType(afterEventRow?.event_type || eventType)) {
+        try {
+          await ensureAssignmentsForEvent({
+            familyId,
+            event: afterEventRow,
+            childIds: newChildIds,
+            workSpec: parseWorkSpec(workSpec, eventType),
+            userId: authUser?.id || null,
+          });
+        } catch (assignErr) {
+          console.warn('[EventDetails] ensureAssignmentsForEvent:', assignErr);
+        }
+      }
+
       setEditing(false);
       setSchedulingBacklog(false);
       
@@ -6221,560 +4994,20 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   };
 
 
-  const renderViewMode = () => {
-    const selectedMaterials = materials.filter(m => attachedMaterialIds.includes(m.id));
-    
-    // Get end date for display - use state first, then fallback to event's end_ts
-    let displayEndDate = eventEndDate;
-    if (!displayEndDate && event?.end_ts) {
-      const isMultiDayEventType = MULTI_DAY_EVENT_TYPES.includes(
-        normalizeEventTypeForDisplay(event?.event_type, event?.holiday_type || event?.holidayType)
-      );
-      if (isMultiDayEventType) {
-        const endDateObj = new Date(event.end_ts);
-        const startDateObj = event?.start_ts ? new Date(event.start_ts) : dueDate;
-        if (startDateObj) {
-          const endDateOnly = new Date(endDateObj.getFullYear(), endDateObj.getMonth(), endDateObj.getDate());
-          const startDateOnly = new Date(startDateObj.getFullYear(), startDateObj.getMonth(), startDateObj.getDate());
-          // Only use if different from start date
-          if (endDateOnly.getTime() !== startDateOnly.getTime()) {
-            displayEndDate = endDateOnly;
-          }
-        }
-      }
-    }
-
-    const parentHelpAssignment = parentLinkedAssignments.find((a) => a.need_help);
-    const parentSubmissionAssignment = parentLinkedAssignments.find(
-      (a) =>
-        a.status === 'submitted' &&
-        (a.review_status == null || a.review_status === 'needs_revision')
+  const workSuggestedStartPreview = useMemo(() => {
+    if (!isWorkProducingEventType(eventType)) return null;
+    const spec = parseWorkSpec(workSpec, eventType);
+    if (spec.suggested_start_mode === 'custom') return null;
+    const dateLocal = dueDate ? toDateInput(dueDate.toISOString()) : draftDate;
+    const ymd = computeSuggestedStartDate(
+      { date_local: dateLocal, start_ts: dueDate?.toISOString?.() || null },
+      spec
     );
-    const parentChildLabel = (a) =>
-      a?.child?.first_name ||
-      familyMembers.find((m) => String(m.id) === String(a?.child_id))?.name ||
-      'Child';
-
-    const showParentAlertsRow =
-      isParentView &&
-      event?.id &&
-      isSchoolWorkEventType(event?.event_type || eventType) &&
-      (!parentLinkedReady || parentHelpAssignment || parentSubmissionAssignment);
-
-    return (
-      <SafeView style={{ flex: 1, backgroundColor: '#ffffff' }}>
-        {/* Header / Title */}
-        <View style={styles.header}>
-          <View style={styles.headerContent}>
-            <View style={styles.headerTextWrap}>
-              <View style={styles.headerBadge}>
-                <Text style={styles.headerBadgeText}>EVENT DETAILS</Text>
-              </View>
-              {showPermissionViewOnlyPill ? (
-                <View style={styles.headerViewOnlyChip}>
-                  <Text style={styles.headerViewOnlyChipText}>VIEW ONLY</Text>
-                </View>
-              ) : null}
-              <Text style={styles.headerTitleLarge}>
-                {draftTitle || event?.title || 'Untitled Event'}
-              </Text>
-            </View>
-            <TouchableOpacity
-              onPress={handleDismissEventModal}
-              style={styles.headerCloseButton}
-              accessibilityRole="button"
-              accessibilityLabel="Close event details"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <X size={18} color="#64748B" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Scrollable Content */}
-        <ScrollView 
-          style={styles.bodyScroll}
-          contentContainerStyle={styles.bodyContent}
-          showsVerticalScrollIndicator={true}
-          nestedScrollEnabled={true}
-          {...(Platform.OS === 'web' && {
-            style: {
-              ...styles.bodyScroll,
-              overflowY: 'auto',
-              overflowX: 'hidden',
-              WebkitOverflowScrolling: 'touch',
-            },
-          })}
-        >
-          <SafeView style={{ flex: 1 }}>
-          {/* Parent: help / submission — above plan + send banners (same footprint as gray banners) */}
-          {showParentAlertsRow && (
-            <View style={{ alignSelf: 'stretch', marginTop: 14, marginBottom: 4 }}>
-              <View
-                style={{
-                  alignSelf: 'stretch',
-                  backgroundColor: 'rgba(79, 70, 229, 0.07)',
-                  borderRadius: 10,
-                  paddingVertical: 7,
-                  paddingHorizontal: 12,
-                  borderWidth: 1,
-                  borderColor: 'rgba(79, 70, 229, 0.18)',
-                }}
-              >
-                {!parentLinkedReady ? (
-                  <View
-                    style={{
-                      minHeight: 40,
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <ActivityIndicator size="small" color="#89B5E4" />
-                  </View>
-                ) : (
-                  <>
-                    {parentHelpAssignment ? (
-                      <Text style={{ color: FG, fontSize: 13, lineHeight: 18, ...webCooper(400) }}>
-                        {parentChildLabel(parentHelpAssignment)} asked for help on this.{' '}
-                        <Text
-                          onPress={() => {
-                            setParentHelpModalAssignment(parentHelpAssignment);
-                            setShowParentHelpModal(true);
-                          }}
-                          style={{
-                            fontSize: 13,
-                            color: '#EA580C',
-                            ...webCooper(700),
-                            ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-                          }}
-                        >
-                          Respond to help request
-                        </Text>
-                      </Text>
-                    ) : null}
-                    {parentSubmissionAssignment ? (
-                      <View style={{ marginTop: parentHelpAssignment ? 12 : 0 }}>
-                        <Text style={{ color: FG, fontSize: 13, lineHeight: 18, ...webCooper(400) }}>
-                          {parentChildLabel(parentSubmissionAssignment)} submitted work for review.
-                        </Text>
-                        <TouchableOpacity
-                          onPress={() => {
-                            setParentSubmissionModalAssignment(parentSubmissionAssignment);
-                            setShowParentSubmissionModal(true);
-                          }}
-                          style={{ marginTop: 8, alignSelf: 'flex-start' }}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={{ fontSize: 13, color: '#2563EB', ...webCooper(700) }}>Review submission</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : null}
-                  </>
-                )}
-              </View>
-            </View>
-          )}
-
-          {showChipConflictBanner ? renderPersistentConflictContainer(false) : null}
-
-          {/* Event Type - at top */}
-          {eventType && (
-            <SafeFieldRow style={[styles.fieldRow, { marginTop: 10, marginBottom: 8 }]}>
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Event Type</Text>
-                <View style={styles.dropdownContainer}>
-                  <View style={[styles.dropdownOption, styles.dropdownOptionActive]}>
-                    <Text style={[styles.dropdownOptionText, styles.dropdownOptionTextActive]}>
-                      {eventType}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            </SafeFieldRow>
-          )}
-
-          {viewerRole === 'tutor' && event?.id && familyId ? (
-            <TutorEventHelpPanel
-              eventId={event.id}
-              familyId={familyId}
-              onUpdated={() => onEventUpdated?.()}
-            />
-          ) : null}
-
-          {/* Tags - show if they exist */}
-          {Array.isArray(event?.tags) && event.tags.length > 0 && (
-            <SafeFieldRow style={styles.fieldRow}>
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Tags</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                  {event.tags.map((tag, index) => (
-                    <View
-                      key={index}
-                      style={{
-                        backgroundColor: CHIP_BG,
-                        borderWidth: 1,
-                        borderColor: CHIP_BORDER,
-                        borderRadius: 16,
-                        paddingHorizontal: 10,
-                        paddingVertical: 4,
-                      }}
-                    >
-                      <Text style={{ fontSize: 12, color: FG }}>{tag}</Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            </SafeFieldRow>
-          )}
-
-          {/* Date and Assignee - side by side in chipRow */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipRow}
-            style={{ marginBottom: 0 }}
-          >
-            {/* Date chip */}
-            {placement === 'calendar' ? (
-              <View style={styles.chip}>
-                <View>
-                  <Text style={styles.chipLabel}>Date</Text>
-                </View>
-                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                  <View style={[styles.chipOption, styles.chipOptionActive]}>
-                    <Text style={[styles.chipOptionText, styles.chipOptionTextActive]}>
-                      {displayEndDate && dueDate && displayEndDate.getTime() !== dueDate.getTime() 
-                        ? fmtDateRange(dueDate, displayEndDate)
-                        : dueDate ? fmt(dueDate) : '—'
-                      }
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            ) : null}
-
-            {/* Assignee chip - show only selected */}
-            {assigneeIds.length > 0 ? (
-              <View style={styles.chip}>
-                <View>
-                  <Text style={styles.chipLabel}>Assignee</Text>
-                </View>
-                <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                  {assigneeIds.map((id) => {
-                    const member = familyMembers.find(m => m.id === id);
-                    if (!member) return null;
-                    return (
-                      <View key={id} style={[styles.chipOption, styles.chipOptionActive]}>
-                        <Text style={[styles.chipOptionText, styles.chipOptionTextActive]}>
-                          {member.name || member.first_name || 'Unknown'}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              </View>
-            ) : null}
-          </ScrollView>
-
-          {/* Schedule Time - in gray rounded block */}
-          {placement === 'calendar' && (
-            <SafeView style={styles.fieldRow}>
-              <View style={styles.timeSection}>
-                {!allDay && (
-                  <View style={styles.timeInputsRow}>
-                    <View style={[styles.timeField, { minWidth: 120 }]}>
-                      <Text style={styles.timeLabel}>Start</Text>
-                      <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{startTime || 'Not set'}</Text>
-                    </View>
-                    <View style={[styles.timeField, { minWidth: 120 }]}>
-                      <Text style={styles.timeLabel}>End</Text>
-                      <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{endTime || 'Not set'}</Text>
-                    </View>
-                  </View>
-                )}
-                {isRecurring && (
-                  <View style={{ marginTop: 12 }}>
-                    <Text style={[styles.timeLabel, { marginBottom: 8 }]}>Recurrence</Text>
-                    <Text style={{ color: SUB, fontSize: 13 }}>
-                      {recurrenceType.charAt(0).toUpperCase() + recurrenceType.slice(1)}
-                      {recurrenceInterval ? ` every ${recurrenceInterval} ${recurrenceType === 'daily' ? 'day(s)' : recurrenceType === 'weekly' ? 'week(s)' : 'month(s)'}` : ''}
-                      {recurrenceEndType === 'never'
-                        ? ' (never ends)'
-                        : recurrenceEndType === 'after'
-                          ? ` (ends after ${recurrenceEndAfter} occurrence${recurrenceEndAfter !== 1 ? 's' : ''})`
-                          : recurrenceEndType === 'term_end'
-                            ? (recurrenceSavedTermEnd ? ` (ends on ${fmt(recurrenceSavedTermEnd)})` : '')
-                            : recurrenceEndDate
-                              ? ` (ends on ${fmt(recurrenceEndDate)})`
-                              : ''}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            </SafeView>
-          )}
-
-          {/* Logistic Details - show if location, mode, or instructor exist */}
-          {(location || mode || instructor) && (
-            <SafeView style={styles.academicSection}>
-              <View
-                style={{
-                  paddingVertical: 4,
-                }}
-              >
-                <Text style={styles.sectionLabel}>Logistical details</Text>
-              </View>
-                  {location && (
-                    <SafeFieldRow style={styles.fieldRow}>
-                      <View style={styles.field}>
-                        <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Location</Text>
-                        <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{location}</Text>
-                      </View>
-                    </SafeFieldRow>
-                  )}
-                  {mode && (
-                    <SafeFieldRow style={styles.fieldRow}>
-                      <View style={styles.field}>
-                        <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Mode</Text>
-                        <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{mode.charAt(0).toUpperCase() + mode.slice(1)}</Text>
-                      </View>
-                    </SafeFieldRow>
-                  )}
-                  {instructor && (
-                    <SafeFieldRow style={styles.fieldRow}>
-                      <View style={styles.field}>
-                        <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Contact</Text>
-                        <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{instructor}</Text>
-                      </View>
-                    </SafeFieldRow>
-                  )}
-            </SafeView>
-          )}
-
-          {/* Academic Details - keep as is */}
-          {(subjectIds.length > 0 || unit || lesson || grade || event?.percent_of_total_grade) && (
-            <SafeView style={[styles.academicSection, styles.academicSectionTopSpacing]}>
-              <View
-                style={{
-                  paddingVertical: 4,
-                }}
-              >
-                <Text style={styles.sectionLabel}>Academic Details</Text>
-              </View>
-              {subjectIds.length > 0 && (
-                <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
-                  <View style={[styles.field, styles.fieldStretch]}>
-                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>
-                      {subjectIds.length > 1 ? 'Subjects' : 'Subject'}
-                    </Text>
-                    {loadingSubjects && resolvedSubjectLabels.length === 0 ? (
-                      <View style={{ marginTop: 8, alignItems: 'flex-start' }}>
-                        <ActivityIndicator size="small" color={MUTED} />
-                      </View>
-                    ) : (
-                      <Text style={{ color: FG, fontSize: 14, marginTop: 4, width: '100%' }}>
-                        {resolvedSubjectLabel || subjectName || 'Unknown'}
-                      </Text>
-                    )}
-                  </View>
-                </SafeFieldRow>
-              )}
-              {unit ? (
-                <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
-                  <View style={[styles.field, styles.fieldStretch]}>
-                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Unit</Text>
-                    <Text style={{ color: FG, fontSize: 14, marginTop: 4, width: '100%' }}>{unit}</Text>
-                  </View>
-                </SafeFieldRow>
-              ) : null}
-              {lesson ? (
-                <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull]}>
-                  <View style={[styles.field, styles.fieldStretch]}>
-                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Lesson</Text>
-                    <Text style={{ color: FG, fontSize: 14, marginTop: 4, width: '100%' }}>{lesson}</Text>
-                  </View>
-                </SafeFieldRow>
-              ) : null}
-              {grade && (
-                <SafeFieldRow style={styles.fieldRow}>
-                  <View style={styles.field}>
-                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Grade</Text>
-                    <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{grade}</Text>
-                  </View>
-                </SafeFieldRow>
-              )}
-              {event?.percent_of_total_grade != null && (
-                <SafeFieldRow style={styles.fieldRow}>
-                  <View style={styles.field}>
-                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>% of Total Grade</Text>
-                    <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>
-                      {parseFloat(event.percent_of_total_grade).toFixed(1)}%
-                    </Text>
-                  </View>
-                </SafeFieldRow>
-              )}
-              {attachedStandards.length > 0 && (
-                <SafeFieldRow style={styles.fieldRow}>
-                  <View style={styles.field}>
-                    <Text style={[styles.fieldLabel, { fontWeight: '700' }]}>Standards</Text>
-                    <View style={{ marginTop: 8 }}>
-                      {attachedStandards.map((standard) => (
-                        <Text key={standard.id} style={{ color: FG, fontSize: 13, marginBottom: 4 }}>
-                          {standard.code || standard.name || standard.id}
-                        </Text>
-                      ))}
-                    </View>
-                  </View>
-                </SafeFieldRow>
-              )}
-            </SafeView>
-          )}
-
-          {/* Attachments - show as links */}
-          {selectedMaterials.length > 0 && (
-            <SafeFieldRow style={styles.fieldRow}>
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Attachments</Text>
-                <View style={{ marginTop: 8 }}>
-                  {selectedMaterials.map((material) => (
-                    <TouchableOpacity
-                      key={material.id}
-                      onPress={async () => {
-                        // Check if it's a file-based material (has storage_path)
-                        const isFileBased = material.storage_path && material.storage_path.trim() !== '';
-                        
-                        if (isFileBased) {
-                          // Check if it's a PDF (by mime type or file extension)
-                          const isPdf = material.mime === 'application/pdf' || 
-                                        (material.storage_path && material.storage_path.toLowerCase().endsWith('.pdf')) ||
-                                        (material.title && material.title.toLowerCase().endsWith('.pdf'));
-                          
-                          if (material.storage_path && isPdf) {
-                            try {
-                              // Use signed URL for better compatibility
-                              const { data: signedUrlData, error: signedError } = await supabase.storage
-                                .from('evidence')
-                                .createSignedUrl(material.storage_path, 3600); // 1 hour expiry
-                              
-                              if (signedError) {
-                                console.error('[EventDetails] Error getting signed URL:', signedError);
-                                Alert.alert(
-                                  'File Access Error',
-                                  `Unable to access the file: ${signedError.message || 'Storage error'}.`
-                                );
-                                return;
-                              } else if (signedUrlData?.signedUrl) {
-                                setPdfUrl(signedUrlData.signedUrl);
-                                setPdfTitle(material.title || 'Attachment');
-                                setShowPdfViewer(true);
-                              } else {
-                                Alert.alert(
-                                  'File Access Error',
-                                  'Unable to generate a URL for this file. Please try again later.'
-                                );
-                              }
-                            } catch (err) {
-                              console.error('[EventDetails] Error getting PDF URL:', err);
-                              Alert.alert(
-                                'Error',
-                                `Unable to open file: ${err.message || 'Unknown error'}`
-                              );
-                            }
-                          } else {
-                            // File-based but not PDF - open in new tab
-                            const fileUrl = `${supabase.supabaseUrl}/storage/v1/object/public/materials/${material.storage_path}`;
-                            if (Platform.OS === 'web') {
-                              window.open(fileUrl, '_blank');
-                            }
-                          }
-                        } else {
-                          // Non-file-based material - only use provider_url if it's a Supabase storage URL
-                          if (material.provider_url && 
-                              material.provider_url.toLowerCase().endsWith('.pdf') && 
-                              isSupabaseStorageUrl(material.provider_url)) {
-                            setPdfUrl(material.provider_url);
-                            setPdfTitle(material.title || 'Attachment');
-                            setShowPdfViewer(true);
-                          } else if (material.provider_url) {
-                            // External URL - open in new tab
-                            if (Platform.OS === 'web') {
-                              window.open(material.provider_url, '_blank');
-                            }
-                          }
-                        }
-                      }}
-                      style={{ marginBottom: 8 }}
-                    >
-                      <Text style={{ color: ACCENT, fontSize: 14, textDecorationLine: 'underline' }}>
-                        {material.title || 'View Attachment'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </SafeFieldRow>
-          )}
-
-          {/* Notes */}
-          {notes && notes.trim() && (
-            <SafeFieldRow style={styles.fieldRow}>
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Notes</Text>
-                <Text style={{ color: FG, fontSize: 14, marginTop: 4 }}>{notes}</Text>
-              </View>
-            </SafeFieldRow>
-          )}
-
-          </SafeView>
-        </ScrollView>
-
-        {/* Footer: Cancel + Delete + Edit grouped on right */}
-        <SafeView style={styles.footer}>
-          <View style={styles.footerActionGroup}>
-            <TouchableOpacity
-              onPress={handleDismissEventModal}
-              style={styles.cancelButtonFilled}
-              activeOpacity={0.9}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.cancelButtonFilledText}>Cancel</Text>
-            </TouchableOpacity>
-            {!readOnly && (
-            <>
-            {event?.id && (
-              <TouchableOpacity
-                {...(Platform.OS === 'web' && { type: 'button' })}
-                onPress={() => handleDelete()}
-                disabled={deleting}
-                style={[
-                  styles.deleteEventButton,
-                  deleting && styles.deleteEventButtonDisabled,
-                ]}
-              >
-                <Trash2 size={17} color="#DC2626" />
-                <Text style={[styles.deleteEventButtonText, deleting && { opacity: 0.8 }]}>
-                  {deleting ? 'Deleting…' : 'Delete Event'}
-                </Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              onPress={() => {
-                setEditing(true);
-                onEditingChange?.(true);
-              }}
-              style={styles.createButton}
-              activeOpacity={0.9}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Edit2 size={16} color="#FFF" />
-              <Text style={styles.createButtonText}>Edit Event</Text>
-            </TouchableOpacity>
-            </>
-            )}
-          </View>
-        </SafeView>
-      </SafeView>
-    );
-  };
+    if (!ymd) return null;
+    const d = new Date(`${ymd}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return ymd;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, [eventType, workSpec, dueDate, draftDate]);
 
   const renderEditForm = () => {
     return (
@@ -6956,6 +5189,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   setEventType(type);
                   if (validationErrors.eventType) {
                     setValidationErrors({ ...validationErrors, eventType: null });
+                  }
+                  if (validationBanner || validationErrors.recurrenceEnd || validationErrors.recurrenceWeekdays) {
+                    clearRecurrenceValidation();
                   }
                 }}
                 style={[
@@ -7153,7 +5389,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         </Text>
                         <ChevronDown size={16} color={MUTED} />
                       </TouchableOpacity>
-                      {showStartTimeDropdown && (() => {
+                      {showStartTimeDropdown && (Platform.OS !== 'web' || startTimeDropdownLayout.ready) && (() => {
                         let ReactDOM;
                         try {
                           ReactDOM = require('react-dom');
@@ -7168,9 +5404,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                               styles.timeSelectOptions,
                               Platform.OS === 'web' && {
                                 position: 'fixed',
-                                top: startTimeDropdownPosition.top,
-                                left: startTimeDropdownPosition.left,
-                                width: startTimeDropdownPosition.width || 150,
+                                top: startTimeDropdownLayout.position?.top,
+                                left: startTimeDropdownLayout.position?.left,
+                                width: startTimeDropdownLayout.position?.width || 150,
                                 marginTop: 0,
                                 zIndex: 99999,
                               },
@@ -7276,7 +5512,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         </Text>
                         <ChevronDown size={16} color={MUTED} />
                       </TouchableOpacity>
-                      {showEndTimeDropdown && (() => {
+                      {showEndTimeDropdown && (Platform.OS !== 'web' || endTimeDropdownLayout.ready) && (() => {
                         let ReactDOM;
                         try {
                           ReactDOM = require('react-dom');
@@ -7291,9 +5527,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                               styles.timeSelectOptions,
                               Platform.OS === 'web' && {
                                 position: 'fixed',
-                                top: endTimeDropdownPosition.top,
-                                left: endTimeDropdownPosition.left,
-                                width: endTimeDropdownPosition.width || 150,
+                                top: endTimeDropdownLayout.position?.top,
+                                left: endTimeDropdownLayout.position?.left,
+                                width: endTimeDropdownLayout.position?.width || 150,
                                 marginTop: 0,
                                 zIndex: 99999,
                               },
@@ -7393,6 +5629,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         onValueChange={(value) => {
                           setIsRecurring(value);
                           if (value) {
+                            ignoreRecurrenceValidationRef.current = false;
                             if (recurrenceType === 'weekly' && (!Array.isArray(recurrenceWeekdays) || recurrenceWeekdays.length === 0)) {
                               if (isClassDayEventType) {
                                 setRecurrenceWeekdays(CLASS_DAY_DEFAULT_WEEKDAYS);
@@ -7401,8 +5638,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                                 setRecurrenceWeekdays([fallback]);
                               }
                             }
-                          } else if (validationErrors.recurrenceEnd) {
-                            setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                          } else if (validationBanner || validationErrors.recurrenceEnd || validationErrors.recurrenceWeekdays) {
+                            clearRecurrenceValidation();
                           }
                         }}
                         trackColor={{ false: BORDER, true: '#AECBFA' }}
@@ -7520,8 +5757,8 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                             ) {
                               setRecurrenceEndDate(new Date(dueDate));
                             }
-                            if (validationErrors.recurrenceEnd) {
-                              setValidationErrors((prev) => ({ ...prev, recurrenceEnd: null }));
+                            if (validationBanner || validationErrors.recurrenceEnd || validationErrors.recurrenceWeekdays) {
+                              clearRecurrenceValidation();
                             }
                           }}
                           style={[
@@ -7654,14 +5891,18 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     </View>
                   ) : null}
                 </View>
-                {validationErrors.recurrenceEnd ? (
-                  <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>{validationErrors.recurrenceEnd}</Text>
-                ) : null}
               </View>
             )}
           </View>
         )}
       </SafeView>
+        <WorkDetailsSection
+          eventType={eventType}
+          workSpec={workSpec}
+          onChange={setWorkSpec}
+          readOnly={readOnly}
+          suggestedStartPreview={workSuggestedStartPreview}
+        />
         {/* Academic details section */}
         {!hideLearningDetailsSection && (
         <ModalSectionCard
@@ -7696,7 +5937,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   </Text>
                   <ChevronDown size={16} color={assigneeIds.length === 0 ? MUTED : SUB} />
                 </TouchableOpacity>
-                {showSubjectDropdown && Platform.OS === 'web' && (() => {
+                {showSubjectDropdown && subjectDropdownLayout.ready && Platform.OS === 'web' && (() => {
                   // Use portal to render outside modal to avoid positioning issues
                   let ReactDOM;
                   try {
@@ -7710,9 +5951,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ref={subjectDropdownRef}
                       style={{
                         position: 'fixed',
-                        top: subjectDropdownPosition.top,
-                        left: subjectDropdownPosition.left,
-                        width: subjectDropdownPosition.width || 200,
+                        top: subjectDropdownLayout.position.top,
+                        left: subjectDropdownLayout.position.left,
+                        width: subjectDropdownLayout.position.width || 200,
                         backgroundColor: '#fff',
                         borderWidth: 1,
                         borderColor: BORDER,
@@ -7870,7 +6111,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   </Text>
                   <ChevronDown size={16} color={SUB} />
                 </TouchableOpacity>
-                {showLessonDropdown && Platform.OS === 'web' && (() => {
+                {showLessonDropdown && lessonDropdownLayout.ready && Platform.OS === 'web' && (() => {
                   let ReactDOM;
                   try {
                     ReactDOM = require('react-dom');
@@ -7883,15 +6124,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       ref={lessonDropdownRef}
                       style={{
                         position: 'fixed',
-                        top: lessonDropdownPosition.top,
-                        left: lessonDropdownPosition.left,
-                        width: lessonDropdownPosition.width || 200,
+                        top: lessonDropdownLayout.position.top,
+                        left: lessonDropdownLayout.position.left,
+                        width: lessonDropdownLayout.position.width || 200,
                         backgroundColor: '#fff',
                         borderWidth: 1,
                         borderColor: BORDER,
                         borderRadius: 10,
                         marginTop: 0,
-                        maxHeight: lessonDropdownPosition.maxHeight || 220,
+                        maxHeight: lessonDropdownLayout.position.maxHeight || 220,
                         zIndex: 99999,
                         ...Platform.select({
                           web: {
@@ -7912,7 +6153,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     >
                       <ScrollView
                         style={{
-                          maxHeight: Math.max(140, (lessonDropdownPosition.maxHeight || 220) - 4),
+                          maxHeight: Math.max(140, (lessonDropdownLayout.position.maxHeight || 220) - 4),
                           ...(Platform.OS === 'web' && {
                             overflowY: 'auto',
                             overflowX: 'hidden',
@@ -8224,7 +6465,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   <Text style={styles.addMaterialText}>Add New</Text>
                 </TouchableOpacity>
               </View>
-              {showMaterialDropdown && Platform.OS === 'web' && (() => {
+              {showMaterialDropdown && materialDropdownLayout.ready && Platform.OS === 'web' && (() => {
                 let ReactDOM;
                 try {
                   ReactDOM = require('react-dom');
@@ -8236,16 +6477,16 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     ref={materialDropdownRef}
                     style={{
                       position: 'fixed',
-                      top: materialDropdownPosition.top,
-                      left: materialDropdownPosition.left,
-                      width: materialDropdownPosition.width || 400,
+                      top: materialDropdownLayout.position.top,
+                      left: materialDropdownLayout.position.left,
+                      width: materialDropdownLayout.position.width || 400,
                       backgroundColor: '#FFFFFF',
                       borderRadius: 8,
                       borderWidth: 1,
                       borderColor: 'rgba(15,23,42,0.08)',
                       padding: 4,
                       minWidth: 400,
-                      maxHeight: materialDropdownPosition.maxHeight || 300,
+                      maxHeight: materialDropdownLayout.position.maxHeight || 300,
                       zIndex: 99999,
                       boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
                       ...(Platform.OS === 'web' && {
@@ -8257,7 +6498,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                   >
                     <ScrollView 
                       style={{ 
-                        maxHeight: (materialDropdownPosition.maxHeight || 300) - 8,
+                        maxHeight: (materialDropdownLayout.position.maxHeight || 300) - 8,
                         ...(Platform.OS === 'web' && {
                           overflowY: 'auto',
                           overflowX: 'hidden',
@@ -8358,12 +6599,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               onPress={() => handleDelete()}
               disabled={deleting}
               style={[
-                styles.deleteEventButton,
-                deleting && styles.deleteEventButtonDisabled,
+                destructiveButtonStyles.button,
+                deleting && destructiveButtonStyles.buttonDisabled,
               ]}
             >
-              <Trash2 size={17} color="#DC2626" />
-              <Text style={[styles.deleteEventButtonText, deleting && { opacity: 0.8 }]}>
+              <Trash2 size={17} color={destructiveIconColor} />
+              <Text style={[destructiveButtonStyles.buttonText, deleting && destructiveButtonStyles.buttonTextDisabled]}>
                 {deleting ? 'Deleting…' : 'Delete Event'}
               </Text>
             </TouchableOpacity>
@@ -8842,7 +7083,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         }}
       />
       <View style={{ flex: 1, backgroundColor: '#ffffff', minHeight: 400 }}>
-        {editing ? renderEditForm() : renderViewMode()}
+        {renderEditForm()}
       </View>
           
           {/* Standards Search Modal */}
@@ -8869,290 +7110,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               }}
               familyId={familyId}
               defaultChildId={assigneeIds.length > 0 ? assigneeIds[0] : null}
-            />
-          ) : null}
-
-          {showAskParentHelpModal ? (
-            <AskParentHelpModal
-              visible
-              onClose={() => {
-                setShowAskParentHelpModal(false);
-                setAskHelpModalAssignment(null);
-              }}
-              onSent={() => {
-                toast.push('Sent to your parent', 'success');
-                loadEventLinkedHelpAssignment();
-                setAskHelpModalAssignment(null);
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
-                  window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
-                  window.dispatchEvent(new CustomEvent('refreshRightRail'));
-                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
-                }
-              }}
-              familyId={familyId}
-              childId={event?.child_id || (assigneeIds.length > 0 ? assigneeIds[0] : null) || session?.child_id}
-              assignment={askHelpModalAssignment}
-              eventContext={
-                askHelpModalAssignment
-                  ? null
-                  : event?.id
-                    ? {
-                        id: event.id,
-                        title: event.title || draftTitle,
-                        start_ts: event.start_ts,
-                        end_ts: event.end_ts,
-                      }
-                    : null
-              }
-            />
-          ) : null}
-
-          {showSubmitForReviewModal ? (
-            <SubmitForReviewModal
-              visible
-              onClose={() => {
-                setShowSubmitForReviewModal(false);
-                setSubmitModalAssignment(null);
-              }}
-              onSubmitted={() => {
-                toast.push('Submitted for review', 'success');
-                loadEventLinkedHelpAssignment();
-                loadEventLinkedParentAssignments();
-                setSubmitModalAssignment(null);
-                onEventUpdated?.();
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('childAssignmentsNeedRefresh'));
-                  window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
-                  window.dispatchEvent(new CustomEvent('refreshRightRail'));
-                  window.dispatchEvent(new CustomEvent('refreshCalendar'));
-                }
-              }}
-              familyId={familyId}
-              childId={event?.child_id || (assigneeIds.length > 0 ? assigneeIds[0] : null) || session?.child_id}
-              assignment={submitModalAssignment}
-              eventContext={
-                event?.id
-                  ? {
-                      id: event.id,
-                      title: event.title || draftTitle,
-                      start_ts: event.start_ts,
-                      end_ts: event.end_ts,
-                      subject_id: event.subject_id || subjectId || null,
-                    }
-                  : null
-              }
-            />
-          ) : null}
-
-          {showSendToStudentModal ? (
-          <Modal
-            visible
-            transparent
-            animationType="fade"
-            onRequestClose={closeSendToStudentModal}
-          >
-            <View
-              style={{
-                flex: 1,
-                backgroundColor: 'rgba(15, 23, 42, 0.4)',
-                justifyContent: 'center',
-                alignItems: 'center',
-                padding: 16,
-              }}
-            >
-              <TouchableOpacity
-                onPress={closeSendToStudentModal}
-                activeOpacity={1}
-                style={StyleSheet.absoluteFillObject}
-                accessibilityRole="button"
-                accessibilityLabel="Close"
-                {...(Platform.OS === 'web' && { cursor: 'default' })}
-              />
-              <View
-                pointerEvents="box-none"
-                style={{
-                  backgroundColor: '#FFFFFF',
-                  borderRadius: 24,
-                  width: '100%',
-                  maxWidth: 520,
-                  borderWidth: 1,
-                  borderColor: LD.shellBorder,
-                  overflow: 'hidden',
-                  position: 'relative',
-                  ...shellShadow,
-                }}
-              >
-                <TouchableOpacity
-                  onPress={closeSendToStudentModal}
-                  style={{
-                    position: 'absolute',
-                    top: 14,
-                    right: 14,
-                    zIndex: 20,
-                    width: 40,
-                    height: 40,
-                    borderRadius: 20,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: 'rgba(255,255,255,0.85)',
-                    borderWidth: 1,
-                    borderColor: LD.border,
-                  }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Close"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <X size={20} color={LD.ink} />
-                </TouchableOpacity>
-
-                <View style={{ paddingHorizontal: 24, paddingTop: 64, paddingBottom: 28 }}>
-                  <Text
-                    style={{
-                      fontSize: 14,
-                      color: LD.muted,
-                      lineHeight: 21,
-                      marginBottom: 18,
-                      ...fontDisplay('400'),
-                    }}
-                  >
-                    {sendInviteClarificationText
-                      ? sendInviteClarificationText
-                      : (
-                        sendTrackingSummary.hasShared
-                          ? (sendTrackingSummary.latestStatusLine || 'Last sent recently.')
-                          : `This will notify ${sendToStudentTargetLabel} that the assignment needs their attention.`
-                      )}
-                  </Text>
-                  {Array.isArray(sendTrackingSummary.historyLines) && sendTrackingSummary.historyLines.length > 0 ? (
-                    <View style={[styles.workflowHistoryList, { marginTop: 0, marginBottom: 12 }]}>
-                      {sendTrackingSummary.historyLines.map((line, index) => (
-                        <Text key={`send-modal-history-line-${index}`} style={styles.workflowSentLine}>
-                          {line}
-                        </Text>
-                      ))}
-                    </View>
-                  ) : null}
-                  <Text
-                    style={{
-                      fontSize: 14,
-                      fontWeight: '600',
-                      color: LD.inkSoft,
-                      marginBottom: 8,
-                      letterSpacing: 0.15,
-                      ...fontDisplay('600'),
-                    }}
-                  >
-                    Note
-                  </Text>
-                  <TextInput
-                    value={sendToStudentNote}
-                    onChangeText={(value) => {
-                      setSendToStudentNote(value);
-                      if (sendToStudentInlineError) setSendToStudentInlineError('');
-                    }}
-                    onKeyPress={(e) => {
-                      e?.stopPropagation?.();
-                    }}
-                    onKeyDown={(e) => {
-                      e?.stopPropagation?.();
-                    }}
-                    placeholder="Add a short message…"
-                    placeholderTextColor={LD.placeholder}
-                    multiline
-                    editable={!sendToStudentSubmitting}
-                    textAlignVertical="top"
-                    style={{
-                      borderWidth: 1,
-                      borderColor: LD.border,
-                      borderRadius: 16,
-                      paddingHorizontal: 16,
-                      paddingVertical: 14,
-                      fontSize: 15,
-                      color: LD.ink,
-                      minHeight: 120,
-                      maxHeight: 260,
-                      backgroundColor: '#FFFFFF',
-                      ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
-                    }}
-                  />
-                  {sendToStudentInlineError ? (
-                    <Text style={[styles.errorTextSmall, { marginTop: 8 }]}>
-                      {sendToStudentInlineError}
-                    </Text>
-                  ) : null}
-
-                  <View style={{ marginTop: 24 }}>
-                    <TouchableOpacity
-                      onPress={() => sendWorkToStudents(sendToStudentNote.trim())}
-                      disabled={sendToStudentSubmitting}
-                      style={[
-                        styles.workflowActionButton,
-                        sendToStudentSubmitting && styles.workflowActionButtonDisabled,
-                        { alignSelf: 'center' },
-                      ]}
-                      {...(Platform.OS === 'web' && { cursor: sendToStudentSubmitting ? 'not-allowed' : 'pointer' })}
-                    >
-                      <View style={styles.workflowActionButtonRow}>
-                        <View style={styles.workflowActionIconWrap}>
-                          <Send size={12} color="#5B6880" />
-                        </View>
-                        <Text style={styles.workflowActionButtonText}>
-                          {sendToStudentSubmitting ? 'Sending…' : (sendTrackingSummary.ctaLabel || 'Send to student')}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-            </View>
-          </Modal>
-          ) : null}
-
-          {showStudentHelpHistoryModal ? (
-            <StudentHelpHistoryModal
-              visible
-              onClose={() => setShowStudentHelpHistoryModal(false)}
-              assignment={eventLinkedHelpAssignment}
-              contextTitle={event?.title || draftTitle}
-            />
-          ) : null}
-
-          {parentHelpModalAssignment && showParentHelpModal ? (
-            <RespondToHelpRequestModal
-              visible
-              assignment={parentHelpModalAssignment}
-              onClose={() => {
-                setShowParentHelpModal(false);
-                setParentHelpModalAssignment(null);
-              }}
-              onResponded={() => {
-                loadEventLinkedParentAssignments();
-                onEventUpdated?.();
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
-                }
-              }}
-            />
-          ) : null}
-
-          {parentSubmissionModalAssignment && showParentSubmissionModal ? (
-            <AssignmentReviewModal
-              visible
-              assignment={parentSubmissionModalAssignment}
-              onClose={() => {
-                setShowParentSubmissionModal(false);
-                setParentSubmissionModalAssignment(null);
-              }}
-              onReviewed={() => {
-                loadEventLinkedParentAssignments();
-                onEventUpdated?.();
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('parentAssignmentsNeedRefresh'));
-                }
-              }}
-              submissionReview
             />
           ) : null}
 
@@ -10643,7 +8600,6 @@ const styles = StyleSheet.create({
     borderColor: '#fecaca',
     borderRadius: 8,
     padding: 12,
-    marginHorizontal: 24,
     marginTop: 12,
     marginBottom: 4,
   },
@@ -11613,34 +9569,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-  },
-  deleteEventButton: {
-    minHeight: 50,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 16,
-    backgroundColor: '#FEF2F2',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  deleteEventButtonDisabled: {
-    backgroundColor: '#FEF2F2',
-    ...(Platform.OS === 'web' && {
-      cursor: 'not-allowed',
-    }),
-  },
-  deleteEventButtonText: {
-    color: '#B91C1C',
-    fontWeight: '700',
-    fontSize: 16,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
-    }),
   },
   cancelText: {
     color: '#6C738E',

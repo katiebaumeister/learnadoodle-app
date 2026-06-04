@@ -15,15 +15,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
-import { FileText, Clock, AlertCircle, CheckCircle, HelpCircle } from 'lucide-react';
+import { FileText, Clock, AlertCircle, CheckCircle } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { getAssignments } from '../../lib/services/assignmentsClient';
 import AssignmentCard from '../assignments/AssignmentCard';
 import AssignmentDetailModal from '../assignments/AssignmentDetailModal';
 import OneTapSubmitButton from './OneTapSubmitButton';
-import AskForHelpModal from './AskForHelpModal';
 import QuickSubmitModal from '../assignments/QuickSubmitModal';
-import { submitAssignment, toggleNeedHelp } from '../../lib/services/assignmentsClient';
+import { submitAssignment } from '../../lib/services/assignmentsClient';
 
 const FILTERS = [
   { id: 'all', label: 'All' },
@@ -40,7 +39,6 @@ export default function ChildAssignmentsScreen({ familyId, onNavigate }) {
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [selectedAssignment, setSelectedAssignment] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
-  const [showHelpModal, setShowHelpModal] = useState(false);
   const [showQuickSubmit, setShowQuickSubmit] = useState(false);
   const [quickSubmitAssignment, setQuickSubmitAssignment] = useState(null);
 
@@ -133,16 +131,6 @@ export default function ChildAssignmentsScreen({ familyId, onNavigate }) {
     }
   };
 
-  const handleToggleHelp = async (assignmentId) => {
-    const { error } = await toggleNeedHelp(assignmentId);
-    if (!error) {
-      await loadAssignments();
-      if (selectedAssignment?.id === assignmentId) {
-        setSelectedAssignment({ ...selectedAssignment, need_help: !selectedAssignment.need_help });
-      }
-    }
-  };
-
   const handleQuickSubmit = (assignment) => {
     setQuickSubmitAssignment(assignment);
     setShowQuickSubmit(true);
@@ -177,14 +165,6 @@ export default function ChildAssignmentsScreen({ familyId, onNavigate }) {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>My Assignments</Text>
-          <TouchableOpacity
-            style={styles.helpButton}
-            onPress={() => setShowHelpModal(true)}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <HelpCircle size={18} color="#887DEE" />
-            <Text style={styles.helpButtonText}>Help</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Filter Tabs */}
@@ -259,12 +239,6 @@ export default function ChildAssignmentsScreen({ familyId, onNavigate }) {
                     familyId={familyId}
                     onSubmitted={handleQuickSubmitted}
                   />
-                  {assignment.need_help && (
-                    <View style={styles.helpBadge}>
-                      <HelpCircle size={14} color="#f59e0b" />
-                      <Text style={styles.helpBadgeText}>Help requested</Text>
-                    </View>
-                  )}
                 </View>
               </View>
             ))}
@@ -283,7 +257,6 @@ export default function ChildAssignmentsScreen({ familyId, onNavigate }) {
           setSelectedAssignment(null);
         }}
         onSubmit={handleSubmit}
-        onToggleHelp={handleToggleHelp}
         onReview={null} // Children can't review
       />
 
@@ -299,19 +272,6 @@ export default function ChildAssignmentsScreen({ familyId, onNavigate }) {
           setQuickSubmitAssignment(null);
         }}
         onSubmitted={handleQuickSubmitted}
-      />
-
-      {/* Ask for Help Modal */}
-      <AskForHelpModal
-        visible={showHelpModal}
-        onClose={() => setShowHelpModal(false)}
-        assignment={selectedAssignment}
-        childId={childId}
-        familyId={familyId}
-        onHelpRequested={() => {
-          setShowHelpModal(false);
-          loadAssignments();
-        }}
       />
     </>
   );

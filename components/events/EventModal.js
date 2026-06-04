@@ -20,24 +20,14 @@ export default function EventModal({
   preloadedAcademicYears = null,
   /** Subjects loaded with WebLayout (id, name, child_id) — seeds EventDetails before refetch */
   preloadedSubjects = null,
-  /** Family assignment rows from WebLayout — seeds help/submission UI in EventDetails */
-  preloadedFamilyAssignments = null,
   /** 'tutor' = read-first event details; no schedule ownership affordances */
   viewerRole = null,
   /** Child/tutor: parent disabled add/edit events in User Controls */
   denyFamilyEventEdit = false,
-  /** null | 'help' | 'submission' | 'send' — parent opens matching assignment/send flow once data loads */
-  parentEventFocus = null,
-  onParentEventFocusConsumed,
-  /** null | 'help' | 'submission' — child opens ask/submit flow once data loads */
-  childEventFocus = null,
-  onChildEventFocusConsumed,
   /** From planner chip conflict icon — show top banner with Auto reschedule / Ignore */
   openConflictResolution = false,
   conflictResolutionContext = null,
   onOpenConflictResolutionConsumed,
-  /** true = only open Send to student modal (no EventDetails shell in background) */
-  sendOnlyMode = false,
 }) {
   const [event, setEvent] = useState(initialEvent);
   const [syllabus, setSyllabus] = useState(null);
@@ -385,7 +375,7 @@ export default function EventModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={[styles.overlay, sendOnlyMode && styles.overlayTransparent]}>
+      <View style={styles.overlay}>
         <View
           style={StyleSheet.absoluteFill}
           accessibilityRole={Platform.OS === 'web' ? 'button' : undefined}
@@ -398,7 +388,6 @@ export default function EventModal({
           style={[
             styles.container,
             isEditing && styles.containerEditMode,
-            sendOnlyMode && styles.containerHidden,
           ]}
         >
           {/* Content */}
@@ -410,7 +399,7 @@ export default function EventModal({
             <View style={[styles.content, isEditing && styles.contentEditMode]}>
               {event ? (
                 <EventDetails
-                  key={schedulingMode ? `scheduling-${event.id}` : `view-${event.id}`}
+                  key={`edit-${event.id}`}
                   event={event}
                   onEventUpdated={handleEventUpdated}
                   onEventDeleted={(deletedEventId) => {
@@ -428,15 +417,9 @@ export default function EventModal({
                   viewerRole={viewerRole}
                   preloadedAcademicYears={preloadedAcademicYears}
                   preloadedSubjects={preloadedSubjects}
-                  preloadedFamilyAssignments={preloadedFamilyAssignments}
-                  parentEventFocus={parentEventFocus}
-                  onParentEventFocusConsumed={onParentEventFocusConsumed}
-                  childEventFocus={childEventFocus}
-                  onChildEventFocusConsumed={onChildEventFocusConsumed}
                   openConflictResolution={openConflictResolution}
                   conflictResolutionContext={conflictResolutionContext}
                   onOpenConflictResolutionConsumed={onOpenConflictResolutionConsumed}
-                  sendOnlyMode={sendOnlyMode}
                 />
               ) : (
                 <View style={styles.loadingContainer}>

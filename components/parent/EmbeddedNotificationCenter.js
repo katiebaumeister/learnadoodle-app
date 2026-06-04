@@ -1005,12 +1005,9 @@ export default function EmbeddedNotificationCenter({
     }
     if (Platform.OS === 'web' && typeof window !== 'undefined' && linkedEventId) {
       window.dispatchEvent(
-        new CustomEvent('openEventModal', {
+        new CustomEvent('openNudgeForEvent', {
           detail: {
             eventId: linkedEventId,
-            initialEvent: null,
-            parentEventFocus: 'send',
-            sendOnlyMode: true,
           },
         })
       );
