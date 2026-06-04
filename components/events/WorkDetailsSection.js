@@ -2,41 +2,60 @@ import React from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   Switch,
   Platform,
   StyleSheet,
 } from 'react-native';
-import { ModalSectionCard } from '../ui/ModalSectionCard';
-import { FileText } from 'lucide-react';
 import {
-  EFFORT_PRESETS,
   isWorkProducingEventType,
   normalizeWorkEventType,
   parseWorkSpec,
+  showsLearningGradingSwitches,
 } from '../../lib/workEventHelpers';
 
 function LearningWorkSwitch({
   label,
+  labelLines = null,
   value,
   onValueChange,
   readOnly = false,
   inLearningSection = false,
+  inLearningSectionRow = false,
   isFirstInLearningSection = false,
 }) {
+  const labelStyle = [
+    styles.label,
+    styles.switchLabelStacked,
+    inLearningSection && styles.learningSectionLabel,
+  ];
+  const stackedLines = Array.isArray(labelLines)
+    ? labelLines.map((line) => String(line || '').trim()).filter(Boolean)
+    : [];
+
   return (
     <View
       style={[
-        styles.switchRow,
-        inLearningSection && (isFirstInLearningSection
+        styles.switchRowStack,
+        inLearningSection && !inLearningSectionRow && (isFirstInLearningSection
           ? styles.learningSectionSwitchRow
           : styles.learningSectionSwitchRowFollow),
+        inLearningSection && inLearningSectionRow && styles.learningSectionSwitchCell,
       ]}
     >
-      <Text style={[styles.label, inLearningSection && styles.learningSectionLabel]}>
-        {label}
-      </Text>
+      {stackedLines.length > 0 ? (
+        <View style={styles.switchLabelLines}>
+          {stackedLines.map((line) => (
+            <Text key={line} style={[labelStyle, styles.switchLabelLine]}>
+              {line}
+            </Text>
+          ))}
+        </View>
+      ) : (
+        <Text style={labelStyle}>
+          {label}
+        </Text>
+      )}
       <Switch
         value={value}
         onValueChange={onValueChange}
@@ -88,13 +107,48 @@ export function RequireFinalDeliverableField({
 
   return (
     <LearningWorkSwitch
-      label="Require final deliverable"
+      label="Submission"
       value={!!spec.require_final_deliverable}
       onValueChange={(value) => patch({ require_final_deliverable: value })}
       readOnly={readOnly}
       inLearningSection={inLearningSection}
       isFirstInLearningSection={false}
     />
+  );
+}
+
+/** Graded + Submission side-by-side in Learning details accordion. */
+export function LearningGradingSwitchesRow({
+  workSpec,
+  eventType,
+  onChange,
+  readOnly = false,
+}) {
+  if (!showsLearningGradingSwitches(eventType)) return null;
+
+  const normalizedType = normalizeWorkEventType(eventType) || eventType;
+  const spec = parseWorkSpec(workSpec, normalizedType);
+  const patch = (partial) => onChange?.({ ...spec, ...partial });
+
+  return (
+    <View style={styles.learningSectionSwitchesRow}>
+      <LearningWorkSwitch
+        label="Graded"
+        value={spec.graded !== false}
+        onValueChange={(value) => patch({ graded: value })}
+        readOnly={readOnly}
+        inLearningSection
+        inLearningSectionRow
+      />
+      <LearningWorkSwitch
+        label="Submission"
+        value={!!spec.require_final_deliverable}
+        onValueChange={(value) => patch({ require_final_deliverable: value })}
+        readOnly={readOnly}
+        inLearningSection
+        inLearningSectionRow
+      />
+    </View>
   );
 }
 
@@ -111,17 +165,19 @@ function MethodChip({ label, active, onPress, disabled }) {
   );
 }
 
-export default function WorkDetailsSection({
-  eventType,
+/** Submission method chips in Learning details — visible when Submission is on. */
+export function LearningSubmissionMethodsField({
   workSpec,
+  eventType,
   onChange,
   readOnly = false,
-  suggestedStartPreview = null,
 }) {
-  const normalizedType = normalizeWorkEventType(eventType);
-  if (!isWorkProducingEventType(normalizedType)) return null;
+  if (!showsLearningGradingSwitches(eventType)) return null;
 
+  const normalizedType = normalizeWorkEventType(eventType) || eventType;
   const spec = parseWorkSpec(workSpec, normalizedType);
+  if (!spec.require_final_deliverable) return null;
+
   const patch = (partial) => onChange?.({ ...spec, ...partial });
   const patchMethods = (key, value) => {
     patch({
@@ -131,158 +187,41 @@ export default function WorkDetailsSection({
       },
     });
   };
-  const patchExam = (key, value) => {
-    patch({
-      exam_modes: {
-        ...spec.exam_modes,
-        [key]: value,
-      },
-    });
-  };
 
   return (
-    <ModalSectionCard
-      Icon={FileText}
-      title="Work Details"
-      subtitle="Instructions, submission, and grading"
-      expanded
-      onPress={() => {}}
-      accent="#7C9CBF"
-      hideChevron
-    >
-      <View style={styles.sectionBody}>
-        <Text style={styles.label}>Instructions</Text>
-        <TextInput
-          value={spec.instructions || ''}
-          onChangeText={(text) => patch({ instructions: text })}
-          placeholder="What should the student do?"
-          placeholderTextColor="#9CA3AF"
-          multiline
-          editable={!readOnly}
-          style={[styles.textArea, readOnly && styles.readOnlyField]}
-        />
-
-        <Text style={[styles.label, styles.labelSpaced]}>Submission methods</Text>
-        <View style={styles.chipRow}>
-          <MethodChip label="Text response" active={!!spec.submission_methods?.text} onPress={() => patchMethods('text', !spec.submission_methods?.text)} disabled={readOnly} />
-          <MethodChip label="File upload" active={!!spec.submission_methods?.file} onPress={() => patchMethods('file', !spec.submission_methods?.file)} disabled={readOnly} />
-          <MethodChip label="Photo" active={!!spec.submission_methods?.photo} onPress={() => patchMethods('photo', !spec.submission_methods?.photo)} disabled={readOnly} />
-          <MethodChip label="Link" active={!!spec.submission_methods?.link} onPress={() => patchMethods('link', !spec.submission_methods?.link)} disabled={readOnly} />
-          <MethodChip label="Parent check-off" active={!!spec.submission_methods?.parent_checkoff} onPress={() => patchMethods('parent_checkoff', !spec.submission_methods?.parent_checkoff)} disabled={readOnly} />
-        </View>
-
-        <Text style={[styles.label, styles.labelSpaced]}>Estimated effort</Text>
-        <View style={styles.chipRow}>
-          {EFFORT_PRESETS.map((preset) => {
-            const active = Number(spec.estimated_effort_minutes) === preset.minutes;
-            return (
-              <MethodChip
-                key={preset.minutes}
-                label={preset.label}
-                active={active}
-                onPress={() => patch({ estimated_effort_minutes: preset.minutes })}
-                disabled={readOnly}
-              />
-            );
-          })}
-        </View>
-
-        <Text style={[styles.label, styles.labelSpaced]}>Suggested start</Text>
-        <View style={styles.chipRow}>
-          <MethodChip
-            label="Auto"
-            active={spec.suggested_start_mode !== 'custom'}
-            onPress={() => patch({ suggested_start_mode: 'auto', suggested_start_date: null })}
-            disabled={readOnly}
-          />
-          <MethodChip
-            label="Custom"
-            active={spec.suggested_start_mode === 'custom'}
-            onPress={() => patch({ suggested_start_mode: 'custom' })}
-            disabled={readOnly}
-          />
-        </View>
-        {spec.suggested_start_mode === 'custom' ? (
-          <TextInput
-            value={spec.suggested_start_date || ''}
-            onChangeText={(text) => patch({ suggested_start_date: text.slice(0, 10) })}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor="#9CA3AF"
-            editable={!readOnly}
-            style={[styles.input, readOnly && styles.readOnlyField]}
-          />
-        ) : suggestedStartPreview ? (
-          <Text style={styles.hint}>Suggested: {suggestedStartPreview}</Text>
-        ) : null}
-
-        {normalizedType === 'Project' ? (
-          <>
-            <View style={styles.switchRow}>
-              <Text style={styles.label}>Allow progress updates</Text>
-              <Switch
-                value={!!spec.allow_progress_updates}
-                onValueChange={(value) => patch({ allow_progress_updates: value })}
-                disabled={readOnly}
-                trackColor={{ false: '#E5E7EB', true: '#AECBFA' }}
-                thumbColor={spec.allow_progress_updates ? '#45A29E' : '#f9fafb'}
-              />
-            </View>
-          </>
-        ) : null}
-
-        {normalizedType === 'Exam' ? (
-          <>
-            <Text style={[styles.label, styles.labelSpaced]}>Exam submission</Text>
-            <View style={styles.chipRow}>
-              <MethodChip label="Parent-entered score" active={!!spec.exam_modes?.parent_score} onPress={() => patchExam('parent_score', !spec.exam_modes?.parent_score)} disabled={readOnly} />
-              <MethodChip label="Question/Answer" active={!!spec.exam_modes?.question_answer} onPress={() => patchExam('question_answer', !spec.exam_modes?.question_answer)} disabled={readOnly} />
-              <MethodChip label="File upload" active={!!spec.exam_modes?.file_upload} onPress={() => patchExam('file_upload', !spec.exam_modes?.file_upload)} disabled={readOnly} />
-            </View>
-          </>
-        ) : null}
+    <View style={styles.learningSectionSubmissionMethods}>
+      <Text style={styles.learningSubmissionLabel}>Submission methods</Text>
+      <View style={styles.chipRow}>
+        <MethodChip label="Text response" active={!!spec.submission_methods?.text} onPress={() => patchMethods('text', !spec.submission_methods?.text)} disabled={readOnly} />
+        <MethodChip label="File upload" active={!!spec.submission_methods?.file} onPress={() => patchMethods('file', !spec.submission_methods?.file)} disabled={readOnly} />
+        <MethodChip label="Photo" active={!!spec.submission_methods?.photo} onPress={() => patchMethods('photo', !spec.submission_methods?.photo)} disabled={readOnly} />
+        <MethodChip label="Link" active={!!spec.submission_methods?.link} onPress={() => patchMethods('link', !spec.submission_methods?.link)} disabled={readOnly} />
+        <MethodChip label="Parent check-off" active={!!spec.submission_methods?.parent_checkoff} onPress={() => patchMethods('parent_checkoff', !spec.submission_methods?.parent_checkoff)} disabled={readOnly} />
       </View>
-    </ModalSectionCard>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  sectionBody: {
-    paddingTop: 4,
-  },
   label: {
     fontSize: 12,
     fontWeight: '600',
     color: '#64748B',
     marginBottom: 6,
   },
-  labelSpaced: {
-    marginTop: 14,
-  },
-  textArea: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    minHeight: 88,
-    fontSize: 14,
-    color: '#111827',
-    backgroundColor: '#FFFFFF',
-    textAlignVertical: 'top',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#111827',
-    backgroundColor: '#FFFFFF',
+  learningSectionSubmissionMethods: {
+    width: '100%',
     marginTop: 8,
+    alignSelf: 'stretch',
   },
-  readOnlyField: {
-    backgroundColor: '#F9FAFB',
+  learningSubmissionLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6b7280',
+    marginBottom: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   chipRow: {
     flexDirection: 'row',
@@ -312,11 +251,22 @@ const styles = StyleSheet.create({
   chipTextActive: {
     color: '#0369A1',
   },
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  switchRowStack: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    gap: 6,
     marginTop: 14,
+  },
+  switchLabelStacked: {
+    marginBottom: 0,
+  },
+  switchLabelLines: {
+    gap: 0,
+  },
+  switchLabelLine: {
+    marginBottom: 0,
+    lineHeight: 15,
   },
   learningSectionSwitchRow: {
     marginTop: 12,
@@ -324,6 +274,8 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#EEF1F6',
     width: '100%',
+    maxWidth: 180,
+    alignSelf: 'flex-start',
     ...(Platform.OS === 'web' && {
       gridColumn: '1 / -1',
     }),
@@ -331,19 +283,41 @@ const styles = StyleSheet.create({
   learningSectionSwitchRowFollow: {
     marginTop: 8,
     width: '100%',
+    maxWidth: 180,
+    alignSelf: 'flex-start',
     ...(Platform.OS === 'web' && {
       gridColumn: '1 / -1',
     }),
+  },
+  learningSectionSwitchesRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 28,
+    marginTop: 0,
+    marginLeft: 20,
+    paddingTop: 0,
+    borderTopWidth: 0,
+    width: 'auto',
+    alignSelf: 'flex-end',
+    ...(Platform.OS === 'web' && {
+      gridColumn: '3 / -1',
+      justifySelf: 'end',
+      marginLeft: 0,
+      paddingLeft: 16,
+    }),
+  },
+  learningSectionSwitchCell: {
+    marginTop: 0,
+    paddingTop: 0,
+    borderTopWidth: 0,
+    width: 'auto',
+    maxWidth: 120,
+    flexShrink: 0,
   },
   learningSectionLabel: {
     fontSize: 12,
     fontWeight: '500',
     color: '#6b7280',
     marginBottom: 0,
-  },
-  hint: {
-    marginTop: 8,
-    fontSize: 12,
-    color: '#64748B',
   },
 });

@@ -1919,11 +1919,7 @@ export default function ProgressTab({
       })}
     </View>
   ) : (
-    <Text style={styles.emptyStateText}>
-      {sectionsMode === 'attendanceGradesOnly' || sectionsMode === 'allEventsOnly'
-        ? 'Grades appear once events for the selected children are graded.'
-        : 'Grades appear once events for this child are graded.'}
-    </Text>
+    <Text style={styles.emptyStateText}>No graded events yet</Text>
   );
 
   const renderSummaryPanelContent = (panelKey, options = {}) => {
@@ -2473,17 +2469,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
-      transition: 'border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease',
-      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.05)',
-    }),
-    ...(Platform.OS === 'ios' && {
-      shadowColor: '#0F172A',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.05,
-      shadowRadius: 8,
-    }),
-    ...(Platform.OS === 'android' && {
-      elevation: 2,
+      transition: 'border-color 0.15s ease, background-color 0.15s ease',
     }),
   },
   overviewSummaryBoxActive: {
@@ -2526,18 +2512,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     padding: 14,
     gap: 12,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.05)',
-    }),
-    ...(Platform.OS === 'ios' && {
-      shadowColor: '#0F172A',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.05,
-      shadowRadius: 8,
-    }),
-    ...(Platform.OS === 'android' && {
-      elevation: 2,
-    }),
   },
   summaryExpandPanelFill: {
     flex: 1,

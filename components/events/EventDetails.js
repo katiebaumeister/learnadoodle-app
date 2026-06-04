@@ -31,12 +31,12 @@ import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curric
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
-import WorkDetailsSection, { GradedField, RequireFinalDeliverableField } from './WorkDetailsSection';
+import { LearningGradingSwitchesRow, LearningSubmissionMethodsField } from './WorkDetailsSection';
 import { ensureAssignmentsForEvent } from '../../lib/workAssignmentClient';
 import {
-  computeSuggestedStartDate,
   isWorkProducingEventType,
   parseWorkSpec,
+  showsLearningGradingSwitches,
 } from '../../lib/workEventHelpers';
 import ConfirmDialog from '../ConfirmDialog';
 import { destructiveButtonStyles, destructiveIconColor } from '../ui/destructiveButtonStyles';
@@ -4145,7 +4145,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         instructor: (instructor && instructor.trim()) ? instructor.trim() : null,
         goal_link: goalLink || null,
         recurrence_rule: recurrenceRule ? JSON.stringify(recurrenceRule) : null,
-        work_spec: isWorkProducingEventType(persistedEventType)
+        work_spec: showsLearningGradingSwitches(persistedEventType)
           ? parseWorkSpec(workSpec, persistedEventType)
           : {},
       };
@@ -5218,20 +5218,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   };
 
 
-  const workSuggestedStartPreview = useMemo(() => {
-    if (!isWorkProducingEventType(eventType)) return null;
-    const spec = parseWorkSpec(workSpec, eventType);
-    if (spec.suggested_start_mode === 'custom') return null;
-    const dateLocal = dueDate ? toDateInput(dueDate.toISOString()) : draftDate;
-    const ymd = computeSuggestedStartDate(
-      { date_local: dateLocal, start_ts: dueDate?.toISOString?.() || null },
-      spec
-    );
-    if (!ymd) return null;
-    const d = new Date(`${ymd}T12:00:00`);
-    if (Number.isNaN(d.getTime())) return ymd;
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  }, [eventType, workSpec, dueDate, draftDate]);
+  const showLearningGradeFields = useMemo(() => {
+    if (!showsLearningGradingSwitches(eventType)) return false;
+    return parseWorkSpec(workSpec, eventType).graded !== false;
+  }, [workSpec, eventType]);
 
   const renderEditForm = () => {
     return (
@@ -6120,13 +6110,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </View>
         )}
       </SafeView>
-        <WorkDetailsSection
-          eventType={eventType}
-          workSpec={workSpec}
-          onChange={setWorkSpec}
-          readOnly={readOnly}
-          suggestedStartPreview={workSuggestedStartPreview}
-        />
         {/* Academic details section */}
         {!hideLearningDetailsSection && (
         <ModalSectionCard
@@ -6465,83 +6448,85 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 ) : null}
               </View>
             </View>
-            <View style={[styles.field, styles.academicFieldPercent]}>
-              <Text style={[styles.fieldLabel, styles.learningRowLabel]}>% Grade</Text>
-              <TextInput
-                placeholder="e.g. 25"
-                placeholderTextColor={MUTED}
-                value={percentOfTotalGrade}
-                onChangeText={setPercentOfTotalGrade}
-                style={[
-                  styles.input,
-                  styles.academicInputCompact,
-                  percentValidationError && styles.inputError
-                ]}
-                keyboardType="numeric"
-              />
-              {checkingPercent && (
-                <Text style={styles.fieldHelpText}>Checking...</Text>
-              )}
-              {percentValidationError && (
-                <View style={{ marginTop: 8 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
-                    <AlertCircle size={16} color="#ef4444" style={{ marginTop: 2, marginRight: 6 }} />
-                    <Text style={styles.errorText}>
-                      {percentValidationError.message}
-                    </Text>
-                  </View>
-                  {percentValidationError.suggestedPercent !== null && percentValidationError.suggestedPercent !== undefined && (
-                    <View style={{ marginTop: 4, paddingLeft: 22 }}>
-                      <Text style={styles.fieldHelpText}>
-                        {`Suggested: Use ${percentValidationError.suggestedPercent.toFixed(1)}% to stay within 100%`}
+            <LearningGradingSwitchesRow
+              workSpec={workSpec}
+              eventType={eventType}
+              onChange={setWorkSpec}
+              readOnly={readOnly}
+            />
+            {showLearningGradeFields ? (
+            <View style={styles.learningSectionGradesRow}>
+              <View style={[styles.field, styles.academicFieldPercent]}>
+                <Text style={[styles.fieldLabel, styles.learningRowLabel]}>% Grade</Text>
+                <TextInput
+                  placeholder="e.g. 25"
+                  placeholderTextColor={MUTED}
+                  value={percentOfTotalGrade}
+                  onChangeText={setPercentOfTotalGrade}
+                  style={[
+                    styles.input,
+                    styles.academicInputCompact,
+                    percentValidationError && styles.inputError
+                  ]}
+                  keyboardType="numeric"
+                />
+                {checkingPercent && (
+                  <Text style={styles.fieldHelpText}>Checking...</Text>
+                )}
+                {percentValidationError && (
+                  <View style={{ marginTop: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 }}>
+                      <AlertCircle size={16} color="#ef4444" style={{ marginTop: 2, marginRight: 6 }} />
+                      <Text style={styles.errorText}>
+                        {percentValidationError.message}
                       </Text>
-                      {percentValidationData && percentValidationData.assignments && percentValidationData.assignments.length > 0 && (
-                        <View style={{ marginTop: 8 }}>
-                          <Text style={[styles.fieldHelpText, { marginBottom: 4, fontWeight: '600' }]}>
-                            Or reduce the weight of other assignments:
-                          </Text>
-                          {percentValidationData.assignments.slice(0, 3).map((assignment, idx) => (
-                            <Text key={idx} style={[styles.fieldHelpText, { marginLeft: 8 }]}>
-                              {`• ${assignment.title}: ${assignment.percent}%`}
-                            </Text>
-                          ))}
-                          {percentValidationData.assignments.length > 3 && (
-                            <Text style={[styles.fieldHelpText, { marginLeft: 8, fontStyle: 'italic' }]}>
-                              {`and ${percentValidationData.assignments.length - 3} more...`}
-                            </Text>
-                          )}
-                        </View>
-                      )}
                     </View>
-                  )}
-                </View>
-              )}
+                    {percentValidationError.suggestedPercent !== null && percentValidationError.suggestedPercent !== undefined && (
+                      <View style={{ marginTop: 4, paddingLeft: 22 }}>
+                        <Text style={styles.fieldHelpText}>
+                          {`Suggested: Use ${percentValidationError.suggestedPercent.toFixed(1)}% to stay within 100%`}
+                        </Text>
+                        {percentValidationData && percentValidationData.assignments && percentValidationData.assignments.length > 0 && (
+                          <View style={{ marginTop: 8 }}>
+                            <Text style={[styles.fieldHelpText, { marginBottom: 4, fontWeight: '600' }]}>
+                              Or reduce the weight of other assignments:
+                            </Text>
+                            {percentValidationData.assignments.slice(0, 3).map((assignment, idx) => (
+                              <Text key={idx} style={[styles.fieldHelpText, { marginLeft: 8 }]}>
+                                {`• ${assignment.title}: ${assignment.percent}%`}
+                              </Text>
+                            ))}
+                            {percentValidationData.assignments.length > 3 && (
+                              <Text style={[styles.fieldHelpText, { marginLeft: 8, fontStyle: 'italic' }]}>
+                                {`and ${percentValidationData.assignments.length - 3} more...`}
+                              </Text>
+                            )}
+                          </View>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                )}
+              </View>
+              <View style={[styles.field, styles.academicFieldGrade]}>
+                <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Grade</Text>
+                <TextInput
+                  placeholder="e.g. A+"
+                  placeholderTextColor={MUTED}
+                  value={grade}
+                  onChangeText={setGrade}
+                  style={[styles.input, styles.academicInputCompact]}
+                />
+              </View>
             </View>
-            <View style={[styles.field, styles.academicFieldGrade]}>
-              <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Grade</Text>
-              <TextInput
-                placeholder="e.g. A+"
-                placeholderTextColor={MUTED}
-                value={grade}
-                onChangeText={setGrade}
-                style={[styles.input, styles.academicInputCompact]}
-              />
-            </View>
-            <GradedField
-              workSpec={workSpec}
-              eventType={eventType}
-              onChange={setWorkSpec}
-              readOnly={readOnly}
-              inLearningSection
-            />
-            <RequireFinalDeliverableField
-              workSpec={workSpec}
-              eventType={eventType}
-              onChange={setWorkSpec}
-              readOnly={readOnly}
-              inLearningSection
-            />
+            ) : null}
           </SafeFieldRow>
+          <LearningSubmissionMethodsField
+            workSpec={workSpec}
+            eventType={eventType}
+            onChange={setWorkSpec}
+            readOnly={readOnly}
+          />
         </ModalSectionCard>
         )}
 
@@ -6633,6 +6618,11 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     );
                   })}
                 </ChipRow>
+                {connectedCalendarTargets.length > 0 ? (
+                  <Text style={[styles.fieldHelpText, styles.connectedCalendarDevNotice]}>
+                    This feature is still under development but the logic will still save for syncing later
+                  </Text>
+                ) : null}
               </SafeView>
             </View>
           </SafeFieldRow>
@@ -9054,6 +9044,19 @@ const styles = StyleSheet.create({
           flexWrap: 'wrap',
         }),
   },
+  learningSectionGradesRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 4,
+    marginTop: 8,
+    paddingTop: 0,
+    width: '100%',
+    alignSelf: 'stretch',
+    ...(Platform.OS === 'web' && {
+      gridColumn: '1 / -1',
+      display: 'flex',
+    }),
+  },
   learningRowLabel: {
     marginBottom: 6,
     minHeight: 16,
@@ -9207,6 +9210,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  connectedCalendarDevNotice: {
+    marginTop: 8,
+    fontSize: 11,
+    lineHeight: 16,
   },
   helpBubble: {
     marginTop: 6,
@@ -9597,8 +9605,10 @@ const styles = StyleSheet.create({
   },
   inlineSwitchField: {
     minWidth: 84,
+    flexDirection: 'column',
     alignItems: 'flex-start',
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
+    gap: 6,
     ...(Platform.OS === 'web' && {
       marginBottom: 6,
     }),
@@ -9614,8 +9624,7 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   inlineSwitchControlWrap: {
-    minHeight: 40,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
   },
   allDayRow: {
     flexDirection: 'row',
