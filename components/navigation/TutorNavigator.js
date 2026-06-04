@@ -29,7 +29,7 @@ const TABS = [
   { id: 'students', label: 'Students', icon: Users },
   { id: 'assignments', label: 'Assignments', icon: FileText },
   { id: 'calendar', label: 'Calendar', icon: Calendar },
-  { id: 'subjects', label: 'Learning', icon: BookOpen },
+  { id: 'subjects', label: 'Records', icon: BookOpen },
 ];
 
 export default function TutorNavigator({ session: propSession, user, ...props }) {

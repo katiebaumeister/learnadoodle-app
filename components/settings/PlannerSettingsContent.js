@@ -1753,7 +1753,7 @@ export default function PlannerSettingsContent({
   }, [toast, readOnly, familyId, selectedSchoolYearLabel, onSave, embeddedInModal]);
 
   const handleRequestClose = useCallback(async () => {
-    if (embeddedInModal && !readOnly) {
+    if (embeddedInModal && !readOnly && hasPendingModalSave) {
       // Let the latest TextInput change commit before persisting on close.
       await new Promise((resolve) => setTimeout(resolve, 50));
       const ok = await persist({});

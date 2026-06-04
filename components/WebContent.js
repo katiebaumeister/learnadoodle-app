@@ -4667,7 +4667,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Cache for subject detail data (for SubjectDetailPage) - keyed by subjectId
   const [subjectDetailCache, setSubjectDetailCache] = useState(() => _subjectDetailSessionInitial.data || {})
   const preloadingDetailsRef = useRef(new Set())
-  const [subjectsPrefetchReady, setSubjectsPrefetchReady] = useState(() => activeTab === 'subjects');
+  const [subjectsPrefetchReady, setSubjectsPrefetchReady] = useState(() => (
+    activeTab === 'subjects' || activeTab === 'learning'
+  ));
   const [activities, setActivities] = useState([])
   const [dailyTasks, setDailyTasks] = useState([])
   const [today] = useState(new Date().toISOString().split('T')[0])
@@ -4683,7 +4685,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // right-rail requests get network priority. Open Subjects tab enables immediately.
   useEffect(() => {
     if (!familyId) return;
-    if (activeTab === 'subjects') {
+    if (activeTab === 'subjects' || activeTab === 'learning') {
       setSubjectsPrefetchReady(true);
       return;
     }
@@ -10266,7 +10268,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     );
 
     // Check if it's a subject detail tab (from routing)
-    if (activeTab && activeTab.startsWith('subject-')) {
+    if (activeTab && activeTab.startsWith('subject-') && activeTab !== 'learning') {
       const subjectId = activeTab.replace('subject-', '');
       const subjectFamilyId = familyId || propSession?.family_id;
       if (!subjectFamilyId) {
@@ -10497,11 +10499,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       case 'records':
       case 'review':
       case 'coach':
+      case 'learning':
       case 'subjects': {
         const subjectsFamilyId = familyId || propSession?.family_id;
         if (!subjectsFamilyId) {
           return renderParentHomeCommon(homeFamilyIdForContent);
         }
+        const subjectsScreenMode = activeTab === 'learning' ? 'catalog' : 'records';
         try {
           return (
             <SubjectsPage
@@ -10514,6 +10518,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               onSubjectDetailUpdate={handleSubjectDetailUpdate}
               userRole={roleForHome ?? userRole}
               accessibleChildren={accessibleChildren}
+              screenMode={subjectsScreenMode}
               onAddSubject={() => {
                 if (Platform.OS === 'web' && typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('openAddSubjectModal'));

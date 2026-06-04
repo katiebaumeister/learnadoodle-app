@@ -281,9 +281,14 @@ export default function PlannerEventsListTable({
   const recenterDenseList = useCallback(() => {
     if (denseTodayIndex < 0) return;
     const target = Math.max(0, denseTodayIndex);
-    denseListRef.current?.scrollToIndex?.({ index: target, animated: false, viewPosition: 0 });
+    const offset = denseItemLayouts[target] ?? 0;
+    if (Platform.OS === 'web') {
+      denseListRef.current?.scrollToOffset?.({ offset, animated: false });
+    } else {
+      denseListRef.current?.scrollToIndex?.({ index: target, animated: false, viewPosition: 0 });
+    }
     allowExpandOnScrollRef.current = true;
-  }, [denseTodayIndex]);
+  }, [denseTodayIndex, denseItemLayouts]);
 
   const prevPlannerShellVisibleRef = useRef(plannerShellVisible);
   useLayoutEffect(() => {
@@ -303,7 +308,7 @@ export default function PlannerEventsListTable({
         recenterDenseList();
       });
     });
-    const retryMs = embedded ? [120, 320] : [120];
+    const retryMs = embedded ? [120, 320, 520] : [120, 320];
     const timers = retryMs.map((ms) => setTimeout(() => recenterDenseList(), ms));
     return () => {
       cancelAnimationFrame(raf1);
@@ -529,19 +534,17 @@ export default function PlannerEventsListTable({
     if (item?.type === 'header') {
       const isTodayHeader = item?.dateKey === todayYmd;
       return (
-        <View style={[styles.denseDateHeader, embedded && styles.denseDateHeaderEmbedded]}>
+        <View style={[
+          styles.denseDateHeader,
+          embedded && styles.denseDateHeaderEmbedded,
+        ]}>
           <View style={styles.denseDateHeaderRow}>
             {isTodayHeader ? (
               <Text style={styles.denseTodayMarker} accessibilityLabel="Today">
                 →
               </Text>
             ) : null}
-            <Text
-              style={[
-                styles.denseDateHeaderText,
-                isTodayHeader && styles.denseDateHeaderTextToday,
-              ]}
-            >
+            <Text style={styles.denseDateHeaderText}>
               {formatDenseDateHeader(item.dateKey)}
             </Text>
           </View>
@@ -582,13 +585,16 @@ export default function PlannerEventsListTable({
   }
 
   const useEmbeddedMaxHeight = embedded && !fillViewport && Number.isFinite(maxListHeight);
-  const embeddedListMaxHeight = useEmbeddedMaxHeight ? maxListHeight - 40 : undefined;
+  const embeddedListMaxHeight = useEmbeddedMaxHeight
+    ? Math.max(240, maxListHeight - 40)
+    : undefined;
 
   return (
     <View style={[
       styles.denseListWrap,
       embedded && fillViewport && styles.denseListWrapFill,
-      useEmbeddedMaxHeight && { maxHeight: maxListHeight },
+      useEmbeddedMaxHeight && styles.denseListWrapEmbeddedFixed,
+      useEmbeddedMaxHeight && { minHeight: maxListHeight, maxHeight: maxListHeight },
     ]}>
       <View style={styles.denseTableHeaderRow}>
         <View style={styles.denseColLeading} />
@@ -657,6 +663,11 @@ const styles = StyleSheet.create({
       display: 'flex',
       flexDirection: 'column',
     }),
+  },
+  denseListWrapEmbeddedFixed: {
+    flex: 0,
+    flexGrow: 0,
+    flexShrink: 0,
   },
   denseListContent: {
     minWidth: DENSE_TABLE_MIN_WIDTH,
@@ -730,9 +741,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  denseDateHeaderTextToday: {
-    color: '#0F4C81',
   },
   denseRow: {
     flexDirection: 'row',

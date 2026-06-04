@@ -14,6 +14,8 @@ import {
 
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
 const SHOW_MATERIALS_IN_SIDEBAR = false;
+const SHOW_SUBJECTS_CATALOG_IN_SIDEBAR = false;
+const SHOW_CREATE_IN_SIDEBAR = false;
 
 const SIDEBAR_BRAND_LOGO = LEARNADOODLE_LOGO_ASSET;
 const SIDEBAR_ICON_SOURCES = SIDEBAR_ICON_ASSETS;
@@ -131,23 +133,29 @@ export default function LeftRail({
     () => {
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
-        { key: 'planner', label: 'Planner', icon: CalendarDays },
+        { key: 'learning', label: 'Subjects', icon: null },
         { key: 'subjects', label: 'Learning', icon: null },
+        { key: 'planner', label: 'Planner', icon: CalendarDays },
         { key: 'create', label: 'Create', icon: Plus },
         { key: 'messages', label: 'Messages', icon: MessageSquare },
         { key: 'materials', label: 'Materials', icon: BookOpen },
         { key: 'profile', label: 'Settings', icon: UserCircle },
         // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
         // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
-        // { key: 'subjects', label: 'Learning', icon: null }, // Hidden from sidebar
-      ].filter((item) => SHOW_MATERIALS_IN_SIDEBAR || item.key !== 'materials');
+        // { key: 'subjects', label: 'Records', icon: null }, // Hidden from sidebar
+      ].filter((item) => {
+        if (!SHOW_MATERIALS_IN_SIDEBAR && item.key === 'materials') return false;
+        if (!SHOW_SUBJECTS_CATALOG_IN_SIDEBAR && item.key === 'learning') return false;
+        if (!SHOW_CREATE_IN_SIDEBAR && item.key === 'create') return false;
+        return true;
+      });
 
       // Same sidebar structure for learner roles; content is child-scoped in WebContent
       if (userRole === 'child' || userRole === 'student') {
         return allItems.filter((item) => {
           if (item.key === 'records' || item.key === 'explore') return false;
           if (item.key === 'planner' && effectivePermissions.canViewPlanner === false) return false;
-          if (item.key === 'subjects' && effectivePermissions.canViewSubjects === false) return false;
+          if ((item.key === 'subjects' || item.key === 'learning') && effectivePermissions.canViewSubjects === false) return false;
           if (item.key === 'materials' && effectivePermissions.canViewLibrary === false) return false;
           return true;
         });
@@ -258,6 +266,7 @@ export default function LeftRail({
             const isNew = item.key === 'new';
             const isLibrary = item.key === 'materials';
             const isSubjects = item.key === 'subjects';
+            const isLearningTab = item.key === 'learning';
             const isFamily = item.key === 'profile';
             const isIntelligence = item.key === 'intelligence';
             const isMore = item.key === 'more';
@@ -350,6 +359,14 @@ export default function LeftRail({
                         imageKey: 'library',
                         source: SIDEBAR_ICON_SOURCES.library,
                         imageStyle: styles.libraryIcon,
+                      })}
+                    </View>
+                  ) : isLearningTab ? (
+                    <View style={styles.subjectsIconContainer}>
+                      {renderStableSidebarImage({
+                        imageKey: 'learning',
+                        source: SIDEBAR_ICON_SOURCES.subjects,
+                        imageStyle: styles.subjectsIcon,
                       })}
                     </View>
                   ) : isSubjects ? (

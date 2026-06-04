@@ -1777,9 +1777,15 @@ export default function ProgressTab({
       } else {
         planProgressContext?.collapseAllEventsAggregateGap?.();
       }
+      if (expandedSummaryPanel === 'attendance' && panelChanged) {
+        setTimeout(() => setAttendanceScrollEpoch((epoch) => epoch + 1), 260);
+      }
       if (suppressSummaryPanelOpenAnimationRef.current) {
         suppressSummaryPanelOpenAnimationRef.current = false;
         summaryPanelAnim.setValue(1);
+        if (expandedSummaryPanel === 'attendance') {
+          setTimeout(() => setAttendanceScrollEpoch((epoch) => epoch + 1), 320);
+        }
       } else if (panelChanged) {
         summaryPanelAnim.setValue(0);
         Animated.timing(summaryPanelAnim, {
@@ -1873,6 +1879,7 @@ export default function ProgressTab({
     <View style={[
       styles.attendancePlannerListWrap,
       useLearningFillLayout && styles.attendancePlannerListWrapLearning,
+      { minHeight: attendanceListMaxHeight },
     ]}>
       <PlannerEventsListTable
         events={attendancePlannerListEvents}
@@ -1887,7 +1894,8 @@ export default function ProgressTab({
         embedded
         fillViewport={false}
         maxListHeight={attendanceListMaxHeight}
-        scrollToToday={false}
+        scrollToToday
+        scrollToTodayEpoch={attendanceScrollEpoch}
         plannerShellVisible={false}
       />
     </View>
@@ -2748,9 +2756,7 @@ const styles = StyleSheet.create({
     }),
   },
   attendancePlannerListWrapLearning: {
-    flex: 0,
-    flexGrow: 0,
-    minHeight: undefined,
+    flexShrink: 0,
   },
   subjectRowItem: {
     borderWidth: 1,

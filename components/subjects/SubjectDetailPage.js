@@ -63,6 +63,8 @@ import {
 } from './SubjectSectionDrilldownPanels';
 import { supabase } from '../../lib/supabase';
 import SubjectProgressPlanSection from './SubjectProgressPlanSection';
+import SubjectAllEventsSection from './SubjectAllEventsSection';
+import { getWorkStatusLabel } from '../../lib/workEventHelpers';
 import AssignmentMessageModal from './AssignmentMessageModal';
 import AssignmentSubmittalRequestModal from './AssignmentSubmittalRequestModal';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
@@ -72,10 +74,12 @@ import MaterialDetailsModal from '../materials/MaterialDetailsModal';
 import { archiveMaterial } from '../../lib/services/materialsClient';
 
 const ATTENDANCE_LIST_LIMIT = 5;
-const SHOW_SUBJECT_PROGRESS = false;
+const SHOW_SUBJECT_EVENTS_SECTION = true;
+const SHOW_SUBJECT_ASSIGNMENTS_SECTION = true;
+const SHOW_SUBJECT_PROGRESS = true;
 const SHOW_SUBJECT_ATTENDANCE_SECTION = false;
 const SHOW_SUBJECT_GRADES_SECTION = false;
-const SHOW_SUBJECT_MATERIALS_SECTION = false;
+const SHOW_SUBJECT_MATERIALS_SECTION = true;
 const SHOW_SUBJECT_UNITS_LESSONS_SECTION = false;
 const WEEKDAY_PLURALS = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1678,6 +1682,7 @@ export default function SubjectDetailPage({
   const assignmentsNeedingHelp = subjectData?.assignmentsNeedingHelp || [];
   const assignmentsAssignedToStudent = subjectData?.assignmentsAssignedToStudent || [];
   const assignmentsByEventId = subjectData?.assignmentsByEventId || {};
+  const subjectAssignments = subjectData?.subjectAssignments || [];
   const isParentViewer =
     session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
 
@@ -3075,21 +3080,89 @@ export default function SubjectDetailPage({
           </View>
         ) : null}
 
+        {SHOW_SUBJECT_EVENTS_SECTION ? (
+          <View id="events-section" style={styles.section}>
+            <View style={styles.attendanceSectionHeader}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Events</Text>
+            </View>
+            <SubjectAllEventsSection
+              events={subjectEvents}
+              eventOutcomes={eventOutcomes}
+              materials={materials}
+              eventAttachmentMaterials={eventAttachmentMaterials}
+              children={children}
+              assignmentsByEventId={assignmentsByEventId}
+              reviewCenterMode={false}
+              onAssignmentPress={(assignment) => openAssignedWorkItem(assignment)}
+              onEventPress={handleSubjectEventPress}
+              onEventRightClick={handleEventContextMenu}
+              onAttachmentPress={(_material, event) => {
+                if (event?.id) handleOpenEventDetails(event.id, event);
+              }}
+            />
+          </View>
+        ) : null}
+
+        {SHOW_SUBJECT_ASSIGNMENTS_SECTION ? (
+          <View id="assignments-section" style={styles.section}>
+            <View style={styles.attendanceSectionHeader}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Assignments</Text>
+            </View>
+            {subjectAssignments.length > 0 ? (
+              <View style={styles.gradesList}>
+                {subjectAssignments.map((assignment) => {
+                  const dueLine = formatDueShort(assignment.due_date);
+                  const statusLabel = getWorkStatusLabel(assignment);
+                  return (
+                    <TouchableOpacity
+                      key={assignment.id}
+                      style={styles.gradeItem}
+                      onPress={() => openAssignedWorkItem(assignment)}
+                      activeOpacity={0.75}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open assignment ${assignment.title || ''}`}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <View style={styles.gradeItemContent}>
+                        <Text style={styles.gradeItemName} numberOfLines={2}>
+                          {assignment.title || 'Assignment'}
+                        </Text>
+                        <Text style={styles.gradeItemDate}>
+                          {getChildName(assignment.child_id)}
+                          {dueLine ? ` · ${dueLine}` : ''}
+                          {` · ${statusLabel}`}
+                        </Text>
+                      </View>
+                      <ChevronRight size={20} color="#94a3b8" />
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : (
+              <View style={styles.emptyStateBox}>
+                <Text style={styles.emptyStateText}>
+                  No assignments for {subject?.name || 'this subject'} yet.
+                </Text>
+              </View>
+            )}
+          </View>
+        ) : null}
+
         {SHOW_SUBJECT_MATERIALS_SECTION ? (
         <View id="materials-section" style={styles.section}>
           <View style={[styles.attendanceSectionHeader, styles.materialsSectionHeader]}>
-            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Materials</Text>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Resources</Text>
             {canManageMaterials ? (
               <TouchableOpacity
                 style={styles.emptyStateButton}
                 onPress={openAddMaterialModal}
                 activeOpacity={0.7}
                 accessibilityRole="button"
-                accessibilityLabel="Add new material"
+                accessibilityLabel="Add resource"
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
                 <Plus size={16} color="#6B7280" />
-                <Text style={styles.emptyStateButtonText}>Add new material</Text>
+                <Text style={styles.emptyStateButtonText}>Add resource</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -3173,7 +3246,7 @@ export default function SubjectDetailPage({
           ) : (
             <View style={styles.emptyStateBox}>
               <Text style={styles.materialsEmptyText}>
-                No materials added yet for {subject?.name || 'this subject'}.
+                No resources added yet for {subject?.name || 'this subject'}.
               </Text>
             </View>
           )}

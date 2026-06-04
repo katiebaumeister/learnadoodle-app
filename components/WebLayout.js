@@ -75,6 +75,7 @@ import { preloadProviderConnectionLogos } from '../lib/preloadConnectedAccountAs
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 import { cleanPlannerEventId } from '../lib/utils/recurringEventUtils';
 import { AVATAR_KEYS } from '../assets/imageAssetMap';
+import { comingSoonModalStyles } from '../theme/comingSoonModalTheme';
 
 /**
  * Parent-only post-onboarding explorer tour (spotlight copy).
@@ -636,6 +637,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const filterButtonRef = useRef(null);
   const [filterDropdownPosition, setFilterDropdownPosition] = useState({ top: 0, left: 0 });
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
+  const [connectedAccountsComingSoonLabel, setConnectedAccountsComingSoonLabel] = useState(null);
   const topToolbarFiltersButtonRef = useRef(null);
   const conflictNotificationsButtonRef = useRef(null);
   const conflictNotificationsPopoverRef = useRef(null);
@@ -913,6 +915,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     window.addEventListener('message', handleOAuthMessage);
     return () => window.removeEventListener('message', handleOAuthMessage);
   }, [refreshGoogleCalendarConnection, syncGoogleCalendarIntoPlanner]);
+
+  const openConnectedAccountsComingSoon = useCallback((providerLabel) => {
+    setShowFiltersDropdown(false);
+    setConnectedAccountsComingSoonLabel(providerLabel || 'Calendar connection');
+  }, []);
 
   const handlePlannerProviderConnect = useCallback(async (providerId, providerLabel, options = {}) => {
     if (providerId !== 'google') {
@@ -2431,6 +2438,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const expectedTab = `subject-${subjectId}`;
         setActiveTab(expectedTab);
         setActiveTopNav('subjects');
+      } else if (pathname === '/learning' || pathname === '/subject-catalog') {
+        window.history.replaceState({}, '', '/subjects');
+        setActiveTab('subjects');
+        setActiveTopNav('subjects');
       } else if (pathname === '/subjects' || pathname === '/intelligence') {
         // Keep legacy /intelligence compatible but normalize to /subjects.
         if (pathname === '/intelligence') {
@@ -2526,6 +2537,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setActiveTopNav((prev) => (prev === 'family' ? prev : 'planner'));
     } else if (activeTab === 'materials') {
       setActiveTopNav('materials');
+    } else if (activeTab === 'learning') {
+      setActiveTopNav('subjects');
     } else if (activeTab === 'subjects' || (activeTab && activeTab.startsWith('subject-'))) {
       setActiveTopNav('subjects');
     } else if (activeTab === 'intelligence') {
@@ -3386,6 +3399,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             window.history.pushState({}, '', '/subjects');
           }
           break;
+        case 'learning':
+          handleTabChange('subjects');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/subjects');
+          }
+          break;
         case 'review':
           handleTabChange('review');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -3690,6 +3709,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } else if (activeTab === 'materials') {
       crumbs.push({ label: 'Materials' });
     } else if (activeTab === 'subjects') {
+      crumbs.push({ label: 'Learning' });
+    } else if (activeTab === 'learning') {
       crumbs.push({ label: 'Learning' });
     } else if (activeTab && activeTab.startsWith('subject-')) {
       crumbs.push({ 
@@ -4242,12 +4263,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           ].map((provider) => {
                             const isConnected = plannerConnectedProviderIds.includes(provider.id);
                             const isSelected = !!selectedConnectedAccounts?.includes(provider.id);
+                            const openComingSoon = () => openConnectedAccountsComingSoon(provider.label);
                             return (
-                              <View
+                              <TouchableOpacity
                                 key={provider.id}
+                                onPress={isConnected ? undefined : openComingSoon}
+                                activeOpacity={isConnected ? 1 : 0.75}
                                 style={{
                                   paddingVertical: 6,
                                   paddingHorizontal: 10,
+                                  ...(Platform.OS === 'web' && !isConnected && { cursor: 'pointer' }),
                                 }}
                               >
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -4288,7 +4313,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                                   )}
 
                                   <TouchableOpacity
-                                    onPress={() => handleTabChange('settings', 'connections')}
+                                    onPress={openComingSoon}
                                     style={{ ...(Platform.OS === 'web' && { cursor: 'pointer' }) }}
                                   >
                                     <Text
@@ -4316,7 +4341,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                                     </Text>
                                   </View>
                                 )}
-                              </View>
+                              </TouchableOpacity>
                             );
                           })}
                         </View>
@@ -6087,6 +6112,42 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           </TouchableOpacity>
         </Modal>
       )}
+
+      <Modal
+        visible={!!connectedAccountsComingSoonLabel}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setConnectedAccountsComingSoonLabel(null)}
+      >
+        <View style={comingSoonModalStyles.overlay}>
+          <View style={comingSoonModalStyles.content}>
+            <TouchableOpacity
+              style={comingSoonModalStyles.close}
+              onPress={() => setConnectedAccountsComingSoonLabel(null)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <X size={24} color="#64748b" />
+            </TouchableOpacity>
+            <Text style={comingSoonModalStyles.title}>Coming soon</Text>
+            <Text style={comingSoonModalStyles.body}>
+              {connectedAccountsComingSoonLabel
+                ? `${connectedAccountsComingSoonLabel} integration is in development. Stay tuned for updates!`
+                : 'This feature is in development. Stay tuned for updates!'}
+            </Text>
+            <TouchableOpacity
+              style={comingSoonModalStyles.button}
+              onPress={() => setConnectedAccountsComingSoonLabel(null)}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Scheduling Assistant Modal */}
       <Modal

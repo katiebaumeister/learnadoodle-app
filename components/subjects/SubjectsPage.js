@@ -195,7 +195,9 @@ export default function SubjectsPage({
   onNavigateToPlannerAttendance,
   userRole = 'parent',
   accessibleChildren = [],
+  screenMode = 'records',
 }) {
+  const isCatalogScreen = screenMode === 'catalog';
   const toast = useToast();
   // Get session context for role-based filtering
   const session = useSession();
@@ -240,8 +242,8 @@ export default function SubjectsPage({
     isChildView && !isSelfManagedStudentViewer && (canShowChildProgressTab || canShowChildScheduleTab);
   const childId = isChildView && safeAccessibleChildren.length > 0 ? (safeAccessibleChildren[0]?.id ?? safeAccessibleChildren[0]) : null;
   const modeStorageKey = useMemo(
-    () => `${SUBJECTS_MODE_STORAGE_PREFIX}:${familyId || 'unknown'}:${isChildView ? 'child' : 'family'}`,
-    [familyId, isChildView]
+    () => `${SUBJECTS_MODE_STORAGE_PREFIX}:${screenMode}:${familyId || 'unknown'}:${isChildView ? 'child' : 'family'}`,
+    [familyId, isChildView, screenMode]
   );
   
   const [subjects, setSubjects] = useState(preloadedSubjects || []);
@@ -1552,13 +1554,65 @@ export default function SubjectsPage({
   ]);
   const renderCoursesHeaderFilters = useCallback((options = {}) => {
     const { showTermRow = true, showChildrenRow = true, showSubjectRow = true } = options;
+    const canEditChildFromFilters = canShowEditChildButton && typeof onEditChild === 'function';
+    const canEditSubjectFromFilters = canShowEditSubjectButton && canManageSubjectsActions && typeof onEditSubject === 'function';
+    const showEditActionsInChildrenRow = !isCatalogScreen && !isChildView && (canEditChildFromFilters || canEditSubjectFromFilters);
+    const shouldPlaceEditOnChildrenRow = showEditActionsInChildrenRow && showChildrenRow && showInlineChildrenFilters;
+    const shouldPlaceEditOnTermRow = showEditActionsInChildrenRow && !shouldPlaceEditOnChildrenRow && showTermRow && registeredTerms.length > 0;
+    const renderFilterRowEditPills = () => (
+      <View style={styles.filterRowEditActions}>
+        {canEditChildFromFilters ? (
+          <TouchableOpacity
+            style={styles.headerEditPill}
+            onPress={() => {
+              if (safeChildren.length === 0 && !canShowEditChildButton) {
+                toast.push('No children to edit', 'error');
+                return;
+              }
+              setLearningHeaderPickerKind('child');
+            }}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Edit children"
+            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+          >
+            <Smile size={14} color="#6B7280" />
+            <Text style={styles.headerEditPillText}>Edit children</Text>
+          </TouchableOpacity>
+        ) : null}
+        {canEditSubjectFromFilters ? (
+          <TouchableOpacity
+            style={styles.headerEditPill}
+            onPress={() => {
+              if ((filteredSubjects || []).length === 0 && !canManageSubjectsActions) {
+                toast.push('No subjects to edit', 'error');
+                return;
+              }
+              setLearningHeaderPickerKind('subject');
+            }}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Edit subjects"
+            {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+          >
+            <BookOpen size={14} color="#6B7280" />
+            <Text style={styles.headerEditPillText}>Edit subjects</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
     return (
     <>
       {showChildrenRow && showInlineChildrenFilters ? (
-        <View style={[styles.filterRow, styles.coursesFilterRowTop]}>
-          <Text style={styles.filterLabel}>Children</Text>
-          <View style={styles.filterChipsWrap}>
-            <View style={styles.filterChecklist}>
+        <View style={[
+          styles.filterRow,
+          styles.coursesFilterRowTop,
+          shouldPlaceEditOnChildrenRow && styles.filterRowWithTrailingActions,
+        ]}>
+          <View style={styles.filterRowMain}>
+            <Text style={styles.filterLabel}>Children</Text>
+            <View style={styles.filterChipsWrap}>
+              <View style={styles.filterChecklist}>
               {safeChildren.map((child) => {
                 const childIdString = String(child.id);
                 const isActive = selectedModeFilter === 'view'
@@ -1598,8 +1652,10 @@ export default function SubjectsPage({
                   </TouchableOpacity>
                 );
               })}
+              </View>
             </View>
           </View>
+          {shouldPlaceEditOnChildrenRow ? renderFilterRowEditPills() : null}
         </View>
       ) : null}
 
@@ -1610,11 +1666,13 @@ export default function SubjectsPage({
             !showInlineChildrenFilters && styles.coursesFilterRowTop,
             styles.filterRowBelowChildren,
             isChildView && styles.childTermFilterRowSpacing,
+            shouldPlaceEditOnTermRow && styles.filterRowWithTrailingActions,
           ]}
         >
-          <Text style={styles.filterLabel}>Term</Text>
-          <View style={styles.filterChipsWrap}>
-            <View style={styles.filterChecklist}>
+          <View style={styles.filterRowMain}>
+            <Text style={styles.filterLabel}>Term</Text>
+            <View style={styles.filterChipsWrap}>
+              <View style={styles.filterChecklist}>
               <TouchableOpacity
                 style={[
                   styles.filterOptionChip,
@@ -1655,8 +1713,10 @@ export default function SubjectsPage({
                   </TouchableOpacity>
                 );
               })}
+              </View>
             </View>
           </View>
+          {shouldPlaceEditOnTermRow ? renderFilterRowEditPills() : null}
         </View>
       ) : null}
 
@@ -1715,6 +1775,12 @@ export default function SubjectsPage({
     </>
   );
   }, [
+    isCatalogScreen,
+    canShowEditChildButton,
+    canShowEditSubjectButton,
+    canManageSubjectsActions,
+    onEditChild,
+    onEditSubject,
     showInlineChildrenFilters,
     isChildView,
     selectedModeFilter,
@@ -1730,13 +1796,14 @@ export default function SubjectsPage({
     effectiveCoursesSubjectIds,
     selectAllSubjectsFilter,
     toggleCourseSubjectFilter,
+    toast,
   ]);
 
   const selectedChildFilterForCards = useMemo(() => {
-    if (selectedModeFilter !== 'view') return selectedChildFilter;
+    if (!isCatalogScreen && selectedModeFilter !== 'view') return selectedChildFilter;
     if (effectiveCoursesChildIds.length === 1) return effectiveCoursesChildIds[0];
     return 'all';
-  }, [selectedModeFilter, selectedChildFilter, effectiveCoursesChildIds]);
+  }, [isCatalogScreen, selectedModeFilter, selectedChildFilter, effectiveCoursesChildIds]);
 
   // Overall averages across filtered subjects (for compact summary card)
   const overallSummary = useMemo(() => {
@@ -2120,7 +2187,13 @@ export default function SubjectsPage({
 
   const canEditChildFromHeader = canShowEditChildButton && typeof onEditChild === 'function';
   const canEditSubjectFromHeader = canShowEditSubjectButton && canManageSubjectsActions && typeof onEditSubject === 'function';
-  const showLearningHeaderEditActions = !isChildView && (canEditChildFromHeader || canEditSubjectFromHeader);
+  const canCreateChildFromHeader = !isChildView && canShowEditChildButton;
+  const canCreateSubjectFromHeader = !isChildView && canManageSubjectsActions;
+  const openAddChildModal = useCallback(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openAddChildModal'));
+    }
+  }, []);
 
   const childNameById = useMemo(() => {
     const map = {};
@@ -2162,38 +2235,64 @@ export default function SubjectsPage({
     setLearningHeaderPickerKind(null);
   }, []);
 
+  const transitionFromLearningHeaderPicker = useCallback((openTarget) => {
+    openTarget?.();
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          setTimeout(() => setLearningHeaderPickerKind(null), 80);
+        });
+      });
+      return;
+    }
+    setLearningHeaderPickerKind(null);
+  }, []);
+
   const openChildEditPicker = useCallback(() => {
     if (!canEditChildFromHeader) return;
-    if (safeChildren.length === 0) {
+    if (safeChildren.length === 0 && !canCreateChildFromHeader) {
       toast.push('No children to edit', 'error');
       return;
     }
     setLearningHeaderPickerKind('child');
-  }, [canEditChildFromHeader, safeChildren.length, toast]);
+  }, [canCreateChildFromHeader, canEditChildFromHeader, safeChildren.length, toast]);
 
   const openSubjectEditPicker = useCallback(() => {
     if (!canEditSubjectFromHeader) return;
-    if (headerSubjectPickerOptions.length === 0) {
+    if (headerSubjectPickerOptions.length === 0 && !canCreateSubjectFromHeader) {
       toast.push('No subjects to edit', 'error');
       return;
     }
     setLearningHeaderPickerKind('subject');
-  }, [canEditSubjectFromHeader, headerSubjectPickerOptions.length, toast]);
+  }, [canCreateSubjectFromHeader, canEditSubjectFromHeader, headerSubjectPickerOptions.length, toast]);
+
+  const handleCreateNewFromPicker = useCallback((type) => {
+    transitionFromLearningHeaderPicker(() => {
+      if (type === 'child') {
+        openAddChildModal();
+        return;
+      }
+      if (type === 'subject') {
+        openAddSubjectWithCurrentHeaders();
+      }
+    });
+  }, [openAddChildModal, openAddSubjectWithCurrentHeaders, transitionFromLearningHeaderPicker]);
 
   const handleLearningHeaderPickerSelect = useCallback((id) => {
     const kind = learningHeaderPickerKind;
-    setLearningHeaderPickerKind(null);
     if (!id || !kind) return;
-    if (kind === 'child') {
-      const child = safeChildren.find((row) => String(row?.id) === String(id));
-      if (child) onEditChild(child);
-      return;
-    }
-    if (kind === 'subject') {
-      const subject = (filteredSubjects || []).find((row) => String(row?.id) === String(id));
-      if (subject) onEditSubject(subject);
-    }
-  }, [filteredSubjects, learningHeaderPickerKind, onEditChild, onEditSubject, safeChildren]);
+    transitionFromLearningHeaderPicker(() => {
+      if (kind === 'child') {
+        const child = safeChildren.find((row) => String(row?.id) === String(id));
+        if (child) onEditChild(child);
+        return;
+      }
+      if (kind === 'subject') {
+        const subject = (filteredSubjects || []).find((row) => String(row?.id) === String(id));
+        if (subject) onEditSubject(subject);
+      }
+    });
+  }, [filteredSubjects, learningHeaderPickerKind, onEditChild, onEditSubject, safeChildren, transitionFromLearningHeaderPicker]);
 
   const learningHeaderPickerCopy = learningHeaderPickerKind === 'child'
     ? {
@@ -2209,7 +2308,7 @@ export default function SubjectsPage({
     <Modal
       visible={!!learningHeaderPickerKind}
       transparent
-      animationType="none"
+      animationType="fade"
       onRequestClose={closeLearningHeaderPicker}
     >
       <TouchableOpacity
@@ -2262,7 +2361,9 @@ export default function SubjectsPage({
               </View>
             ) : (
               <View style={styles.learningPickerEmptyWrap}>
-                <Text style={styles.learningPickerEmptyText}>No children available.</Text>
+                <Text style={styles.learningPickerEmptyText}>
+                  {canCreateChildFromHeader ? 'No children yet.' : 'No children available.'}
+                </Text>
               </View>
             )
           ) : headerSubjectPickerOptions.length > 0 ? (
@@ -2298,7 +2399,9 @@ export default function SubjectsPage({
             </View>
           ) : (
             <View style={styles.learningPickerEmptyWrap}>
-              <Text style={styles.learningPickerEmptyText}>No subjects available.</Text>
+              <Text style={styles.learningPickerEmptyText}>
+                {canCreateSubjectFromHeader ? 'No subjects yet.' : 'No subjects available.'}
+              </Text>
             </View>
           )}
           <View style={styles.learningPickerActions}>
@@ -2310,6 +2413,32 @@ export default function SubjectsPage({
             >
               <Text style={styles.learningPickerCancelText}>Cancel</Text>
             </TouchableOpacity>
+            {learningHeaderPickerKind === 'child' && canCreateChildFromHeader ? (
+              <TouchableOpacity
+                style={styles.learningPickerPrimaryBtn}
+                onPress={() => handleCreateNewFromPicker('child')}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Create new child"
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <Plus size={16} color="#FFFFFF" />
+                <Text style={styles.learningPickerPrimaryText}>Create new child</Text>
+              </TouchableOpacity>
+            ) : null}
+            {learningHeaderPickerKind === 'subject' && canCreateSubjectFromHeader ? (
+              <TouchableOpacity
+                style={styles.learningPickerPrimaryBtn}
+                onPress={() => handleCreateNewFromPicker('subject')}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Create new subject"
+                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+              >
+                <Plus size={16} color="#FFFFFF" />
+                <Text style={styles.learningPickerPrimaryText}>Create new subject</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -2599,37 +2728,55 @@ export default function SubjectsPage({
             <Text style={styles.headerTitle}>{subjectsHeaderTitle}</Text>
           )}
         </View>
-        {showLearningHeaderEditActions ? (
+        {isCatalogScreen ? (
           <View style={styles.headerActions}>
-            {canEditChildFromHeader ? (
+            <View style={styles.searchContainer}>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search subjects..."
+                placeholderTextColor="#9ca3af"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                onSubmitEditing={handleSearchSubmit}
+              />
+              {searchQuery.length > 0 ? (
+                <TouchableOpacity
+                  onPress={() => setSearchQuery('')}
+                  style={styles.clearButton}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <X size={18} color={colors.muted} />
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.searchIconContainer}>
+                  <Search size={18} color={colors.muted} />
+                </View>
+              )}
+            </View>
+            {canManageSubjectsActions ? (
               <TouchableOpacity
-                style={styles.headerEditPill}
-                onPress={openChildEditPicker}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel="Edit children"
-                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+                style={styles.newButton}
+                onPress={openAddSubjectWithCurrentHeaders}
+                activeOpacity={0.8}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Smile size={14} color="#6B7280" />
-                <Text style={styles.headerEditPillText}>Edit children</Text>
-              </TouchableOpacity>
-            ) : null}
-            {canEditSubjectFromHeader ? (
-              <TouchableOpacity
-                style={styles.headerEditPill}
-                onPress={openSubjectEditPicker}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel="Edit subjects"
-                {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-              >
-                <BookOpen size={14} color="#6B7280" />
-                <Text style={styles.headerEditPillText}>Edit subjects</Text>
+                <Text style={styles.newButtonText}>+ NEW</Text>
               </TouchableOpacity>
             ) : null}
           </View>
+        ) : !isChildView && (canManageSubjectsActions || typeof onAddEvent === 'function') ? (
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.newButton}
+              onPress={openAddEventWithCurrentHeaders}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.newButtonText}>+ NEW</Text>
+            </TouchableOpacity>
+          </View>
         ) : null}
-        {(!isChildView || isSelfManagedStudentViewer) && (
+        {(!isChildView || isSelfManagedStudentViewer) && !isCatalogScreen && (
           <View style={[styles.headerModeWrap, !isChildView && styles.headerModeWrapNoPicker]}>
             <View style={styles.headerModeControls}>
               {isChildView && isSelfManagedStudentViewer ? (
@@ -2690,7 +2837,7 @@ export default function SubjectsPage({
             </View>
           </View>
         )}
-        {showChildModeToggle && (
+        {showChildModeToggle && !isCatalogScreen && (
           <View style={styles.headerModeWrap}>
             <View style={styles.headerModeControls}>
               <View style={styles.modeSegmentedControl}>
@@ -2754,12 +2901,77 @@ export default function SubjectsPage({
           </View>
         )}
       </View>
+      <View style={styles.divider} />
       {renderPlanningPreferencesModal()}
       {renderSubjectsExportModal()}
       {renderLearningHeaderPickerModal()}
 
       {/* Content */}
-      {selectedModeFilter === 'plan' ? (
+      {isCatalogScreen ? (
+        error ? (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={loadSubjects}>
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : filteredSubjects.length === 0 ? (
+          <View style={styles.coursesTabContent}>
+            {renderCoursesHeaderFilters()}
+
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyTitle}>
+                {searchQuery ? 'No results found' : 'No subjects yet'}
+              </Text>
+              <Text style={styles.emptyText}>
+                {searchQuery
+                  ? 'Please try something else'
+                  : 'Create subjects to organize learning.'}
+              </Text>
+              {!searchQuery && canManageSubjectsActions ? (
+                <TouchableOpacity
+                  style={styles.emptyButton}
+                  onPress={openAddSubjectWithCurrentHeaders}
+                >
+                  <Plus size={16} color="#5AAEF2" />
+                  <Text style={styles.emptyButtonText}>Add</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.coursesTabContent}>
+            {renderCoursesHeaderFilters()}
+            <ScrollView
+              style={styles.subjectsList}
+              contentContainerStyle={styles.subjectsListContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {(filteredSubjects || []).filter((subject) => subject?.id).map((subject) => (
+                <SubjectOverviewCard
+                  key={subject.id}
+                  subject={subject}
+                  children={safeChildren}
+                  selectedChildFilter={selectedChildFilterForCards}
+                  onCardClick={handleSubjectClick}
+                  onNeedsHelpPress={(entry) => openSubjectToSection(entry.id, 'needs-help-section')}
+                  onNavigateToPlanner={handleNavigateToPlanner}
+                  onAddSyllabus={handleAddSyllabus}
+                  onAddEvent={onAddEvent}
+                  onAddMaterial={onAddMaterial}
+                  searchPreviewSectionId={activeSearchPreviewSectionId}
+                  searchPreviewData={subjectDetailCache[subject.id] || null}
+                  searchPreviewTokens={searchTokens}
+                  onSearchPreviewMaterialPress={(entry, materialId) =>
+                    handleSubjectClick(entry, 'materials-section', materialId)
+                  }
+                  isSearchResultCompact={Boolean(searchQuery.trim())}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        )
+      ) : selectedModeFilter === 'plan' ? (
         <View style={styles.coursesTabContent}>
           {renderCoursesHeaderFilters({ showTermRow: false, showChildrenRow: false })}
           <SubjectsPlanBuilder
@@ -3165,20 +3377,48 @@ const styles = StyleSheet.create({
   learningPickerActions: {
     marginTop: 18,
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 12,
   },
   learningPickerCancelBtn: {
+    minHeight: 50,
     paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 28,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   learningPickerCancelText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
     color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningPickerPrimaryBtn: {
+    height: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    backgroundColor: '#9ECFFB',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  learningPickerPrimaryText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   headerModeWrap: {
     flex: 1,
@@ -3285,6 +3525,15 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.border || '#e5e7eb',
+    marginTop: 0,
+    marginBottom: 0,
+    marginHorizontal: 24,
+    position: 'relative',
+    zIndex: 10,
   },
   exportModalBackdrop: {
     flex: 1,
@@ -3854,6 +4103,24 @@ const styles = StyleSheet.create({
   },
   coursesFilterRowTop: {
     marginTop: 8,
+  },
+  filterRowWithTrailingActions: {
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  filterRowMain: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  filterRowEditActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
+    marginLeft: 12,
   },
   filterRowBelowMode: {
     marginTop: 0,

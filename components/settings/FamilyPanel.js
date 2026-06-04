@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
-import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Heart, FileText, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw, CalendarPlus } from 'lucide-react';
+import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Heart, FileText, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw } from 'lucide-react';
 import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount, setOnboardingPlanningMode } from '../../lib/apiClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
@@ -366,7 +366,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [editSubjectName, setEditSubjectName] = useState('');
   const [editSubjectNotes, setEditSubjectNotes] = useState('');
   const [savingSubject, setSavingSubject] = useState(false);
-  const [openingPlanForSubjectId, setOpeningPlanForSubjectId] = useState(null);
   const [selectedCoursesSchoolYear, setSelectedCoursesSchoolYear] = useState(getCurrentSchoolYearLabel());
   const [showCoursesSchoolYearDropdown, setShowCoursesSchoolYearDropdown] = useState(false);
   const [childrenWithAvatars, setChildrenWithAvatars] = useState([]);
@@ -2343,7 +2342,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         toast.push('Unable to open subject schedule. Try again in a moment.', 'info');
         return;
       }
-      setOpeningPlanForSubjectId(subject.id);
       setCourseScheduleModalData({
         subjectName: String(subject?.name || 'Subject').trim() || 'Subject',
         events: [],
@@ -2389,8 +2387,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         console.warn('[FamilyPanel] handleOpenBuildPlanForSubject', e);
         setShowCourseScheduleModal(false);
         toast.push('Could not open subject schedule.', 'error');
-      } finally {
-        setOpeningPlanForSubjectId(null);
       }
     },
     [toast, familyId, formatCourseScheduleDateTime, resolveSchoolYearRangeForSubject]
@@ -3967,25 +3963,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                                   accessibilityLabel="Edit subject"
                                 >
                                   <Pencil size={16} color="#374151" />
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                  style={[
-                                    styles.subjectActionButton,
-                                    isHovered && styles.subjectActionButtonHovered,
-                                    openingPlanForSubjectId === subject.id && styles.buttonDisabled,
-                                  ]}
-                                  onPress={() => handleOpenBuildPlanForSubject(subject)}
-                                  disabled={openingPlanForSubjectId === subject.id}
-                                  {...(Platform.OS === 'web' && {
-                                    cursor: openingPlanForSubjectId === subject.id ? 'not-allowed' : 'pointer',
-                                  })}
-                                  accessibilityLabel="Open schedule setup"
-                                >
-                                  {openingPlanForSubjectId === subject.id ? (
-                                    <ActivityIndicator size="small" color="#0d9488" />
-                                  ) : (
-                                    <CalendarPlus size={16} color="#0d9488" />
-                                  )}
                                 </TouchableOpacity>
                               </View>
                             )}
