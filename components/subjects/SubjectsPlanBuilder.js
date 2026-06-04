@@ -6585,13 +6585,57 @@ export default function SubjectsPlanBuilder({
     });
   }, [animateYearTargetDisclosure]);
 
+  const renderLearningGoalsPanelHeaderActions = ({
+    showFixGap = false,
+    canFixGap = true,
+    fixingGap = false,
+    onFixGap = null,
+  } = {}) => (
+    <View style={styles.gapPanelHeaderActions}>
+      <TouchableOpacity
+        onPress={openPlanningPreferences}
+        style={styles.sectionHeaderActionButton}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Open planning preferences"
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Text style={styles.sectionHeaderActionButtonText}>Planning preferences</Text>
+      </TouchableOpacity>
+      {showFixGap ? (
+        <TouchableOpacity
+          onPress={onFixGap}
+          activeOpacity={0.85}
+          disabled={fixingGap || !canFixGap}
+          style={[
+            styles.sectionHeaderActionButton,
+            (fixingGap || !canFixGap) && styles.yearTargetsGapActionPillDisabled,
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Fix gap"
+          {...(Platform.OS === 'web' && { cursor: (fixingGap || !canFixGap) ? 'default' : 'pointer' })}
+        >
+          <Text
+            style={[
+              styles.sectionHeaderActionButtonText,
+              (fixingGap || !canFixGap) && styles.yearTargetsGapActionPillTextDisabled,
+            ]}
+          >
+            {fixingGap ? 'Fixing...' : 'Fix gap'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+
   const renderYearTargetGapSection = (row, options = {}) => {
-    if (!row) return { gapCell: null, expandedRow: null };
+    if (!row) return { gapCell: null, expandedRow: null, headerActions: null };
     const isClassDayAggregateTable = options?.isClassDayAggregateTable === true;
     const isLastRow = options?.isLastRow === true;
     const isInline = options?.variant === 'inline';
     const skipGapCell = options?.skipGapCell === true;
     const overrideExpanded = options?.overrideExpanded === true;
+    const fixGapInPanelHeader = options?.fixGapInPanelHeader === true;
     const rowId = String(row?.id || '').trim();
     const rowTargetUnit = String(row?.targetUnit || row?.targetMode || 'days').trim().toLowerCase() === 'hours' ? 'hours' : 'days';
     const rowTargetLabel = rowTargetUnit === 'hours' ? 'hours' : 'days';
@@ -7317,11 +7361,58 @@ export default function SubjectsPlanBuilder({
       </View>
     );
 
+    const fixGapButton = suggestedDaysText ? (
+      <TouchableOpacity
+        onPress={() => fixYearTargetGap({
+          ...row,
+          ...(catchUpRowResolved || {}),
+        })}
+        activeOpacity={0.85}
+        disabled={fixingGapRowId === rowId || !canFixGap}
+        style={[
+          styles.sectionHeaderActionButton,
+          (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsGapActionPillDisabled,
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel="Fix gap"
+        {...(Platform.OS === 'web' && { cursor: (fixingGapRowId === rowId || !canFixGap) ? 'default' : 'pointer' })}
+      >
+        <Text
+          style={[
+            styles.sectionHeaderActionButtonText,
+            (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsGapActionPillTextDisabled,
+          ]}
+        >
+          {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
+        </Text>
+      </TouchableOpacity>
+    ) : null;
+
+    const headerActions = isInline
+      ? renderLearningGoalsPanelHeaderActions({
+        showFixGap: fixGapInPanelHeader && Boolean(suggestedDaysText),
+        canFixGap,
+        fixingGap: fixingGapRowId === rowId,
+        onFixGap: () => fixYearTargetGap({
+          ...row,
+          ...(catchUpRowResolved || {}),
+        }),
+      })
+      : null;
+
     const expandedRow = (showSuggestion && isExpanded) ? (
       <View style={[
         isInline ? styles.allEventsGapExpandedBlock : styles.subjectGapExpandedRow,
         !isInline && isLastRow && styles.subjectRowLast,
       ]}>
+        {isInline && !fixGapInPanelHeader && suggestedDaysText ? (
+          <View style={styles.yearTargetsExpandedSuggestionLineRow}>
+            <Text style={styles.yearTargetsPredictiveSuggestionLine}>
+              {suggestedDaysText}
+            </Text>
+            {fixGapButton}
+          </View>
+        ) : null}
         <Animated.View style={[styles.yearTargetsExpandedSuggestionWrap, suggestionAnimatedStyle]}>
         <View style={styles.yearTargetsExpandedSuggestionContainer}>
           <View style={styles.yearTargetsSavedTargetRow}>
@@ -7330,16 +7421,18 @@ export default function SubjectsPlanBuilder({
                 ? `Gap is based on saved overall planning preferences: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`
                 : `Gap is based on saved ${String(row?.name || 'subject')} attendance goal of ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`}
             </Text>
-            <TouchableOpacity
-              onPress={openPlanningPreferences}
-              style={styles.yearTargetsSavedTargetButton}
-              activeOpacity={0.85}
-              accessibilityRole="button"
-              accessibilityLabel="Change saved goal"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.yearTargetsSavedTargetButtonText}>Change saved goal</Text>
-            </TouchableOpacity>
+            {!isInline ? (
+              <TouchableOpacity
+                onPress={openPlanningPreferences}
+                style={styles.sectionHeaderActionButton}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Open planning preferences"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={styles.sectionHeaderActionButtonText}>Planning preferences</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
           {fixGapActionRecommendation ? (
             <View style={styles.yearTargetsRecommendationActionsRow}>
@@ -7361,34 +7454,18 @@ export default function SubjectsPlanBuilder({
             </View>
           ) : null}
           {suggestedDaysText ? (
-            <View style={styles.yearTargetsExpandedSuggestionLineRow}>
+            isInline && fixGapInPanelHeader ? (
               <Text style={styles.yearTargetsPredictiveSuggestionLine}>
                 {suggestedDaysText}
               </Text>
-              <TouchableOpacity
-                onPress={() => fixYearTargetGap({
-                  ...row,
-                  ...(catchUpRowResolved || {}),
-                })}
-                activeOpacity={0.85}
-                disabled={fixingGapRowId === rowId || !canFixGap}
-                style={[
-                  styles.yearTargetsPredictiveSuggestionButton,
-                  styles.yearTargetsPredictiveFixGapButton,
-                  (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonDisabled,
-                ]}
-                {...(Platform.OS === 'web' && { cursor: (fixingGapRowId === rowId || !canFixGap) ? 'default' : 'pointer' })}
-              >
-                <Text
-                  style={[
-                    styles.yearTargetsPredictiveSuggestionButtonText,
-                    (fixingGapRowId === rowId || !canFixGap) && styles.yearTargetsPredictiveSuggestionButtonTextDisabled,
-                  ]}
-                >
-                  {fixingGapRowId === rowId ? 'Fixing...' : 'Fix gap'}
+            ) : !isInline ? (
+              <View style={styles.yearTargetsExpandedSuggestionLineRow}>
+                <Text style={styles.yearTargetsPredictiveSuggestionLine}>
+                  {suggestedDaysText}
                 </Text>
-              </TouchableOpacity>
-            </View>
+                {fixGapButton}
+              </View>
+            ) : null
           ) : null}
           {historyRunsWithDetails.length > 0 ? (
             <View style={styles.yearTargetsFixGapHistoryContainer}>
@@ -7445,7 +7522,7 @@ export default function SubjectsPlanBuilder({
       </View>
     ) : null;
 
-    return { gapCell, expandedRow };
+    return { gapCell, expandedRow, headerActions };
   };
 
   const renderAllEventsGapForSubjects = (activeSubjectIds) => {
@@ -7462,6 +7539,7 @@ export default function SubjectsPlanBuilder({
       return renderYearTargetGapSection(gapTargetRows[0], {
         variant: 'inline',
         isLastRow: true,
+        fixGapInPanelHeader: true,
       });
     }
 
@@ -7533,6 +7611,8 @@ export default function SubjectsPlanBuilder({
       </View>
     );
 
+    const headerActions = renderLearningGoalsPanelHeaderActions({ showFixGap: false });
+
     const expandedRow = isExpanded ? (
       <View style={styles.allEventsGapExpandedStack}>
         <Animated.View style={[styles.allEventsGapExpandedStackInner, suggestionAnimatedStyle]}>
@@ -7542,6 +7622,7 @@ export default function SubjectsPlanBuilder({
               isLastRow: index === gapTargetRows.length - 1,
               skipGapCell: true,
               overrideExpanded: true,
+              fixGapInPanelHeader: false,
             });
             return rowExpanded ? (
               <React.Fragment key={`all-events-gap-${String(row?.id || index)}`}>
@@ -7553,7 +7634,7 @@ export default function SubjectsPlanBuilder({
       </View>
     ) : null;
 
-    return { gapCell, expandedRow };
+    return { gapCell, expandedRow, headerActions };
   };
 
 
@@ -9542,22 +9623,11 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  yearTargetsSavedTargetButton: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#C7D2FE',
-    backgroundColor: '#EEF2FF',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  yearTargetsGapActionPillDisabled: {
+    opacity: 0.55,
   },
-  yearTargetsSavedTargetButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#3730A3',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+  yearTargetsGapActionPillTextDisabled: {
+    color: '#94A3B8',
   },
   yearTargetsFixGapHistoryContainer: {
     borderWidth: 1,
@@ -9834,6 +9904,13 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  gapPanelHeaderActions: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
   },
   sectionHeaderActionButton: {
     flexDirection: 'row',

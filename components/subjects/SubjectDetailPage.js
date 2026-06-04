@@ -3448,11 +3448,11 @@ export default function SubjectDetailPage({
                     onPress={() => setShowPastEventsGradesModal(true)}
                     activeOpacity={0.7}
                     accessibilityRole="button"
-                    accessibilityLabel="Bulk add grades"
+                    accessibilityLabel="Add grades"
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <Plus size={16} color="#6B7280" />
-                    <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
+                    <Text style={styles.emptyStateButtonText}>Add grades</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>

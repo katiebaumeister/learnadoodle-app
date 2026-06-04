@@ -38,6 +38,7 @@ import {
   isWorkProducingEventType,
   parseWorkSpec,
   showsLearningGradingSwitches,
+  showsLearningDetailsSection,
 } from '../lib/workEventHelpers';
 
 const BG = '#ffffff';
@@ -2551,7 +2552,7 @@ export default function TaskCreateModal({
   };
   const isDaysOffOrBreakEvent = eventType === 'Day Off' || eventType === 'Break';
   const hideScheduleTimeControls = placement === 'calendar' && isDaysOffOrBreakEvent;
-  const hideLearningDetailsSection = isDaysOffOrBreakEvent;
+  const hideLearningDetailsSection = !showsLearningDetailsSection(eventType);
   const showLearningGradeFields = useMemo(() => {
     if (!showsLearningGradingSwitches(eventType)) return false;
     return parseWorkSpec(workSpec, eventType).graded !== false;

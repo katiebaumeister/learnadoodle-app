@@ -12,10 +12,11 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { CheckCircle2, ChevronLeft, ChevronRight, Download, Edit2, Plus, X } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Download, Edit2, Plus, X } from 'lucide-react';
 import PlannerEventsListTable from '../planner/PlannerEventsListTable';
 // Archived: month calendar + attendance key — see ./archived/SubjectAttendanceMonthPanelArchived.js
 import MarkAllAttendedModal from './MarkAllAttendedModal';
+import AssignWorkModal from './AssignWorkModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import SubjectAllEventsSection from './SubjectAllEventsSection';
 import { dispatchOpenReviewForAssignment } from '../../lib/openAssignmentWorkflow';
@@ -457,6 +458,7 @@ export default function ProgressTab({
   };
   const [subjectPickerAction, setSubjectPickerAction] = useState(null);
   const [showMarkAllAttendedModal, setShowMarkAllAttendedModal] = useState(false);
+  const [showAssignWorkModal, setShowAssignWorkModal] = useState(false);
   const [gradesModalSubjectId, setGradesModalSubjectId] = useState(null);
   const [familyTargetScope, setFamilyTargetScope] = useState('overall');
   const [familyDefaultTargetDays, setFamilyDefaultTargetDays] = useState(null);
@@ -1833,6 +1835,35 @@ export default function ProgressTab({
     await Promise.all(ids.map((id) => onRefreshSubjectDetail?.(id)));
   }, [onRefreshSubjectDetail, subjectDetails]);
 
+  const assignWorkFilterSummary = useMemo(() => {
+    const childCount = resolvedActiveChildIds.length;
+    const childPart = childCount === 0
+      ? 'all children'
+      : (childCount === 1
+        ? ((children || []).find((row) => String(row?.id) === String(resolvedActiveChildIds[0]))?.first_name
+          || (children || []).find((row) => String(row?.id) === String(resolvedActiveChildIds[0]))?.name
+          || 'Student')
+        : `${childCount} children`);
+    const totalSubjects = (filteredSubjects || []).filter((s) => s?.id).length;
+    const subjectCount = resolvedActiveSubjectIds.length;
+    const subjectPart = subjectCount === 0 || subjectCount >= totalSubjects
+      ? 'all subjects'
+      : `${subjectCount} subject${subjectCount !== 1 ? 's' : ''}`;
+    return `${childPart}, ${subjectPart}, ${selectedAcademicYearLabel}`;
+  }, [
+    resolvedActiveChildIds,
+    resolvedActiveSubjectIds,
+    filteredSubjects,
+    selectedAcademicYearLabel,
+    children,
+  ]);
+
+  const handleAssignWorkCompleted = useCallback(async () => {
+    setPlannerListRefreshEpoch((epoch) => epoch + 1);
+    const ids = (subjectDetails || []).map(({ subject }) => subject?.id).filter(Boolean);
+    await Promise.all(ids.map((id) => onRefreshSubjectDetail?.(id)));
+  }, [onRefreshSubjectDetail, subjectDetails]);
+
   useEffect(() => {
     if (displayedSummaryPanel === 'attendance') {
       setAttendanceScrollEpoch((epoch) => epoch + 1);
@@ -1920,11 +1951,11 @@ export default function ProgressTab({
             onPress={() => openSubjectPicker('grades_add')}
             activeOpacity={0.7}
             accessibilityRole="button"
-            accessibilityLabel="Bulk add grades"
+            accessibilityLabel="Add grades"
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
             <Plus size={16} color="#6B7280" />
-            <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
+            <Text style={styles.emptyStateButtonText}>Add grades</Text>
           </TouchableOpacity>
         ) : null}
         {canExport ? (
@@ -1940,6 +1971,25 @@ export default function ProgressTab({
             <Text style={styles.emptyStateButtonText}>Export</Text>
           </TouchableOpacity>
         ) : null}
+      </View>
+    );
+  };
+
+  const renderLearningLogHeaderActions = () => {
+    if (isChildView || !canManageAttendance) return null;
+    return (
+      <View style={styles.sectionHeaderActions}>
+        <TouchableOpacity
+          style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+          onPress={() => setShowAssignWorkModal(true)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Assign work"
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <ClipboardList size={14} color="#6B7280" />
+          <Text style={styles.emptyStateButtonText}>Assign work</Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -2014,6 +2064,7 @@ export default function ProgressTab({
         <View style={panelStyle}>
           <View style={styles.summaryExpandPanelHeader}>
             <Text style={styles.summaryExpandPanelTitle}>Learning Log</Text>
+            {renderLearningLogHeaderActions()}
           </View>
           <SubjectAllEventsSection
             events={allEventsAggregate.events}
@@ -2040,10 +2091,13 @@ export default function ProgressTab({
       return (
         <View style={panelStyle}>
           <View style={styles.summaryExpandPanelHeader}>
-            <Text style={styles.summaryExpandPanelTitle}>Learning goals</Text>
-            {allEventsProgressSummary?.summaryLine ? (
-              <Text style={styles.summaryExpandPanelSubtitle}>{allEventsProgressSummary.summaryLine}</Text>
-            ) : null}
+            <View style={styles.summaryExpandPanelHeaderMain}>
+              <Text style={styles.summaryExpandPanelTitle}>Learning goals</Text>
+              {allEventsProgressSummary?.summaryLine ? (
+                <Text style={styles.summaryExpandPanelSubtitle}>{allEventsProgressSummary.summaryLine}</Text>
+              ) : null}
+            </View>
+            {allEventsGapSection?.headerActions || null}
           </View>
           {allEventsGapSection?.expandedRow || (
             <Text style={styles.emptyStateText}>
@@ -2310,6 +2364,14 @@ export default function ProgressTab({
         resolvedActiveChildIds={resolvedActiveChildIds}
         onCompleted={handleMarkAllAttendedCompleted}
       />
+      <AssignWorkModal
+        visible={showAssignWorkModal}
+        onClose={() => setShowAssignWorkModal(false)}
+        familyId={familyId}
+        events={allEventsAggregate.events}
+        filterSummary={assignWorkFilterSummary}
+        onCompleted={handleAssignWorkCompleted}
+      />
       <SubjectPastEventsGradesModal
         visible={!!gradesModalSubjectId}
         onClose={() => setGradesModalSubjectId(null)}
@@ -2543,6 +2605,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
     flexWrap: 'wrap',
+  },
+  summaryExpandPanelHeaderMain: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
   },
   summaryExpandPanelTitle: { fontSize: 16, fontWeight: '700', color: '#1F2937', ...WEB_HEADING_FONT },
   summaryExpandPanelSubtitle: { fontSize: 12, color: '#64748B', ...WEB_BODY_FONT },

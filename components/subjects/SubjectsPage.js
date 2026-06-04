@@ -2459,7 +2459,7 @@ export default function SubjectsPage({
               onPress={runSubjectsExport}
               disabled={subjectsExportBusy}
             >
-              <Download size={14} color="#FFFFFF" />
+              <Download size={16} color="#FFFFFF" />
               <Text style={styles.exportSubmitText}>{subjectsExportBusy ? 'Exporting…' : 'Export'}</Text>
             </TouchableOpacity>
           </View>
@@ -3481,54 +3481,50 @@ const styles = StyleSheet.create({
   exportModalActions: {
     marginTop: 14,
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'flex-end',
-    gap: 8,
+    gap: 12,
   },
   exportCancelButton: {
-    minWidth: 92,
-    borderRadius: 10,
-    backgroundColor: '#f3f4f6',
-    paddingHorizontal: 18,
+    minHeight: 50,
     paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     alignItems: 'center',
     justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   exportCancelText: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#374151',
-    fontWeight: '600',
+    fontWeight: '700',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   exportSubmitButton: {
+    height: 50,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    minWidth: 132,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#90CAF5',
-    backgroundColor: '#90CAF5',
-    paddingHorizontal: 22,
-    paddingVertical: 12,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 12px rgba(158, 207, 251, 0.55)',
-    }),
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    backgroundColor: '#9ECFFB',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   exportSubmitButtonDisabled: {
-    opacity: 0.55,
-    ...(Platform.OS === 'web' && {
-      boxShadow: 'none',
-    }),
+    opacity: 0.6,
   },
   exportSubmitText: {
-    fontSize: 15,
-    color: '#ffffff',
-    fontWeight: '600',
+    fontSize: 16,
+    color: '#FFFFFF',
+    fontWeight: '800',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   summaryCard: {

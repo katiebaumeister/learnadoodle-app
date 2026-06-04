@@ -4385,7 +4385,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       flexShrink: 0,
                     }}
                   >
-                    {/* Sliding purple highlight — only when Month/Week/To-do is the active context (not plan/attendance from right bar) */}
+                    {/* Sliding highlight — matches Learning / filter chip active blue */}
                     {showTopPlannerSegmentHighlight && viewChipSlider.width > 0 && (
                       <View
                         style={{
@@ -4395,9 +4395,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           bottom: 6,
                           width: viewChipSlider.width,
                           borderRadius: 9999,
-                          backgroundColor: 'rgba(139, 92, 246, 0.15)',
+                          backgroundColor: 'rgba(107,179,232,0.12)',
                           borderWidth: 1,
-                          borderColor: 'rgba(139, 92, 246, 0.5)',
+                          borderColor: '#6BB3E8',
                         }}
                       />
                     )}
@@ -4445,7 +4445,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         >
                           <Text style={{
                             fontSize: 15,
-                            color: isActive ? 'rgba(99, 102, 241, 1)' : 'rgba(15,23,42,0.85)',
+                            color: isActive ? '#6BB3E8' : 'rgba(15,23,42,0.85)',
                             fontWeight: isActive ? '600' : '500',
                             fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                           }}>

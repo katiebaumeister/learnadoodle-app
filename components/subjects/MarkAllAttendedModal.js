@@ -293,7 +293,7 @@ export default function MarkAllAttendedModal({
                 <Text style={[styles.optionTitle, selectAllSubjects && styles.optionTitleActive]}>
                   All subjects
                 </Text>
-                {selectAllSubjects ? <CheckCircle2 size={18} color="#4C7ED9" /> : null}
+                {selectAllSubjects ? <CheckCircle2 size={18} color="#6BB3E8" /> : null}
               </TouchableOpacity>
               {scopedSubjectOptions.length > 0 ? (
                 <View style={styles.list}>
@@ -328,7 +328,7 @@ export default function MarkAllAttendedModal({
                             </View>
                           ) : null}
                         </View>
-                        {isActive ? <CheckCircle2 size={18} color="#4C7ED9" /> : <ChevronRight size={16} color="#9CA3AF" />}
+                        {isActive ? <CheckCircle2 size={18} color="#6BB3E8" /> : <ChevronRight size={16} color="#9CA3AF" />}
                       </TouchableOpacity>
                     );
                   })}
@@ -477,7 +477,10 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F3F4F6',
   },
   optionRowLast: { borderBottomWidth: 0 },
-  optionRowActive: { backgroundColor: '#F8FBFF' },
+  optionRowActive: {
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
+    borderColor: '#6BB3E8',
+  },
   optionTextWrap: { flex: 1, minWidth: 0 },
   optionTitle: {
     fontSize: 17,
@@ -485,7 +488,7 @@ const styles = StyleSheet.create({
     color: '#1F2937',
     ...WEB_HEADING_FONT,
   },
-  optionTitleActive: { color: '#1E40AF' },
+  optionTitleActive: { color: '#6BB3E8' },
   studentsRow: {
     marginTop: 4,
     flexDirection: 'row',
@@ -531,37 +534,44 @@ const styles = StyleSheet.create({
   actions: {
     marginTop: 18,
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 12,
   },
   cancelBtn: {
+    minHeight: 50,
     paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 28,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   cancelText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
     color: '#374151',
-    ...WEB_BODY_FONT,
+    ...WEB_HEADING_FONT,
   },
   primaryBtn: {
+    height: 50,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
-    paddingVertical: 12,
     paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: '#4C7ED9',
+    borderRadius: 16,
+    backgroundColor: '#9ECFFB',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   primaryBtnDisabled: { opacity: 0.6 },
   primaryText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '800',
     color: '#FFFFFF',
-    ...WEB_BODY_FONT,
+    ...WEB_HEADING_FONT,
   },
 });

@@ -37,6 +37,7 @@ import {
   isWorkProducingEventType,
   parseWorkSpec,
   showsLearningGradingSwitches,
+  showsLearningDetailsSection,
 } from '../../lib/workEventHelpers';
 import ConfirmDialog from '../ConfirmDialog';
 import { destructiveButtonStyles, destructiveIconColor } from '../ui/destructiveButtonStyles';
@@ -1528,7 +1529,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
   const shouldHideAttendanceChip = isDaysOffOrBreakEvent || currentHolidayType === 'GLOBAL_HOLIDAY';
   const hideScheduleTimeControls = placement === 'calendar' && isDaysOffOrBreakEvent;
-  const hideLearningDetailsSection = isDaysOffOrBreakEvent;
+  const hideLearningDetailsSection = isDaysOffOrBreakEvent || !showsLearningDetailsSection(eventType);
   const isClassDayEventType = useMemo(
     () =>
       normalizeEventTypeForDisplay(eventType) === 'Class Day'
