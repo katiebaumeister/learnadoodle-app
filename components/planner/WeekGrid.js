@@ -852,6 +852,8 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                           onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
                           onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
                           showCheckmark={true}
+                          children={children}
+                          hideDoneStyling={true}
                         />
                       </View>
                     );

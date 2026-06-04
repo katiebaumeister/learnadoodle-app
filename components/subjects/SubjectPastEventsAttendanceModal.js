@@ -173,6 +173,7 @@ export default function SubjectPastEventsAttendanceModal({
   onClose,
   familyId,
   subjectId,
+  subjectName = null,
   events = [],
   onCompleted,
   getChildName,
@@ -180,6 +181,10 @@ export default function SubjectPastEventsAttendanceModal({
 }) {
   const toast = useToast();
   const scopedSubjectId = String(subjectId || '').trim();
+  const modalTitle = useMemo(() => {
+    const name = String(subjectName || '').trim();
+    return name ? `Bulk Actions - ${name}` : 'Bulk Actions';
+  }, [subjectName]);
   const [attendanceLogs, setAttendanceLogs] = useState([]);
   const [pendingAction, setPendingAction] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -503,7 +508,7 @@ export default function SubjectPastEventsAttendanceModal({
         />
         <View style={styles.card}>
           <View style={styles.header}>
-            <Text style={styles.title}>Mark attendance</Text>
+            <Text style={styles.title}>{modalTitle}</Text>
             <TouchableOpacity
               onPress={handleCancel}
               style={styles.closeCircle}

@@ -31,7 +31,7 @@ import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curric
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
-import WorkDetailsSection from './WorkDetailsSection';
+import WorkDetailsSection, { RequireFinalDeliverableField } from './WorkDetailsSection';
 import { ensureAssignmentsForEvent } from '../../lib/workAssignmentClient';
 import {
   computeSuggestedStartDate,
@@ -6526,6 +6526,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               />
             </View>
           </SafeFieldRow>
+          <RequireFinalDeliverableField
+            workSpec={workSpec}
+            eventType={eventType}
+            onChange={setWorkSpec}
+            readOnly={readOnly}
+          />
         </ModalSectionCard>
         )}
 

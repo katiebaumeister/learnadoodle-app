@@ -3697,6 +3697,7 @@ export default function SubjectDetailPage({
         onClose={() => setShowPastEventsAttendanceModal(false)}
         familyId={familyId}
         subjectId={subject.id}
+        subjectName={subject?.name}
         events={subjectData?.events || []}
         getChildName={getChildName}
         onOpenEvent={handleOpenEventDetails}

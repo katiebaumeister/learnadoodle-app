@@ -17,6 +17,32 @@ import {
   parseWorkSpec,
 } from '../../lib/workEventHelpers';
 
+export function RequireFinalDeliverableField({
+  workSpec,
+  eventType,
+  onChange,
+  readOnly = false,
+}) {
+  const normalizedType = normalizeWorkEventType(eventType);
+  if (normalizedType !== 'Project') return null;
+
+  const spec = parseWorkSpec(workSpec, normalizedType);
+  const patch = (partial) => onChange?.({ ...spec, ...partial });
+
+  return (
+    <View style={styles.switchRow}>
+      <Text style={styles.label}>Require final deliverable</Text>
+      <Switch
+        value={!!spec.require_final_deliverable}
+        onValueChange={(value) => patch({ require_final_deliverable: value })}
+        disabled={readOnly}
+        trackColor={{ false: '#E5E7EB', true: '#AECBFA' }}
+        thumbColor={spec.require_final_deliverable ? '#45A29E' : '#f9fafb'}
+      />
+    </View>
+  );
+}
+
 function MethodChip({ label, active, onPress, disabled }) {
   return (
     <TouchableOpacity
@@ -155,16 +181,6 @@ export default function WorkDetailsSection({
                 disabled={readOnly}
                 trackColor={{ false: '#E5E7EB', true: '#AECBFA' }}
                 thumbColor={spec.allow_progress_updates ? '#45A29E' : '#f9fafb'}
-              />
-            </View>
-            <View style={styles.switchRow}>
-              <Text style={styles.label}>Require final deliverable</Text>
-              <Switch
-                value={!!spec.require_final_deliverable}
-                onValueChange={(value) => patch({ require_final_deliverable: value })}
-                disabled={readOnly}
-                trackColor={{ false: '#E5E7EB', true: '#AECBFA' }}
-                thumbColor={spec.require_final_deliverable ? '#45A29E' : '#f9fafb'}
               />
             </View>
           </>

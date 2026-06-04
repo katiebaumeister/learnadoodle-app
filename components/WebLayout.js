@@ -12,7 +12,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
 import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, Download, Bell } from 'lucide-react';
-import { getChildColorFromAvatar } from '../utils/avatarColors';
+import { sourceForChild } from './ui/ChildAvatarCluster';
 import { useAuth } from '../contexts/AuthContext';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
 import { FiltersProvider } from '../contexts/FiltersContext';
@@ -4027,7 +4027,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                             </TouchableOpacity>
                       {children.map((child) => {
                         const isSelected = selectedCalendarChildren !== null && selectedCalendarChildren?.includes(child.id);
-                        const childColor = getChildColorFromAvatar(child.avatar);
                         return (
                           <TouchableOpacity
                             key={child.id}
@@ -4066,19 +4065,30 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                                 <Check size={10} color="#FFFFFF" />
                               )}
                             </View>
+                            <View
+                              style={{
+                                width: 20,
+                                height: 20,
+                                borderRadius: 10,
+                                overflow: 'hidden',
+                                flexShrink: 0,
+                                backgroundColor: '#f1f5f9',
+                              }}
+                            >
+                              <Image
+                                source={sourceForChild(child)}
+                                style={{
+                                  width: 20,
+                                  height: 20,
+                                  transform: [{ scale: 1.2 }],
+                                  ...(Platform.OS === 'web' && { objectFit: 'cover' }),
+                                }}
+                                resizeMode="cover"
+                              />
+                            </View>
                             <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', flex: 1, fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
                               {child.first_name || child.name || 'Unknown'}
                             </Text>
-                            {/* Colored dot - moved to right */}
-                            <View
-                              style={{
-                                width: 8,
-                                height: 8,
-                                borderRadius: 4,
-                                backgroundColor: childColor,
-                                flexShrink: 0,
-                              }}
-                            />
                           </TouchableOpacity>
                         );
                       })}

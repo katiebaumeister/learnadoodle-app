@@ -6175,19 +6175,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               action: () => openChildEventModal('submission'),
             });
           }
-        } else {
-          menuItems.push({
-            text: 'Send to student',
-            iconKey: 'send',
-            action: () => {
-              window.dispatchEvent(new CustomEvent('openNudgeForEvent', {
-                detail: {
-                  eventId: ev?.id,
-                  initialEvent: ev,
-                },
-              }));
-            },
-          });
         }
 
         if (isSeriesGroup) {

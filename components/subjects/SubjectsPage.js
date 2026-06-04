@@ -9,6 +9,7 @@ import {
   Platform,
   Modal,
   Alert,
+  Image,
 } from 'react-native';
 import {
   Search,
@@ -30,7 +31,7 @@ import { generateAttendanceReport } from '../../lib/services/attendanceClient';
 import { exportCurriculumPlan, exportReportCard } from '../../lib/services/exportClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
-import { getChildColorFromAvatar } from '../../utils/avatarColors';
+import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { useSession } from '../../contexts/SessionContext';
 import { useOptionalFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
@@ -1516,7 +1517,6 @@ export default function SubjectsPage({
           <View style={styles.filterChipsWrap}>
             <View style={styles.filterChecklist}>
               {safeChildren.map((child) => {
-                const childColor = getChildColorFromAvatar(child.avatar);
                 const childIdString = String(child.id);
                 const isActive = selectedModeFilter === 'view'
                   ? effectiveCoursesChildIds.includes(childIdString)
@@ -1536,6 +1536,13 @@ export default function SubjectsPage({
                       setSelectedChildFilter(child.id);
                     }}
                   >
+                    <View style={styles.filterOptionChipAvatarWrap}>
+                      <Image
+                        source={sourceForChild(child)}
+                        style={styles.filterOptionChipAvatar}
+                        resizeMode="cover"
+                      />
+                    </View>
                     <Text
                       style={[
                         styles.filterOptionChipText,
@@ -1545,12 +1552,6 @@ export default function SubjectsPage({
                     >
                       {child.name || child.first_name}
                     </Text>
-                    <View
-                      style={[
-                        styles.filterOptionChipDot,
-                        { backgroundColor: childColor },
-                      ]}
-                    />
                   </TouchableOpacity>
                 );
               })}
@@ -2474,7 +2475,6 @@ export default function SubjectsPage({
           </View>
         )}
       </View>
-      <View style={styles.divider} />
       {renderPlanningPreferencesModal()}
       {renderSubjectsExportModal()}
 
@@ -2797,15 +2797,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border || '#e5e7eb',
-    marginTop: 0,
-    marginBottom: 0,
-    marginHorizontal: 24,
-    position: 'relative',
-    zIndex: 10,
   },
   exportModalBackdrop: {
     flex: 1,
@@ -3378,7 +3369,7 @@ const styles = StyleSheet.create({
     paddingTop: 4,
   },
   coursesFilterRowTop: {
-    marginTop: 24,
+    marginTop: 8,
   },
   filterRowBelowMode: {
     marginTop: 0,
@@ -3501,11 +3492,19 @@ const styles = StyleSheet.create({
     color: '#6BB3E8',
     fontWeight: '600',
   },
-  filterOptionChipDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  filterOptionChipAvatarWrap: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     flexShrink: 0,
+    overflow: 'hidden',
+    backgroundColor: '#f1f5f9',
+  },
+  filterOptionChipAvatar: {
+    width: 18,
+    height: 18,
+    transform: [{ scale: 1.2 }],
+    ...(Platform.OS === 'web' && { objectFit: 'cover' }),
   },
   filterChipsWrapYear: {
     flex: 1,

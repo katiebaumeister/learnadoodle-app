@@ -8315,6 +8315,7 @@ export default function SubjectsPlanBuilder({
           onClose={() => setShowPastEventsAttendanceModal(false)}
           familyId={familyId}
           subjectId={attendanceModalData.subjectId}
+          subjectName={attendanceModalData.subjectName}
           events={attendanceModalData.events}
           onCompleted={() => setEventsRefreshKey((prev) => prev + 1)}
           getChildName={(childId) => childNameById[String(childId)] || 'Student'}

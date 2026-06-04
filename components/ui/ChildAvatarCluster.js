@@ -39,7 +39,7 @@ function resolveKeyedAvatar(avatarKey) {
 /** Exported for invite flows, pickers, etc. */
 export function sourceForChild(child) {
   if (!child) return avatarSources.prof1;
-  const raw = child.avatar_url || child.avatar;
+  const raw = child.avatar_key || child.avatar_url || child.avatar;
   if (raw == null || raw === '') return avatarSources.prof1;
   if (typeof raw !== 'string') return resolveKeyedAvatar(raw);
 
@@ -69,6 +69,7 @@ export default function ChildAvatarCluster({
   familyChildren = [],
   size = 22,
   overlap = -6,
+  hideBackground = false,
   style,
 }) {
   const ids = Array.isArray(childIds) ? childIds : [];
@@ -78,8 +79,25 @@ export default function ChildAvatarCluster({
   const overflow = ids.length - visible.length;
   const hasOverflow = overflow > 0;
   const stacked = visible.length > 1 || hasOverflow;
-  const ring = stacked ? (Platform.OS === 'web' ? 2 : StyleSheet.hairlineWidth * 2) : 0;
+  const ring = stacked
+    ? size <= 10
+      ? Platform.OS === 'web'
+        ? 0.5
+        : StyleSheet.hairlineWidth
+      : Platform.OS === 'web'
+        ? 2
+        : StyleSheet.hairlineWidth * 2
+    : 0;
   const radius = size / 2;
+  const imageScale = hideBackground
+    ? size <= 10
+      ? 1.2
+      : 1.15
+    : size <= 10
+      ? 1.2
+      : 1;
+  const showOverflowCount = size >= 14;
+  const avatarBackground = hideBackground ? 'transparent' : '#f1f5f9';
 
   const childFor = (childId) =>
     familyChildren.find((c) => c != null && String(c.id) === String(childId));
@@ -87,9 +105,8 @@ export default function ChildAvatarCluster({
   return (
     <View style={[{ flexDirection: 'row', alignItems: 'center' }, style]}>
       {visible.map((childId, index) => (
-        <Image
+        <View
           key={String(childId)}
-          source={sourceForChild(childFor(childId))}
           style={{
             width: size,
             height: size,
@@ -98,12 +115,21 @@ export default function ChildAvatarCluster({
             borderColor: '#FFFFFF',
             marginLeft: index > 0 ? overlap : 0,
             zIndex: visible.length - index + (hasOverflow ? 1 : 0),
-            backgroundColor: '#f1f5f9',
+            backgroundColor: avatarBackground,
             overflow: 'hidden',
-            ...(Platform.OS === 'web' && { objectFit: 'cover' }),
           }}
-          resizeMode="cover"
-        />
+        >
+          <Image
+            source={sourceForChild(childFor(childId))}
+            style={{
+              width: size,
+              height: size,
+              ...(imageScale !== 1 && { transform: [{ scale: imageScale }] }),
+              ...(Platform.OS === 'web' && { objectFit: 'cover' }),
+            }}
+            resizeMode="cover"
+          />
+        </View>
       ))}
       {hasOverflow && (
         <View
@@ -120,18 +146,20 @@ export default function ChildAvatarCluster({
             justifyContent: 'center',
           }}
         >
-          <Text
-            style={{
-              fontSize: size > 20 ? 11 : 9,
-              fontWeight: '600',
-              color: '#64748b',
-              ...(Platform.OS === 'web' && {
-                fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }),
-            }}
-          >
-            +{overflow}
-          </Text>
+          {showOverflowCount ? (
+            <Text
+              style={{
+                fontSize: size > 20 ? 11 : 9,
+                fontWeight: '600',
+                color: '#64748b',
+                ...(Platform.OS === 'web' && {
+                  fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                }),
+              }}
+            >
+              +{overflow}
+            </Text>
+          ) : null}
         </View>
       )}
     </View>

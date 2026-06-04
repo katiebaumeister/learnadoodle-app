@@ -9,7 +9,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, Platform, ScrollView, TouchableOpacity } from 'react-native';
-import { Plus, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
@@ -621,24 +621,6 @@ export default function ParentHomeScreen({
         ? '1 thing planned'
         : `${blockCount} things planned`;
 
-  const handleViewTodaysTodo = () => {
-    // Navigate to planner → To-do lists → Today (client-side, no reload)
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const url = new URL(window.location.href);
-      url.pathname = '/planner';
-      url.searchParams.set('view', 'tasks');
-      url.searchParams.set('section', 'today');
-      url.searchParams.set('date', todayStr);
-      window.history.pushState({}, '', url.toString());
-      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
-      window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'today' } }));
-      if (onNavigate) onNavigate('planner');
-    } else if (onNavigate) {
-      onNavigate('planner');
-    }
-  };
-
   const mainContent = (
     <View style={styles.mainSurface}>
       {/* Dashboard header anchor */}
@@ -649,14 +631,6 @@ export default function ParentHomeScreen({
             <Text style={styles.dateText}>{formatDate(selectedDate)}</Text>
             <Text style={styles.scheduleSummaryText}>{scheduleSummaryLine}</Text>
           </View>
-          <TouchableOpacity
-            style={styles.viewTodosButton}
-            onPress={handleViewTodaysTodo}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Calendar size={16} color="#5B6B7A" />
-            <Text style={styles.viewTodosButtonText}>View To-Dos</Text>
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -848,32 +822,6 @@ const styles = StyleSheet.create({
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  viewTodosButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    alignSelf: 'flex-start',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      transition: 'all 0.2s ease',
-      backdropFilter: 'blur(8px)',
-      WebkitBackdropFilter: 'blur(8px)',
-    }),
-  },
-  viewTodosButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   divider: {
     height: 1,
     backgroundColor: 'rgba(148, 163, 184, 0.2)',
@@ -883,7 +831,6 @@ const styles = StyleSheet.create({
   scheduleSection: {
     flex: 1,
     marginTop: 2,
-    /** Match headerCard top inset so “Add event” aligns with “View To-Dos” from the card edge */
     paddingTop: 14,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',

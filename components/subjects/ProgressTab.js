@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
   Image,
   Modal,
   Platform,
@@ -10,7 +12,8 @@ import {
   View,
 } from 'react-native';
 import { ChevronLeft, ChevronRight, Edit2, Plus, X } from 'lucide-react';
-import { SubjectAttendanceMonthDrilldown } from './SubjectSectionDrilldownPanels';
+import PlannerEventsListTable from '../planner/PlannerEventsListTable';
+// Archived: month calendar + attendance key — see ./archived/SubjectAttendanceMonthPanelArchived.js
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import SubjectAllEventsSection from './SubjectAllEventsSection';
@@ -27,6 +30,13 @@ import { createAttendanceLog, deleteAttendanceLog, updateAttendanceLog } from '.
 const WEB_HEADING_FONT = Platform.OS === 'web'
   ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
   : {};
+const SUMMARY_PANEL_DISCLOSURE_MAX_HEIGHT = {
+  attendance: 580,
+  grades: 520,
+  learning_log: 680,
+  learning_goals: 1200,
+};
+
 const WEB_BODY_FONT = Platform.OS === 'web'
   ? { fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
   : {};
@@ -614,7 +624,15 @@ export default function ProgressTab({
     }
   };
 
-  const [expandedSummaryPanel, setExpandedSummaryPanel] = useState(null);
+  const defaultExpandedSummaryPanel = sectionsMode === 'allEventsOnly' ? 'attendance' : null;
+  const [expandedSummaryPanel, setExpandedSummaryPanel] = useState(defaultExpandedSummaryPanel);
+  const [displayedSummaryPanel, setDisplayedSummaryPanel] = useState(defaultExpandedSummaryPanel);
+  const summaryPanelAnim = useRef(new Animated.Value(defaultExpandedSummaryPanel ? 1 : 0)).current;
+  const prevExpandedSummaryPanelRef = useRef(defaultExpandedSummaryPanel);
+  /** Skip expand animation on first paint when a panel is open by default (screen load only). */
+  const suppressSummaryPanelOpenAnimationRef = useRef(!!defaultExpandedSummaryPanel);
+  const [plannerListRefreshEpoch, setPlannerListRefreshEpoch] = useState(0);
+  const [attendanceScrollEpoch, setAttendanceScrollEpoch] = useState(0);
   const [optimisticAttendanceByKey, setOptimisticAttendanceByKey] = useState({});
   useEffect(() => {
     setOptimisticAttendanceByKey({});
@@ -1192,6 +1210,9 @@ export default function ProgressTab({
       }
       console.warn('[ProgressTab] Failed toggling attendance:', err);
     }
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { skipHomeRefresh: true } }));
+    }
   }, [familyId, attendanceEventById, attendanceRecordsForUI, getEventMinutes, onRefreshSubjectDetail, subjectDetails, resolveChildIdsForAttendanceEvent, attendanceLogIdByEventDayChild]);
   const resolveAllEventsAttendanceState = useCallback((event) => {
     const eventId = String(event?.id || '').trim();
@@ -1214,6 +1235,26 @@ export default function ProgressTab({
     if (!eventId || !state?.dayDate || state.canToggle === false) return;
     handleToggleEventAttendanceForDate(state.dayDate, eventId, event);
   }, [resolveAllEventsAttendanceState, handleToggleEventAttendanceForDate]);
+
+  const refreshProgressEventsFromPlanner = useCallback(() => {
+    setPlannerListRefreshEpoch((v) => v + 1);
+    (subjectDetails || []).forEach(({ subject }) => {
+      if (subject?.id) {
+        Promise.resolve(onRefreshSubjectDetail?.(subject.id)).catch(() => {});
+      }
+    });
+  }, [subjectDetails, onRefreshSubjectDetail]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onRefresh = () => refreshProgressEventsFromPlanner();
+    window.addEventListener('refreshCalendar', onRefresh);
+    window.addEventListener('eventAttendancePatched', onRefresh);
+    return () => {
+      window.removeEventListener('refreshCalendar', onRefresh);
+      window.removeEventListener('eventAttendancePatched', onRefresh);
+    };
+  }, [refreshProgressEventsFromPlanner]);
   const canMarkAttendanceForDateKey = useCallback((dateKey) => {
     const normKey = String(dateKey || '').slice(0, 10);
     if (!normKey) return false;
@@ -1658,9 +1699,8 @@ export default function ProgressTab({
   const showAttendanceGradesSections = sectionsMode === 'attendanceGradesOnly'
     ? hasAggregateSubjectScope
     : sectionsMode === 'full' && subjectProgressRows.length > 0;
-  const showAllEventsSection = (
-    sectionsMode === 'attendanceGradesOnly' || sectionsMode === 'allEventsOnly'
-  ) && hasAggregateSubjectScope;
+  /** Summary cards + expand panels (Subjects page). Standalone All Events table archived below. */
+  const showAllEventsSection = sectionsMode === 'allEventsOnly' && hasAggregateSubjectScope;
   const detailLoadAttemptedRef = useRef(new Set());
   useEffect(() => {
     if (!showAllEventsSection || typeof onRefreshSubjectDetail !== 'function') return;
@@ -1732,12 +1772,40 @@ export default function ProgressTab({
     setExpandedSummaryPanel((prev) => (prev === panel ? null : panel));
   }, []);
   useEffect(() => {
-    if (expandedSummaryPanel === 'learning_goals') {
-      planProgressContext?.expandAllEventsAggregateGap?.();
+    if (expandedSummaryPanel) {
+      const panelChanged = prevExpandedSummaryPanelRef.current !== expandedSummaryPanel;
+      prevExpandedSummaryPanelRef.current = expandedSummaryPanel;
+      setDisplayedSummaryPanel(expandedSummaryPanel);
+      if (expandedSummaryPanel === 'learning_goals') {
+        planProgressContext?.expandAllEventsAggregateGap?.();
+      } else {
+        planProgressContext?.collapseAllEventsAggregateGap?.();
+      }
+      if (suppressSummaryPanelOpenAnimationRef.current) {
+        suppressSummaryPanelOpenAnimationRef.current = false;
+        summaryPanelAnim.setValue(1);
+      } else if (panelChanged) {
+        summaryPanelAnim.setValue(0);
+        Animated.timing(summaryPanelAnim, {
+          toValue: 1,
+          duration: 220,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: false,
+        }).start();
+      }
       return;
     }
+    prevExpandedSummaryPanelRef.current = null;
     planProgressContext?.collapseAllEventsAggregateGap?.();
-  }, [expandedSummaryPanel, planProgressContext]);
+    Animated.timing(summaryPanelAnim, {
+      toValue: 0,
+      duration: 180,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished) setDisplayedSummaryPanel(null);
+    });
+  }, [expandedSummaryPanel, planProgressContext, summaryPanelAnim]);
   const learningHighlights = useMemo(() => {
     const now = Date.now();
     const futureUnits = new Set();
@@ -1764,42 +1832,39 @@ export default function ProgressTab({
       .map((row) => `${row.subject}: ${row.gradeAverageLetter}`)
       .join(' · ') || 'No subjects yet'
   ), [subjectProgressRows]);
-  const attendanceSummaryChips = (
-    <View style={styles.attendanceSummaryWrap}>
-      <View style={styles.attendanceToolbarRow}>
-        <View style={styles.attendanceKeyShell}>
-          <View style={styles.attendanceKeyRow}>
-            <View style={styles.attendanceKeyPill}>
-              <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotAttended]} />
-              <Text style={styles.attendanceKeyText}>Attended</Text>
-            </View>
-            <View style={styles.attendanceKeyPill}>
-              <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUnattended]} />
-              <Text style={styles.attendanceKeyText}>Unattended</Text>
-            </View>
-            <View style={styles.attendanceKeyPill}>
-              <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUpcoming]} />
-              <Text style={styles.attendanceKeyText}>Upcoming</Text>
-            </View>
-          </View>
-        </View>
-      </View>
-    </View>
-  );
+  const attendancePlannerListEvents = allEventsAggregate.events;
+
+  const attendanceModalSubjectName = useMemo(() => {
+    const sid = String(attendanceModalSubjectId || '').trim();
+    if (!sid || sid === EMPTY_SUBJECT_MODAL_ID) return null;
+    const fromMap = subjectById.get(sid)?.subject?.name;
+    if (fromMap) return fromMap;
+    const fromFiltered = (filteredSubjects || []).find((s) => String(s?.id) === sid)?.name;
+    return fromFiltered || null;
+  }, [attendanceModalSubjectId, subjectById, filteredSubjects]);
+
+  useEffect(() => {
+    if (displayedSummaryPanel === 'attendance') {
+      setAttendanceScrollEpoch((epoch) => epoch + 1);
+    }
+  }, [displayedSummaryPanel, plannerListRefreshEpoch, attendancePlannerListEvents?.length]);
 
   const attendancePanelInner = (
-    <View style={styles.progressInsightsPanelWrap}>
-      <SubjectAttendanceMonthDrilldown
-        attendanceRecords={attendanceRecordsForUI.map((record) => ({
-          ...record,
-          day_date: record?.dayDate,
-          event_id: record?.eventId,
-        }))}
-        subjectEvents={attendanceEvents}
-        onOpenEventDetails={handleOpenEventDetails}
-        onToggleEventAttendance={handleToggleEventAttendanceForDate}
-        onAddEventForDate={handleOpenAddEventForDate}
-        hideLegend
+    <View style={styles.attendancePlannerListWrap}>
+      <PlannerEventsListTable
+        events={attendancePlannerListEvents}
+        children={children}
+        familyId={familyId}
+        monthDate={new Date()}
+        onEventPress={(event) => handleOpenEventDetails(event?.id, event)}
+        onEventRightClick={handleEventContextMenu}
+        onEventComplete={canManageAttendance ? handleAllEventsAttendanceToggle : undefined}
+        resolveEventCompleted={(event) => resolveAllEventsAttendanceState(event)?.isAttended === true}
+        listRefreshEpoch={plannerListRefreshEpoch}
+        scrollToTodayEpoch={attendanceScrollEpoch}
+        embedded
+        maxListHeight={480}
+        plannerShellVisible={displayedSummaryPanel === 'attendance'}
       />
     </View>
   );
@@ -1857,9 +1922,8 @@ export default function ProgressTab({
     </Text>
   );
 
-  const renderSummaryExpandPanel = () => {
-    if (!expandedSummaryPanel) return null;
-    if (expandedSummaryPanel === 'attendance') {
+  const renderSummaryPanelContent = (panelKey) => {
+    if (panelKey === 'attendance') {
       return (
         <View style={styles.summaryExpandPanel}>
           <View style={styles.summaryExpandPanelHeader}>
@@ -1876,12 +1940,11 @@ export default function ProgressTab({
               </TouchableOpacity>
             ) : null}
           </View>
-          {attendanceSummaryChips}
           {attendancePanelInner}
         </View>
       );
     }
-    if (expandedSummaryPanel === 'grades') {
+    if (panelKey === 'grades') {
       return (
         <View style={styles.summaryExpandPanel}>
           <View style={styles.summaryExpandPanelHeader}>
@@ -1902,7 +1965,7 @@ export default function ProgressTab({
         </View>
       );
     }
-    if (expandedSummaryPanel === 'learning_log') {
+    if (panelKey === 'learning_log') {
       return (
         <View style={styles.summaryExpandPanel}>
           <View style={styles.summaryExpandPanelHeader}>
@@ -1929,7 +1992,7 @@ export default function ProgressTab({
         </View>
       );
     }
-    if (expandedSummaryPanel === 'learning_goals') {
+    if (panelKey === 'learning_goals') {
       return (
         <View style={styles.summaryExpandPanel}>
           <View style={styles.summaryExpandPanelHeader}>
@@ -1947,6 +2010,28 @@ export default function ProgressTab({
       );
     }
     return null;
+  };
+
+  const renderSummaryExpandPanel = () => {
+    if (!displayedSummaryPanel) return null;
+    const panelContent = renderSummaryPanelContent(displayedSummaryPanel);
+    if (!panelContent) return null;
+    const maxHeight = SUMMARY_PANEL_DISCLOSURE_MAX_HEIGHT[displayedSummaryPanel] || 720;
+    const disclosureStyle = {
+      maxHeight: summaryPanelAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, maxHeight],
+      }),
+      opacity: summaryPanelAnim.interpolate({
+        inputRange: [0, 0.15, 1],
+        outputRange: [0, 0.35, 1],
+      }),
+    };
+    return (
+      <Animated.View style={[styles.summaryExpandPanelOuter, disclosureStyle]}>
+        {panelContent}
+      </Animated.View>
+    );
   };
 
   const renderClickableSummaryBox = (panelKey, label, value, meta, options = {}) => {
@@ -2088,7 +2173,6 @@ export default function ProgressTab({
                 </View>
               </View>
               <View style={styles.progressSectionBody}>
-                {attendanceSummaryChips}
                 {attendancePanelInner}
               </View>
             </View>
@@ -2117,64 +2201,36 @@ export default function ProgressTab({
         ) : null}
         {showAllEventsSection ? (
           <View style={[styles.section, embeddedInScrollView && styles.sectionEmbedded]}>
-            {sectionsMode === 'allEventsOnly' ? (
-              <View style={styles.allEventsSummaryWrap}>
-                <View style={styles.overviewSummaryGrid}>
-                  {renderClickableSummaryBox(
-                    'attendance',
-                    'Attendance',
-                    overviewStats.attendanceRate == null ? 'No data' : `${overviewStats.attendanceRate}%`,
-                    `${overviewStats.completedDays} attended · ${attendanceDayCounts.absent} unattended`
-                  )}
-                  {renderClickableSummaryBox(
-                    'grades',
-                    'Grades',
-                    overviewStats.gradeAverage == null ? 'No grades' : `${overviewStats.gradeAverage}%`,
-                    `${gradeRows.length} recorded grade${gradeRows.length === 1 ? '' : 's'}`
-                  )}
-                  {renderClickableSummaryBox(
-                    'learning_log',
-                    'Learning Log',
-                    String(submittedArtifactsCount),
-                    submittedArtifactsCount === 1 ? 'submitted artifact' : 'submitted artifacts'
-                  )}
-                  {renderClickableSummaryBox(
-                    'learning_goals',
-                    'Learning Goals',
-                    allEventsProgressSummary?.summaryLine || 'No targets yet',
-                    learningGoalsGapLabel,
-                    { compactValue: true, metaAccent: !!learningGoalsGapLabel }
-                  )}
-                </View>
-                {renderSummaryExpandPanel()}
+            <View style={styles.allEventsSummaryWrap}>
+              <View style={styles.overviewSummaryGrid}>
+                {renderClickableSummaryBox(
+                  'attendance',
+                  'Attendance',
+                  overviewStats.attendanceRate == null ? 'No data' : `${overviewStats.attendanceRate}%`,
+                  `${overviewStats.completedDays} attended · ${attendanceDayCounts.absent} unattended`
+                )}
+                {renderClickableSummaryBox(
+                  'grades',
+                  'Grades',
+                  overviewStats.gradeAverage == null ? 'No grades' : `${overviewStats.gradeAverage}%`,
+                  `${gradeRows.length} recorded grade${gradeRows.length === 1 ? '' : 's'}`
+                )}
+                {renderClickableSummaryBox(
+                  'learning_log',
+                  'Learning Log',
+                  String(submittedArtifactsCount),
+                  submittedArtifactsCount === 1 ? 'submitted artifact' : 'submitted artifacts'
+                )}
+                {renderClickableSummaryBox(
+                  'learning_goals',
+                  'Learning Goals',
+                  allEventsProgressSummary?.summaryLine || 'No targets yet',
+                  learningGoalsGapLabel,
+                  { compactValue: true, metaAccent: !!learningGoalsGapLabel }
+                )}
               </View>
-            ) : null}
-            <View style={styles.allEventsSectionHeader}>
-              <View style={styles.allEventsTitleRow}>
-                <View style={styles.allEventsTitleLeft}>
-                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>All Events</Text>
-                </View>
-              </View>
+              {renderSummaryExpandPanel()}
             </View>
-            <View style={styles.progressSectionBody}>
-              <SubjectAllEventsSection
-                events={allEventsAggregate.events}
-                eventOutcomes={allEventsAggregate.eventOutcomes}
-                materials={allEventsAggregate.materials}
-                eventAttachmentMaterials={allEventsAggregate.eventAttachmentMaterials}
-                children={children}
-                assignmentsByEventId={allEventsAggregate.assignmentsByEventId}
-                onEventPress={(event) => handleOpenEventDetails(event?.id, event)}
-                onEventRightClick={handleEventContextMenu}
-                resolveEventAttendanceState={resolveAllEventsAttendanceState}
-                onToggleEventAttendance={canManageAttendance ? handleAllEventsAttendanceToggle : undefined}
-                onAttachmentPress={(_material, event) => {
-                  if (event?.id) handleOpenEventDetails(event.id, event);
-                }}
-                canManageEvents={canManageAttendance}
-              />
-            </View>
-
           </View>
         ) : null}
 
@@ -2197,6 +2253,7 @@ export default function ProgressTab({
         onClose={() => setAttendanceModalSubjectId(null)}
         familyId={familyId}
         subjectId={attendanceModalSubjectId}
+        subjectName={attendanceModalSubjectName}
         events={subjectById.get(String(attendanceModalSubjectId || ''))?.detail?.events || []}
         getChildName={getChildName}
         onOpenEvent={() => {}}
@@ -2358,8 +2415,12 @@ const styles = StyleSheet.create({
   overviewSummaryValueCompact: { fontSize: 14, lineHeight: 20 },
   overviewSummaryMeta: { marginTop: 2, fontSize: 12, color: '#64748B', ...WEB_BODY_FONT },
   overviewSummaryMetaAccent: { color: '#DC2626', fontWeight: '600' },
-  summaryExpandPanel: {
+  summaryExpandPanelOuter: {
+    width: '100%',
+    overflow: 'hidden',
     marginTop: 10,
+  },
+  summaryExpandPanel: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 10,
@@ -2498,6 +2559,13 @@ const styles = StyleSheet.create({
   },
   progressInsightsPanelWrap: {
     marginTop: 0,
+  },
+  attendancePlannerListWrap: {
+    width: '100%',
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      overflowX: 'auto',
+    }),
   },
   subjectRowItem: {
     borderWidth: 1,

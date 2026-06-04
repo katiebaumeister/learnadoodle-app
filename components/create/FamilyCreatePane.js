@@ -7,45 +7,44 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { Activity, GraduationCap, Users, BookOpen } from 'lucide-react';
+import { Calendar, BookOpen, Smile, Paperclip } from 'lucide-react';
 import MessagesPaneCloseButton from '../messages/MessagesPaneCloseButton';
+
+/** Match AppModalShell hero icons on add modals (TaskCreateModal, AddSubjectModal, etc.) */
+const CREATE_ICON_STYLE = {
+  iconBg: '#F0F8FF',
+  iconBorder: 'rgba(158, 207, 251, 0.45)',
+  iconColor: '#9ECFFB',
+};
 
 const CREATE_OPTIONS = [
   {
     id: 'event',
     label: 'New event',
     description: 'Schedule a lesson, exam, or activity',
-    icon: Activity,
-    iconBg: 'rgba(99, 102, 241, 0.12)',
-    iconBorder: 'rgba(99, 102, 241, 0.35)',
-    iconColor: '#4F46E5',
+    icon: Calendar,
+    ...CREATE_ICON_STYLE,
   },
   {
     id: 'subject',
     label: 'New subject',
     description: 'Add a course for your school year',
-    icon: GraduationCap,
-    iconBg: 'rgba(16, 185, 129, 0.12)',
-    iconBorder: 'rgba(16, 185, 129, 0.35)',
-    iconColor: '#059669',
+    icon: BookOpen,
+    ...CREATE_ICON_STYLE,
   },
   {
     id: 'child',
     label: 'New child',
     description: 'Add a student to your family',
-    icon: Users,
-    iconBg: 'rgba(236, 72, 153, 0.12)',
-    iconBorder: 'rgba(236, 72, 153, 0.35)',
-    iconColor: '#DB2777',
+    icon: Smile,
+    ...CREATE_ICON_STYLE,
   },
   {
     id: 'material',
     label: 'New material',
     description: 'Add a book, link, or resource',
-    icon: BookOpen,
-    iconBg: 'rgba(245, 158, 11, 0.12)',
-    iconBorder: 'rgba(245, 158, 11, 0.35)',
-    iconColor: '#D97706',
+    icon: Paperclip,
+    ...CREATE_ICON_STYLE,
   },
 ];
 
@@ -104,7 +103,7 @@ export default function FamilyCreatePane({
                   borderColor: option.iconBorder,
                 },
               ]}>
-                <Icon size={20} color={disabled ? '#94A3B8' : option.iconColor} />
+                <Icon size={26} color={disabled ? '#94A3B8' : option.iconColor} />
               </View>
               <View style={styles.optionBody}>
                 <Text style={[styles.optionLabel, disabled && styles.optionLabelDisabled]}>

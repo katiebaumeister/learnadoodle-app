@@ -30,7 +30,7 @@ import {
   updateExclusion,
 } from '../lib/services/plannerSettingsClient';
 import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
-import WorkDetailsSection from './events/WorkDetailsSection';
+import WorkDetailsSection, { RequireFinalDeliverableField } from './events/WorkDetailsSection';
 import { ensureAssignmentsForEvent } from '../lib/workAssignmentClient';
 import {
   computeSuggestedStartDate,
@@ -5503,6 +5503,11 @@ export default function TaskCreateModal({
                   />
                 </View>
               </SafeFieldRow>
+              <RequireFinalDeliverableField
+                workSpec={workSpec}
+                eventType={eventType}
+                onChange={setWorkSpec}
+              />
                 </SafeView>
             </ModalSectionCard>
             ) : null}

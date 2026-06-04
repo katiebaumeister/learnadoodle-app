@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, Platform, Animated } from 'react-native';
 import { Check, BookOpen, Calculator, FlaskConical, Palette, Music, Dumbbell, Code, Globe, Pencil, Sparkles, AlertTriangle } from 'lucide-react';
 import CompletionRing from './CompletionRing';
 import { detectConflicts } from '../../lib/utils/conflictDetection';
-import ChildDotCluster from '../ui/ChildDotCluster';
+import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 
 export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [] }) {
@@ -747,10 +747,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
               </View>
               {/* Child participation dots - right after time */}
               {!hideChildDots && participatingChildIds.length > 0 && (
-                <ChildDotCluster
+                <ChildAvatarCluster
                   childIds={participatingChildIds}
                   familyChildren={children}
-                  dotSize={7}
+                  size={9}
                   overlap={-3}
                   style={{ marginLeft: 6, flexShrink: 0 }}
                 />
@@ -815,13 +815,14 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                   }}>{displayTime}</Text>
                 )}
               </View>
-              {/* Child participation dots - Right-aligned */}
+              {/* Child avatars — month/week planner chips */}
               {!hideChildDots && participatingChildIds.length > 0 && (
-                <ChildDotCluster
+                <ChildAvatarCluster
                   childIds={participatingChildIds}
                   familyChildren={children}
-                  dotSize={7}
-                  overlap={-3}
+                  size={14}
+                  overlap={-4}
+                  hideBackground
                   style={{ marginLeft: 'auto', flexShrink: 0 }}
                 />
               )}
@@ -1004,11 +1005,11 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
         </View>
         {/* Child participation dots - Cluster Glyph (month compact) */}
         {!hideChildDots && participatingChildIds.length > 0 && (
-          <ChildDotCluster
+          <ChildAvatarCluster
             childIds={participatingChildIds}
             familyChildren={children}
-            dotSize={6}
-            overlap={-2}
+            size={8}
+            overlap={-3}
             style={{ marginLeft: alignDotsNearTime ? 4 : 'auto', flexShrink: 0 }}
           />
         )}
@@ -1247,10 +1248,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
       </View>
       {/* Child participation dots - Cluster Glyph */}
       {!hideChildDots && participatingChildIds.length > 0 && (
-        <ChildDotCluster
+        <ChildAvatarCluster
           childIds={participatingChildIds}
           familyChildren={children}
-          dotSize={7}
+          size={9}
           overlap={-3}
           style={{ marginLeft: alignDotsNearTime ? 4 : 'auto', flexShrink: 0 }}
         />

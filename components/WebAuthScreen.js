@@ -41,7 +41,8 @@ export default function WebAuthScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [emailAuthLoading, setEmailAuthLoading] = useState(false);
+  const [googleAuthLoading, setGoogleAuthLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [existingEmailOfferReset, setExistingEmailOfferReset] = useState(false);
@@ -224,7 +225,7 @@ export default function WebAuthScreen() {
 
     if (isSignUp) {
       // If we already sent a confirmation to this email, show friendly message instead of calling signUp again.
-      setLoading(true);
+      setEmailAuthLoading(true);
       try {
         const base = getAPIBase();
         const checkRes = await fetch(`${base}/api/auth/signup-confirmation-sent?email=${encodeURIComponent(email.trim())}`);
@@ -233,14 +234,14 @@ export default function WebAuthScreen() {
           if (checkData.sent_at) {
             const formatted = formatConfirmationSentAt(checkData.sent_at);
             setSuccessMessage(formatted ? `Confirmation sent on ${formatted}. Please check your email!` : 'Confirmation already sent. Please check your email!');
-            setLoading(false);
+            setEmailAuthLoading(false);
             return;
           }
         }
       } catch (_) {
         // Ignore; proceed with signUp
       } finally {
-        setLoading(false);
+        setEmailAuthLoading(false);
       }
 
       // Email-only signup: we send a confirmation link; user sets password on /set-password after confirming.
@@ -271,7 +272,7 @@ export default function WebAuthScreen() {
         (typeof crypto !== 'undefined' && crypto.getRandomValues
           ? Array.from(crypto.getRandomValues(new Uint8Array(20))).map((b) => all[b % all.length]).join('')
           : Array.from({ length: 20 }, () => all[Math.floor(Math.random() * all.length)]).join(''));
-      setLoading(true);
+      setEmailAuthLoading(true);
       try {
         const { data, error } = await signUp(email.trim(), tempPassword, { emailRedirectTo: redirectTo });
         if (error) {
@@ -293,14 +294,14 @@ export default function WebAuthScreen() {
               errMsg
             );
           }
-          setLoading(false);
+          setEmailAuthLoading(false);
           return;
         }
         const existingAccount = data?.user && (!data.user.identities || data.user.identities.length === 0);
         if (existingAccount) {
           setErrorMessage('An account with this email already exists.');
           setExistingEmailOfferReset(true);
-          setLoading(false);
+          setEmailAuthLoading(false);
           return;
         }
         if (data?.user && !data?.session) {
@@ -329,12 +330,12 @@ export default function WebAuthScreen() {
               : (err?.message || 'An unexpected error occurred.')
         );
       } finally {
-        setLoading(false);
+        setEmailAuthLoading(false);
       }
       return;
     }
 
-    setLoading(true);
+    setEmailAuthLoading(true);
 
     try {
       const { data, error } = await signIn(email, password);
@@ -355,7 +356,7 @@ export default function WebAuthScreen() {
     } catch (error) {
       setErrorMessage('An unexpected error occurred: ' + error.message);
     } finally {
-      setLoading(false);
+      setEmailAuthLoading(false);
     }
   };
 
@@ -367,7 +368,7 @@ export default function WebAuthScreen() {
       return;
     }
 
-    setLoading(true);
+    setEmailAuthLoading(true);
 
     try {
       const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined;
@@ -383,13 +384,13 @@ export default function WebAuthScreen() {
     } catch (error) {
       setErrorMessage('An unexpected error occurred: ' + error.message);
     } finally {
-      setLoading(false);
+      setEmailAuthLoading(false);
     }
   };
 
   const handleGoogleAuth = async () => {
     clearMessages();
-    setLoading(true);
+    setGoogleAuthLoading(true);
     try {
       const { error } = await signInWithGoogle();
       if (error) {
@@ -398,13 +399,13 @@ export default function WebAuthScreen() {
     } catch (error) {
       setErrorMessage(error?.message || 'Failed to start Google sign in');
     } finally {
-      setLoading(false);
+      setGoogleAuthLoading(false);
     }
   };
 
   const handleSendResetForExistingEmail = async () => {
     if (!email) return;
-    setLoading(true);
+    setEmailAuthLoading(true);
     clearMessages();
     try {
       const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined;
@@ -419,7 +420,7 @@ export default function WebAuthScreen() {
     } catch (error) {
       setErrorMessage(error.message || 'Failed to send reset link.');
     } finally {
-      setLoading(false);
+      setEmailAuthLoading(false);
     }
   };
 
@@ -484,13 +485,13 @@ export default function WebAuthScreen() {
               </View>
 
               <TouchableOpacity
-                style={[styles.authButton, loading && styles.disabledButton]}
+                style={[styles.authButton, emailAuthLoading && styles.disabledButton]}
                 onPress={handleResetPassword}
-                disabled={loading}
-                {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
+                disabled={emailAuthLoading}
+                {...(Platform.OS === 'web' && { cursor: emailAuthLoading ? 'not-allowed' : 'pointer' })}
               >
                 <Text style={styles.authButtonText}>
-                  {loading ? 'Sending link…' : 'Send reset link'}
+                  {emailAuthLoading ? 'Sending link…' : 'Send reset link'}
                 </Text>
               </TouchableOpacity>
 
@@ -590,7 +591,7 @@ export default function WebAuthScreen() {
       setPassword('');
       setConfirmPassword('');
       setResendLoading(false);
-      setLoading(false);
+      setEmailAuthLoading(false);
       setShowWelcome(false);
       setIsSignUp(true);
       setIsResetPassword(false);
@@ -739,9 +740,9 @@ export default function WebAuthScreen() {
             <TouchableOpacity
               style={styles.resetLinkButton}
               onPress={handleSendResetForExistingEmail}
-              disabled={loading}
+              disabled={emailAuthLoading}
             >
-              <Text style={styles.resetLinkButtonText}>{loading ? 'Sending…' : 'Send password reset link'}</Text>
+              <Text style={styles.resetLinkButtonText}>{emailAuthLoading ? 'Sending…' : 'Send password reset link'}</Text>
             </TouchableOpacity>
           </View>
         ) : null}
@@ -801,13 +802,15 @@ export default function WebAuthScreen() {
         <TouchableOpacity
           style={[
             styles.authButton,
-            (loading || (isSignUp && !isSignUpFormValid)) && styles.disabledButton
+            (emailAuthLoading || (isSignUp && !isSignUpFormValid)) && styles.disabledButton
           ]}
           onPress={handleAuth}
-          disabled={loading || (isSignUp && !isSignUpFormValid)}
+          disabled={emailAuthLoading || googleAuthLoading || (isSignUp && !isSignUpFormValid)}
         >
           <Text style={styles.authButtonText}>
-            {loading ? 'Sending link…' : (isSignUp ? 'Send sign up link' : 'Sign In')}
+            {emailAuthLoading
+              ? (isSignUp ? 'Sending link…' : 'Logging in…')
+              : (isSignUp ? 'Send sign up link' : 'Sign In')}
           </Text>
         </TouchableOpacity>
 
@@ -819,9 +822,9 @@ export default function WebAuthScreen() {
               <View style={styles.dividerLine} />
             </View>
             <TouchableOpacity
-              style={[styles.googleButton, loading && styles.disabledButton]}
+              style={[styles.googleButton, googleAuthLoading && styles.disabledButton]}
               onPress={handleGoogleAuth}
-              disabled={loading}
+              disabled={googleAuthLoading}
             >
               <View style={styles.googleButtonContent}>
                 <Image source={googleLogo} style={styles.googleButtonIcon} resizeMode="contain" />
