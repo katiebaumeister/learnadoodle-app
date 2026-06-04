@@ -10,13 +10,15 @@ import {
 
 const TOOLBAR_IDS = ['logo', 'home', 'planner', 'family', 'library', 'subject', 'more'];
 const CONNECTED_ACCOUNT_LOGO_IDS = ['googleLogo', 'dropboxLogo', 'notionLogo', 'youtubeLogo', 'quizletLogo', 'canvasLogo'];
-const SHELL_IMAGE_IDS = ['icon', ...TOOLBAR_IDS, ...AVATAR_KEYS];
+const SHELL_IMAGE_IDS = ['icon', 'messages', 'create', ...TOOLBAR_IDS, ...AVATAR_KEYS];
 
 const SHELL_SOURCES = {
   icon: require('../assets/icon.png'),
   logo: LEARNADOODLE_LOGO_ASSET,
   home: SIDEBAR_ICON_ASSETS.home,
   planner: SIDEBAR_ICON_ASSETS.planner,
+  messages: SIDEBAR_ICON_ASSETS.messages,
+  create: SIDEBAR_ICON_ASSETS.create,
   family: SIDEBAR_ICON_ASSETS.family,
   library: SIDEBAR_ICON_ASSETS.library,
   subject: SIDEBAR_ICON_ASSETS.subjects,

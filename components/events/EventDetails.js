@@ -25,6 +25,7 @@ import { isChildHelpAssignment } from '../child/childHomeRailHelpers';
 import AddSubjectModal from '../AddSubjectModal';
 import { STRINGS } from '../../lib/i18n/strings';
 import { getAcademicYear } from '../../lib/services/academicYearClient';
+import { getFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
 import { dropPlanYearFullDataCacheEntry, dropPlanEditListTimesCacheEntry } from '../../lib/planEditListCache';
 import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
@@ -812,6 +813,49 @@ function fmt(d) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+const resolveSchoolYearLabelForDate = (date = new Date()) => {
+  const normalizedDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const month = normalizedDate.getMonth() + 1;
+  const startYear = month >= 8 ? normalizedDate.getFullYear() : normalizedDate.getFullYear() - 1;
+  return `${startYear}/${String(startYear + 1).slice(-2)}`;
+};
+
+const parseYmdDate = (value) => {
+  if (!value) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return new Date(`${year}-${month}-${day}T00:00:00`);
+  }
+  const ymd = String(value).slice(0, 10);
+  if (!ymd) return null;
+  const parsed = new Date(`${ymd}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const isDateWithin = (candidate, start, end) => {
+  if (!candidate || !start || !end) return false;
+  const c = candidate.getTime();
+  return c >= start.getTime() && c <= end.getTime();
+};
+
+const buildFallbackPlannerDefaultsForDate = (date = new Date()) => {
+  const label = resolveSchoolYearLabelForDate(date);
+  const match = label.match(/^(\d{4})\s*\/\s*(\d{2})$/);
+  if (!match) return null;
+  const startYear = Number(match[1]);
+  const endYear = startYear + 1;
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return null;
+  return {
+    default_year_end_date: `${endYear}-05-31`,
+    default_fall_term_start_date: `${startYear}-08-01`,
+    default_fall_term_end_date: `${startYear}-12-31`,
+    default_spring_term_start_date: `${endYear}-01-01`,
+    default_spring_term_end_date: `${endYear}-05-01`,
+  };
+};
+
 function normalizeByWeekday(value) {
   const raw = Array.isArray(value) ? value : value != null ? [value] : [];
   return Array.from(
@@ -1131,6 +1175,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [academicYears, setAcademicYears] = useState(() =>
     Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0 ? [...preloadedAcademicYears] : []
   );
+  const [plannerDefaults, setPlannerDefaults] = useState(() =>
+    buildFallbackPlannerDefaultsForDate(event?.start_ts ? new Date(event.start_ts) : new Date())
+  );
   const [instructionalMinutesOverride, setInstructionalMinutesOverride] = useState(() =>
     event?.instructional_minutes != null ? String(event.instructional_minutes) : ''
   );
@@ -1237,6 +1284,25 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [percentValidationError, setPercentValidationError] = useState(null);
   const [percentValidationData, setPercentValidationData] = useState(null);
   const [checkingPercent, setCheckingPercent] = useState(false);
+  const [validationErrors, setValidationErrors] = useState({});
+  const [validationBanner, setValidationBanner] = useState('');
+  const ignoreRecurrenceValidationRef = useRef(false);
+  const [conflictWarning, setConflictWarning] = useState(null);
+  const [shouldAutoAdjust, setShouldAutoAdjust] = useState(false);
+  const [shouldAllowOverlaps, setShouldAllowOverlaps] = useState(false);
+  const [chipConflictBannerDismissed, setChipConflictBannerDismissed] = useState(false);
+  const [chipConflictMessage, setChipConflictMessage] = useState(null);
+  const [chipConflictSuggestion, setChipConflictSuggestion] = useState(null);
+  const [chipConflictLoading, setChipConflictLoading] = useState(false);
+  const onEditingChangeRef = useRef(onEditingChange);
+  const lastHydratedEventSignatureRef = useRef(null);
+  const lastMaterialsLoadKeyRef = useRef('');
+  const lastSubjectsLoadKeyRef = useRef('');
+  const loggedInvalidAcademicYearIdsRef = useRef(new Set());
+  const editConflictEnterOp = useRef(new Animated.Value(0)).current;
+  const editConflictEnterY = useRef(new Animated.Value(5)).current;
+  const chipConflictEnterOp = useRef(new Animated.Value(0)).current;
+  const chipConflictEnterY = useRef(new Animated.Value(5)).current;
   const [loadingStandards, setLoadingStandards] = useState(false);
   const [standardsMastery, setStandardsMastery] = useState({}); // Map of standard_id -> mastery_level
 
@@ -1254,6 +1320,24 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setUnit('');
     setShowLessonDropdown(false);
   }, []);
+
+  useEffect(() => {
+    onEditingChangeRef.current = onEditingChange;
+  }, [onEditingChange]);
+
+  const logInvalidAcademicYearIdOnce = useCallback((source, rawAcademicYearId) => {
+    if (!__DEV__) return;
+    const value = String(rawAcademicYearId ?? '').trim();
+    if (!value) return;
+    const key = `${source}:${value}`;
+    if (loggedInvalidAcademicYearIdsRef.current.has(key)) return;
+    loggedInvalidAcademicYearIdsRef.current.add(key);
+    console.warn('[EventDetails] Skipping academic_years query for non-UUID academic_year_id:', {
+      source,
+      academic_year_id: rawAcademicYearId,
+      event_id: event?.id || null,
+    });
+  }, [event?.id]);
 
   useEffect(() => {
     if (!familyId) return;
@@ -1370,10 +1454,148 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     }
   }, [editing]);
 
+  useEffect(() => {
+    if (!familyId) return;
+    let cancelled = false;
+    const loadPlannerDefaults = async () => {
+      try {
+        const schoolYearLabel = resolveSchoolYearLabelForDate(dueDate instanceof Date ? dueDate : new Date());
+        const settingsRes = await getFamilyPlannerSettings(familyId, schoolYearLabel);
+        if (cancelled) return;
+        if (settingsRes?.error) {
+          console.warn('[EventDetails] Failed to load planner settings:', settingsRes.error);
+          return;
+        }
+        setPlannerDefaults(settingsRes?.data || buildFallbackPlannerDefaultsForDate(dueDate instanceof Date ? dueDate : new Date()));
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('[EventDetails] Failed to load planning preferences defaults:', err);
+        }
+      }
+    };
+    loadPlannerDefaults();
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId, dueDate]);
+
   const showPermissionViewOnlyPill =
     readOnly &&
     readOnlyReason === 'permissions' &&
     session?.role_flags?.isChild === true;
+
+  const headerAttendanceChip = useMemo(() => {
+    const normalizedStatus = normalizeStatus(draftStatus || event?.status);
+
+    if (normalizedStatus === 'done') {
+      return { label: 'ATTENDED', dotStyle: styles.headerStatusDotAttended };
+    }
+
+    let startDate = null;
+    const draftStart = combineDateTime(draftDate, draftStartTime);
+    if (draftStart && !Number.isNaN(draftStart.getTime())) {
+      startDate = draftStart;
+    } else {
+      const fallbackStart = event?.start_ts || event?.start || event?.start_local || null;
+      const parsedFallback = fallbackStart ? new Date(fallbackStart) : null;
+      if (parsedFallback && !Number.isNaN(parsedFallback.getTime())) {
+        startDate = parsedFallback;
+      }
+    }
+
+    if (startDate && startDate.getTime() > Date.now()) {
+      return { label: 'UPCOMING', dotStyle: styles.headerStatusDotUpcoming };
+    }
+
+    return { label: 'UNATTENDED', dotStyle: styles.headerStatusDotUnattended };
+  }, [draftStatus, event?.status, draftDate, draftStartTime, event?.start_ts, event?.start, event?.start_local]);
+
+  const currentHolidayType = useMemo(
+    () => String(event?.holiday_type || event?.holidayType || '').toUpperCase(),
+    [event?.holiday_type, event?.holidayType]
+  );
+
+  const isDaysOffOrBreakEvent = useMemo(() => {
+    const normalizedEventType = String(eventType || '').trim().toLowerCase();
+    return (
+      currentHolidayType === 'CUSTOM_HOLIDAY'
+      || currentHolidayType === 'CUSTOM_BREAK'
+      || normalizedEventType === 'day off'
+      || normalizedEventType === 'break'
+    );
+  }, [currentHolidayType, eventType]);
+
+  const shouldHideAttendanceChip = isDaysOffOrBreakEvent || currentHolidayType === 'GLOBAL_HOLIDAY';
+  const hideScheduleTimeControls = placement === 'calendar' && isDaysOffOrBreakEvent;
+  const hideLearningDetailsSection = isDaysOffOrBreakEvent;
+  const isClassDayEventType = useMemo(
+    () =>
+      normalizeEventTypeForDisplay(eventType) === 'Class Day'
+      || eventType === 'ClassDay'
+      || String(event?.event_type || '') === 'ClassDay',
+    [eventType, event?.event_type]
+  );
+  const useCompactRepeatGrid = useMemo(
+    () => (Platform.OS === 'web' ? viewportWidth < 1200 : viewportWidth < 900),
+    [viewportWidth]
+  );
+  const academicSectionTitle = 'Learning details';
+
+  const recurrenceSavedTermEnd = useMemo(() => {
+    const linkedYear = (academicYears || []).find((a) => String(a.id) === String(academicYearId));
+    if (linkedYear?.end_date) {
+      const parsed = parseYmdDate(linkedYear.end_date);
+      if (parsed) return parsed;
+    }
+    const defaults = plannerDefaults || buildFallbackPlannerDefaultsForDate(dueDate instanceof Date ? dueDate : new Date());
+    if (!defaults) return null;
+    if (!(dueDate instanceof Date) || Number.isNaN(dueDate.getTime())) {
+      return parseYmdDate(defaults.default_year_end_date);
+    }
+    const fallStart = parseYmdDate(defaults.default_fall_term_start_date);
+    const fallEnd = parseYmdDate(defaults.default_fall_term_end_date);
+    const springStart = parseYmdDate(defaults.default_spring_term_start_date);
+    const springEnd = parseYmdDate(defaults.default_spring_term_end_date);
+    const yearEnd = parseYmdDate(defaults.default_year_end_date);
+    if (isDateWithin(dueDate, fallStart, fallEnd)) return fallEnd;
+    if (isDateWithin(dueDate, springStart, springEnd)) return springEnd;
+    return yearEnd;
+  }, [academicYears, academicYearId, plannerDefaults, dueDate]);
+
+  const showBreakEndDateField = placement === 'calendar' && normalizeEventTypeForDisplay(eventType) === 'Break';
+
+  const buildValidationBannerMessage = useCallback((errors) => {
+    const messagesByKey = {
+      title: 'enter an event name',
+      eventType: 'select an event type',
+      date: 'choose a date',
+      assignee: 'select at least one assignee',
+      time: 'enter a start time',
+      endDate: 'set a valid end date',
+      recurrenceWeekdays: 'select at least one weekday',
+      recurrenceInterval: 'enter a recurrence interval',
+      recurrenceEnd: 'set a valid recurrence end',
+    };
+    const orderedKeys = [
+      'title',
+      'eventType',
+      'date',
+      'assignee',
+      'time',
+      'endDate',
+      'recurrenceWeekdays',
+      'recurrenceInterval',
+      'recurrenceEnd',
+    ];
+    const missing = orderedKeys
+      .filter((key) => Boolean(errors?.[key]))
+      .map((key) => messagesByKey[key])
+      .filter(Boolean);
+    if (missing.length === 0) return '';
+    if (missing.length === 1) return `Please ${missing[0]} before saving.`;
+    if (missing.length === 2) return `Please ${missing[0]} and ${missing[1]} before saving.`;
+    return `Please ${missing.slice(0, -1).join(', ')}, and ${missing[missing.length - 1]} before saving.`;
+  }, []);
 
   const computeFieldErrors = useCallback(() => {
     const errors = {};
@@ -6579,8 +6801,29 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       </ScrollView>
 
       <View style={styles.footerDivider} />
-      {/* Footer with Cancel, Delete Event (when editing), and Save */}
+      {/* Footer: Delete (left), Cancel + Save (right) */}
       <View style={styles.footerEditEvent}>
+        <View style={styles.footerEditEventLeft}>
+          {event?.id && !readOnly && (
+            <TouchableOpacity
+              {...(Platform.OS === 'web' && { type: 'button' })}
+              onPress={() => handleDelete()}
+              disabled={deleting}
+              style={[
+                styles.cancelButtonFilled,
+                styles.cancelButtonFilledWithIcon,
+                deleting && styles.cancelButtonFilledDisabled,
+              ]}
+              activeOpacity={0.9}
+              {...(Platform.OS === 'web' && { cursor: deleting ? 'not-allowed' : 'pointer' })}
+            >
+              <Trash2 size={17} color="#374151" />
+              <Text style={styles.cancelButtonFilledText}>
+                {deleting ? 'Deleting…' : 'Delete Event'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
         <View style={styles.footerEditEventRight}>
           <TouchableOpacity
             {...(Platform.OS === 'web' && { type: 'button' })}
@@ -6593,22 +6836,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           >
             <Text style={styles.cancelButtonFilledText}>Cancel</Text>
           </TouchableOpacity>
-          {event?.id && !readOnly && (
-            <TouchableOpacity
-              {...(Platform.OS === 'web' && { type: 'button' })}
-              onPress={() => handleDelete()}
-              disabled={deleting}
-              style={[
-                destructiveButtonStyles.button,
-                deleting && destructiveButtonStyles.buttonDisabled,
-              ]}
-            >
-              <Trash2 size={17} color={destructiveIconColor} />
-              <Text style={[destructiveButtonStyles.buttonText, deleting && destructiveButtonStyles.buttonTextDisabled]}>
-                {deleting ? 'Deleting…' : 'Delete Event'}
-              </Text>
-            </TouchableOpacity>
-          )}
           <TouchableOpacity
           onPress={() => {
             if (saving || readOnly) return;
@@ -9554,11 +9781,16 @@ const styles = StyleSheet.create({
   },
   footerEditEvent: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     alignItems: 'center',
     minHeight: 64,
     paddingHorizontal: 24,
     paddingVertical: 14,
+  },
+  footerEditEventLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
   },
   footerActionGroup: {
     flexDirection: 'row',
@@ -9589,6 +9821,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
+    }),
+  },
+  cancelButtonFilledWithIcon: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  cancelButtonFilledDisabled: {
+    opacity: 0.65,
+    ...(Platform.OS === 'web' && {
+      cursor: 'not-allowed',
     }),
   },
   cancelButtonFilledText: {

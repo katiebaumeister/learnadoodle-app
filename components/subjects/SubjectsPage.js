@@ -2473,43 +2473,6 @@ export default function SubjectsPage({
             </View>
           </View>
         )}
-        <View style={styles.headerActions}>
-          <View style={styles.searchContainer}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search subjects..."
-              placeholderTextColor="#9ca3af"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              onSubmitEditing={handleSearchSubmit}
-            />
-            {searchQuery.length > 0 ? (
-              <TouchableOpacity
-                onPress={() => setSearchQuery('')}
-                style={styles.clearButton}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <X size={18} color={colors.muted} />
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.searchIconContainer}>
-                <Search size={18} color={colors.muted} />
-              </View>
-            )}
-          </View>
-          {canManageAttendanceActions && (
-            <TouchableOpacity
-              style={styles.newButton}
-              onPress={openAddEventWithCurrentHeaders}
-              activeOpacity={0.8}
-              {...(Platform.OS === 'web' && {
-                cursor: 'pointer',
-              })}
-            >
-              <Text style={styles.newButtonText}>+ NEW</Text>
-            </TouchableOpacity>
-          )}
-        </View>
       </View>
       <View style={styles.divider} />
       {renderPlanningPreferencesModal()}

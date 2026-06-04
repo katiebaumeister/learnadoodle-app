@@ -70,6 +70,7 @@ import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PRE
 import AppLoader, { ensureWebShellImagesLoaded } from './AppLoader';
 import RebalanceModal from './year/RebalanceModal';
 import FamilyMessagesPane from './messages/FamilyMessagesPane';
+import FamilyCreatePane from './create/FamilyCreatePane';
 import { preloadProviderConnectionLogos } from '../lib/preloadConnectedAccountAssets';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 import { cleanPlannerEventId } from '../lib/utils/recurringEventUtils';
@@ -214,6 +215,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [activeSubtab, setActiveSubtab] = useState(null);
   const [activeTopNav, setActiveTopNav] = useState('home');
   const [isMessagesPaneOpen, setIsMessagesPaneOpen] = useState(false);
+  const [isCreatePaneOpen, setIsCreatePaneOpen] = useState(false);
   const [activeChildId, setActiveChildId] = useState(null);
   const [activeChildSection, setActiveChildSection] = useState('affirmation');
   const [showSyllabusUpload, setShowSyllabusUpload] = useState(false);
@@ -2415,6 +2417,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       if (isPageReload()) {
         window.history.replaceState({}, '', '/');
         setIsMessagesPaneOpen(false);
+        setIsCreatePaneOpen(false);
         setActiveTab('home');
         setActiveTopNav((prev) => (prev === 'family' ? prev : 'home'));
         return;
@@ -2514,13 +2517,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, [activeTab, activeSubtab]);
 
-  useEffect(() => {
+  const syncTopNavFromActiveTab = useCallback(() => {
     if (activeTab === 'home') {
       setActiveTopNav((prev) => (prev === 'family' ? prev : 'home'));
     } else if (activeTab === 'explore') {
       setActiveTopNav('explore');
-    } else if ((activeTab === 'calendar' || activeTab === 'planner') && activeTopNav !== 'family') {
-      setActiveTopNav('planner');
+    } else if (activeTab === 'calendar' || activeTab === 'planner') {
+      setActiveTopNav((prev) => (prev === 'family' ? prev : 'planner'));
     } else if (activeTab === 'materials') {
       setActiveTopNav('materials');
     } else if (activeTab === 'subjects' || (activeTab && activeTab.startsWith('subject-'))) {
@@ -2536,7 +2539,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } else if ((activeTab === 'children-list' || (activeTab && activeTab.startsWith('child-'))) && activeChildId) {
       setActiveTopNav('family');
     }
-  }, [activeTab, activeChildId, activeTopNav]);
+  }, [activeTab, activeChildId]);
+
+  useEffect(() => {
+    if (isMessagesPaneOpen || isCreatePaneOpen) return;
+    syncTopNavFromActiveTab();
+  }, [activeTab, activeChildId, isMessagesPaneOpen, isCreatePaneOpen, syncTopNavFromActiveTab]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -3268,8 +3276,78 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   // Handler for Settings chip
 
+  const handleCreatePaneSelect = useCallback(
+    (optionId) => {
+      setIsCreatePaneOpen(false);
+      syncTopNavFromActiveTab();
+      switch (optionId) {
+        case 'event':
+          if (sessionRestricted && !familyUserControls.allowed('events')) {
+            Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
+            return;
+          }
+          setTaskModalDate(new Date());
+          setShowTaskModal(true);
+          break;
+        case 'subject':
+          if (sessionRestricted && !familyUserControls.allowed('subjects')) {
+            Alert.alert('Not available', 'Your family admin has disabled adding or editing subjects.');
+            return;
+          }
+          setEditingSubject(null);
+          setShowAddSubjectModal(true);
+          break;
+        case 'child':
+          if (resolvedShellUserRole === 'child' || resolvedShellUserRole === 'student' || resolvedShellUserRole === 'tutor') {
+            Alert.alert('Not available', 'Only family admins can add children.');
+            return;
+          }
+          setShowAddChildModal(true);
+          break;
+        case 'material':
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('openAddMaterialModal'));
+          }
+          break;
+        default:
+          break;
+      }
+    },
+    [
+      familyUserControls,
+      resolvedShellUserRole,
+      sessionRestricted,
+      syncTopNavFromActiveTab,
+    ]
+  );
+
   const handleTopSelect = useCallback(
     (key) => {
+      if (key === 'messages') {
+        if (isMessagesPaneOpen) {
+          setIsMessagesPaneOpen(false);
+          syncTopNavFromActiveTab();
+        } else {
+          setIsCreatePaneOpen(false);
+          setIsMessagesPaneOpen(true);
+          setActiveTopNav('messages');
+        }
+        return;
+      }
+      if (key === 'create') {
+        if (isCreatePaneOpen) {
+          setIsCreatePaneOpen(false);
+          syncTopNavFromActiveTab();
+        } else {
+          setIsMessagesPaneOpen(false);
+          setIsCreatePaneOpen(true);
+          setActiveTopNav('create');
+        }
+        return;
+      }
+
+      setIsMessagesPaneOpen(false);
+      setIsCreatePaneOpen(false);
       setActiveTopNav(key);
       switch (key) {
         case 'home':
@@ -3289,9 +3367,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             window.history.pushState({}, '', url.toString());
           }
           handleTabChange('planner');
-          break;
-        case 'messages':
-          setIsMessagesPaneOpen((prev) => !prev);
           break;
         case 'new':
           handleTabChange('settings', 'profile');
@@ -3342,7 +3417,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           handleTabChange('home');
       }
     },
-    [handleTabChange]
+    [handleTabChange, isCreatePaneOpen, isMessagesPaneOpen, syncTopNavFromActiveTab]
   );
 
   const mergeExplorerTourInProfile = useCallback((patch) => {
@@ -3678,9 +3753,27 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           disabled={onboardingBlocked}
           flushToEdge={activeTab === 'planner' || activeTab === 'calendar'}
           leftPane={{
-            visible: isMessagesPaneOpen,
+            visible: isMessagesPaneOpen || isCreatePaneOpen,
             width: 340,
-            content: (
+            content: isCreatePaneOpen ? (
+              <FamilyCreatePane
+                placement="left"
+                onClosePane={() => {
+                  setIsCreatePaneOpen(false);
+                  syncTopNavFromActiveTab();
+                }}
+                onSelectOption={handleCreatePaneSelect}
+                disabledOptions={{
+                  event: denyFamilyEventEdit,
+                  subject: sessionRestricted && !familyUserControls.allowed('subjects'),
+                  child:
+                    resolvedShellUserRole === 'child'
+                    || resolvedShellUserRole === 'student'
+                    || resolvedShellUserRole === 'tutor',
+                  material: familyUserControls.effectivePermissions?.canViewLibrary === false,
+                }}
+              />
+            ) : (
               <FamilyMessagesPane
                 familyId={familyId}
                 viewerRole={resolvedShellUserRole || 'parent'}
@@ -3690,13 +3783,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 active={isMessagesPaneOpen}
                 placement="left"
                 childInviteSummaries={family?.child_invite_summaries ?? null}
-                onClosePane={() => setIsMessagesPaneOpen(false)}
+                onClosePane={() => {
+                  setIsMessagesPaneOpen(false);
+                  syncTopNavFromActiveTab();
+                }}
               />
             ),
           }}
           sidebar={{
             topActive: activeTopNav,
             messagesPaneOpen: isMessagesPaneOpen,
+            createPaneOpen: isCreatePaneOpen,
             onSelectTop: handleTopSelect,
             childrenList: children,
             activeChildId: activeChildId,

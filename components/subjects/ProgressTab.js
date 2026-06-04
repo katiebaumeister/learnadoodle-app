@@ -9,7 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { ChevronLeft, ChevronRight, Download, Edit2, Plus, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Edit2, Plus, X } from 'lucide-react';
 import { SubjectAttendanceMonthDrilldown } from './SubjectSectionDrilldownPanels';
 import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
@@ -1728,42 +1728,6 @@ export default function ProgressTab({
     if (!Number.isFinite(magnitude) || magnitude === 0) return null;
     return Number(deltaDays) < 0 ? `+${magnitude} days` : `-${magnitude} days`;
   }, [allEventsProgressSummary]);
-  const learningLogEntries = useMemo(() => {
-    const activeSet = new Set(resolvedActiveSubjectIds.map(String));
-    const seen = new Set();
-    const entries = [];
-    const pushRow = (row, subjectName) => {
-      if (!row) return;
-      const id = String(row?.id || '').trim();
-      const dedupeKey = id || `${row?.child_id}|${row?.title}|${row?.updated_at}`;
-      if (seen.has(dedupeKey)) return;
-      if (!recordMatchesChildIds(row, resolvedActiveChildIds)) return;
-      const status = String(row?.status || '').trim().toLowerCase();
-      if (status !== 'submitted' && status !== 'reviewed' && status !== 'accepted') return;
-      seen.add(dedupeKey);
-      const childId = String(row?.child_id || '').trim();
-      const child = (children || []).find((c) => String(c?.id) === childId);
-      entries.push({
-        id: dedupeKey,
-        title: String(row?.title || 'Assignment').trim() || 'Assignment',
-        childName: getChildLabel(child) || 'Student',
-        status,
-        date: row?.submitted_at || row?.updated_at || null,
-        assignment: row,
-        subjectName: subjectName || 'Subject',
-      });
-    };
-    subjectDetails.forEach(({ subject, detail }) => {
-      const subjectId = String(subject?.id || '').trim();
-      if (!subjectId || !activeSet.has(subjectId)) return;
-      const subjectName = subject?.name || 'Subject';
-      const assignments = Array.isArray(detail?.subjectAssignments) && detail.subjectAssignments.length
-        ? detail.subjectAssignments
-        : Object.values(detail?.assignmentsByEventId || {}).flat();
-      assignments.forEach((row) => pushRow(row, subjectName));
-    });
-    return entries.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
-  }, [subjectDetails, resolvedActiveSubjectIds, resolvedActiveChildIds, children]);
   const toggleSummaryPanel = useCallback((panel) => {
     setExpandedSummaryPanel((prev) => (prev === panel ? null : panel));
   }, []);
@@ -1944,52 +1908,24 @@ export default function ProgressTab({
           <View style={styles.summaryExpandPanelHeader}>
             <Text style={styles.summaryExpandPanelTitle}>Learning Log</Text>
           </View>
-          {learningLogEntries.length > 0 ? (
-            <View style={styles.learningLogList}>
-              {learningLogEntries.map((entry) => (
-                <TouchableOpacity
-                  key={entry.id}
-                  style={styles.learningLogItem}
-                  onPress={() => {
-                    let rawIds = entry.assignment?.linked_event_ids;
-                    if (typeof rawIds === 'string') {
-                      try {
-                        rawIds = JSON.parse(rawIds);
-                      } catch {
-                        rawIds = null;
-                      }
-                    }
-                    const eventId = Array.isArray(rawIds) && rawIds[0] != null
-                      ? String(rawIds[0]).trim()
-                      : '';
-                    if (!eventId) return;
-                    let match = null;
-                    subjectDetails.forEach(({ detail }) => {
-                      if (match) return;
-                      match = (detail?.events || []).find((ev) => String(ev?.id) === eventId) || null;
-                    });
-                    if (match) handleOpenEventDetails(eventId, match);
-                  }}
-                  activeOpacity={0.75}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.learningLogItemMain}>
-                    <Text style={styles.learningLogItemTitle} numberOfLines={1}>{entry.title}</Text>
-                    <Text style={styles.learningLogItemMeta} numberOfLines={1}>
-                      {`${entry.childName} · ${entry.subjectName}${entry.date ? ` · ${formatDate(entry.date)}` : ''}`}
-                    </Text>
-                  </View>
-                  <Text style={styles.learningLogItemStatus}>
-                    {entry.status === 'submitted' ? 'Submitted' : entry.status === 'reviewed' ? 'Reviewed' : 'Accepted'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : (
-            <Text style={styles.emptyStateText}>
-              Submitted artifacts appear when students turn in assignment work.
-            </Text>
-          )}
+          <SubjectAllEventsSection
+            events={allEventsAggregate.events}
+            eventOutcomes={allEventsAggregate.eventOutcomes}
+            materials={allEventsAggregate.materials}
+            eventAttachmentMaterials={allEventsAggregate.eventAttachmentMaterials}
+            children={children}
+            assignmentsByEventId={allEventsAggregate.assignmentsByEventId}
+            reviewCenterMode
+            onAssignmentPress={handleReviewCenterAssignmentPress}
+            onEventPress={(event) => handleOpenEventDetails(event?.id, event)}
+            onEventRightClick={handleEventContextMenu}
+            resolveEventAttendanceState={resolveAllEventsAttendanceState}
+            onToggleEventAttendance={canManageAttendance ? handleAllEventsAttendanceToggle : undefined}
+            onAttachmentPress={(_material, event) => {
+              if (event?.id) handleOpenEventDetails(event.id, event);
+            }}
+            canManageEvents={canManageAttendance}
+          />
         </View>
       );
     }
@@ -2216,19 +2152,7 @@ export default function ProgressTab({
             <View style={styles.allEventsSectionHeader}>
               <View style={styles.allEventsTitleRow}>
                 <View style={styles.allEventsTitleLeft}>
-                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Work review</Text>
-                  {typeof onOpenExportModal === 'function' ? (
-                    <TouchableOpacity
-                      style={styles.allEventsExportButton}
-                      onPress={onOpenExportModal}
-                      activeOpacity={0.8}
-                      accessibilityRole="button"
-                      accessibilityLabel="Export subjects data"
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Download size={18} color="rgba(15,23,42,0.7)" />
-                    </TouchableOpacity>
-                  ) : null}
+                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>All Events</Text>
                 </View>
               </View>
             </View>
@@ -2240,8 +2164,6 @@ export default function ProgressTab({
                 eventAttachmentMaterials={allEventsAggregate.eventAttachmentMaterials}
                 children={children}
                 assignmentsByEventId={allEventsAggregate.assignmentsByEventId}
-                reviewCenterMode
-                onAssignmentPress={handleReviewCenterAssignmentPress}
                 onEventPress={(event) => handleOpenEventDetails(event?.id, event)}
                 onEventRightClick={handleEventContextMenu}
                 resolveEventAttendanceState={resolveAllEventsAttendanceState}
@@ -2252,6 +2174,7 @@ export default function ProgressTab({
                 canManageEvents={canManageAttendance}
               />
             </View>
+
           </View>
         ) : null}
 
@@ -2421,14 +2344,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 11,
     paddingVertical: 10,
     ...(Platform.OS === 'web' && { cursor: 'pointer', transition: 'border-color 0.15s ease, background-color 0.15s ease' }),
   },
   overviewSummaryBoxActive: {
     borderColor: '#6BB3E8',
-    backgroundColor: '#F0F9FF',
+    backgroundColor: '#FFFFFF',
   },
   overviewSummaryLabel: { fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', ...WEB_HEADING_FONT },
   overviewSummaryValue: { marginTop: 4, fontSize: 19, fontWeight: '700', color: '#0F172A', ...WEB_HEADING_FONT },

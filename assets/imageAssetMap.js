@@ -34,6 +34,7 @@ export const SIDEBAR_ICON_ASSETS = Object.freeze({
   home: require('./home.png'),
   planner: require('./planner.png'),
   messages: require('./messages.png'),
+  create: require('./create.png'),
   family: require('./family.png'),
   library: require('./library.png'),
   subjects: require('./subject.png'),

@@ -42,6 +42,7 @@ const CHILD_SECTIONS = [
 export default function LeftRail({
   topActive,
   messagesPaneOpen = false,
+  createPaneOpen = false,
   onSelectTop,
   childrenList = [],
   activeChildId,
@@ -130,9 +131,10 @@ export default function LeftRail({
     () => {
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
-        { key: 'messages', label: 'Messages', icon: MessageSquare },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
         { key: 'subjects', label: 'Learning', icon: Brain },
+        { key: 'create', label: 'Create', icon: Plus },
+        { key: 'messages', label: 'Messages', icon: MessageSquare },
         { key: 'materials', label: 'Materials', icon: BookOpen },
         { key: 'profile', label: 'Settings', icon: UserCircle },
         // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
@@ -244,7 +246,12 @@ export default function LeftRail({
           {topNavItems.map((item) => {
             const Icon = item.icon;
             const isMessages = item.key === 'messages';
-            const active = topActive === item.key || (isMessages && messagesPaneOpen);
+            const isCreate = item.key === 'create';
+            const active = messagesPaneOpen
+              ? isMessages
+              : createPaneOpen
+                ? isCreate
+                : topActive === item.key;
             const isHovered = hoveredItem === item.key && !active;
             const isHome = item.key === 'home';
             const isPlanner = item.key === 'planner';
@@ -319,6 +326,14 @@ export default function LeftRail({
                         imageKey: 'messages',
                         source: SIDEBAR_ICON_SOURCES.messages,
                         imageStyle: styles.messagesIcon,
+                      })}
+                    </View>
+                  ) : isCreate ? (
+                    <View style={styles.plannerIconContainer}>
+                      {renderStableSidebarImage({
+                        imageKey: 'create',
+                        source: SIDEBAR_ICON_SOURCES.create,
+                        imageStyle: styles.createIcon,
                       })}
                     </View>
                   ) : isNew ? (
@@ -705,6 +720,10 @@ const styles = StyleSheet.create({
     height: 46,
   },
   messagesIcon: {
+    width: 58,
+    height: 58,
+  },
+  createIcon: {
     width: 58,
     height: 58,
   },

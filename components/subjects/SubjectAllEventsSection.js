@@ -10,6 +10,7 @@ import {
   getPlannerEventTypeColors,
 } from '../planner/plannerListTableUtils';
 import {
+  getAllEventsSubmissionLabel,
   getGradeColumnLabel,
   getSubmissionColumnLabel,
   getWorkStatusLabel,
@@ -139,6 +140,7 @@ function TableHeader({ reviewCenterMode = false }) {
       <Text style={[styles.tableHeaderCell, styles.colLeadingSpacer]}>Attendance</Text>
       <Text style={[styles.tableHeaderCell, styles.colDetails]}>Event Details</Text>
       <Text style={[styles.tableHeaderCell, styles.colUnits]}>Units</Text>
+      <Text style={[styles.tableHeaderCell, styles.colSubmission]}>Submission</Text>
       <Text style={[styles.tableHeaderCell, styles.colGrade]}>Grade</Text>
       <Text style={[styles.tableHeaderCell, styles.colAttachments]}>Attachments</Text>
     </View>
@@ -216,7 +218,7 @@ export default function SubjectAllEventsSection({
     const assignment = primaryAssignmentForEvent(assignmentsByEventId, eventId);
     const workSpec = event?.work_spec || {};
     const statusLabel = getWorkStatusLabel(assignment);
-    const submissionLabel = getSubmissionColumnLabel(assignment);
+    const submissionLabel = getSubmissionColumnLabel(assignment, event);
     const gradeLabel = getGradeColumnLabel(assignment, workSpec);
     const typeLabel = formatEventTypeLabel(event);
     const { chipBg, chipText } = getPlannerEventTypeColors(event);
@@ -333,6 +335,8 @@ export default function SubjectAllEventsSection({
       : '';
     const { chipBg, chipText } = getPlannerEventTypeColors(event);
     const eventId = String(event?.id || '');
+    const assignment = primaryAssignmentForEvent(assignmentsByEventId, eventId, eventChildIds);
+    const submissionLabel = getAllEventsSubmissionLabel(event, assignment);
     const handleRowContextMenu = (nativeEvent) => {
       if (Platform.OS !== 'web' || typeof window === 'undefined' || !onEventRightClick) return;
       nativeEvent?.preventDefault?.();
@@ -436,6 +440,16 @@ export default function SubjectAllEventsSection({
           )}
         </View>
 
+        <View style={[styles.tableCell, styles.colSubmission]}>
+          {submissionLabel ? (
+            <Text style={[styles.cellText, styles.submissionText]} numberOfLines={1} ellipsizeMode="tail">
+              {submissionLabel}
+            </Text>
+          ) : (
+            <Text style={styles.emptyCellText}>—</Text>
+          )}
+        </View>
+
         <View style={[styles.tableCell, styles.colGrade]}>
           {gradeLabel ? (
             <Text style={[styles.cellText, styles.gradeText, isDone && styles.mutedText]} numberOfLines={1} ellipsizeMode="tail">
@@ -452,6 +466,7 @@ export default function SubjectAllEventsSection({
       </View>
     );
   }, [
+    assignmentsByEventId,
     canManageEvents,
     children,
     gradeByEventId,
@@ -528,7 +543,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingBottom: 8,
-    minWidth: 872,
+    minWidth: 1060,
   },
   tableHeaderCell: {
     fontSize: 11,
@@ -547,13 +562,13 @@ const styles = StyleSheet.create({
   },
   eventList: {
     gap: ALL_EVENTS_ROW_GAP,
-    minWidth: 872,
+    minWidth: 1060,
   },
   eventCardRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    minWidth: 980,
+    minWidth: 1060,
     minHeight: ALL_EVENTS_ROW_HEIGHT,
     paddingVertical: 12,
     paddingHorizontal: 12,
@@ -607,6 +622,10 @@ const styles = StyleSheet.create({
   },
   colUnits: {
     flex: 1.2,
+    minWidth: 0,
+  },
+  colSubmission: {
+    flex: 0.9,
     minWidth: 0,
   },
   colGrade: {
@@ -734,6 +753,10 @@ const styles = StyleSheet.create({
   gradeText: {
     fontWeight: '600',
     color: '#374151',
+  },
+  submissionText: {
+    fontWeight: '500',
+    color: '#475569',
   },
   emptyCellText: {
     fontSize: 13,
