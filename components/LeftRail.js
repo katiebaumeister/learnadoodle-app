@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
-import { Plus, Home, CalendarDays, Compass, FileText, BookOpen, Brain, UserCircle, Settings, MessageSquare, Users } from 'lucide-react';
+import { Plus, Home, CalendarDays, Compass, FileText, BookOpen, UserCircle, Settings, MessageSquare, Users } from 'lucide-react';
 import Dropdown, { DropdownItem } from './ui/Dropdown';
 import StableImage from './ui/StableImage';
 import { safeImageUri } from '../lib/safeImageUri';
@@ -132,7 +132,7 @@ export default function LeftRail({
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
-        { key: 'subjects', label: 'Learning', icon: Brain },
+        { key: 'subjects', label: 'Learning', icon: null },
         { key: 'create', label: 'Create', icon: Plus },
         { key: 'messages', label: 'Messages', icon: MessageSquare },
         { key: 'materials', label: 'Materials', icon: BookOpen },
@@ -353,11 +353,11 @@ export default function LeftRail({
                       })}
                     </View>
                   ) : isSubjects ? (
-                    <View style={styles.subjectsIconContainer}>
+                    <View style={styles.libraryIconContainer}>
                       {renderStableSidebarImage({
-                        imageKey: 'subjects',
-                        source: SIDEBAR_ICON_SOURCES.subjects,
-                        imageStyle: styles.subjectsIcon,
+                        imageKey: 'library',
+                        source: SIDEBAR_ICON_SOURCES.library,
+                        imageStyle: styles.libraryIcon,
                       })}
                     </View>
                   ) : isFamily ? (

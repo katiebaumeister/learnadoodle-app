@@ -78,6 +78,84 @@ export default function ChildAvatarCluster({
   const visible = ids.slice(0, 3);
   const overflow = ids.length - visible.length;
   const hasOverflow = overflow > 0;
+  const childFor = (childId) =>
+    familyChildren.find((c) => c != null && String(c.id) === String(childId));
+
+  // Bare prof art on chips/list rows: no fill, ring, or heavy overlap.
+  if (hideBackground) {
+    const maxOverlap = Math.round(-size * 0.55);
+    const chipOverlap =
+      overlap < 0 ? Math.max(overlap, maxOverlap) : maxOverlap;
+
+    return (
+      <View
+        style={[
+          {
+            flexDirection: 'row',
+            alignItems: 'center',
+          },
+          style,
+        ]}
+      >
+        {visible.map((childId, index) => (
+          <View
+            key={String(childId)}
+            style={{
+              width: size,
+              height: size,
+              marginLeft: index > 0 ? chipOverlap : 0,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: 'transparent',
+              zIndex: visible.length - index + (hasOverflow ? 1 : 0),
+              ...(Platform.OS === 'web' && {
+                position: 'relative',
+              }),
+            }}
+          >
+            <Image
+              source={sourceForChild(childFor(childId))}
+              style={{
+                width: size,
+                height: size,
+                ...(Platform.OS === 'web' && { objectFit: 'contain' }),
+              }}
+              resizeMode="contain"
+            />
+          </View>
+        ))}
+        {hasOverflow && size >= 14 ? (
+          <View
+            style={{
+              width: size,
+              height: size,
+              marginLeft: visible.length > 0 ? chipOverlap : 0,
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 0,
+              ...(Platform.OS === 'web' && {
+                position: 'relative',
+              }),
+            }}
+          >
+            <Text
+              style={{
+                fontSize: size > 20 ? 11 : 9,
+                fontWeight: '600',
+                color: '#64748b',
+                ...(Platform.OS === 'web' && {
+                  fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                }),
+              }}
+            >
+              +{overflow}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    );
+  }
+
   const stacked = visible.length > 1 || hasOverflow;
   const ring = stacked
     ? size <= 10
@@ -89,18 +167,8 @@ export default function ChildAvatarCluster({
         : StyleSheet.hairlineWidth * 2
     : 0;
   const radius = size / 2;
-  const imageScale = hideBackground
-    ? size <= 10
-      ? 1.2
-      : 1.15
-    : size <= 10
-      ? 1.2
-      : 1;
+  const imageScale = size <= 10 ? 1.2 : 1;
   const showOverflowCount = size >= 14;
-  const avatarBackground = hideBackground ? 'transparent' : '#f1f5f9';
-
-  const childFor = (childId) =>
-    familyChildren.find((c) => c != null && String(c.id) === String(childId));
 
   return (
     <View style={[{ flexDirection: 'row', alignItems: 'center' }, style]}>
@@ -115,8 +183,10 @@ export default function ChildAvatarCluster({
             borderColor: '#FFFFFF',
             marginLeft: index > 0 ? overlap : 0,
             zIndex: visible.length - index + (hasOverflow ? 1 : 0),
-            backgroundColor: avatarBackground,
+            backgroundColor: '#f1f5f9',
             overflow: 'hidden',
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
         >
           <Image

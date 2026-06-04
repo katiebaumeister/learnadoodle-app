@@ -31,7 +31,7 @@ import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curric
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
-import WorkDetailsSection, { RequireFinalDeliverableField } from './WorkDetailsSection';
+import WorkDetailsSection, { GradedField, RequireFinalDeliverableField } from './WorkDetailsSection';
 import { ensureAssignmentsForEvent } from '../../lib/workAssignmentClient';
 import {
   computeSuggestedStartDate,
@@ -4154,8 +4154,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       // - Explicit start time => fixed-time row
       if (!(allDay || draftAllDay)) {
         updates.is_flexible = !hasExplicitStartTime;
+        updates.all_day = false;
       } else {
         updates.is_flexible = false;
+        updates.all_day = true;
       }
 
       const cmSave = parseCurriculumMetadata(event);
@@ -6525,13 +6527,21 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 style={[styles.input, styles.academicInputCompact]}
               />
             </View>
+            <GradedField
+              workSpec={workSpec}
+              eventType={eventType}
+              onChange={setWorkSpec}
+              readOnly={readOnly}
+              inLearningSection
+            />
+            <RequireFinalDeliverableField
+              workSpec={workSpec}
+              eventType={eventType}
+              onChange={setWorkSpec}
+              readOnly={readOnly}
+              inLearningSection
+            />
           </SafeFieldRow>
-          <RequireFinalDeliverableField
-            workSpec={workSpec}
-            eventType={eventType}
-            onChange={setWorkSpec}
-            readOnly={readOnly}
-          />
         </ModalSectionCard>
         )}
 

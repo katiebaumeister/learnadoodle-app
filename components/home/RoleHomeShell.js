@@ -34,7 +34,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     width: '100%',
-    /* Match main app surface so gutters / column gap aren’t blue-gray */
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
       maxWidth: '100%',
@@ -64,7 +63,8 @@ const styles = StyleSheet.create({
   },
   leftSection: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    gap: 12,
     ...(Platform.OS === 'web' && {
       flex: 2.55,
       minWidth: 0,
@@ -73,11 +73,6 @@ const styles = StyleSheet.create({
       display: 'flex',
       flexDirection: 'column',
       alignSelf: 'stretch',
-      borderRadius: 14,
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: 'rgba(15, 23, 42, 0.08)',
-      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.05)',
     }),
   },
   leftSectionFullWidth: {

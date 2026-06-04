@@ -10,6 +10,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { ChevronLeft, ChevronRight, Edit2, Plus, X } from 'lucide-react';
 import PlannerEventsListTable from '../planner/PlannerEventsListTable';
@@ -1701,6 +1702,8 @@ export default function ProgressTab({
     : sectionsMode === 'full' && subjectProgressRows.length > 0;
   /** Summary cards + expand panels (Subjects page). Standalone All Events table archived below. */
   const showAllEventsSection = sectionsMode === 'allEventsOnly' && hasAggregateSubjectScope;
+  const useLearningFillLayout = embeddedInScrollView && sectionsMode === 'allEventsOnly' && Platform.OS === 'web';
+  const { height: windowHeight } = useWindowDimensions();
   const detailLoadAttemptedRef = useRef(new Set());
   useEffect(() => {
     if (!showAllEventsSection || typeof onRefreshSubjectDetail !== 'function') return;
@@ -1863,7 +1866,8 @@ export default function ProgressTab({
         listRefreshEpoch={plannerListRefreshEpoch}
         scrollToTodayEpoch={attendanceScrollEpoch}
         embedded
-        maxListHeight={480}
+        fillViewport={useLearningFillLayout}
+        maxListHeight={useLearningFillLayout ? undefined : 480}
         plannerShellVisible={displayedSummaryPanel === 'attendance'}
       />
     </View>
@@ -1922,10 +1926,15 @@ export default function ProgressTab({
     </Text>
   );
 
-  const renderSummaryPanelContent = (panelKey) => {
+  const renderSummaryPanelContent = (panelKey, options = {}) => {
+    const fillLayout = options.fillLayout === true;
+    const panelStyle = [
+      styles.summaryExpandPanel,
+      fillLayout && styles.summaryExpandPanelFill,
+    ];
     if (panelKey === 'attendance') {
       return (
-        <View style={styles.summaryExpandPanel}>
+        <View style={panelStyle}>
           <View style={styles.summaryExpandPanelHeader}>
             <Text style={styles.summaryExpandPanelTitle}>Attendance</Text>
             {canManageAttendance ? (
@@ -1940,13 +1949,15 @@ export default function ProgressTab({
               </TouchableOpacity>
             ) : null}
           </View>
-          {attendancePanelInner}
+          <View style={fillLayout ? styles.summaryExpandPanelBody : undefined}>
+            {attendancePanelInner}
+          </View>
         </View>
       );
     }
     if (panelKey === 'grades') {
       return (
-        <View style={styles.summaryExpandPanel}>
+        <View style={panelStyle}>
           <View style={styles.summaryExpandPanelHeader}>
             <Text style={styles.summaryExpandPanelTitle}>Grades</Text>
             {!isChildView ? (
@@ -1967,7 +1978,7 @@ export default function ProgressTab({
     }
     if (panelKey === 'learning_log') {
       return (
-        <View style={styles.summaryExpandPanel}>
+        <View style={panelStyle}>
           <View style={styles.summaryExpandPanelHeader}>
             <Text style={styles.summaryExpandPanelTitle}>Learning Log</Text>
           </View>
@@ -1994,7 +2005,7 @@ export default function ProgressTab({
     }
     if (panelKey === 'learning_goals') {
       return (
-        <View style={styles.summaryExpandPanel}>
+        <View style={panelStyle}>
           <View style={styles.summaryExpandPanelHeader}>
             <Text style={styles.summaryExpandPanelTitle}>Learning goals</Text>
             {allEventsProgressSummary?.summaryLine ? (
@@ -2014,13 +2025,26 @@ export default function ProgressTab({
 
   const renderSummaryExpandPanel = () => {
     if (!displayedSummaryPanel) return null;
+    if (useLearningFillLayout) {
+      if (!displayedSummaryPanel) return null;
+      const panelContent = renderSummaryPanelContent(displayedSummaryPanel, { fillLayout: true });
+      if (!panelContent) return null;
+      return (
+        <View style={styles.summaryExpandPanelOuterFill}>
+          {panelContent}
+        </View>
+      );
+    }
     const panelContent = renderSummaryPanelContent(displayedSummaryPanel);
     if (!panelContent) return null;
     const maxHeight = SUMMARY_PANEL_DISCLOSURE_MAX_HEIGHT[displayedSummaryPanel] || 720;
+    const viewportMaxHeight = Platform.OS === 'web' && windowHeight > 0
+      ? Math.max(maxHeight, windowHeight - 300)
+      : maxHeight;
     const disclosureStyle = {
       maxHeight: summaryPanelAnim.interpolate({
         inputRange: [0, 1],
-        outputRange: [0, maxHeight],
+        outputRange: [0, viewportMaxHeight],
       }),
       opacity: summaryPanelAnim.interpolate({
         inputRange: [0, 0.15, 1],
@@ -2050,11 +2074,14 @@ export default function ProgressTab({
         accessibilityState={{ expanded: isActive }}
         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
       >
-        <Text style={styles.overviewSummaryLabel}>{label}</Text>
+        <Text style={[styles.overviewSummaryLabel, isActive && styles.overviewSummaryLabelActive]}>
+          {label}
+        </Text>
         <Text
           style={[
             styles.overviewSummaryValue,
             options.compactValue && styles.overviewSummaryValueCompact,
+            isActive && styles.overviewSummaryValueActive,
           ]}
           numberOfLines={options.compactValue ? 2 : 1}
         >
@@ -2065,6 +2092,7 @@ export default function ProgressTab({
             style={[
               styles.overviewSummaryMeta,
               options.metaAccent && styles.overviewSummaryMetaAccent,
+              isActive && !options.metaAccent && styles.overviewSummaryMetaActive,
             ]}
             numberOfLines={1}
           >
@@ -2200,8 +2228,15 @@ export default function ProgressTab({
           </>
         ) : null}
         {showAllEventsSection ? (
-          <View style={[styles.section, embeddedInScrollView && styles.sectionEmbedded]}>
-            <View style={styles.allEventsSummaryWrap}>
+          <View style={[
+            styles.section,
+            embeddedInScrollView && styles.sectionEmbedded,
+            useLearningFillLayout && styles.sectionEmbeddedFill,
+          ]}>
+            <View style={[
+              styles.allEventsSummaryWrap,
+              useLearningFillLayout && styles.allEventsSummaryWrapFill,
+            ]}>
               <View style={styles.overviewSummaryGrid}>
                 {renderClickableSummaryBox(
                   'attendance',
@@ -2238,9 +2273,17 @@ export default function ProgressTab({
   );
 
   return (
-    <View style={embeddedInScrollView ? styles.pageEmbedded : styles.page}>
+    <View style={[
+      embeddedInScrollView ? styles.pageEmbedded : styles.page,
+      useLearningFillLayout && styles.pageEmbeddedFill,
+    ]}>
       {embeddedInScrollView ? (
-        <View style={styles.contentInnerEmbedded}>{progressMainContent}</View>
+        <View style={[
+          styles.contentInnerEmbedded,
+          useLearningFillLayout && styles.contentInnerEmbeddedFill,
+        ]}>
+          {progressMainContent}
+        </View>
       ) : (
         <View style={styles.progressShell}>
           <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} showsVerticalScrollIndicator={false}>
@@ -2366,15 +2409,39 @@ const styles = StyleSheet.create({
       position: 'relative',
     }),
   },
+  pageEmbeddedFill: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      flexShrink: 1,
+    }),
+  },
   contentInnerEmbedded: {
     width: '100%',
     paddingTop: 0,
     paddingBottom: 0,
   },
+  contentInnerEmbeddedFill: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
   sectionEmbedded: {
     marginTop: 0,
     marginBottom: 28,
     paddingHorizontal: 0,
+  },
+  sectionEmbeddedFill: {
+    flex: 1,
+    minHeight: 0,
+    marginBottom: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   progressShell: { flex: 1, flexDirection: 'row', alignItems: 'stretch' },
   content: { flex: 1 },
@@ -2404,11 +2471,33 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 11,
     paddingVertical: 10,
-    ...(Platform.OS === 'web' && { cursor: 'pointer', transition: 'border-color 0.15s ease, background-color 0.15s ease' }),
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease',
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.05)',
+    }),
+    ...(Platform.OS === 'ios' && {
+      shadowColor: '#0F172A',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.05,
+      shadowRadius: 8,
+    }),
+    ...(Platform.OS === 'android' && {
+      elevation: 2,
+    }),
   },
   overviewSummaryBoxActive: {
     borderColor: '#6BB3E8',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
+  },
+  overviewSummaryLabelActive: {
+    color: '#6BB3E8',
+  },
+  overviewSummaryValueActive: {
+    color: '#0F172A',
+  },
+  overviewSummaryMetaActive: {
+    color: '#475569',
   },
   overviewSummaryLabel: { fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', ...WEB_HEADING_FONT },
   overviewSummaryValue: { marginTop: 4, fontSize: 19, fontWeight: '700', color: '#0F172A', ...WEB_HEADING_FONT },
@@ -2420,6 +2509,16 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginTop: 10,
   },
+  summaryExpandPanelOuterFill: {
+    width: '100%',
+    flex: 1,
+    minHeight: 0,
+    marginTop: 10,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
   summaryExpandPanel: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -2427,6 +2526,34 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     padding: 14,
     gap: 12,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.05)',
+    }),
+    ...(Platform.OS === 'ios' && {
+      shadowColor: '#0F172A',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.05,
+      shadowRadius: 8,
+    }),
+    ...(Platform.OS === 'android' && {
+      elevation: 2,
+    }),
+  },
+  summaryExpandPanelFill: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  summaryExpandPanelBody: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   summaryExpandPanelHeader: {
     flexDirection: 'row',
@@ -2563,8 +2690,12 @@ const styles = StyleSheet.create({
   attendancePlannerListWrap: {
     width: '100%',
     minWidth: 0,
+    flex: 1,
+    minHeight: 0,
     ...(Platform.OS === 'web' && {
       overflowX: 'auto',
+      display: 'flex',
+      flexDirection: 'column',
     }),
   },
   subjectRowItem: {
@@ -2625,6 +2756,15 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1F2937', marginBottom: 16, ...WEB_HEADING_FONT },
   attendanceSectionHeader: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 10 },
   allEventsSummaryWrap: { marginBottom: 14 },
+  allEventsSummaryWrapFill: {
+    flex: 1,
+    minHeight: 0,
+    marginBottom: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
   allEventsSummaryBox: { minWidth: 140 },
   allEventsSectionHeader: { marginBottom: 10 },
   allEventsTitleRow: {

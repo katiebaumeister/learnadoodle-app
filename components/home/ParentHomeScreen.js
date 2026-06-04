@@ -634,8 +634,6 @@ export default function ParentHomeScreen({
         </View>
       </View>
 
-      <View style={styles.divider} />
-
       {/* Daily schedule — primary “Add event” lives in card empty state; header CTA when there are events */}
       <View style={styles.scheduleSection}>
         <View style={styles.sectionHeader}>
@@ -746,25 +744,14 @@ const styles = StyleSheet.create({
     }),
   },
   mainSurface: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.1)',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
+    flex: 1,
+    backgroundColor: 'transparent',
+    gap: 12,
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      flex: 1,
       height: '100%',
       minHeight: 0,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      /* Single white column comes from RoleHomeShell.leftSection — avoid double card chrome */
-      backgroundColor: 'transparent',
-      borderWidth: 0,
-      borderRadius: 0,
-      boxShadow: 'none',
     }),
   },
   headerCard: {
@@ -821,12 +808,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(148, 163, 184, 0.2)',
-    marginTop: 10,
-    marginBottom: 10,
   },
   scheduleSection: {
     flex: 1,

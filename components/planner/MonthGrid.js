@@ -1411,6 +1411,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                                 ev={ev} 
                                 compact={true}
                                 fullWidth={true}
+                                plannerCalendarChip
                                 disableTouchable={true}
                                 onPress={undefined}
                                 onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
@@ -1436,6 +1437,7 @@ export default function MonthGrid({ date, events = [], selectedDate, onSelectDat
                               ev={ev} 
                               compact={true}
                               fullWidth={true}
+                              plannerCalendarChip
                               onPress={onEventPress && !isPublicHoliday ? () => onEventPress(ev) : undefined}
                               onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
                               onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}

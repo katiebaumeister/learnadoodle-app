@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Platform, StyleSheet } from 'react-native';
+import { Plus } from 'lucide-react';
 import { startOfToday } from './utils/date';
 import CompletionRing from '../calendar/CompletionRing';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
@@ -15,6 +16,7 @@ import {
   resolveMaterialDisplayLabel,
   formatEventGradeLabel,
   getPlannerEventTypeColors,
+  isPlannerHolidayOrBreakType,
   mergeAssignmentsByEventId,
 } from './plannerListTableUtils';
 import {
@@ -48,11 +50,17 @@ export default function PlannerEventsListTable({
   plannerShellVisible = true,
   listRefreshEpoch = 0,
   embedded = false,
+  /** When true with embedded, list grows to fill parent flex column (Learning attendance). */
+  fillViewport = false,
   maxListHeight = 520,
   /** When true, list opens scrolled to today's date header (planner list + embedded attendance). */
   scrollToToday = false,
   /** Bump to re-anchor after panel disclosure animation (e.g. Learning attendance expand). */
   scrollToTodayEpoch = 0,
+  /** Opens create-event flow (planner list empty state). */
+  onAddEvent = null,
+  emptyTitle: emptyTitleProp = null,
+  emptySubtitle: emptySubtitleProp = null,
 }) {
   const isDoneStatus = useCallback((statusValue) => defaultIsDoneStatus(statusValue), []);
   const [materialById, setMaterialById] = useState(() => new Map());
@@ -359,6 +367,7 @@ export default function PlannerEventsListTable({
     const materialIds = getEventMaterialIds(event);
     const assignment = primaryAssignmentForEvent(assignmentsByEventId, eventId, eventChildIds);
     const submissionLabel = getAllEventsSubmissionLabel(event, assignment);
+    const hideAttendanceControl = isPlannerHolidayOrBreakType(event);
 
     const handleRowContextMenu = (nativeEvent) => {
       if (Platform.OS !== 'web' || typeof window === 'undefined' || !onEventRightClick) return;
@@ -384,24 +393,26 @@ export default function PlannerEventsListTable({
         })}
       >
         <View style={styles.denseColLeading}>
-          <View
-            style={styles.denseStatusCell}
-            {...(Platform.OS === 'web' && onEventComplete && {
-              onClick: (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                onEventComplete(event);
-              },
-              onMouseDown: (e) => e.stopPropagation(),
-            })}
-          >
-            <CompletionRing
-              isDone={isDone}
-              size={14}
-              pendingBorderColor="rgba(107, 114, 128, 0.5)"
-              onPress={() => onEventComplete && onEventComplete(event)}
-            />
-          </View>
+          {!hideAttendanceControl ? (
+            <View
+              style={styles.denseStatusCell}
+              {...(Platform.OS === 'web' && onEventComplete && {
+                onClick: (e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  onEventComplete(event);
+                },
+                onMouseDown: (e) => e.stopPropagation(),
+              })}
+            >
+              <CompletionRing
+                isDone={isDone}
+                size={14}
+                pendingBorderColor="rgba(107, 114, 128, 0.5)"
+                onPress={() => onEventComplete && onEventComplete(event)}
+              />
+            </View>
+          ) : null}
         </View>
 
         <TouchableOpacity
@@ -414,23 +425,24 @@ export default function PlannerEventsListTable({
             {String(event?.title || 'Untitled')}
           </Text>
           <View style={styles.denseSublineRow}>
-            <View style={[styles.denseTypeChip, { backgroundColor: chipBg }]}>
-              <Text style={[styles.denseTypeChipText, { color: chipText }]} numberOfLines={1}>
-                {typeLabel}
-              </Text>
-            </View>
             {timeLabel ? (
               <Text style={[styles.denseSublineMeta, isDone && styles.denseMutedText]} numberOfLines={1}>
                 {timeLabel}
               </Text>
             ) : null}
+            <View style={[styles.denseTypeChip, { backgroundColor: chipBg }]}>
+              <Text style={[styles.denseTypeChipText, { color: chipText }]} numberOfLines={1}>
+                {typeLabel}
+              </Text>
+            </View>
             {eventChildIds.length > 0 ? (
               <View style={styles.denseChildLabel}>
                 <ChildAvatarCluster
                   childIds={eventChildIds}
                   familyChildren={children}
                   size={20}
-                  overlap={-6}
+                  overlap={-9}
+                  hideBackground
                 />
                 {childLabel ? (
                   <Text style={[styles.denseSublineMeta, isDone && styles.denseMutedText]} numberOfLines={1}>
@@ -510,25 +522,69 @@ export default function PlannerEventsListTable({
 
   const renderDenseListItem = useCallback(({ item }) => {
     if (item?.type === 'header') {
+      const isTodayHeader = item?.dateKey === todayYmd;
       return (
         <View style={[styles.denseDateHeader, embedded && styles.denseDateHeaderEmbedded]}>
-          <Text style={styles.denseDateHeaderText}>{formatDenseDateHeader(item.dateKey)}</Text>
+          <View style={styles.denseDateHeaderRow}>
+            {isTodayHeader ? (
+              <Text style={styles.denseTodayMarker} accessibilityLabel="Today">
+                →
+              </Text>
+            ) : null}
+            <Text
+              style={[
+                styles.denseDateHeaderText,
+                isTodayHeader && styles.denseDateHeaderTextToday,
+              ]}
+            >
+              {formatDenseDateHeader(item.dateKey)}
+            </Text>
+          </View>
         </View>
       );
     }
     return renderDenseEventRow(item?.event);
-  }, [embedded, formatDenseDateHeader, renderDenseEventRow]);
+  }, [embedded, formatDenseDateHeader, renderDenseEventRow, todayYmd]);
 
   if (!filteredEvents.length && !groupedDenseRows.some((r) => r?.type === 'header')) {
+    const hasAnyEvents = (events || []).length > 0;
+    const emptyTitle = emptyTitleProp
+      || (hasAnyEvents ? 'No events in this range' : 'No events yet');
+    const emptySubtitle = emptySubtitleProp
+      || (hasAnyEvents
+        ? 'Try another month or adjust your filters.'
+        : 'Create events to build your schedule.');
+    const showAddButton = !embedded && !hasAnyEvents && typeof onAddEvent === 'function';
+
     return (
-      <View style={[styles.emptyState, embedded && styles.emptyStateEmbedded]}>
-        <Text style={styles.emptyStateText}>No events in this range</Text>
+      <View style={[styles.emptyContainer, embedded && styles.emptyContainerEmbedded]}>
+        <Text style={styles.emptyTitle}>{emptyTitle}</Text>
+        <Text style={styles.emptySubtitle}>{emptySubtitle}</Text>
+        {showAddButton ? (
+          <TouchableOpacity
+            style={styles.emptyButton}
+            onPress={onAddEvent}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Add event"
+          >
+            <Plus size={16} color="#5AAEF2" />
+            <Text style={styles.emptyButtonText}>Add</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   }
 
+  const useEmbeddedMaxHeight = embedded && !fillViewport && Number.isFinite(maxListHeight);
+  const embeddedListMaxHeight = useEmbeddedMaxHeight ? maxListHeight - 40 : undefined;
+
   return (
-    <View style={[styles.denseListWrap, embedded && { maxHeight: maxListHeight }]}>
+    <View style={[
+      styles.denseListWrap,
+      embedded && fillViewport && styles.denseListWrapFill,
+      useEmbeddedMaxHeight && { maxHeight: maxListHeight },
+    ]}>
       <View style={styles.denseTableHeaderRow}>
         <View style={styles.denseColLeading} />
         <Text style={[styles.denseTableHeaderCell, styles.denseColDetails]}>Event Details</Text>
@@ -542,10 +598,12 @@ export default function PlannerEventsListTable({
         ref={denseListRef}
         style={[
           styles.tasksList,
-          embedded && {
-            maxHeight: maxListHeight - 40,
+          embedded && fillViewport && styles.tasksListFill,
+          embedded && useEmbeddedMaxHeight && {
+            maxHeight: embeddedListMaxHeight,
             ...(Platform.OS === 'web' && { overflowY: 'auto' }),
           },
+          embedded && fillViewport && Platform.OS === 'web' && { overflowY: 'auto', flex: 1 },
         ]}
         contentContainerStyle={styles.denseListContent}
         data={groupedDenseRows}
@@ -587,6 +645,14 @@ const styles = StyleSheet.create({
       overflowX: 'auto',
     }),
   },
+  denseListWrapFill: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
   denseListContent: {
     minWidth: DENSE_TABLE_MIN_WIDTH,
   },
@@ -621,6 +687,10 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
   },
+  tasksListFill: {
+    flex: 1,
+    minHeight: 0,
+  },
   denseDateHeader: {
     height: DENSE_DATE_HEADER_HEIGHT,
     justifyContent: 'center',
@@ -634,6 +704,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
   },
+  denseDateHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  denseTodayMarker: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#5AAEF2',
+    lineHeight: 18,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   denseDateHeaderText: {
     fontSize: 13,
     fontWeight: '700',
@@ -641,6 +725,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  denseDateHeaderTextToday: {
+    color: '#0F4C81',
   },
   denseRow: {
     flexDirection: 'row',
@@ -711,6 +798,13 @@ const styles = StyleSheet.create({
     gap: 8,
     width: '100%',
   },
+  denseChildLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
+    minWidth: 0,
+  },
   denseTypeChip: {
     borderRadius: 999,
     paddingHorizontal: 8,
@@ -729,13 +823,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  denseChildLabel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexShrink: 1,
-    minWidth: 0,
   },
   denseCellText: {
     fontSize: 13,
@@ -769,15 +856,60 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  emptyState: {
-    padding: 24,
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 24,
+    minHeight: 280,
   },
-  emptyStateEmbedded: {
-    paddingVertical: 16,
+  emptyContainerEmbedded: {
+    paddingVertical: 40,
+    minHeight: 200,
   },
-  emptyStateText: {
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptySubtitle: {
     fontSize: 14,
     color: '#6B7280',
+    textAlign: 'center',
+    maxWidth: 420,
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  emptyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 20,
+    minHeight: 42,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#9ED3FF',
+    backgroundColor: '#F8FCFF',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  emptyButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#5AAEF2',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

@@ -5,8 +5,9 @@ import CompletionRing from './CompletionRing';
 import { detectConflicts } from '../../lib/utils/conflictDetection';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
+import { formatEventScheduleTimeLabel, formatEventChipTimeLabel } from '../planner/plannerListTableUtils';
 
-export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [] }) {
+export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [], plannerCalendarChip = false }) {
   const isDoneStatus = (statusValue) => {
     const normalized = String(statusValue || '').trim().toLowerCase();
     return normalized === 'done' || normalized === 'completed';
@@ -190,26 +191,18 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
   // Format time so display always matches actual scheduled local time
   const formatTime = () => {
-    // Timeless/flexible events intentionally have no explicit wall-clock time.
-    // Keep chip time empty instead of rendering 12:00 AM fallbacks.
-    if (ev?.is_flexible === true) {
-      return null;
+    if (plannerCalendarChip) {
+      const chipLabel = formatEventChipTimeLabel(ev);
+      return chipLabel || null;
     }
-    // Defensive fallback: treat midnight-bounded lesson-like events as timeless.
-    // This prevents "12 AM" display for untimed rows that were persisted with day bounds.
-    const eventTypeRaw = String(ev?.event_type || ev?.type || '').trim();
-    const isIntrinsicAllDayType = ['Project', 'Trip', 'Holiday', 'Other'].includes(eventTypeRaw);
-    if (!isIntrinsicAllDayType && (ev?.start_ts || ev?.start) && (ev?.end_ts || ev?.end)) {
-      const s = new Date(ev.start_ts || ev.start);
-      const en = new Date(ev.end_ts || ev.end);
-      if (!Number.isNaN(s.getTime()) && !Number.isNaN(en.getTime())) {
-        const startsAtMidnight = s.getHours() === 0 && s.getMinutes() === 0;
-        const endsAtMidnight = en.getHours() === 0 && en.getMinutes() === 0;
-        const endsAtEndOfDay = en.getHours() === 23 && en.getMinutes() === 59;
-        if (startsAtMidnight && (endsAtMidnight || endsAtEndOfDay)) {
-          return null;
-        }
-      }
+
+    const scheduleLabel = formatEventScheduleTimeLabel(ev);
+    if (
+      scheduleLabel === 'No time added' ||
+      scheduleLabel === 'All Day' ||
+      (scheduleLabel && !scheduleLabel.includes('12:00 AM - 11:59'))
+    ) {
+      return scheduleLabel;
     }
 
     // Debug logging for the specific event we're tracking
@@ -820,10 +813,10 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
                 <ChildAvatarCluster
                   childIds={participatingChildIds}
                   familyChildren={children}
-                  size={14}
-                  overlap={-4}
+                  size={16}
+                  overlap={-7}
                   hideBackground
-                  style={{ marginLeft: 'auto', flexShrink: 0 }}
+                  style={{ marginLeft: 'auto', flexShrink: 0, alignSelf: 'center' }}
                 />
               )}
             </View>

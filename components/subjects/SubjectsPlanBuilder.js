@@ -8634,7 +8634,8 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      flexShrink: 0,
+      flex: 1,
+      minHeight: 0,
       position: 'relative',
     }),
   },
@@ -8799,6 +8800,12 @@ const styles = StyleSheet.create({
   },
   emptyScheduleSectionFooterOnly: {
     marginTop: 0,
+    ...(Platform.OS === 'web' && {
+      flex: 1,
+      minHeight: 0,
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   embeddedFooterSection: {
     width: '100%',
@@ -8812,6 +8819,12 @@ const styles = StyleSheet.create({
   },
   embeddedFooterSectionFooterOnly: {
     marginTop: 0,
+    ...(Platform.OS === 'web' && {
+      flex: 1,
+      minHeight: 0,
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   scheduleEmptyCard: {
     borderWidth: 1,

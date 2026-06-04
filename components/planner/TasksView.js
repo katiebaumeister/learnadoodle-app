@@ -1137,6 +1137,20 @@ export default function TasksView({
 
   const isDenseCalendarSection = ['today', 'tomorrow', 'thismonth', 'nextmonth', 'all'].includes(activeSection);
 
+  const listEmptyCopy = useMemo(() => {
+    switch (activeSection) {
+      case 'today':
+        return { title: 'No events today', subtitle: 'Add something to today\'s schedule.' };
+      case 'tomorrow':
+        return { title: 'No events tomorrow', subtitle: 'Plan ahead by adding an event.' };
+      case 'thismonth':
+        return { title: 'No events this month', subtitle: 'Create events to fill out the month.' };
+      case 'nextmonth':
+        return { title: 'No events next month', subtitle: 'Create events to fill out the month.' };
+      default:
+        return { title: 'No events yet', subtitle: 'Create events to build your schedule.' };
+    }
+  }, [activeSection]);
 
   return (
     <View style={styles.container}>
@@ -1205,12 +1219,6 @@ export default function TasksView({
               )
             )}
           </ScrollView>
-        ) : currentEvents.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>
-              No tasks {activeSection === 'today' ? 'today' : activeSection === 'completed' ? 'completed' : 'here'}
-            </Text>
-          </View>
         ) : isDenseCalendarSection ? (
           <PlannerEventsListTable
             events={currentEvents}
@@ -1221,7 +1229,20 @@ export default function TasksView({
             onEventRightClick={onEventRightClick}
             onEventComplete={onEventComplete}
             plannerShellVisible={plannerShellVisible}
+            onAddEvent={
+              onCreateTask && activeSection !== 'completed'
+                ? () => onCreateTask(activeSection === 'backlog' ? 'backlog' : 'calendar')
+                : null
+            }
+            emptyTitle={listEmptyCopy.title}
+            emptySubtitle={listEmptyCopy.subtitle}
           />
+        ) : currentEvents.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>
+              No tasks {activeSection === 'today' ? 'today' : activeSection === 'completed' ? 'completed' : 'here'}
+            </Text>
+          </View>
         ) : (
           <ScrollView style={styles.tasksList}>
             {currentEvents.map(renderTaskItem)}

@@ -258,6 +258,7 @@ export default function SubjectsPage({
   const [selectedYearFilter, setSelectedYearFilter] = useState(() => getCurrentSchoolYear());
   const [selectedTermFilter, setSelectedTermFilter] = useState(ALL_TERMS_FILTER);
   const [selectedCourseSubjectIds, setSelectedCourseSubjectIds] = useState([]);
+  const [allSubjectsFilterActive, setAllSubjectsFilterActive] = useState(true);
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [pendingScheduleModalRequest, setPendingScheduleModalRequest] = useState(null);
   const [subjectDetailCache, setSubjectDetailCache] = useState(preloadedSubjectDetailCache || {});
@@ -902,16 +903,22 @@ export default function SubjectsPage({
   );
 
   useEffect(() => {
+    if (allSubjectsFilterActive) return;
     setSelectedCourseSubjectIds((prev) => {
       const prevSet = new Set((Array.isArray(prev) ? prev : []).map(String));
       if (!allCourseSubjectIds.length) return [];
       const retained = allCourseSubjectIds.filter((id) => prevSet.has(id));
-      return retained.length > 0 ? retained : allCourseSubjectIds;
+      if (retained.length === 0) {
+        setAllSubjectsFilterActive(true);
+        return [];
+      }
+      return retained;
     });
-  }, [allCourseSubjectIds.join('|')]);
+  }, [allCourseSubjectIds.join('|'), allSubjectsFilterActive]);
 
   const effectiveCoursesSubjectIds = useMemo(() => {
     if (!allCourseSubjectIds.length) return [];
+    if (allSubjectsFilterActive) return allCourseSubjectIds;
     const selectedSet = new Set(
       (Array.isArray(selectedCourseSubjectIds) ? selectedCourseSubjectIds : [])
         .map((id) => String(id || '').trim())
@@ -919,7 +926,12 @@ export default function SubjectsPage({
     );
     const valid = allCourseSubjectIds.filter((id) => selectedSet.has(id));
     return valid.length > 0 ? valid : allCourseSubjectIds;
-  }, [allCourseSubjectIds, selectedCourseSubjectIds]);
+  }, [allCourseSubjectIds, selectedCourseSubjectIds, allSubjectsFilterActive]);
+
+  const selectAllSubjectsFilter = useCallback(() => {
+    setAllSubjectsFilterActive(true);
+    setSelectedCourseSubjectIds([]);
+  }, []);
 
   const detailLoadAttemptedRef = useRef(new Set());
   useEffect(() => {
@@ -948,6 +960,7 @@ export default function SubjectsPage({
   const toggleCourseSubjectFilter = useCallback((subjectId) => {
     const safeId = String(subjectId || '').trim();
     if (!safeId) return;
+    setAllSubjectsFilterActive(false);
     setSelectedCourseSubjectIds((prev) => {
       const current = Array.isArray(prev)
         ? prev.map((id) => String(id || '').trim()).filter(Boolean)
@@ -1617,15 +1630,33 @@ export default function SubjectsPage({
         </View>
       ) : null}
 
-      {showSubjectRow && (allCourseSubjectIds.length > 0 || canManageSubjectsActions) ? (
+      {showSubjectRow && allCourseSubjectIds.length > 0 ? (
         <View style={[styles.filterRow, styles.filterRowBelowTerm]}>
           <Text style={styles.filterLabel}>Subjects</Text>
           <View style={styles.filterChipsWrap}>
             <View style={styles.filterChecklist}>
+              <TouchableOpacity
+                style={[
+                  styles.filterOptionChip,
+                  allSubjectsFilterActive && styles.filterOptionChipActive,
+                ]}
+                onPress={selectAllSubjectsFilter}
+              >
+                <Text
+                  style={[
+                    styles.filterOptionChipText,
+                    allSubjectsFilterActive && styles.filterOptionChipTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  All subjects
+                </Text>
+              </TouchableOpacity>
               {filteredSubjects.map((subject) => {
                 const subjectIdString = String(subject?.id || '').trim();
                 if (!subjectIdString) return null;
-                const isActive = effectiveCoursesSubjectIds.includes(subjectIdString);
+                const isActive = !allSubjectsFilterActive
+                  && effectiveCoursesSubjectIds.includes(subjectIdString);
                 return (
                   <TouchableOpacity
                     key={subject.id}
@@ -1647,17 +1678,6 @@ export default function SubjectsPage({
                   </TouchableOpacity>
                 );
               })}
-              {canManageSubjectsActions ? (
-                <TouchableOpacity
-                  style={styles.addSubjectFilterChip}
-                  onPress={openAddSubjectWithCurrentHeaders}
-                  activeOpacity={0.85}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Plus size={14} color="#64748B" />
-                  <Text style={styles.addSubjectFilterChipText}>Add subject</Text>
-                </TouchableOpacity>
-              ) : null}
             </View>
           </View>
         </View>
@@ -1676,10 +1696,10 @@ export default function SubjectsPage({
     selectedTermFilter,
     filteredSubjects,
     allCourseSubjectIds,
+    allSubjectsFilterActive,
     effectiveCoursesSubjectIds,
+    selectAllSubjectsFilter,
     toggleCourseSubjectFilter,
-    canManageSubjectsActions,
-    openAddSubjectWithCurrentHeaders,
   ]);
 
   const selectedChildFilterForCards = useMemo(() => {
@@ -2561,49 +2581,91 @@ export default function SubjectsPage({
       ) : (
         <View style={styles.coursesTabContent}>
           {renderCoursesHeaderFilters()}
-          <ScrollView
-            style={styles.subjectsList}
-            contentContainerStyle={styles.subjectsListContent}
-            showsVerticalScrollIndicator={false}
-          >
-            <SubjectsPlanBuilder
-              familyId={familyId}
-              planningMode={planningMode}
-              selectedYearFilter={selectedYearFilter}
-              selectedTermFilter={selectedTermFilter}
-              children={safeChildren}
-              visibleSubjects={filteredSubjects}
-              allSubjects={subjects}
-              onOpenPlannerSettings={openPlanningPreferencesModal}
-              homeSections="footerOnly"
-              embeddedInScrollView
-              embeddedFooter={(planProgressContext) => (
-                <ProgressTab
-                  familyId={familyId}
-                  children={safeChildren}
-                  filteredSubjects={filteredSubjects}
-                  subjectDetailCache={subjectDetailCache}
-                  selectedChildFilter={selectedChildFilter}
-                  selectedYearFilter={selectedYearFilter}
-                  hideYearHeader
-                  sectionsMode="allEventsOnly"
-                  embeddedInScrollView
-                  activeChildIds={effectiveCoursesChildIds}
-                  activeSubjectIds={effectiveCoursesSubjectIds}
-                  planProgressContext={planProgressContext}
-                  onOpenExportModal={openSubjectsExportModal}
-                  onRefreshSubjectDetail={refreshSubjectDetailById}
-                  canManageAttendance={canManageAttendanceActions}
-                  onOpenSubject={(subjectId, options = null) => {
-                    const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
-                    if (match) {
-                      handleSubjectClick(match, null, null, options?.action || null);
-                    }
-                  }}
-                />
-              )}
-            />
-          </ScrollView>
+          {Platform.OS === 'web' ? (
+            <View style={styles.coursesViewFill}>
+              <SubjectsPlanBuilder
+                familyId={familyId}
+                planningMode={planningMode}
+                selectedYearFilter={selectedYearFilter}
+                selectedTermFilter={selectedTermFilter}
+                children={safeChildren}
+                visibleSubjects={filteredSubjects}
+                allSubjects={subjects}
+                onOpenPlannerSettings={openPlanningPreferencesModal}
+                homeSections="footerOnly"
+                embeddedInScrollView
+                embeddedFooter={(planProgressContext) => (
+                  <ProgressTab
+                    familyId={familyId}
+                    children={safeChildren}
+                    filteredSubjects={filteredSubjects}
+                    subjectDetailCache={subjectDetailCache}
+                    selectedChildFilter={selectedChildFilter}
+                    selectedYearFilter={selectedYearFilter}
+                    hideYearHeader
+                    sectionsMode="allEventsOnly"
+                    embeddedInScrollView
+                    activeChildIds={effectiveCoursesChildIds}
+                    activeSubjectIds={effectiveCoursesSubjectIds}
+                    planProgressContext={planProgressContext}
+                    onOpenExportModal={openSubjectsExportModal}
+                    onRefreshSubjectDetail={refreshSubjectDetailById}
+                    canManageAttendance={canManageAttendanceActions}
+                    onOpenSubject={(subjectId, options = null) => {
+                      const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
+                      if (match) {
+                        handleSubjectClick(match, null, null, options?.action || null);
+                      }
+                    }}
+                  />
+                )}
+              />
+            </View>
+          ) : (
+            <ScrollView
+              style={styles.subjectsList}
+              contentContainerStyle={styles.subjectsListContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <SubjectsPlanBuilder
+                familyId={familyId}
+                planningMode={planningMode}
+                selectedYearFilter={selectedYearFilter}
+                selectedTermFilter={selectedTermFilter}
+                children={safeChildren}
+                visibleSubjects={filteredSubjects}
+                allSubjects={subjects}
+                onOpenPlannerSettings={openPlanningPreferencesModal}
+                homeSections="footerOnly"
+                embeddedInScrollView
+                embeddedFooter={(planProgressContext) => (
+                  <ProgressTab
+                    familyId={familyId}
+                    children={safeChildren}
+                    filteredSubjects={filteredSubjects}
+                    subjectDetailCache={subjectDetailCache}
+                    selectedChildFilter={selectedChildFilter}
+                    selectedYearFilter={selectedYearFilter}
+                    hideYearHeader
+                    sectionsMode="allEventsOnly"
+                    embeddedInScrollView
+                    activeChildIds={effectiveCoursesChildIds}
+                    activeSubjectIds={effectiveCoursesSubjectIds}
+                    planProgressContext={planProgressContext}
+                    onOpenExportModal={openSubjectsExportModal}
+                    onRefreshSubjectDetail={refreshSubjectDetailById}
+                    canManageAttendance={canManageAttendanceActions}
+                    onOpenSubject={(subjectId, options = null) => {
+                      const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
+                      if (match) {
+                        handleSubjectClick(match, null, null, options?.action || null);
+                      }
+                    }}
+                  />
+                )}
+              />
+            </ScrollView>
+          )}
         </View>
       )}
       <ComplianceRequirementModal
@@ -3465,24 +3527,6 @@ const styles = StyleSheet.create({
     borderColor: '#6BB3E8',
     backgroundColor: 'rgba(107,179,232,0.12)',
   },
-  addSubjectFilterChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#D1D5DB',
-    borderRadius: 999,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  addSubjectFilterChipText: {
-    fontSize: 14,
-    color: 'rgba(15,23,42,0.9)',
-    fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  },
   filterOptionChipText: {
     fontSize: 14,
     color: 'rgba(15,23,42,0.9)',
@@ -3687,6 +3731,22 @@ const styles = StyleSheet.create({
   },
   coursesTabContent: {
     flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  coursesViewFill: {
+    flex: 1,
+    minHeight: 0,
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 16,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   subjectsListContent: {
     paddingBottom: 40,

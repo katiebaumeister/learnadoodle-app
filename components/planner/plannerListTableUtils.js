@@ -57,12 +57,90 @@ export function formatEventTypeLabel(event) {
   return knownLabels[lower] || raw;
 }
 
-export function formatTimeRangeLabel(event) {
+const ALL_DAY_TIME_LABEL = 'All Day';
+const NO_TIME_ADDED_LABEL = 'No time added';
+
+export function isPlannerHolidayOrBreakType(event) {
   const holidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
   const typeLower = String(event?.event_type || event?.type || '').trim().toLowerCase();
-  if (typeLower === 'holiday' || holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'CUSTOM_BREAK' || holidayType === 'GLOBAL_HOLIDAY') {
-    return 'All day';
+  return (
+    typeLower === 'holiday' ||
+    typeLower === 'day off' ||
+    typeLower === 'dayoff' ||
+    typeLower === 'break' ||
+    holidayType === 'CUSTOM_HOLIDAY' ||
+    holidayType === 'CUSTOM_BREAK' ||
+    holidayType === 'GLOBAL_HOLIDAY'
+  );
+}
+
+function isMidnightLocalTimeString(str) {
+  const match = String(str || '').match(/(\d{1,2})(?::(\d{2}))?(?:\s*(AM|PM))?/i);
+  if (!match) return false;
+  const minutes = (match[2] ?? '00').padStart(2, '0');
+  if (minutes !== '00') return false;
+  const hours = parseInt(match[1], 10);
+  const period = match[3]?.toUpperCase();
+  if (period === 'AM' && hours === 12) return true;
+  if (period === 'PM') return false;
+  if (!period) return hours === 0 || hours === 12;
+  return period === 'AM' && hours === 12;
+}
+
+function hasExplicitWallClockStart(event) {
+  const sl = event?.start_local;
+  if (sl == null || sl === '') return false;
+  if (typeof sl !== 'string') return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(sl.trim())) return false;
+  if (!/(\d{1,2})(?::\d{2})?\s*(AM|PM)?/i.test(sl)) return false;
+  return !isMidnightLocalTimeString(sl);
+}
+
+function hasMidnightToEndOfDayBounds(event) {
+  const startMs = event?.start_ts || event?.start;
+  const endMs = event?.end_ts || event?.end;
+  if (!startMs || !endMs) return false;
+  const start = new Date(startMs);
+  const end = new Date(endMs);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+
+  const durationMinutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+  if (durationMinutes >= 23 * 60) return true;
+
+  const startsAtMidnight = start.getHours() === 0 && start.getMinutes() === 0;
+  const endsAtEndOfDay = end.getHours() === 23 && end.getMinutes() >= 59;
+  const endsAtMidnight = end.getHours() === 0 && end.getMinutes() === 0;
+  return startsAtMidnight && (endsAtEndOfDay || endsAtMidnight);
+}
+
+/** Saved with optional/blank start time (flexible), not an explicit all-day event. */
+export function isTimelessUntimedEvent(event) {
+  if (!event || isPlannerHolidayOrBreakType(event)) return false;
+  if (event.all_day === true || event.allDay === true) return false;
+  return event.is_flexible === true;
+}
+
+/** Explicit all-day (toggle, holiday/break types, or non-flexible full-day bounds). */
+export function isAllDayEvent(event) {
+  if (!event) return false;
+  if (event.all_day === true || event.allDay === true) return true;
+  if (isPlannerHolidayOrBreakType(event)) return true;
+  if (event.is_flexible === false && hasMidnightToEndOfDayBounds(event)) {
+    return true;
   }
+  return false;
+}
+
+function isMidnightSpanTimeLabel(startLabel, endLabel) {
+  if (!startLabel || !endLabel) return false;
+  const startMidnight = /^12:00\s*AM$/i.test(String(startLabel).trim());
+  const endLate =
+    /^11:59\s*PM$/i.test(String(endLabel).trim()) ||
+    /^12:00\s*AM$/i.test(String(endLabel).trim());
+  return startMidnight && endLate;
+}
+
+function formatTimedRangeLabel(event) {
   const startValue = resolveEventDateValue(event);
   const endValue = event?.end_ts || event?.end || event?.end_local;
   const formatTime = (value) => {
@@ -76,6 +154,69 @@ export function formatTimeRangeLabel(event) {
   if (!startLabel && !endLabel) return '';
   if (startLabel && endLabel) return `${startLabel} - ${endLabel}`;
   return startLabel || endLabel || '';
+}
+
+function formatSingleStartTimeLabel(event) {
+  if (typeof event?.start_local === 'string') {
+    const match = event.start_local.match(/(\d{1,2})(?::(\d{2}))?(?:\s*(AM|PM))?/i);
+    if (match) {
+      let hours = parseInt(match[1], 10);
+      const minutes = (match[2] ?? '00').padStart(2, '0');
+      const periodRaw = match[3];
+      if (periodRaw) {
+        const period = periodRaw.toUpperCase();
+        return minutes === '00' ? `${hours} ${period}` : `${hours}:${minutes} ${period}`;
+      }
+      const derivedPeriod = hours >= 12 ? 'PM' : 'AM';
+      if (hours > 12) hours -= 12;
+      else if (hours === 0) hours = 12;
+      return minutes === '00' ? `${hours} ${derivedPeriod}` : `${hours}:${minutes} ${derivedPeriod}`;
+    }
+  }
+
+  const startValue = resolveEventDateValue(event);
+  if (!startValue) return '';
+  const d = new Date(startValue);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+/** Month/week calendar chips: start time only; blank for untimed; "All Day" for all-day. */
+export function formatEventChipTimeLabel(event) {
+  if (!event) return '';
+  if (isTimelessUntimedEvent(event)) return '';
+  if (isAllDayEvent(event)) return ALL_DAY_TIME_LABEL;
+
+  const range = formatTimedRangeLabel(event);
+  if (range) {
+    const [startPart, endPart] = range.split(/\s*-\s*/);
+    if (isMidnightSpanTimeLabel(startPart?.trim(), endPart?.trim()) && !hasExplicitWallClockStart(event)) {
+      return '';
+    }
+    if (startPart?.trim()) return startPart.trim();
+  }
+
+  return formatSingleStartTimeLabel(event);
+}
+
+/** Chip/list/home schedule label for event time. */
+export function formatEventScheduleTimeLabel(event) {
+  if (!event) return '';
+  if (isTimelessUntimedEvent(event)) return NO_TIME_ADDED_LABEL;
+  if (isAllDayEvent(event)) return ALL_DAY_TIME_LABEL;
+
+  const timed = formatTimedRangeLabel(event);
+  if (timed) {
+    const [startPart, endPart] = timed.split(/\s*-\s*/);
+    if (isMidnightSpanTimeLabel(startPart?.trim(), endPart?.trim()) && !hasExplicitWallClockStart(event)) {
+      return NO_TIME_ADDED_LABEL;
+    }
+  }
+  return timed;
+}
+
+export function formatTimeRangeLabel(event) {
+  return formatEventScheduleTimeLabel(event);
 }
 
 export function formatChildNamesSentence(names) {

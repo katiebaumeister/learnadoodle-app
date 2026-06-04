@@ -278,8 +278,6 @@ export default function ChildHomeScreen({
         </View>
       </View>
 
-      <View style={styles.divider} />
-
       <View style={styles.scheduleSection}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionLabel}>Today's schedule</Text>
@@ -345,22 +343,14 @@ const styles = StyleSheet.create({
     }),
   },
   mainSurface: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.1)',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
+    flex: 1,
+    backgroundColor: 'transparent',
+    gap: 12,
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
-      flex: 1,
       height: '100%',
       minHeight: 0,
-      backgroundColor: 'transparent',
-      borderWidth: 0,
-      borderRadius: 0,
-      boxShadow: 'none',
     }),
   },
   headerCard: {

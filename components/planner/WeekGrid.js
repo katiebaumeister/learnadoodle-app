@@ -816,6 +816,7 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                             ev={ev}
                             compact={true}
                             fullWidth={true}
+                            plannerCalendarChip
                             hideTime={false}
                             onPress={onEventPress ? () => onEventPress(ev) : undefined}
                             onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
@@ -847,6 +848,7 @@ export default function WeekGrid({ anchorDate, events = [], onSelectDate, onEven
                           ev={ev}
                           compact={true}
                           fullWidth={true}
+                          plannerCalendarChip
                           hideTime={false}
                           onPress={onEventPress ? () => onEventPress(ev) : undefined}
                           onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}

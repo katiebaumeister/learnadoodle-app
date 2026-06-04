@@ -17,29 +17,84 @@ import {
   parseWorkSpec,
 } from '../../lib/workEventHelpers';
 
+function LearningWorkSwitch({
+  label,
+  value,
+  onValueChange,
+  readOnly = false,
+  inLearningSection = false,
+  isFirstInLearningSection = false,
+}) {
+  return (
+    <View
+      style={[
+        styles.switchRow,
+        inLearningSection && (isFirstInLearningSection
+          ? styles.learningSectionSwitchRow
+          : styles.learningSectionSwitchRowFollow),
+      ]}
+    >
+      <Text style={[styles.label, inLearningSection && styles.learningSectionLabel]}>
+        {label}
+      </Text>
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        disabled={readOnly}
+        trackColor={{ false: '#E5E7EB', true: '#AECBFA' }}
+        thumbColor={value ? '#45A29E' : '#f9fafb'}
+      />
+    </View>
+  );
+}
+
+export function GradedField({
+  workSpec,
+  eventType,
+  onChange,
+  readOnly = false,
+  inLearningSection = false,
+}) {
+  if (!isWorkProducingEventType(eventType)) return null;
+
+  const normalizedType = normalizeWorkEventType(eventType);
+  const spec = parseWorkSpec(workSpec, normalizedType);
+  const patch = (partial) => onChange?.({ ...spec, ...partial });
+
+  return (
+    <LearningWorkSwitch
+      label="Graded"
+      value={spec.graded !== false}
+      onValueChange={(value) => patch({ graded: value })}
+      readOnly={readOnly}
+      inLearningSection={inLearningSection}
+      isFirstInLearningSection={inLearningSection}
+    />
+  );
+}
+
 export function RequireFinalDeliverableField({
   workSpec,
   eventType,
   onChange,
   readOnly = false,
+  inLearningSection = false,
 }) {
-  const normalizedType = normalizeWorkEventType(eventType);
-  if (normalizedType !== 'Project') return null;
+  if (!isWorkProducingEventType(eventType)) return null;
 
+  const normalizedType = normalizeWorkEventType(eventType);
   const spec = parseWorkSpec(workSpec, normalizedType);
   const patch = (partial) => onChange?.({ ...spec, ...partial });
 
   return (
-    <View style={styles.switchRow}>
-      <Text style={styles.label}>Require final deliverable</Text>
-      <Switch
-        value={!!spec.require_final_deliverable}
-        onValueChange={(value) => patch({ require_final_deliverable: value })}
-        disabled={readOnly}
-        trackColor={{ false: '#E5E7EB', true: '#AECBFA' }}
-        thumbColor={spec.require_final_deliverable ? '#45A29E' : '#f9fafb'}
-      />
-    </View>
+    <LearningWorkSwitch
+      label="Require final deliverable"
+      value={!!spec.require_final_deliverable}
+      onValueChange={(value) => patch({ require_final_deliverable: value })}
+      readOnly={readOnly}
+      inLearningSection={inLearningSection}
+      isFirstInLearningSection={false}
+    />
   );
 }
 
@@ -160,17 +215,6 @@ export default function WorkDetailsSection({
           <Text style={styles.hint}>Suggested: {suggestedStartPreview}</Text>
         ) : null}
 
-        <View style={styles.switchRow}>
-          <Text style={styles.label}>Graded</Text>
-          <Switch
-            value={spec.graded !== false}
-            onValueChange={(value) => patch({ graded: value })}
-            disabled={readOnly}
-            trackColor={{ false: '#E5E7EB', true: '#AECBFA' }}
-            thumbColor={spec.graded !== false ? '#45A29E' : '#f9fafb'}
-          />
-        </View>
-
         {normalizedType === 'Project' ? (
           <>
             <View style={styles.switchRow}>
@@ -273,6 +317,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginTop: 14,
+  },
+  learningSectionSwitchRow: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#EEF1F6',
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      gridColumn: '1 / -1',
+    }),
+  },
+  learningSectionSwitchRowFollow: {
+    marginTop: 8,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      gridColumn: '1 / -1',
+    }),
+  },
+  learningSectionLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6b7280',
+    marginBottom: 0,
   },
   hint: {
     marginTop: 8,

@@ -30,7 +30,7 @@ import {
   updateExclusion,
 } from '../lib/services/plannerSettingsClient';
 import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
-import WorkDetailsSection, { RequireFinalDeliverableField } from './events/WorkDetailsSection';
+import WorkDetailsSection, { GradedField, RequireFinalDeliverableField } from './events/WorkDetailsSection';
 import { ensureAssignmentsForEvent } from '../lib/workAssignmentClient';
 import {
   computeSuggestedStartDate,
@@ -2978,7 +2978,7 @@ export default function TaskCreateModal({
           return;
         }
         const hasExplicitStartTime = Boolean(normalizedStartTime);
-        const isFlexibleForSave = allDay || !hasExplicitStartTime;
+        const isFlexibleForSave = !allDay && !hasExplicitStartTime;
 
         let startDate;
         let endDate;
@@ -2989,7 +2989,7 @@ export default function TaskCreateModal({
           endDate.setHours(23, 59, 0, 0);
         } else {
           if (!hasExplicitStartTime) {
-            // Keep start/end optional by defaulting blank-time events to all-day bounds.
+            // Date-only placement (midnight–end of day); is_flexible marks "no time added", not all-day.
             startDate = new Date(baseDate);
             endDate = new Date(baseDate);
             endDate.setHours(23, 59, 0, 0);
@@ -5502,12 +5502,19 @@ export default function TaskCreateModal({
                     style={[styles.input, styles.academicInputCompact]}
                   />
                 </View>
+                <GradedField
+                  workSpec={workSpec}
+                  eventType={eventType}
+                  onChange={setWorkSpec}
+                  inLearningSection
+                />
+                <RequireFinalDeliverableField
+                  workSpec={workSpec}
+                  eventType={eventType}
+                  onChange={setWorkSpec}
+                  inLearningSection
+                />
               </SafeFieldRow>
-              <RequireFinalDeliverableField
-                workSpec={workSpec}
-                eventType={eventType}
-                onChange={setWorkSpec}
-              />
                 </SafeView>
             </ModalSectionCard>
             ) : null}
