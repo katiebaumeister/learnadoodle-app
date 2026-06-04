@@ -229,27 +229,34 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   chip: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
   },
   chipActive: {
-    borderColor: '#85C4F2',
-    backgroundColor: '#F0F8FF',
+    borderColor: '#6BB3E8',
+    backgroundColor: 'rgba(133,196,242,0.2)',
   },
   chipDisabled: {
     opacity: 0.7,
   },
   chipText: {
     fontSize: 12,
-    color: '#475569',
+    color: '#6b7280',
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   chipTextActive: {
-    color: '#0369A1',
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   switchRowStack: {
     flexDirection: 'column',

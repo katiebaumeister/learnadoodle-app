@@ -23,6 +23,7 @@ import {
   ExternalLink,
   Trash2,
   CheckCircle,
+  CheckCircle2,
   Check,
   XCircle,
   X,
@@ -41,7 +42,7 @@ import MaterialDocViewerModal, {
 } from '../materials/MaterialDocViewerModal';
 import { useToast } from '../Toast';
 import { comingSoonModalStyles } from '../../theme/comingSoonModalTheme';
-import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
+import MarkAllAttendedModal from './MarkAllAttendedModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import SubjectAssignedToStudentModal from './SubjectAssignedToStudentModal';
 import RespondToHelpRequestModal from '../parent/RespondToHelpRequestModal';
@@ -448,7 +449,7 @@ export default function SubjectDetailPage({
   const [error, setError] = useState(null);
   const [subjectData, setSubjectData] = useState(preloadedSubjectData || null);
   const [showExportComingSoonModal, setShowExportComingSoonModal] = useState(false);
-  const [showPastEventsAttendanceModal, setShowPastEventsAttendanceModal] = useState(false);
+  const [showMarkAllAttendedModal, setShowMarkAllAttendedModal] = useState(false);
   const [showPastEventsGradesModal, setShowPastEventsGradesModal] = useState(false);
   const [showAssignedToStudentModal, setShowAssignedToStudentModal] = useState(false);
   /** Web-only: which export icon is hovered (portal tooltip, matches planner RightToolbar). */
@@ -888,7 +889,7 @@ export default function SubjectDetailPage({
     const t = setTimeout(() => {
       if (action === 'attendance_edit' && SHOW_SUBJECT_ATTENDANCE_SECTION) {
         scrollToSection('attendance-section');
-        setShowPastEventsAttendanceModal(true);
+        setShowMarkAllAttendedModal(true);
         return;
       }
       if (action === 'grades_add' && SHOW_SUBJECT_GRADES_SECTION) {
@@ -3285,14 +3286,14 @@ export default function SubjectDetailPage({
                   {canManageAttendance ? (
                     <TouchableOpacity
                       style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
-                      onPress={() => setShowPastEventsAttendanceModal(true)}
+                      onPress={() => setShowMarkAllAttendedModal(true)}
                       activeOpacity={0.7}
                       accessibilityRole="button"
-                      accessibilityLabel="Bulk edit attendance"
+                      accessibilityLabel="Mark all as attended"
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Edit2 size={14} color="#6B7280" />
-                      <Text style={styles.emptyStateButtonText}>Bulk edit attendance</Text>
+                      <CheckCircle2 size={14} color="#6B7280" />
+                      <Text style={styles.emptyStateButtonText}>Mark all as attended</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -3692,16 +3693,20 @@ export default function SubjectDetailPage({
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
-      <SubjectPastEventsAttendanceModal
-        visible={showPastEventsAttendanceModal}
-        onClose={() => setShowPastEventsAttendanceModal(false)}
+      <MarkAllAttendedModal
+        visible={showMarkAllAttendedModal}
+        onClose={() => setShowMarkAllAttendedModal(false)}
         familyId={familyId}
-        subjectId={subject.id}
-        subjectName={subject?.name}
-        events={subjectData?.events || []}
-        getChildName={getChildName}
-        onOpenEvent={handleOpenEventDetails}
-        onCreatePlan={handleOpenPlanBuilder}
+        subjectDetails={subject?.id ? [{ subject, detail: subjectData }] : []}
+        subjectOptions={subject?.id ? [{
+          id: subject.id,
+          name: subject?.name || 'Subject',
+          childIds: assignedChildren,
+          studentLabel: childrenNames.join(', '),
+        }] : []}
+        children={children}
+        resolvedActiveChildIds={assignedChildren}
+        fixedSubjectId={subject?.id}
         onCompleted={() => loadSubjectDetail({ silent: true })}
       />
       <SubjectPastEventsGradesModal

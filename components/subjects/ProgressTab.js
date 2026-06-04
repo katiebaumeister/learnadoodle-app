@@ -12,10 +12,10 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { ChevronLeft, ChevronRight, Edit2, Plus, X } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, ChevronRight, Download, Edit2, Plus, X } from 'lucide-react';
 import PlannerEventsListTable from '../planner/PlannerEventsListTable';
 // Archived: month calendar + attendance key — see ./archived/SubjectAttendanceMonthPanelArchived.js
-import SubjectPastEventsAttendanceModal from './SubjectPastEventsAttendanceModal';
+import MarkAllAttendedModal from './MarkAllAttendedModal';
 import SubjectPastEventsGradesModal from './SubjectPastEventsGradesModal';
 import SubjectAllEventsSection from './SubjectAllEventsSection';
 import { dispatchOpenReviewForAssignment } from '../../lib/openAssignmentWorkflow';
@@ -456,7 +456,7 @@ export default function ProgressTab({
     return child?.first_name || child?.name || child?.full_name || child?.display_name || 'Student';
   };
   const [subjectPickerAction, setSubjectPickerAction] = useState(null);
-  const [attendanceModalSubjectId, setAttendanceModalSubjectId] = useState(null);
+  const [showMarkAllAttendedModal, setShowMarkAllAttendedModal] = useState(false);
   const [gradesModalSubjectId, setGradesModalSubjectId] = useState(null);
   const [familyTargetScope, setFamilyTargetScope] = useState('overall');
   const [familyDefaultTargetDays, setFamilyDefaultTargetDays] = useState(null);
@@ -549,10 +549,6 @@ export default function ProgressTab({
   }, [familyId, selectedAcademicYearStart]);
   const subjectPickerCopy = useMemo(() => {
     const byAction = {
-      attendance_edit: {
-        title: 'Choose a subject for attendance',
-        subtitle: 'Pick the subject whose attendance you want to update.',
-      },
       grades_add: {
         title: 'Choose a subject for grades',
         subtitle: 'Pick the subject whose grades you want to update.',
@@ -573,10 +569,6 @@ export default function ProgressTab({
   }, [subjectPickerAction]);
   const openSubjectPicker = (action) => {
     if (!hasSubjectOptions) {
-      if (action === 'attendance_edit') {
-        setAttendanceModalSubjectId(EMPTY_SUBJECT_MODAL_ID);
-        return;
-      }
       if (action === 'grades_add') {
         setGradesModalSubjectId(EMPTY_SUBJECT_MODAL_ID);
         return;
@@ -604,12 +596,6 @@ export default function ProgressTab({
     const action = subjectPickerAction;
     setSubjectPickerAction(null);
     if (!subjectId || !action) return;
-    if (action === 'attendance_edit') {
-      setAttendanceModalSubjectId(subjectId);
-      // Refresh in background so modal opens immediately.
-      onRefreshSubjectDetail?.(subjectId);
-      return;
-    }
     if (action === 'grades_add') {
       setGradesModalSubjectId(subjectId);
       // Refresh in background so modal opens immediately.
@@ -1837,14 +1823,15 @@ export default function ProgressTab({
   ), [subjectProgressRows]);
   const attendancePlannerListEvents = allEventsAggregate.events;
 
-  const attendanceModalSubjectName = useMemo(() => {
-    const sid = String(attendanceModalSubjectId || '').trim();
-    if (!sid || sid === EMPTY_SUBJECT_MODAL_ID) return null;
-    const fromMap = subjectById.get(sid)?.subject?.name;
-    if (fromMap) return fromMap;
-    const fromFiltered = (filteredSubjects || []).find((s) => String(s?.id) === sid)?.name;
-    return fromFiltered || null;
-  }, [attendanceModalSubjectId, subjectById, filteredSubjects]);
+  const handleMarkAllAttendedCompleted = useCallback(async (subjectIds = []) => {
+    setPlannerListRefreshEpoch((epoch) => epoch + 1);
+    setAttendanceScrollEpoch((epoch) => epoch + 1);
+    setOptimisticAttendanceByKey({});
+    const ids = Array.isArray(subjectIds) && subjectIds.length > 0
+      ? subjectIds
+      : (subjectDetails || []).map(({ subject }) => subject?.id).filter(Boolean);
+    await Promise.all(ids.map((id) => onRefreshSubjectDetail?.(id)));
+  }, [onRefreshSubjectDetail, subjectDetails]);
 
   useEffect(() => {
     if (displayedSummaryPanel === 'attendance') {
@@ -1922,6 +1909,76 @@ export default function ProgressTab({
     <Text style={styles.emptyStateText}>No graded events yet</Text>
   );
 
+  const renderGradesHeaderActions = () => {
+    const canExport = typeof onOpenExportModal === 'function';
+    if (isChildView && !canExport) return null;
+    return (
+      <View style={styles.sectionHeaderActions}>
+        {!isChildView ? (
+          <TouchableOpacity
+            style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+            onPress={() => openSubjectPicker('grades_add')}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Bulk add grades"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Plus size={16} color="#6B7280" />
+            <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
+          </TouchableOpacity>
+        ) : null}
+        {canExport ? (
+          <TouchableOpacity
+            style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+            onPress={() => onOpenExportModal('grades')}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Export grades"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Download size={14} color="#6B7280" />
+            <Text style={styles.emptyStateButtonText}>Export</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderAttendanceHeaderActions = () => {
+    const canExport = typeof onOpenExportModal === 'function';
+    if (!canManageAttendance && !canExport) return null;
+    return (
+      <View style={styles.sectionHeaderActions}>
+        {canManageAttendance ? (
+          <TouchableOpacity
+            style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+            onPress={() => setShowMarkAllAttendedModal(true)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Mark all as attended"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <CheckCircle2 size={14} color="#6B7280" />
+            <Text style={styles.emptyStateButtonText}>Mark all as attended</Text>
+          </TouchableOpacity>
+        ) : null}
+        {canExport ? (
+          <TouchableOpacity
+            style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
+            onPress={() => onOpenExportModal('attendance')}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Export attendance"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Download size={14} color="#6B7280" />
+            <Text style={styles.emptyStateButtonText}>Export</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  };
+
   const renderSummaryPanelContent = (panelKey, options = {}) => {
     const fillLayout = options.fillLayout === true;
     const panelStyle = [
@@ -1933,17 +1990,7 @@ export default function ProgressTab({
         <View style={panelStyle}>
           <View style={styles.summaryExpandPanelHeader}>
             <Text style={styles.summaryExpandPanelTitle}>Attendance</Text>
-            {canManageAttendance ? (
-              <TouchableOpacity
-                style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
-                onPress={() => openSubjectPicker('attendance_edit')}
-                activeOpacity={0.7}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Edit2 size={14} color="#6B7280" />
-                <Text style={styles.emptyStateButtonText}>Bulk edit attendance</Text>
-              </TouchableOpacity>
-            ) : null}
+            {renderAttendanceHeaderActions()}
           </View>
           <View style={fillLayout ? styles.summaryExpandPanelBody : undefined}>
             {attendancePanelInner}
@@ -1956,17 +2003,7 @@ export default function ProgressTab({
         <View style={panelStyle}>
           <View style={styles.summaryExpandPanelHeader}>
             <Text style={styles.summaryExpandPanelTitle}>Grades</Text>
-            {!isChildView ? (
-              <TouchableOpacity
-                style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
-                onPress={() => openSubjectPicker('grades_add')}
-                activeOpacity={0.7}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Plus size={16} color="#6B7280" />
-                <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
-              </TouchableOpacity>
-            ) : null}
+            {renderGradesHeaderActions()}
           </View>
           {gradesPanelInner}
         </View>
@@ -2182,40 +2219,16 @@ export default function ProgressTab({
             <View style={[styles.section, embeddedInScrollView && styles.sectionEmbedded]}>
               <View style={styles.attendanceSectionHeader}>
                 <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>{attendanceSectionTitle}</Text>
-                <View style={styles.sectionHeaderActions}>
-                  {canManageAttendance ? (
-                    <TouchableOpacity
-                      style={[styles.emptyStateButton, styles.attendanceHeaderEditButton]}
-                      onPress={() => openSubjectPicker('attendance_edit')}
-                      activeOpacity={0.7}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Edit2 size={14} color="#6B7280" />
-                      <Text style={styles.emptyStateButtonText}>Bulk edit attendance</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
+                {renderAttendanceHeaderActions()}
               </View>
               <View style={styles.progressSectionBody}>
                 {attendancePanelInner}
               </View>
             </View>
             <View style={[styles.section, embeddedInScrollView && styles.sectionEmbedded]}>
-              <View style={styles.gradesSectionHeader}>
-                <View style={styles.gradesSectionTitleRow}>
-                  <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>{gradesSectionTitle}</Text>
-                  {!isChildView ? (
-                    <TouchableOpacity
-                      style={[styles.emptyStateButton, styles.gradesHeaderAddButton]}
-                      onPress={() => openSubjectPicker('grades_add')}
-                      activeOpacity={0.7}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <Plus size={16} color="#6B7280" />
-                      <Text style={styles.emptyStateButtonText}>Bulk add grades</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
+              <View style={[styles.gradesSectionHeader, styles.attendanceSectionHeader]}>
+                <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>{gradesSectionTitle}</Text>
+                {renderGradesHeaderActions()}
               </View>
               <View style={styles.progressSectionBody}>
                 {gradesPanelInner}
@@ -2287,20 +2300,15 @@ export default function ProgressTab({
           </ScrollView>
         </View>
       )}
-      <SubjectPastEventsAttendanceModal
-        visible={!!attendanceModalSubjectId}
-        onClose={() => setAttendanceModalSubjectId(null)}
+      <MarkAllAttendedModal
+        visible={showMarkAllAttendedModal}
+        onClose={() => setShowMarkAllAttendedModal(false)}
         familyId={familyId}
-        subjectId={attendanceModalSubjectId}
-        subjectName={attendanceModalSubjectName}
-        events={subjectById.get(String(attendanceModalSubjectId || ''))?.detail?.events || []}
-        getChildName={getChildName}
-        onOpenEvent={() => {}}
-        onCreatePlan={() => {}}
-        onCompleted={async () => {
-          const sid = attendanceModalSubjectId;
-          if (sid && sid !== EMPTY_SUBJECT_MODAL_ID) await onRefreshSubjectDetail?.(sid);
-        }}
+        subjectDetails={subjectDetails}
+        subjectOptions={subjectOptions}
+        children={children}
+        resolvedActiveChildIds={resolvedActiveChildIds}
+        onCompleted={handleMarkAllAttendedCompleted}
       />
       <SubjectPastEventsGradesModal
         visible={!!gradesModalSubjectId}

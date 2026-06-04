@@ -483,7 +483,7 @@ export default function SubjectAllEventsSection({
       <View style={styles.emptyStateBox}>
         <Text style={styles.emptyStateText}>
           {reviewCenterMode
-            ? 'No assignments, projects, or exams yet.'
+            ? 'No assignments, projects, or exams assigned or submitted yet.'
             : 'Nothing to see here! Add some events to get started'}
         </Text>
       </View>

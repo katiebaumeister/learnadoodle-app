@@ -22,7 +22,10 @@ import {
   GraduationCap,
   Download,
   Check,
+  Smile,
+  BookOpen,
 } from 'lucide-react';
+
 import { colors } from '../../theme/colors';
 import { getSubjectsWithOverview, getSubjectDetail } from '../../lib/services/subjectsClient';
 import { isAbortLikeError } from '../../lib/apiClient';
@@ -368,6 +371,7 @@ export default function SubjectsPage({
   const [subjectsExportEndDate, setSubjectsExportEndDate] = useState('');
   const [subjectsExportChildIds, setSubjectsExportChildIds] = useState([]);
   const [subjectsExportBusy, setSubjectsExportBusy] = useState(false);
+  const [subjectsExportHideTypePicker, setSubjectsExportHideTypePicker] = useState(false);
   const allCourseChildIds = useMemo(
     () => (safeChildren || []).map((child) => String(child?.id || '')).filter(Boolean),
     [safeChildren]
@@ -1096,17 +1100,41 @@ export default function SubjectsPage({
     return `${selectedCoursesYear} / ${termLabel}`;
   }, [selectedCoursesYear, selectedTermFilter]);
   const openSubjectsExportModal = useCallback((preferredType = 'schedule') => {
-    const type = ['schedule', 'schedule_tables', 'attendance', 'report_card', 'units_lessons'].includes(String(preferredType))
-      ? String(preferredType)
+    const normalizedPreferred = preferredType === 'grades' ? 'report_card' : String(preferredType || '');
+    const type = ['schedule', 'schedule_tables', 'attendance', 'report_card', 'units_lessons'].includes(normalizedPreferred)
+      ? normalizedPreferred
       : 'schedule';
     const range = parseSchoolYearRange(selectedCoursesYear || getCurrentSchoolYear());
+    const lockTypePicker = type === 'attendance' || type === 'report_card';
+    setSubjectsExportHideTypePicker(lockTypePicker);
     setSubjectsExportType(type);
-    setSubjectsExportFormat((type === 'schedule' || type === 'schedule_tables') ? 'excel' : 'pdf');
+    if (type === 'schedule' || type === 'schedule_tables') {
+      setSubjectsExportFormat('excel');
+    } else if (type === 'attendance') {
+      setSubjectsExportFormat('pdf');
+    } else if (type === 'report_card') {
+      setSubjectsExportFormat('pdf');
+    } else {
+      setSubjectsExportFormat('pdf');
+    }
     setSubjectsExportStartDate(range.startDate);
     setSubjectsExportEndDate(range.endDate);
     setSubjectsExportChildIds(prefilledSubjectChildIds);
     setShowSubjectsExportModal(true);
   }, [selectedCoursesYear, prefilledSubjectChildIds]);
+
+  const subjectsExportModalTitle = useMemo(() => {
+    if (!subjectsExportHideTypePicker) return 'Export subject data';
+    if (subjectsExportType === 'attendance') return 'Export attendance';
+    if (subjectsExportType === 'report_card') return 'Export grades';
+    return 'Export subject data';
+  }, [subjectsExportHideTypePicker, subjectsExportType]);
+
+  const closeSubjectsExportModal = useCallback(() => {
+    if (subjectsExportBusy) return;
+    setShowSubjectsExportModal(false);
+    setSubjectsExportHideTypePicker(false);
+  }, [subjectsExportBusy]);
   const toggleSubjectsExportChild = useCallback((childId) => {
     const safeId = String(childId || '');
     if (!safeId) return;
@@ -1503,6 +1531,7 @@ export default function SubjectsPage({
         }
       }
       setShowSubjectsExportModal(false);
+      setSubjectsExportHideTypePicker(false);
     } catch (err) {
       Alert.alert('Export failed', err?.message || 'Unable to export right now.');
     } finally {
@@ -2139,12 +2168,8 @@ export default function SubjectsPage({
       toast.push('No children to edit', 'error');
       return;
     }
-    if (safeChildren.length === 1) {
-      onEditChild(safeChildren[0]);
-      return;
-    }
     setLearningHeaderPickerKind('child');
-  }, [canEditChildFromHeader, onEditChild, safeChildren, toast]);
+  }, [canEditChildFromHeader, safeChildren.length, toast]);
 
   const openSubjectEditPicker = useCallback(() => {
     if (!canEditSubjectFromHeader) return;
@@ -2152,15 +2177,8 @@ export default function SubjectsPage({
       toast.push('No subjects to edit', 'error');
       return;
     }
-    if (headerSubjectPickerOptions.length === 1) {
-      const match = (filteredSubjects || []).find(
-        (subject) => String(subject?.id) === String(headerSubjectPickerOptions[0]?.id)
-      );
-      if (match) onEditSubject(match);
-      return;
-    }
     setLearningHeaderPickerKind('subject');
-  }, [canEditSubjectFromHeader, filteredSubjects, headerSubjectPickerOptions, onEditSubject, toast]);
+  }, [canEditSubjectFromHeader, headerSubjectPickerOptions.length, toast]);
 
   const handleLearningHeaderPickerSelect = useCallback((id) => {
     const kind = learningHeaderPickerKind;
@@ -2303,23 +2321,19 @@ export default function SubjectsPage({
       visible={showSubjectsExportModal}
       transparent
       animationType="fade"
-      onRequestClose={() => !subjectsExportBusy && setShowSubjectsExportModal(false)}
+      onRequestClose={closeSubjectsExportModal}
     >
       <TouchableOpacity
         style={styles.exportModalBackdrop}
         activeOpacity={1}
-        onPress={() => {
-          if (!subjectsExportBusy) setShowSubjectsExportModal(false);
-        }}
+        onPress={closeSubjectsExportModal}
       >
         <TouchableOpacity style={styles.exportModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
           <View style={styles.exportModalHeaderRow}>
-            <Text style={styles.exportModalTitle}>Export subject data</Text>
+            <Text style={styles.exportModalTitle}>{subjectsExportModalTitle}</Text>
             <TouchableOpacity
               style={styles.exportModalCloseButton}
-              onPress={() => {
-                if (!subjectsExportBusy) setShowSubjectsExportModal(false);
-              }}
+              onPress={closeSubjectsExportModal}
               disabled={subjectsExportBusy}
               hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
               {...(Platform.OS === 'web' && { cursor: subjectsExportBusy ? 'default' : 'pointer' })}
@@ -2328,33 +2342,37 @@ export default function SubjectsPage({
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.exportModalLabel}>Data type</Text>
-          <View style={styles.exportTypeRow}>
-            {[
-              { id: 'schedule', label: 'Class Schedule' },
-              { id: 'schedule_tables', label: 'Schedule Tables' },
-              { id: 'attendance', label: 'Attendance' },
-              { id: 'report_card', label: 'Report card' },
-              { id: 'units_lessons', label: 'Units/Lessons' },
-            ].map((option) => {
-              const active = subjectsExportType === option.id;
-              return (
-                <TouchableOpacity
-                  key={option.id}
-                  style={[styles.exportTypeChip, active && styles.exportTypeChipActive]}
-                  onPress={() => {
-                    setSubjectsExportType(option.id);
-                    if (option.id === 'schedule' || option.id === 'schedule_tables') setSubjectsExportFormat('excel');
-                    if (option.id === 'attendance') setSubjectsExportFormat('pdf');
-                    if (option.id === 'report_card') setSubjectsExportFormat('pdf');
-                    if (option.id === 'units_lessons') setSubjectsExportFormat('pdf');
-                  }}
-                >
-                  <Text style={[styles.exportTypeChipText, active && styles.exportTypeChipTextActive]}>{option.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          {!subjectsExportHideTypePicker ? (
+            <>
+              <Text style={styles.exportModalLabel}>Data type</Text>
+              <View style={styles.exportTypeRow}>
+                {[
+                  { id: 'schedule', label: 'Class Schedule' },
+                  { id: 'schedule_tables', label: 'Schedule Tables' },
+                  { id: 'attendance', label: 'Attendance' },
+                  { id: 'report_card', label: 'Report card' },
+                  { id: 'units_lessons', label: 'Units/Lessons' },
+                ].map((option) => {
+                  const active = subjectsExportType === option.id;
+                  return (
+                    <TouchableOpacity
+                      key={option.id}
+                      style={[styles.exportTypeChip, active && styles.exportTypeChipActive]}
+                      onPress={() => {
+                        setSubjectsExportType(option.id);
+                        if (option.id === 'schedule' || option.id === 'schedule_tables') setSubjectsExportFormat('excel');
+                        if (option.id === 'attendance') setSubjectsExportFormat('pdf');
+                        if (option.id === 'report_card') setSubjectsExportFormat('pdf');
+                        if (option.id === 'units_lessons') setSubjectsExportFormat('pdf');
+                      }}
+                    >
+                      <Text style={[styles.exportTypeChipText, active && styles.exportTypeChipTextActive]}>{option.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </>
+          ) : null}
 
           <Text style={styles.exportModalLabel}>Format</Text>
           <View style={styles.exportTypeRow}>
@@ -2431,7 +2449,7 @@ export default function SubjectsPage({
           <View style={styles.exportModalActions}>
             <TouchableOpacity
               style={styles.exportCancelButton}
-              onPress={() => setShowSubjectsExportModal(false)}
+              onPress={closeSubjectsExportModal}
               disabled={subjectsExportBusy}
             >
               <Text style={styles.exportCancelText}>Cancel</Text>
@@ -2592,6 +2610,7 @@ export default function SubjectsPage({
                 accessibilityLabel="Edit children"
                 {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
               >
+                <Smile size={14} color="#6B7280" />
                 <Text style={styles.headerEditPillText}>Edit children</Text>
               </TouchableOpacity>
             ) : null}
@@ -2604,6 +2623,7 @@ export default function SubjectsPage({
                 accessibilityLabel="Edit subjects"
                 {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
               >
+                <BookOpen size={14} color="#6B7280" />
                 <Text style={styles.headerEditPillText}>Edit subjects</Text>
               </TouchableOpacity>
             ) : null}
@@ -2778,6 +2798,7 @@ export default function SubjectsPage({
             onRefreshSubjectDetail={refreshSubjectDetailById}
             onEditChild={canShowEditChildButton ? onEditChild : null}
             canManageAttendance={canManageAttendanceActions}
+            onOpenExportModal={openSubjectsExportModal}
             onOpenScheduleTab={() => handleModeFilterChange('plan')}
             onOpenSubject={(subjectId, options = null) => {
               const match = (subjects || []).find((subject) => String(subject?.id) === String(subjectId));
@@ -2996,6 +3017,9 @@ const styles = StyleSheet.create({
     marginLeft: 'auto',
   },
   headerEditPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 999,
