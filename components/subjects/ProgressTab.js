@@ -25,6 +25,10 @@ import {
   formatPlanProgressSummary,
   getPlanProgressStatusFromMetrics,
 } from './SubjectsPlanBuilder';
+import {
+  isWorkProducingEventType,
+  primaryAssignmentForEvent,
+} from '../../lib/workEventHelpers';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
 import { supabase } from '../../lib/supabase';
 import { createAttendanceLog, deleteAttendanceLog, updateAttendanceLog } from '../../lib/services/recordsClient';
@@ -261,6 +265,72 @@ function percentToLetter(percent) {
   if (p >= 60) return 'D-';
   return 'F';
 }
+
+function percentToGradeColor(percent) {
+  const p = Number(percent);
+  if (!Number.isFinite(p)) return '#0F172A';
+  if (p >= 90) return '#059669';
+  if (p >= 80) return '#2563EB';
+  if (p >= 70) return '#D97706';
+  if (p >= 60) return '#EA580C';
+  return '#DC2626';
+}
+
+function classifyLearningLogAssignment(row) {
+  if (!row) return null;
+  const status = String(row?.status || '').trim().toLowerCase();
+  const reviewStatus = String(row?.review_status || '').trim().toLowerCase();
+  const hasGrade = Boolean(row?.grade_display) || row?.grade_value != null;
+  if (row?.need_help === true) return 'needs_help';
+  const needsReview = status === 'submitted'
+    && (reviewStatus === '' || reviewStatus === 'needs_revision');
+  if (needsReview) return 'needs_review';
+  const isReviewed = reviewStatus === 'approved'
+    || reviewStatus === 'reviewed'
+    || status === 'reviewed'
+    || status === 'accepted';
+  if ((status === 'submitted' || isReviewed) && !hasGrade) return 'needs_grading';
+  return null;
+}
+
+const SUMMARY_CHIP_TONES = {
+  neutral: {
+    chip: { borderColor: '#CBD5E1', backgroundColor: '#F8FAFC' },
+    text: { color: '#475569' },
+  },
+  needs_review: {
+    chip: { borderColor: '#93C5FD', backgroundColor: '#EFF6FF' },
+    text: { color: '#1D4ED8' },
+  },
+  needs_grading: {
+    chip: { borderColor: '#C4B5FD', backgroundColor: '#F5F3FF' },
+    text: { color: '#6D28D9' },
+  },
+  needs_help: {
+    chip: { borderColor: '#FDBA74', backgroundColor: '#FFF7ED' },
+    text: { color: '#C2410C' },
+  },
+  on_track: {
+    chip: { borderColor: '#93C5FD', backgroundColor: '#EFF6FF' },
+    text: { color: '#1D4ED8' },
+  },
+  behind: {
+    chip: { borderColor: '#FDBA74', backgroundColor: '#FFF7ED' },
+    text: { color: '#C2410C' },
+  },
+  ahead: {
+    chip: { borderColor: '#6EE7B7', backgroundColor: '#ECFDF5' },
+    text: { color: '#047857' },
+  },
+  attended: {
+    chip: { borderColor: '#86EFAC', backgroundColor: '#ECFDF5' },
+    text: { color: '#059669' },
+  },
+  unattended: {
+    chip: { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
+    text: { color: '#DC2626' },
+  },
+};
 
 function parsePositiveInt(value) {
   const n = Number(value);
@@ -1753,6 +1823,77 @@ export default function ProgressTab({
     });
     return count;
   }, [subjectDetails, resolvedActiveSubjectIds, resolvedActiveChildIds]);
+  const learningLogActionCounts = useMemo(() => {
+    const activeSet = new Set(resolvedActiveSubjectIds.map(String));
+    const seen = new Set();
+    const counts = { assigned: 0, needs_grading: 0, needs_review: 0, needs_help: 0 };
+    const consider = (row) => {
+      if (!row) return;
+      const id = String(row?.id || '').trim();
+      const dedupeKey = id || `${row?.child_id}|${row?.title}|${row?.updated_at}`;
+      if (seen.has(dedupeKey)) return;
+      if (!recordMatchesChildIds(row, resolvedActiveChildIds)) return;
+      seen.add(dedupeKey);
+      counts.assigned += 1;
+      const bucket = classifyLearningLogAssignment(row);
+      if (bucket) counts[bucket] += 1;
+    };
+    subjectDetails.forEach(({ subject, detail }) => {
+      const subjectId = String(subject?.id || '').trim();
+      if (!subjectId || !activeSet.has(subjectId)) return;
+      const assignments = Array.isArray(detail?.subjectAssignments) && detail.subjectAssignments.length
+        ? detail.subjectAssignments
+        : Object.values(detail?.assignmentsByEventId || {}).flat();
+      assignments.forEach(consider);
+    });
+    return counts;
+  }, [subjectDetails, resolvedActiveSubjectIds, resolvedActiveChildIds]);
+  const planningGoalsStatusChip = useMemo(() => {
+    const tone = allEventsProgressSummary?.statusTone;
+    if (tone === 'behind') return { label: 'Behind target', tone: 'behind' };
+    if (tone === 'ahead') return { label: 'Ahead of target', tone: 'ahead' };
+    if (tone === 'on_track') return { label: 'On track', tone: 'on_track' };
+    if (tone === 'no_cadence') return { label: 'No schedule', tone: 'neutral' };
+    return null;
+  }, [allEventsProgressSummary]);
+  const learningLogSummaryChips = useMemo(() => {
+    const { needs_grading, needs_review, needs_help } = learningLogActionCounts;
+    const actionChips = [
+      needs_grading > 0 && {
+        label: `Needs grading ${needs_grading}`,
+        tone: 'needs_grading',
+      },
+      needs_review > 0 && {
+        label: `Needs review ${needs_review}`,
+        tone: 'needs_review',
+      },
+      needs_help > 0 && {
+        label: `Needs help ${needs_help}`,
+        tone: 'needs_help',
+      },
+    ].filter(Boolean);
+    if (actionChips.length > 0) return actionChips;
+
+    const { events, assignmentsByEventId } = allEventsAggregate;
+    const hasAssignedWorkInLog = (events || []).some((event) => {
+      if (isWorkProducingEventType(event?.event_type || event?.type)) return true;
+      return Boolean(primaryAssignmentForEvent(
+        assignmentsByEventId,
+        event?.id,
+        resolvedActiveChildIds
+      ));
+    });
+
+    if (!hasAssignedWorkInLog && submittedArtifactsCount === 0) {
+      return [{ label: 'Nothing assigned', tone: 'neutral' }];
+    }
+    return [];
+  }, [
+    learningLogActionCounts,
+    allEventsAggregate,
+    resolvedActiveChildIds,
+    submittedArtifactsCount,
+  ]);
   const learningGoalsGapLabel = useMemo(() => {
     const deltaDays = allEventsProgressSummary?.deltaDays;
     if (deltaDays == null || Number(deltaDays) === 0) return null;
@@ -2145,6 +2286,26 @@ export default function ProgressTab({
     );
   };
 
+  const renderSummaryActionChips = (chips = []) => {
+    const visibleChips = (chips || []).filter((chip) => chip && String(chip?.label || '').trim());
+    if (!visibleChips.length) return null;
+    return (
+      <View style={styles.overviewSummaryChipsRow}>
+        {visibleChips.map((chip) => {
+          const toneStyles = SUMMARY_CHIP_TONES[chip.tone] || SUMMARY_CHIP_TONES.neutral;
+          const chipKey = `${chip.tone}-${chip.label}`;
+          return (
+            <View key={chipKey} style={[styles.overviewSummaryChip, toneStyles.chip]}>
+              <Text style={[styles.overviewSummaryChipText, toneStyles.text]} numberOfLines={1}>
+                {chip.label}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
+
   const renderClickableSummaryBox = (panelKey, label, value, meta, options = {}) => {
     const isActive = expandedSummaryPanel === panelKey;
     return (
@@ -2169,12 +2330,14 @@ export default function ProgressTab({
             styles.overviewSummaryValue,
             options.compactValue && styles.overviewSummaryValueCompact,
             isActive && styles.overviewSummaryValueActive,
+            options.valueColor ? { color: options.valueColor } : null,
           ]}
           numberOfLines={options.compactValue ? 2 : 1}
         >
           {value}
         </Text>
-        {meta ? (
+        {options.metaNode || null}
+        {!options.metaNode && meta ? (
           <Text
             style={[
               styles.overviewSummaryMeta,
@@ -2186,6 +2349,7 @@ export default function ProgressTab({
             {meta}
           </Text>
         ) : null}
+        {renderSummaryActionChips(options.chips)}
       </TouchableOpacity>
     );
   };
@@ -2305,26 +2469,52 @@ export default function ProgressTab({
                   'learning_log',
                   'Learning Log',
                   String(submittedArtifactsCount),
-                  submittedArtifactsCount === 1 ? 'submitted artifact' : 'submitted artifacts'
+                  submittedArtifactsCount === 1 ? 'submitted artifact' : 'submitted artifacts',
+                  { chips: learningLogSummaryChips }
                 )}
                 {renderClickableSummaryBox(
                   'learning_goals',
                   'Planning goals',
                   allEventsProgressSummary?.summaryLine || 'No targets yet',
                   learningGoalsGapLabel,
-                  { compactValue: true, metaAccent: !!learningGoalsGapLabel }
+                  {
+                    compactValue: true,
+                    metaAccent: !!learningGoalsGapLabel,
+                    chips: planningGoalsStatusChip ? [planningGoalsStatusChip] : [],
+                  }
                 )}
                 {renderClickableSummaryBox(
                   'attendance',
                   'Attendance',
-                  overviewStats.attendanceRate == null ? 'No data' : `${overviewStats.attendanceRate}%`,
-                  `${overviewStats.completedDays} attended · ${attendanceDayCounts.absent} unattended`
+                  (attendanceDayCounts.present + attendanceDayCounts.absent) === 0
+                    ? 'No data'
+                    : String(attendanceDayCounts.present + attendanceDayCounts.absent),
+                  (attendanceDayCounts.present + attendanceDayCounts.absent) === 1
+                    ? 'day marked'
+                    : ((attendanceDayCounts.present + attendanceDayCounts.absent) === 0 ? null : 'days marked'),
+                  {
+                    chips: [
+                      {
+                        label: `${attendanceDayCounts.present} attended`,
+                        tone: 'attended',
+                      },
+                      {
+                        label: `${attendanceDayCounts.absent} unattended`,
+                        tone: 'unattended',
+                      },
+                    ],
+                  }
                 )}
                 {renderClickableSummaryBox(
                   'grades',
                   'Grades',
-                  overviewStats.gradeAverage == null ? 'No grades' : `${overviewStats.gradeAverage}%`,
-                  `${gradeRows.length} recorded grade${gradeRows.length === 1 ? '' : 's'}`
+                  overviewStats.gradeAverage == null
+                    ? 'No grades'
+                    : `${percentToLetter(overviewStats.gradeAverage)} (${overviewStats.gradeAverage}%)`,
+                  `${gradeRows.length} recorded grade${gradeRows.length === 1 ? '' : 's'}`,
+                  overviewStats.gradeAverage == null
+                    ? {}
+                    : { valueColor: percentToGradeColor(overviewStats.gradeAverage) }
                 )}
               </View>
               {renderSummaryExpandPanel()}
@@ -2560,6 +2750,24 @@ const styles = StyleSheet.create({
   overviewSummaryValueCompact: { fontSize: 14, lineHeight: 20 },
   overviewSummaryMeta: { marginTop: 2, fontSize: 12, color: '#64748B', ...WEB_BODY_FONT },
   overviewSummaryMetaAccent: { color: '#DC2626', fontWeight: '600' },
+  overviewSummaryChipsRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  overviewSummaryChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    maxWidth: '100%',
+  },
+  overviewSummaryChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    ...WEB_HEADING_FONT,
+  },
   summaryExpandPanelOuter: {
     width: '100%',
     overflow: 'hidden',

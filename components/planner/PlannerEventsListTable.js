@@ -243,6 +243,11 @@ export default function PlannerEventsListTable({
 
   const denseListRef = useRef(null);
   const allowExpandOnScrollRef = useRef(false);
+  const userHasManuallyScrolledRef = useRef(false);
+  const isProgrammaticScrollRef = useRef(false);
+  const scrollOffsetRef = useRef(0);
+  const prevPastMonthsRef = useRef(allPastMonths);
+  const prevTodayLayoutOffsetRef = useRef(0);
   const [listVisibilityEpoch, setListVisibilityEpoch] = useState(0);
   const allWindowExpandAtRef = useRef({ past: 0, future: 0 });
   const denseTodayIndex = useMemo(
@@ -279,16 +284,26 @@ export default function PlannerEventsListTable({
   const stickyHeaderIndices = embedded ? [] : denseStickyHeaderIndices;
 
   const recenterDenseList = useCallback(() => {
-    if (denseTodayIndex < 0) return;
+    if (denseTodayIndex < 0 || userHasManuallyScrolledRef.current) return;
     const target = Math.max(0, denseTodayIndex);
     const offset = denseItemLayouts[target] ?? 0;
+    isProgrammaticScrollRef.current = true;
     if (Platform.OS === 'web') {
       denseListRef.current?.scrollToOffset?.({ offset, animated: false });
     } else {
       denseListRef.current?.scrollToIndex?.({ index: target, animated: false, viewPosition: 0 });
     }
-    allowExpandOnScrollRef.current = true;
+    scrollOffsetRef.current = offset;
+    requestAnimationFrame(() => {
+      isProgrammaticScrollRef.current = false;
+      allowExpandOnScrollRef.current = true;
+    });
   }, [denseTodayIndex, denseItemLayouts]);
+
+  useLayoutEffect(() => {
+    userHasManuallyScrolledRef.current = false;
+    allowExpandOnScrollRef.current = false;
+  }, [scrollToTodayEpoch, listVisibilityEpoch]);
 
   const prevPlannerShellVisibleRef = useRef(plannerShellVisible);
   useLayoutEffect(() => {
@@ -301,6 +316,7 @@ export default function PlannerEventsListTable({
 
   useLayoutEffect(() => {
     if (!shouldAnchorToToday || denseTodayIndex < 0) return;
+    if (userHasManuallyScrolledRef.current) return;
     allowExpandOnScrollRef.current = false;
     let raf2 = 0;
     const raf1 = requestAnimationFrame(() => {
@@ -318,7 +334,6 @@ export default function PlannerEventsListTable({
   }, [
     shouldAnchorToToday,
     denseTodayIndex,
-    groupedDenseRows.length,
     listRefreshEpoch,
     scrollToTodayEpoch,
     listVisibilityEpoch,
@@ -327,9 +342,32 @@ export default function PlannerEventsListTable({
   ]);
 
   useLayoutEffect(() => {
+    if (!userHasManuallyScrolledRef.current) {
+      prevPastMonthsRef.current = allPastMonths;
+      prevTodayLayoutOffsetRef.current = denseItemLayouts[denseTodayIndex] ?? 0;
+      return;
+    }
+    const pastExpanded = allPastMonths > prevPastMonthsRef.current;
+    const prevTodayOffset = prevTodayLayoutOffsetRef.current;
+    const nextTodayOffset = denseItemLayouts[denseTodayIndex] ?? 0;
+    if (pastExpanded && nextTodayOffset > prevTodayOffset) {
+      const delta = nextTodayOffset - prevTodayOffset;
+      isProgrammaticScrollRef.current = true;
+      const nextOffset = scrollOffsetRef.current + delta;
+      scrollOffsetRef.current = nextOffset;
+      denseListRef.current?.scrollToOffset?.({ offset: nextOffset, animated: false });
+      requestAnimationFrame(() => {
+        isProgrammaticScrollRef.current = false;
+      });
+    }
+    prevPastMonthsRef.current = allPastMonths;
+    prevTodayLayoutOffsetRef.current = nextTodayOffset;
+  }, [allPastMonths, denseTodayIndex, denseItemLayouts]);
+
+  useLayoutEffect(() => {
     if (!embedded || shouldAnchorToToday) return;
     denseListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
-  }, [embedded, shouldAnchorToToday, listRefreshEpoch, listVisibilityEpoch, groupedDenseRows.length]);
+  }, [embedded, shouldAnchorToToday, listRefreshEpoch, listVisibilityEpoch]);
 
   const maybeExpandAllPast = useCallback(() => {
     const now = Date.now();
@@ -632,14 +670,22 @@ export default function PlannerEventsListTable({
         }}
         onEndReachedThreshold={0.65}
         onEndReached={maybeExpandAllFuture}
+        onScrollBeginDrag={() => {
+          userHasManuallyScrolledRef.current = true;
+        }}
         onScroll={(e) => {
-          if (!allowExpandOnScrollRef.current) return;
           const y = e?.nativeEvent?.contentOffset?.y ?? 0;
+          scrollOffsetRef.current = y;
+          if (!isProgrammaticScrollRef.current && allowExpandOnScrollRef.current) {
+            userHasManuallyScrolledRef.current = true;
+          }
+          if (!allowExpandOnScrollRef.current) return;
           if (y <= 120) maybeExpandAllPast();
         }}
         scrollEventThrottle={16}
         nestedScrollEnabled
         onScrollToIndexFailed={() => {
+          if (userHasManuallyScrolledRef.current) return;
           setTimeout(() => recenterDenseList(), 120);
         }}
       />
