@@ -11,16 +11,20 @@ import {
   Modal,
   TextInput,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
-import { X, Check, RotateCcw, Award } from 'lucide-react';
+import { X, Check, RotateCcw, Award, Link, Upload, Paperclip } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { reviewAssignmentWork } from '../../lib/workAssignmentClient';
 import {
+  extractStudentSubmissionText,
   getWorkStatusLabel,
   normalizeWorkEventType,
   parseWorkSpec,
+  resolveQuizAnswerRows,
 } from '../../lib/workEventHelpers';
+import { createFileMaterial } from '../../lib/services/materialsClient';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 
 function resolveLinkedEventId(assignment) {
@@ -50,6 +54,9 @@ export default function WorkReviewModal({
   const [gradeValue, setGradeValue] = useState('');
   const [linkedEvent, setLinkedEvent] = useState(null);
   const [attachments, setAttachments] = useState([]);
+  const [reviewAttachments, setReviewAttachments] = useState([]);
+  const [uploadingMarkup, setUploadingMarkup] = useState(false);
+  const [markupError, setMarkupError] = useState(null);
 
   const linkedEventId = useMemo(() => resolveLinkedEventId(assignment), [assignment]);
   const workSpec = useMemo(
@@ -59,11 +66,21 @@ export default function WorkReviewModal({
   const eventType = normalizeWorkEventType(linkedEvent?.event_type || assignment?.event_type);
   const statusLabel = getWorkStatusLabel(assignment);
   const instructions =
-    String(workSpec?.instructions || '').trim()
-    || String(assignment?.description || '').trim()
-    || 'No instructions provided.';
+    String(workSpec?.instructions || '').trim() || 'No instructions provided.';
+  const studentSubmissionText = extractStudentSubmissionText(assignment?.description);
+  const submittedLink = useMemo(() => {
+    const desc = String(assignment?.description || '');
+    const match = desc.match(/\[Link submission\]\s*\n?\s*(https?:\/\/\S+)/i);
+    return match ? match[1].trim() : null;
+  }, [assignment?.description]);
   const progressPercent =
     assignment?.progress_percent != null ? Math.round(Number(assignment.progress_percent)) : null;
+  const quizAnswerRows = useMemo(
+    () => resolveQuizAnswerRows(workSpec, assignment?.description),
+    [workSpec, assignment?.description]
+  );
+  const familyId = assignment?.family_id || null;
+  const childId = assignment?.child_id || null;
 
   useEffect(() => {
     setFeedback(String(assignment?.review_feedback || ''));
@@ -105,7 +122,7 @@ export default function WorkReviewModal({
       const rawIds = assignment?.linked_evidence_ids;
       const ids = Array.isArray(rawIds) ? rawIds.map(String).filter(Boolean) : [];
       if (ids.length === 0) {
-        setAttachments([]);
+        if (!cancelled) setAttachments([]);
         return;
       }
       try {
@@ -126,10 +143,38 @@ export default function WorkReviewModal({
     };
   }, [assignment?.id, assignment?.linked_evidence_ids]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadReviewAttachments = async () => {
+      const rawIds = assignment?.linked_review_attachment_ids;
+      const ids = Array.isArray(rawIds) ? rawIds.map(String).filter(Boolean) : [];
+      if (ids.length === 0) {
+        if (!cancelled) setReviewAttachments([]);
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('materials')
+          .select('id, title, provider_url, url, storage_path')
+          .in('id', ids);
+        if (cancelled || error) return;
+        const byId = new Map((data || []).map((row) => [String(row.id), row]));
+        setReviewAttachments(ids.map((id) => byId.get(String(id))).filter(Boolean));
+      } catch (_) {
+        if (!cancelled) setReviewAttachments([]);
+      }
+    };
+    loadReviewAttachments();
+    return () => {
+      cancelled = true;
+    };
+  }, [assignment?.id, assignment?.linked_review_attachment_ids]);
+
   const runReview = async (action) => {
     if (!assignment?.id || submitting) return;
     setSubmitting(true);
     try {
+      const reviewAttachmentIds = reviewAttachments.map((file) => String(file.id)).filter(Boolean);
       await reviewAssignmentWork({
         assignmentId: assignment.id,
         action,
@@ -137,6 +182,7 @@ export default function WorkReviewModal({
         gradeDisplay: gradeDisplay.trim() || null,
         gradeValue: gradeValue.trim() === '' ? null : Number(gradeValue),
         reviewerId: user?.id || null,
+        reviewAttachmentIds,
       });
       onReviewed?.();
       onClose?.();
@@ -144,6 +190,64 @@ export default function WorkReviewModal({
       console.warn('[WorkReviewModal] review failed:', err);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const pickMarkedUpFile = async () => {
+    if (Platform.OS !== 'web') {
+      setMarkupError('Marked-up file upload is available on web.');
+      return;
+    }
+    if (!familyId || !childId) {
+      setMarkupError('Missing family context for upload.');
+      return;
+    }
+    setMarkupError(null);
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '*/*';
+    input.onchange = async (e) => {
+      const file = e?.target?.files?.[0];
+      if (!file) return;
+      setUploadingMarkup(true);
+      try {
+        const ext = String(file.name || '').split('.').pop() || 'bin';
+        const fileName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+        const filePath = `${familyId}/${childId}/review-markup/${fileName}`;
+        const { error: uploadError } = await supabase.storage
+          .from('uploads')
+          .upload(filePath, file, { cacheControl: '3600', upsert: false });
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage.from('uploads').getPublicUrl(filePath);
+        const mat = await createFileMaterial({
+          familyId,
+          childId,
+          storagePath: filePath,
+          title: file.name || 'Marked-up file',
+          mime: file.type || 'application/octet-stream',
+          bytes: file.size || 0,
+          eventId: linkedEventId || null,
+          url: publicUrl,
+          tags: ['review_markup'],
+        });
+        if (mat?.id) {
+          setReviewAttachments((prev) => [...prev, mat]);
+        }
+      } catch (err) {
+        setMarkupError(err?.message || 'Could not upload marked-up file.');
+      } finally {
+        setUploadingMarkup(false);
+      }
+    };
+    input.click();
+  };
+
+  const openAttachment = (file) => {
+    const url = String(file?.provider_url || file?.url || '').trim();
+    if (!url) return;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -187,25 +291,66 @@ export default function WorkReviewModal({
 
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>Student submission</Text>
-              <Text style={styles.bodyText}>
-                {assignment?.submitted_at
-                  ? `Submitted ${new Date(assignment.submitted_at).toLocaleString('en-US', {
+              {assignment?.submitted_at ? (
+                <Text style={styles.metaLine}>
+                  Submitted{' '}
+                  {new Date(assignment.submitted_at).toLocaleString('en-US', {
                     month: 'short',
                     day: 'numeric',
                     hour: 'numeric',
                     minute: '2-digit',
-                  })}`
-                  : 'Not submitted yet'}
-              </Text>
+                  })}
+                </Text>
+              ) : (
+                <Text style={styles.bodyText}>Not submitted yet</Text>
+              )}
+              {studentSubmissionText ? (
+                <Text style={[styles.bodyText, { marginTop: 8 }]}>{studentSubmissionText}</Text>
+              ) : null}
+              {submittedLink ? (
+                <TouchableOpacity
+                  onPress={() => {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.open(submittedLink, '_blank', 'noopener,noreferrer');
+                    }
+                  }}
+                  style={styles.linkRow}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Link size={14} color="#2563EB" />
+                  <Text style={styles.linkText} numberOfLines={2}>{submittedLink}</Text>
+                </TouchableOpacity>
+              ) : null}
+              {quizAnswerRows.length > 0 ? (
+                <View style={styles.quizBlock}>
+                  {quizAnswerRows.map((row, index) => (
+                    <View key={row.id} style={styles.quizRow}>
+                      <Text style={styles.quizPrompt}>
+                        {index + 1}. {row.prompt}
+                      </Text>
+                      <Text style={styles.quizAnswer}>
+                        {row.answer || '—'}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
             </View>
 
             {attachments.length > 0 ? (
               <View style={styles.section}>
-                <Text style={styles.sectionLabel}>Attachments</Text>
+                <Text style={styles.sectionLabel}>Uploaded files</Text>
                 {attachments.map((file) => (
-                  <Text key={file.id} style={styles.attachmentLine}>
-                    {String(file.title || file.storage_path || 'Attachment')}
-                  </Text>
+                  <TouchableOpacity
+                    key={file.id}
+                    onPress={() => openAttachment(file)}
+                    style={styles.attachmentRow}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.attachmentLine}>
+                      {String(file.title || file.storage_path || 'Attachment')}
+                    </Text>
+                  </TouchableOpacity>
                 ))}
               </View>
             ) : null}
@@ -234,6 +379,43 @@ export default function WorkReviewModal({
             ) : null}
 
             <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Marked-up file (optional)</Text>
+              <TouchableOpacity
+                style={styles.markupUploadButton}
+                onPress={pickMarkedUpFile}
+                disabled={uploadingMarkup || submitting}
+                {...(Platform.OS === 'web' && { cursor: uploadingMarkup || submitting ? 'default' : 'pointer' })}
+              >
+                {uploadingMarkup ? (
+                  <ActivityIndicator size="small" color="#64748B" />
+                ) : (
+                  <>
+                    <Upload size={14} color="#64748B" />
+                    <Text style={styles.markupUploadText}>Attach marked-up file</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+              {markupError ? <Text style={styles.markupError}>{markupError}</Text> : null}
+              {reviewAttachments.length > 0 ? (
+                <View style={styles.markupList}>
+                  {reviewAttachments.map((file) => (
+                    <TouchableOpacity
+                      key={file.id}
+                      onPress={() => openAttachment(file)}
+                      style={styles.markupRow}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Paperclip size={14} color="#64748B" />
+                      <Text style={styles.attachmentLine}>
+                        {String(file.title || file.storage_path || 'Marked-up file')}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.section}>
               <Text style={styles.sectionLabel}>Comments</Text>
               <TextInput
                 style={styles.feedbackInput}
@@ -256,7 +438,7 @@ export default function WorkReviewModal({
               {...(Platform.OS === 'web' && { cursor: submitting ? 'default' : 'pointer' })}
             >
               <RotateCcw size={15} color="#B45309" />
-              <Text style={styles.sendBackText}>Send back</Text>
+              <Text style={styles.sendBackText}>Return for changes</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, styles.approveButton]}
@@ -265,7 +447,7 @@ export default function WorkReviewModal({
               {...(Platform.OS === 'web' && { cursor: submitting ? 'default' : 'pointer' })}
             >
               <Check size={15} color="#15803D" />
-              <Text style={styles.approveText}>Approve</Text>
+              <Text style={styles.approveText}>Mark complete</Text>
             </TouchableOpacity>
             {workSpec?.graded !== false ? (
               <TouchableOpacity
@@ -369,6 +551,25 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0369A1',
   },
+  metaLine: {
+    fontSize: 13,
+    color: '#64748B',
+  },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  linkText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#2563EB',
+    textDecorationLine: 'underline',
+  },
+  attachmentRow: {
+    paddingVertical: 4,
+  },
   attachmentLine: {
     fontSize: 13,
     color: '#334155',
@@ -392,6 +593,53 @@ const styles = StyleSheet.create({
   gradeInputPercent: {
     maxWidth: 88,
     flexGrow: 0,
+  },
+  quizBlock: {
+    marginTop: 10,
+    gap: 10,
+  },
+  quizRow: {
+    gap: 4,
+  },
+  quizPrompt: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  quizAnswer: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#1E293B',
+  },
+  markupUploadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  markupUploadText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  markupError: {
+    fontSize: 12,
+    color: '#DC2626',
+  },
+  markupList: {
+    marginTop: 8,
+    gap: 6,
+  },
+  markupRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   feedbackInput: {
     minHeight: 110,

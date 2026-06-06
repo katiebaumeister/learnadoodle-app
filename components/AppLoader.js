@@ -3,52 +3,12 @@ import { View, StyleSheet, Platform, Image, ActivityIndicator } from 'react-nati
 import {
   AVATAR_ASSETS,
   AVATAR_KEYS,
-  LANDING_IMAGE_ASSETS,
-  LEARNADOODLE_LOGO_ASSET,
-  SIDEBAR_ICON_ASSETS,
+  FAVICON_ASSET,
 } from '../assets/imageAssetMap';
 
-const TOOLBAR_IDS = ['logo', 'home', 'planner', 'family', 'library', 'subject', 'more'];
 const CONNECTED_ACCOUNT_LOGO_IDS = ['googleLogo', 'dropboxLogo', 'notionLogo', 'youtubeLogo', 'quizletLogo', 'canvasLogo'];
-const SHELL_IMAGE_IDS = ['icon', 'messages', 'create', ...TOOLBAR_IDS, ...AVATAR_KEYS];
 
-const SHELL_SOURCES = {
-  icon: require('../assets/icon.png'),
-  logo: LEARNADOODLE_LOGO_ASSET,
-  home: SIDEBAR_ICON_ASSETS.home,
-  planner: SIDEBAR_ICON_ASSETS.planner,
-  messages: SIDEBAR_ICON_ASSETS.messages,
-  create: SIDEBAR_ICON_ASSETS.create,
-  family: SIDEBAR_ICON_ASSETS.family,
-  library: SIDEBAR_ICON_ASSETS.library,
-  subject: SIDEBAR_ICON_ASSETS.subjects,
-  more: SIDEBAR_ICON_ASSETS.more,
-  ...AVATAR_ASSETS,
-};
-
-/** Marketing / landing page PNGs — same batch as shell so first paint never waits on them */
-const LANDING_PAGE_IDS = [
-  'landingHero',
-  'landingSchedule',
-  'landingCurriculum',
-  'landingProgress',
-  'landingSupport',
-  'landingTeach',
-  'landingPrivacy',
-  'landingSuperdoodle',
-];
-const LANDING_PAGE_SOURCES = {
-  landingHero: LANDING_IMAGE_ASSETS.landing,
-  landingSchedule: LANDING_IMAGE_ASSETS.schedule,
-  landingCurriculum: LANDING_IMAGE_ASSETS.curriculum,
-  landingProgress: LANDING_IMAGE_ASSETS.progress,
-  landingSupport: LANDING_IMAGE_ASSETS.support,
-  landingTeach: LANDING_IMAGE_ASSETS.teach,
-  landingPrivacy: LANDING_IMAGE_ASSETS.privacy,
-  landingSuperdoodle: LANDING_IMAGE_ASSETS.superdoodlesection,
-};
-
-/** Connected accounts logos (Family -> Connected accounts) */
+/** Connected accounts logos (Family → Integrations) */
 const CONNECTED_ACCOUNT_LOGO_SOURCES = {
   googleLogo: require('../assets/google.png'),
   dropboxLogo: require('../assets/dropbox.png'),
@@ -58,11 +18,11 @@ const CONNECTED_ACCOUNT_LOGO_SOURCES = {
   canvasLogo: require('../assets/canvas.png'),
 };
 
-/** Shell + sidebar + avatars + landing + connected-accounts logos */
-const CRITICAL_WEB_IMAGE_IDS = [...SHELL_IMAGE_IDS, ...LANDING_PAGE_IDS, ...CONNECTED_ACCOUNT_LOGO_IDS];
+/** Favicon + default avatars + integration logos — no legacy sidebar PNG icons (Lucide rail now). */
+const CRITICAL_WEB_IMAGE_IDS = ['favicon', ...AVATAR_KEYS, ...CONNECTED_ACCOUNT_LOGO_IDS];
 const CRITICAL_WEB_SOURCES = {
-  ...SHELL_SOURCES,
-  ...LANDING_PAGE_SOURCES,
+  favicon: FAVICON_ASSET,
+  ...AVATAR_ASSETS,
   ...CONNECTED_ACCOUNT_LOGO_SOURCES,
 };
 
@@ -85,7 +45,7 @@ function resolveUri(source) {
 let webShellImagesPromise = null;
 
 /**
- * Web: preload + decode shell, toolbar, prof1–10, landing page PNGs once (singleton).
+ * Web: preload + decode favicon, prof1–10, and integration logos once (singleton).
  * Call from index.js so decoding runs in parallel with the JS bundle before React root.
  * No-op resolve on native.
  */

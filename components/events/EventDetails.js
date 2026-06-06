@@ -31,9 +31,10 @@ import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curric
 import { isSchoolWorkEventType } from '../child/childHomeRailHelpers';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
-import { LearningGradingSwitchesRow, LearningSubmissionMethodsField } from './WorkDetailsSection';
+import StudentWorkSection from './StudentWorkSection';
 import { ensureAssignmentsForEvent } from '../../lib/workAssignmentClient';
 import {
+  defaultWorkSpec,
   isWorkProducingEventType,
   parseWorkSpec,
   showsLearningGradingSwitches,
@@ -1115,6 +1116,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [draftTags, setDraftTags] = useState([]);
   const [tagInput, setTagInput] = useState('');
   const [showAcademicDetails, setShowAcademicDetails] = useState(() => eventHasAcademicDetailsSection(event));
+  const [studentWorkExpanded, setStudentWorkExpanded] = useState(() => (
+    isWorkProducingEventType(event?.event_type)
+  ));
   const [showLogisticDetails, setShowLogisticDetails] = useState(
     () => !!(event?.location || event?.mode || event?.instructor)
   );
@@ -5244,38 +5248,22 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         })}
       >
       <View pointerEvents={readOnly ? 'none' : 'auto'}>
-      {/* Header */}
-      <View style={styles.headerEditEvent}>
-        <View style={styles.headerContent}>
-          <View style={styles.headerTextWrap}>
-            <View style={styles.headerBadgeRow}>
-              <View style={[styles.headerBadge, styles.headerBadgeTight]}>
-                <Text style={styles.headerBadgeText}>{isSeriesEditScope ? 'EDIT SERIES' : 'EDIT EVENT'}</Text>
-              </View>
-              {!shouldHideAttendanceChip && (
-                <View style={styles.headerStatusChip}>
-                  <View style={[styles.headerStatusDot, headerAttendanceChip.dotStyle]} />
-                  <Text style={styles.headerStatusChipText}>{headerAttendanceChip.label}</Text>
-                </View>
-              )}
-            </View>
-            <Text style={styles.headerTitleLarge}>
-              {isSeriesEditScope ? 'Edit series' : (hasPersistedEventId ? 'Edit event' : 'New event')}
-            </Text>
-          </View>
-          <TouchableOpacity
-            onPress={handleDismissEventModal}
-            style={styles.headerCloseButton}
-            accessibilityRole="button"
-            accessibilityLabel="Close edit event"
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <X size={18} color="#64748B" />
-          </TouchableOpacity>
-        </View>
+      {/* Title row */}
+      <View style={styles.modalTitleRow}>
+        <Text style={styles.modalTitle}>
+          {isSeriesEditScope ? 'Edit series' : (hasPersistedEventId ? 'Edit event' : 'New event')}
+        </Text>
+        <TouchableOpacity
+          onPress={handleDismissEventModal}
+          style={styles.headerCloseButton}
+          accessibilityRole="button"
+          accessibilityLabel="Close edit event"
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <X size={18} color="#64748B" strokeWidth={2.25} />
+        </TouchableOpacity>
       </View>
-      <View style={styles.headerDivider} />
-      <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull, { marginTop: 12, marginBottom: 8 }]}>
+      <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull, { marginTop: 4, marginBottom: 8 }]}>
         <View style={[styles.field, styles.fieldStretch]}>
           <Text style={styles.fieldLabel}>
             Name <Text style={{ color: '#ef4444' }}>*</Text>
@@ -5403,6 +5391,12 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 key={type}
                 onPress={() => {
                   setEventType(type);
+                  if (isWorkProducingEventType(type)) {
+                    setWorkSpec(defaultWorkSpec(type));
+                    setStudentWorkExpanded(true);
+                  } else {
+                    setStudentWorkExpanded(false);
+                  }
                   if (validationErrors.eventType) {
                     setValidationErrors({ ...validationErrors, eventType: null });
                   }
@@ -6112,6 +6106,27 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </View>
         )}
       </SafeView>
+        {/* Student Work — Assignment / Project / Exam */}
+        {isWorkProducingEventType(eventType) ? (
+        <ModalSectionCard
+          Icon={FileText}
+          title="Student Work"
+          subtitle="Submission, instructions, and start date"
+          expanded={studentWorkExpanded}
+          onPress={() => setStudentWorkExpanded(!studentWorkExpanded)}
+          accent="#85C4F2"
+        >
+          <StudentWorkSection
+            workSpec={workSpec}
+            eventType={eventType}
+            onChange={setWorkSpec}
+            readOnly={readOnly}
+            inputStyle={styles.input}
+            labelStyle={styles.fieldLabel}
+          />
+        </ModalSectionCard>
+        ) : null}
+
         {/* Academic details section */}
         {!hideLearningDetailsSection && (
         <ModalSectionCard
@@ -6450,12 +6465,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 ) : null}
               </View>
             </View>
-            <LearningGradingSwitchesRow
-              workSpec={workSpec}
-              eventType={eventType}
-              onChange={setWorkSpec}
-              readOnly={readOnly}
-            />
             {showLearningGradeFields ? (
             <View style={styles.learningSectionGradesRow}>
               <View style={[styles.field, styles.academicFieldPercent]}>
@@ -6523,12 +6532,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </View>
             ) : null}
           </SafeFieldRow>
-          <LearningSubmissionMethodsField
-            workSpec={workSpec}
-            eventType={eventType}
-            onChange={setWorkSpec}
-            readOnly={readOnly}
-          />
         </ModalSectionCard>
         )}
 
@@ -6808,7 +6811,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
       </ScrollView>
 
-      <View style={styles.footerDivider} />
       {/* Footer: Delete (left), Cancel + Save (right) */}
       <View style={styles.footerEditEvent}>
         <View style={styles.footerEditEventLeft}>
@@ -8704,6 +8706,24 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  modalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 4,
+  },
+  modalTitle: {
+    flex: 1,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '700',
+    color: '#0F172A',
+    paddingRight: 8,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   headerEditEvent: {
     marginHorizontal: -20,
     paddingHorizontal: 24,
@@ -8794,14 +8814,15 @@ const styles = StyleSheet.create({
     }),
   },
   headerCloseButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   googleConnectChip: {
     alignSelf: 'flex-start',

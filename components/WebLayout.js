@@ -21,6 +21,8 @@ import WebContent from './WebContent';
 import SearchModal from './SearchModal';
 import GlobalNewMenu from './GlobalNewMenu';
 import AppShell from './layout/AppShell.js';
+import AppTopBar from './layout/AppTopBar.js';
+import { resolveSection } from './layout/sectionNavConfig';
 import RightToolbar from './RightToolbar';
 import TaskCreateModal from './TaskCreateModal';
 import EventModal from './events/EventModal';
@@ -71,7 +73,6 @@ import AppLoader, { ensureWebShellImagesLoaded } from './AppLoader';
 import RebalanceModal from './year/RebalanceModal';
 import FamilyMessagesPane from './messages/FamilyMessagesPane';
 import FamilyCreatePane from './create/FamilyCreatePane';
-import { preloadProviderConnectionLogos } from '../lib/preloadConnectedAccountAssets';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 import { cleanPlannerEventId } from '../lib/utils/recurringEventUtils';
 import { AVATAR_KEYS } from '../assets/imageAssetMap';
@@ -184,6 +185,7 @@ function isFamilyShellTab(tab) {
   return (
     tab === 'profile' ||
     tab === 'settings' ||
+    tab === 'family' ||
     tab === 'children-list' ||
     tab.startsWith('child-') ||
     tab.startsWith('notes-pages-')
@@ -2479,13 +2481,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           setActiveTab('materials');
           setActiveTopNav('materials');
         }
+      } else if (pathname === '/records') {
+        if (activeTab !== 'records') {
+          setActiveTab('records');
+          setActiveTopNav('records');
+        }
       } else if (pathname === '/family' || pathname === '/profile') {
         if (pathname === '/profile') {
           window.history.replaceState({}, '', '/family');
         }
-        if (activeTab !== 'profile') {
-          setActiveTab('profile');
-          setActiveTopNav('profile');
+        if (activeTab !== 'family' && activeTab !== 'profile') {
+          setActiveTab('family');
+          setActiveTopNav('family');
         }
       } else if (pathname === '/students') {
         if (activeTab !== 'tutor-students') {
@@ -2518,15 +2525,23 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (activeTab && activeTab.startsWith('child-')) {
       const childId = activeTab.replace('child-', '');
       setActiveChildId(childId);
-    } else if (activeTab === 'settings') {
+      return;
+    }
+    if (activeTab === 'settings') {
       // Preserve activeChildId so Profile can show the child's email when parent is "viewing as" that child
-    } else if (activeSubtab) {
+      return;
+    }
+    const subtabIsChildId =
+      activeSubtab &&
+      Array.isArray(children) &&
+      children.some((c) => String(c.id) === String(activeSubtab));
+    if (subtabIsChildId) {
       setActiveChildId(activeSubtab);
     } else {
       setActiveChildId(null);
       setActiveChildSection('affirmation');
     }
-  }, [activeTab, activeSubtab]);
+  }, [activeTab, activeSubtab, children]);
 
   const syncTopNavFromActiveTab = useCallback(() => {
     if (activeTab === 'home') {
@@ -2535,10 +2550,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setActiveTopNav('explore');
     } else if (activeTab === 'calendar' || activeTab === 'planner') {
       setActiveTopNav((prev) => (prev === 'family' ? prev : 'planner'));
+    } else if (activeTab === 'records') {
+      setActiveTopNav('records');
+    } else if (activeTab === 'family') {
+      setActiveTopNav('family');
     } else if (activeTab === 'materials') {
       setActiveTopNav('materials');
     } else if (activeTab === 'learning') {
-      setActiveTopNav('subjects');
+      setActiveTopNav('learning');
     } else if (activeTab === 'subjects' || (activeTab && activeTab.startsWith('subject-'))) {
       setActiveTopNav('subjects');
     } else if (activeTab === 'intelligence') {
@@ -3249,25 +3268,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     [profile, children, family]
   );
 
-  // After sign-in: provider logos for Connected accounts (non-blocking)
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !user?.id) return;
-    const run = () => preloadProviderConnectionLogos();
-    let idleId;
-    if (typeof requestIdleCallback !== 'undefined') {
-      idleId = requestIdleCallback(run, { timeout: 4000 });
-    } else {
-      idleId = setTimeout(run, 1);
-    }
-    return () => {
-      if (typeof cancelIdleCallback !== 'undefined' && typeof idleId === 'number') {
-        cancelIdleCallback(idleId);
-      } else {
-        clearTimeout(idleId);
-      }
-    };
-  }, [user?.id]);
-
   // Remote https avatars (children, members, profile) — background
   useEffect(() => {
     if (Platform.OS !== 'web' || avatarUrlsToPreload.length === 0) return;
@@ -3379,7 +3379,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             url.searchParams.delete('view');
             window.history.pushState({}, '', url.toString());
           }
-          handleTabChange('planner');
+          handleTabChange('planner', 'calendar');
           break;
         case 'new':
           handleTabChange('settings', 'profile');
@@ -3394,15 +3394,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
           break;
         case 'subjects':
-          handleTabChange('subjects');
+          handleTabChange('subjects', 'subjects');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.history.pushState({}, '', '/subjects');
           }
           break;
         case 'learning':
-          handleTabChange('subjects');
+          handleTabChange('learning', 'subjects');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/subjects');
+            window.history.pushState({}, '', '/learning');
           }
           break;
         case 'review':
@@ -3412,7 +3412,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
           break;
         case 'records':
-          handleTabChange('records');
+          handleTabChange('records', 'attendance');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/records');
+          }
           break;
         case 'intelligence':
           handleTabChange('intelligence');
@@ -3422,6 +3425,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           break;
         case 'profile':
           handleTabChange('profile');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/family');
+          }
+          break;
+        case 'family':
+          handleTabChange('family', 'members');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.history.pushState({}, '', '/family');
           }
@@ -3573,6 +3582,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     [handleTabChange]
   );
 
+  const handleExitChildView = useCallback(() => {
+    setActiveChildId(null);
+    setActiveChildSection('affirmation');
+    handleTabChange('home');
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.history.pushState({}, '', '/');
+    }
+  }, [handleTabChange]);
+
   const handleChildSectionSelect = useCallback(
     (childId, section) => {
       setActiveTopNav('family');
@@ -3631,8 +3649,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     prevActiveTabRef.current = activeTab;
   }, [activeTab, currentView, planYearFromSubjectDetail, resetInlinePlanYearOpenState]);
 
-  // Determine if we're on a calendar screen
-  const isCalendarScreen = activeTab === 'calendar' || activeTab === 'planner';
+  const plannerSection = activeTab === 'planner' ? resolveSection('planner', activeSubtab) : null;
+  const isCalendarScreen =
+    activeTab === 'calendar' ||
+    (activeTab === 'planner' && plannerSection === 'calendar');
 
   /** Schedule setup / preferences replace the main pane in URL state but must not unmount WebContent (month grid stays warm). */
   const isPlanYearInline =
@@ -3758,6 +3778,33 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, []);
 
+  const handleShellAvatarPress = useCallback(() => {
+    if (resolvedShellUserRole === 'child' || resolvedShellUserRole === 'student') {
+      handleTabChange('home');
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.pushState({}, '', '/');
+      }
+      return;
+    }
+    handleTabChange('settings', 'profile');
+  }, [resolvedShellUserRole, handleTabChange]);
+
+  const handleShellOpenSettings = useCallback(() => {
+    handleTabChange('settings', 'profile');
+  }, [handleTabChange]);
+
+  const handleShellLogOut = useCallback(async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      // signOut handles local fallback
+    }
+  }, [signOut]);
+
+  const handleShellLogoPress = useCallback(() => {
+    handleTabChange('home');
+  }, [handleTabChange]);
+
   // When user+session: one tree so loader never remounts; content is either preload placeholder or full app
   if (user && session) {
     return (
@@ -3772,7 +3819,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         <PlannerDiffProvider>
         <AppShell
           disabled={onboardingBlocked}
-          flushToEdge={activeTab === 'planner' || activeTab === 'calendar'}
+          flushToEdge
+          topBar={(
+            <AppTopBar
+              userName={profile?.name || profile?.first_name || ''}
+              userEmail={user?.email || profile?.email || ''}
+              userRole={resolvedShellUserRole}
+              onLogoPress={handleShellLogoPress}
+              onOpenSettings={handleShellOpenSettings}
+              onLogOut={handleShellLogOut}
+            />
+          )}
           leftPane={{
             visible: isMessagesPaneOpen || isCreatePaneOpen,
             width: 340,
@@ -3821,18 +3878,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             activeChildSection: activeChildSection,
             onSelectChild: handleChildSelect,
             onSelectChildSection: handleChildSectionSelect,
+            onExitChildView: handleExitChildView,
             onOpenNew: handleOpenNewMenu,
             onOpenSearch: openSearch,
-            onAvatarPress: () => {
-              if (resolvedShellUserRole === 'child' || resolvedShellUserRole === 'student') {
-                handleTabChange('home');
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.history.pushState({}, '', '/');
-                }
-                return;
-              }
-              handleTabChange('settings', 'profile');
-            },
+            onAvatarPress: handleShellAvatarPress,
             user: user,
             userRole: resolvedShellUserRole,
           }}
@@ -4999,6 +5048,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 profile={profile}
                 preloadedPlanHealth={preloadedPlanHealth}
                 onHomeInitialDataReady={handleHomeInitialDataReady}
+                onViewAsChild={handleChildSelect}
+                onExitChildView={handleExitChildView}
               />
               </View>
               {isPlanYearInline ? (

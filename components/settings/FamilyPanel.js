@@ -169,7 +169,7 @@ function confirmParentReinvite(email) {
   });
 }
 
-export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null }) {
+export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null, hideInternalSidebar = false, onViewAsChild = null, onExitChildView = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
   const currentChildId = propCurrentChildId ?? null;
   const viewingAsChildId = propViewingAsChildId ?? null;
@@ -3292,6 +3292,33 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         return (
           <View style={styles.mainContentInner}>
             <Text style={styles.mainContentTitle}>Family Members</Text>
+
+            {propUserRole === 'parent' && !isChildRestrictedView && viewingAsChildId ? (() => {
+              const previewChild = children.find((c) => String(c.id) === String(viewingAsChildId));
+              const previewName = previewChild?.first_name || previewChild?.name || 'Child';
+              return (
+                <View style={styles.viewAsChildBanner}>
+                  <Text style={styles.viewAsChildBannerText}>
+                    Previewing as {previewName}. You still have parent access; use the sidebar to switch tabs.
+                  </Text>
+                  {typeof onExitChildView === 'function' ? (
+                    <TouchableOpacity
+                      style={styles.viewAsChildBannerButton}
+                      onPress={onExitChildView}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={styles.viewAsChildBannerButtonText}>Back to parent view</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              );
+            })() : null}
+
+            {propUserRole === 'parent' && !isChildRestrictedView && children.length > 0 && !viewingAsChildId ? (
+              <Text style={styles.viewAsChildHint}>
+                Preview the app as your child to see their home, learning, and permissions.
+              </Text>
+            ) : null}
             
             {/* Parents Section */}
             <View style={styles.membersSectionRow}>
@@ -3576,6 +3603,33 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   </View>
                   {!isChildRestrictedView && (
                     <View style={styles.memberRowActions}>
+                      {propUserRole === 'parent' && typeof onViewAsChild === 'function' && !child.archived ? (
+                        <TouchableOpacity
+                          style={[
+                            styles.viewAsChildButton,
+                            viewingAsChildId != null && String(viewingAsChildId) === String(child.id)
+                              && styles.viewAsChildButtonActive,
+                            isHovered && styles.viewAsChildButtonHovered,
+                          ]}
+                          onPress={() => {
+                            if (viewingAsChildId != null && String(viewingAsChildId) === String(child.id)) {
+                              return;
+                            }
+                            onViewAsChild(child.id);
+                          }}
+                          disabled={
+                            viewingAsChildId != null && String(viewingAsChildId) === String(child.id)
+                          }
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Eye size={14} color="#4F46E5" />
+                          <Text style={styles.viewAsChildButtonText}>
+                            {viewingAsChildId != null && String(viewingAsChildId) === String(child.id)
+                              ? 'Viewing'
+                              : 'View as'}
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
                       <TouchableOpacity 
                         style={[
                           styles.memberRowActionButton,
@@ -5055,7 +5109,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         </ScrollView>
 
         {/* Right: Fixed sidebar - hidden on About, Terms, and Privacy pages */}
-        {!isChildRestrictedView && activeSection !== 'about' && activeSection !== 'terms' && activeSection !== 'privacy' && (
+        {!hideInternalSidebar && !isChildRestrictedView && activeSection !== 'about' && activeSection !== 'terms' && activeSection !== 'privacy' && (
           <View style={styles.sidebar}>
           <View style={styles.sidebarContent}>
           {/* Account Card */}
@@ -6043,7 +6097,7 @@ function createStyles(tokens) {
       flex: 1,
       width: '100%',
       height: '100%',
-      backgroundColor: '#f3f4f5',
+      backgroundColor: '#FFFFFF',
     },
     twoColumnLayout: {
       flex: 1,
@@ -6253,6 +6307,81 @@ function createStyles(tokens) {
     coursesSchoolYearDropdownOptionTextActive: {
       color: '#111827',
       fontWeight: '700',
+    },
+    viewAsChildHint: {
+      fontSize: 14,
+      color: '#64748B',
+      marginBottom: 20,
+      lineHeight: 20,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    viewAsChildBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      flexWrap: 'wrap',
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      marginBottom: 16,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: 'rgba(99, 102, 241, 0.18)',
+      backgroundColor: 'rgba(238, 242, 255, 0.65)',
+    },
+    viewAsChildBannerText: {
+      flex: 1,
+      minWidth: 200,
+      fontSize: 14,
+      color: '#4338CA',
+      lineHeight: 20,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    viewAsChildBannerButton: {
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+      backgroundColor: '#FFFFFF',
+      borderWidth: 1,
+      borderColor: 'rgba(99, 102, 241, 0.25)',
+    },
+    viewAsChildBannerButtonText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: '#4338CA',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    viewAsChildButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: 'rgba(99, 102, 241, 0.22)',
+      backgroundColor: '#FFFFFF',
+    },
+    viewAsChildButtonHovered: {
+      backgroundColor: '#EEF2FF',
+    },
+    viewAsChildButtonActive: {
+      backgroundColor: '#EEF2FF',
+      borderColor: 'rgba(99, 102, 241, 0.35)',
+    },
+    viewAsChildButtonText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: '#4F46E5',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
     },
     membersInviteButton: {
       flexDirection: 'row',

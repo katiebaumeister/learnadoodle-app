@@ -1,14 +1,13 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
-import { Plus, Home, CalendarDays, Compass, FileText, BookOpen, UserCircle, Settings, MessageSquare, Users } from 'lucide-react';
+import { Plus, Home, CalendarDays, UserCircle, MessageCircle, Users, GraduationCap, Layers, Library, FileText } from 'lucide-react';
 import Dropdown, { DropdownItem } from './ui/Dropdown';
 import StableImage from './ui/StableImage';
 import { safeImageUri } from '../lib/safeImageUri';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
 import {
   AVATAR_KEYS,
-  LEARNADOODLE_LOGO_ASSET,
-  SIDEBAR_ICON_ASSETS,
+  FAVICON_ASSET,
   resolveBundledAvatarSource,
 } from '../assets/imageAssetMap';
 
@@ -17,8 +16,8 @@ const SHOW_MATERIALS_IN_SIDEBAR = false;
 const SHOW_SUBJECTS_CATALOG_IN_SIDEBAR = false;
 const SHOW_CREATE_IN_SIDEBAR = false;
 
-const SIDEBAR_BRAND_LOGO = LEARNADOODLE_LOGO_ASSET;
-const SIDEBAR_ICON_SOURCES = SIDEBAR_ICON_ASSETS;
+const SIDEBAR_BRAND_LOGO = FAVICON_ASSET;
+const NAV_ICON_SIZE = 20;
 
 const resolveAvatarSource = (avatarKey) => {
   return resolveBundledAvatarSource(avatarKey);
@@ -46,6 +45,7 @@ export default function LeftRail({
   messagesPaneOpen = false,
   createPaneOpen = false,
   onSelectTop,
+  onExitChildView = null,
   childrenList = [],
   activeChildId,
   activeChildSection = 'affirmation',
@@ -59,6 +59,9 @@ export default function LeftRail({
   onOpenSettings,
   onOpenFeedback,
   isCollapsed: isCollapsedProp,
+  hideBrandLogo = false,
+  hideProfileNav = false,
+  iconRailMode = false,
 }) {
   const [expandedChildren, setExpandedChildren] = useState(new Set());
   const [hoveredItem, setHoveredItem] = useState(null);
@@ -133,17 +136,20 @@ export default function LeftRail({
     () => {
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
-        { key: 'learning', label: 'Subjects', icon: null },
-        { key: 'subjects', label: 'Learning', icon: null },
+        { key: 'learning', label: 'Subjects', icon: Layers },
+        { key: 'subjects', label: 'Learning', icon: GraduationCap },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
+        { key: 'records', label: 'Records', icon: FileText },
+        { key: 'family', label: 'Family', icon: Users },
         { key: 'create', label: 'Create', icon: Plus },
-        { key: 'messages', label: 'Messages', icon: MessageSquare },
-        { key: 'materials', label: 'Materials', icon: BookOpen },
+        { key: 'messages', label: 'Messages', icon: MessageCircle },
+        { key: 'materials', label: 'Materials', icon: Library },
         { key: 'profile', label: 'Settings', icon: UserCircle },
         // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
         // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
         // { key: 'subjects', label: 'Records', icon: null }, // Hidden from sidebar
       ].filter((item) => {
+        if (hideProfileNav && item.key === 'profile') return false;
         if (!SHOW_MATERIALS_IN_SIDEBAR && item.key === 'materials') return false;
         if (!SHOW_SUBJECTS_CATALOG_IN_SIDEBAR && item.key === 'learning') return false;
         if (!SHOW_CREATE_IN_SIDEBAR && item.key === 'create') return false;
@@ -165,14 +171,14 @@ export default function LeftRail({
           { key: 'home', label: 'Home', icon: Home },
           { key: 'tutor-students', label: 'My students', icon: Users },
           { key: 'planner', label: 'Planner', icon: CalendarDays },
-          ...(SHOW_MATERIALS_IN_SIDEBAR ? [{ key: 'materials', label: 'Materials', icon: BookOpen }] : []),
+          ...(SHOW_MATERIALS_IN_SIDEBAR ? [{ key: 'materials', label: 'Materials', icon: Library }] : []),
         ];
       } else {
         // Parents see everything except archived items
-        return allItems.filter(item => item.key !== 'records' && item.key !== 'explore');
+        return allItems.filter((item) => item.key !== 'explore');
       }
     },
-    [effectivePermissions.canViewLibrary, effectivePermissions.canViewPlanner, effectivePermissions.canViewSubjects, userRole]
+    [effectivePermissions.canViewLibrary, effectivePermissions.canViewPlanner, effectivePermissions.canViewSubjects, userRole, hideProfileNav]
   );
 
   // Helper to validate if avatar_url is a valid URL (not just a UUID)
@@ -207,24 +213,34 @@ export default function LeftRail({
     return <Image source={source} style={styles.childAvatar} />;
   };
 
-  // Apply glass class on web
-  const containerClassName = Platform.OS === 'web' ? 'glass sidebarWash' : undefined;
+  // Apply glass class on web (not in icon rail — overlay uses solid background)
+  const containerClassName = Platform.OS === 'web' && !iconRailMode ? 'glass sidebarWash' : undefined;
 
   return (
     <View 
-      style={[styles.container, isCollapsed ? styles.collapsed : styles.expanded]}
+      style={[
+        styles.container,
+        iconRailMode && styles.containerIconRail,
+        isCollapsed
+          ? (iconRailMode ? styles.collapsedIconRail : styles.collapsed)
+          : (iconRailMode ? styles.expandedIconRail : styles.expanded),
+      ]}
       {...(Platform.OS === 'web' && containerClassName ? { className: containerClassName } : {})}
     >
-      <View style={[styles.wrap, isCollapsed && styles.wrapCollapsed]}>
-        {/* Top Icon - Only shown when expanded */}
-        {!isCollapsed && (
+      <View style={[
+        styles.wrap,
+        iconRailMode && isCollapsed && styles.wrapCollapsedIconRail,
+        iconRailMode && !isCollapsed && styles.wrapIconRailExpanded,
+        !iconRailMode && isCollapsed && styles.wrapCollapsed,
+      ]}>
+        {/* Brand logo — hidden when moved to top bar */}
+        {!isCollapsed && !hideBrandLogo && (
           <View style={styles.topIconContainer}>
             <View style={styles.topIconWrapper}>
               {renderStableSidebarImage({
                 imageKey: 'brandLogo',
                 source: SIDEBAR_BRAND_LOGO,
                 imageStyle: styles.topIcon,
-                resizeMode: 'cover',
                 placeholderStyle: styles.topIconPlaceholder,
               })}
             </View>
@@ -234,13 +250,20 @@ export default function LeftRail({
         {/* When parent is viewing as a child, show "Back to my view" */}
         {!isCollapsed && userRole === 'parent' && activeChildId && childrenList?.length > 0 && (() => {
           const viewingChild = childrenList.find((c) => String(c.id) === String(activeChildId));
-          const viewingName = viewingChild?.first_name || viewingChild?.name || 'Child';
+          if (!viewingChild) return null;
+          const viewingName = viewingChild.first_name || viewingChild.name || 'Child';
           return (
             <View style={styles.viewingAsRow}>
               <Text style={styles.viewingAsLabel} numberOfLines={1}>Viewing as {viewingName}</Text>
               <TouchableOpacity
                 style={styles.backToMyViewButton}
-                onPress={() => onSelectTop?.('home')}
+                onPress={() => {
+                  if (typeof onExitChildView === 'function') {
+                    onExitChildView();
+                  } else {
+                    onSelectTop?.('home');
+                  }
+                }}
                 activeOpacity={0.8}
               >
                 <Text style={styles.backToMyViewText}>Back to my view</Text>
@@ -252,7 +275,7 @@ export default function LeftRail({
         {/* Main menu section */}
         <View style={styles.sectionGroup}>
           {topNavItems.map((item) => {
-            const Icon = item.icon;
+            const NavIcon = item.icon;
             const isMessages = item.key === 'messages';
             const isCreate = item.key === 'create';
             const active = messagesPaneOpen
@@ -261,15 +284,13 @@ export default function LeftRail({
                 ? isCreate
                 : topActive === item.key;
             const isHovered = hoveredItem === item.key && !active;
-            const isHome = item.key === 'home';
             const isPlanner = item.key === 'planner';
-            const isNew = item.key === 'new';
-            const isLibrary = item.key === 'materials';
-            const isSubjects = item.key === 'subjects';
-            const isLearningTab = item.key === 'learning';
-            const isFamily = item.key === 'profile';
-            const isIntelligence = item.key === 'intelligence';
             const isMore = item.key === 'more';
+            const iconColor = active
+              ? SIDEBAR_COLORS.activeText
+              : isHovered
+                ? '#374151'
+                : 'rgba(15, 23, 42, 0.55)';
             return (
               <TouchableOpacity
                 key={item.key}
@@ -277,9 +298,11 @@ export default function LeftRail({
                 {...(Platform.OS === 'web' && isPlanner ? { nativeID: 'explorer-tour-sidebar-planner' } : {})}
                 style={[
                   styles.navItem,
+                  iconRailMode && (isCollapsed ? styles.navItemIconRailCollapsed : styles.navItemIconRailExpanded),
                   active && styles.navItemActive,
+                  active && iconRailMode && isCollapsed && styles.navItemActiveIconRail,
                   isHovered && styles.navItemHover,
-                  isCollapsed && styles.navItemCollapsed,
+                  isCollapsed && !iconRailMode && styles.navItemCollapsed,
                 ]}
                 onPress={() => {
                   if (isMore) {
@@ -313,99 +336,15 @@ export default function LeftRail({
                 })}
               >
                 <View style={styles.iconWrapper}>
-                  {isHome ? (
-                    <View style={styles.homeIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'home',
-                        source: SIDEBAR_ICON_SOURCES.home,
-                        imageStyle: styles.homeIcon,
-                      })}
+                  {NavIcon ? (
+                    <View style={styles.iconContainer}>
+                      <NavIcon
+                        size={NAV_ICON_SIZE}
+                        color={iconColor}
+                        strokeWidth={active ? 2.25 : 2}
+                      />
                     </View>
-                  ) : isPlanner ? (
-                    <View style={styles.plannerIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'planner',
-                        source: SIDEBAR_ICON_SOURCES.planner,
-                        imageStyle: styles.plannerIcon,
-                      })}
-                    </View>
-                  ) : isMessages ? (
-                    <View style={styles.plannerIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'messages',
-                        source: SIDEBAR_ICON_SOURCES.messages,
-                        imageStyle: styles.messagesIcon,
-                      })}
-                    </View>
-                  ) : isCreate ? (
-                    <View style={styles.plannerIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'create',
-                        source: SIDEBAR_ICON_SOURCES.create,
-                        imageStyle: styles.createIcon,
-                      })}
-                    </View>
-                  ) : isNew ? (
-                    <View style={styles.newIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'family',
-                        source: SIDEBAR_ICON_SOURCES.family,
-                        imageStyle: styles.newIcon,
-                      })}
-                    </View>
-                  ) : isLibrary ? (
-                    <View style={styles.libraryIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'library',
-                        source: SIDEBAR_ICON_SOURCES.library,
-                        imageStyle: styles.libraryIcon,
-                      })}
-                    </View>
-                  ) : isLearningTab ? (
-                    <View style={styles.subjectsIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'learning',
-                        source: SIDEBAR_ICON_SOURCES.subjects,
-                        imageStyle: styles.subjectsIcon,
-                      })}
-                    </View>
-                  ) : isSubjects ? (
-                    <View style={styles.libraryIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'library',
-                        source: SIDEBAR_ICON_SOURCES.library,
-                        imageStyle: styles.libraryIcon,
-                      })}
-                    </View>
-                  ) : isFamily ? (
-                    <View style={styles.familyIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'family',
-                        source: SIDEBAR_ICON_SOURCES.family,
-                        imageStyle: styles.familyIcon,
-                      })}
-                    </View>
-                  ) : isIntelligence ? (
-                    <View style={styles.subjectsIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'subjects',
-                        source: SIDEBAR_ICON_SOURCES.subjects,
-                        imageStyle: styles.subjectsIcon,
-                      })}
-                    </View>
-                  ) : isMore ? (
-                    <View style={styles.moreIconContainer}>
-                      {renderStableSidebarImage({
-                        imageKey: 'more',
-                        source: SIDEBAR_ICON_SOURCES.more,
-                        imageStyle: styles.moreIcon,
-                      })}
-                    </View>
-                  ) : (
-                    Icon && <View style={styles.iconContainer}>
-                      <Icon size={42} color={active ? SIDEBAR_COLORS.accent : 'rgba(15,23,42,0.6)'} />
-                    </View>
-                  )}
+                  ) : null}
                 </View>
                 {!isCollapsed && (
                   <View style={styles.navLabelContainer}>
@@ -431,15 +370,29 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? {} : { backgroundColor: SIDEBAR_COLORS.backgroundColor }),
     paddingVertical: 16,
     flex: 1,
-    minHeight: Platform.OS === 'web' ? '100vh' : undefined,
+    minHeight: Platform.OS === 'web' ? '100%' : undefined,
     overflow: 'hidden',
+  },
+  containerIconRail: {
+    paddingVertical: 8,
+    height: '100%',
+    width: '100%',
+    backgroundColor: 'transparent',
+    borderRightWidth: 0,
   },
   collapsed: {
     width: 76,
     paddingHorizontal: 8,
   },
+  collapsedIconRail: {
+    width: '100%',
+    paddingHorizontal: 0,
+  },
   expanded: {
-    width: 240, // Match sidebarContainer width
+    width: 240,
+  },
+  expandedIconRail: {
+    width: '100%',
   },
   wrap: {
     flexDirection: 'column',
@@ -449,6 +402,16 @@ const styles = StyleSheet.create({
   },
   wrapCollapsed: {
     paddingHorizontal: 8,
+  },
+  wrapCollapsedIconRail: {
+    paddingHorizontal: 0,
+    alignItems: 'center',
+  },
+  wrapIconRailExpanded: {
+    paddingHorizontal: 8,
+    paddingTop: 4,
+    alignItems: 'stretch',
+    width: '100%',
   },
   viewingAsRow: {
     marginBottom: 12,
@@ -490,7 +453,7 @@ const styles = StyleSheet.create({
   navItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 0, // Remove gap since iconWrapper has fixed width
+    gap: 0,
     paddingVertical: 4,
     paddingHorizontal: 20,
     borderRadius: 0,
@@ -499,19 +462,41 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderWidth: 0,
     ...(Platform.OS === 'web' && {
-      transition: 'all 0.15s ease',
+      transition: 'background-color 0.15s ease',
       cursor: 'pointer',
     }),
   },
+  navItemIconRailCollapsed: {
+    paddingVertical: 8,
+    paddingHorizontal: 0,
+    paddingLeft: 0,
+    paddingRight: 0,
+    marginHorizontal: 0,
+    marginLeft: 0,
+    marginRight: 0,
+    borderRadius: 8,
+    width: 52,
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'center',
+  },
+  navItemIconRailExpanded: {
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    marginHorizontal: 0,
+    width: '100%',
+    alignSelf: 'stretch',
+  },
   navItemActive: {
-    backgroundColor: SIDEBAR_COLORS.activeTint, // keep polish active tint
-    borderRadius: 12,
-    borderWidth: 0,
-    paddingVertical: 4,
-    paddingRight: 24,
-    ...(Platform.OS === 'web' && {
-      backgroundColor: '#FFFFFF',
-    }),
+    backgroundColor: '#FAFAFA',
+    borderRadius: 8,
+  },
+  navItemActiveIconRail: {
+    paddingLeft: 0,
+    paddingRight: 0,
+    marginLeft: 0,
+    marginRight: 0,
   },
   navItemHover: {
     backgroundColor: 'transparent',
@@ -520,34 +505,41 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   navLabelContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'flex-start',
     height: '100%',
-    marginLeft: 12, // Fixed spacing from icon wrapper
+    marginLeft: 8,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      minWidth: 0,
+    }),
   },
   navLabel: {
-    fontSize: 16,
+    fontSize: 13,
     color: '#6B7280',
-    fontWeight: '800',
+    fontWeight: '600',
     textTransform: 'uppercase',
-    lineHeight: 22, // Consistent line height for alignment
-    includeFontPadding: false, // Remove extra padding for better alignment
+    lineHeight: 18,
+    includeFontPadding: false,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      letterSpacing: '-0.011em', // Tighter, more editorial
-      lineHeight: '22px',
+      letterSpacing: '0.02em',
+      lineHeight: '18px',
+      whiteSpace: 'nowrap',
     }),
   },
   navLabelActive: {
     color: SIDEBAR_COLORS.activeText,
-    fontWeight: '800',
+    fontWeight: '700',
     textTransform: 'uppercase',
-    lineHeight: 22, // Consistent line height for alignment
-    includeFontPadding: false, // Remove extra padding for better alignment
+    lineHeight: 18,
+    includeFontPadding: false,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      letterSpacing: '-0.011em',
-      lineHeight: '22px',
+      letterSpacing: '0.02em',
+      lineHeight: '18px',
+      whiteSpace: 'nowrap',
     }),
   },
   navLabelHover: {
@@ -556,6 +548,8 @@ const styles = StyleSheet.create({
   sectionGroup: {
     flexDirection: 'column',
     gap: 0,
+    width: '100%',
+    overflow: 'hidden',
   },
   divider: {
     height: 1,
@@ -585,22 +579,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 16,
     paddingBottom: 8,
-    marginHorizontal: -16,
-    paddingLeft: 12,
-    paddingRight: 0,
+    paddingHorizontal: 20,
   },
   topIconWrapper: {
-    width: 220, // Slightly smaller
-    height: 36, // Slightly smaller
+    width: 36,
+    height: 36,
     overflow: 'hidden',
-    borderRadius: 4,
+    borderRadius: 6,
   },
   topIcon: {
-    width: 220, // Slightly smaller
-    height: 72, // Slightly smaller
-    marginTop: -12, // Crop top significantly
-    marginBottom: -12, // Crop bottom significantly
-    // No left/right margins - only crop top and bottom
+    width: 36,
+    height: 36,
   },
   topIconPlaceholder: {
     width: '100%',
@@ -697,7 +686,7 @@ const styles = StyleSheet.create({
     color: SIDEBAR_COLORS.accent,
   },
   iconWrapper: {
-    width: 52, // Fixed width - matches largest icon container (planner/library)
+    width: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -709,108 +698,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   iconContainer: {
-    width: 52,
-    height: 52,
+    width: 24,
+    height: 24,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  homeIconContainer: {
-    width: 52,
-    height: 52,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  homeIcon: {
-    width: 50, // Slightly smaller than container to prevent cropping
-    height: 50,
-  },
-  plannerIconContainer: {
-    width: 48,
-    height: 48,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  plannerIcon: {
-    width: 46, // Slightly smaller than container to prevent cropping
-    height: 46,
-  },
-  messagesIcon: {
-    width: 58,
-    height: 58,
-  },
-  createIcon: {
-    width: 58,
-    height: 58,
-  },
-  newIconContainer: {
-    width: 48,
-    height: 48,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  newIcon: {
-    width: 46, // Slightly smaller than container to prevent cropping
-    height: 46,
-  },
-  libraryIconContainer: {
-    width: 54,
-    height: 54,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  libraryIcon: {
-    width: 52, // Slightly smaller than container to prevent cropping
-    height: 52,
-  },
-  subjectsIconContainer: {
-    width: 54,
-    height: 54,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  subjectsIcon: {
-    width: 80, // Larger to allow more cropping/zooming
-    height: 80, // Larger to allow more cropping/zooming
-    marginTop: -12, // Crop top more to zoom in
-    marginBottom: -12, // Crop bottom more to zoom in
-  },
-  familyIconContainer: {
-    width: 48,
-    height: 48,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  familyIcon: {
-    width: 46, // Slightly smaller than container to prevent cropping
-    height: 46,
-  },
-  intelligenceIconContainer: {
-    width: 40,
-    height: 40,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  intelligenceIcon: {
-    width: 38, // Slightly smaller than container to prevent cropping
-    height: 38,
-  },
-  moreIconContainer: {
-    width: 40,
-    height: 40,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  moreIcon: {
-    width: 38, // Slightly smaller than container to prevent cropping
-    height: 38,
   },
 });
 

@@ -9878,7 +9878,6 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     paddingHorizontal: 0,
     gap: 0,
-    maxWidth: 1400,
     width: '100%',
     marginBottom: 0,
   },
@@ -10652,7 +10651,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.24)',
     minHeight: 200,
-    maxWidth: 1400,
     width: '100%',
     ...(Platform.OS === 'web' && {
       boxSizing: 'border-box',

@@ -10,13 +10,14 @@ import {
   getPlannerEventTypeColors,
 } from '../planner/plannerListTableUtils';
 import {
-  getAllEventsSubmissionLabel,
   getGradeColumnLabel,
-  getSubmissionColumnLabel,
   getWorkStatusLabel,
   isWorkProducingEventType,
   primaryAssignmentForEvent,
+  resolveSubmissionColumnDisplay,
+  SUBMISSION_COLUMN_STATES,
 } from '../../lib/workEventHelpers';
+import SubmissionColumnCell from '../planner/SubmissionColumnCell';
 const ALL_EVENTS_MAX_VISIBLE_ROWS = 5;
 const ALL_EVENTS_ROW_GAP = 8;
 const ALL_EVENTS_ROW_HEIGHT = 56;
@@ -217,8 +218,8 @@ export default function SubjectAllEventsSection({
     const eventId = String(event?.id || '');
     const assignment = primaryAssignmentForEvent(assignmentsByEventId, eventId);
     const workSpec = event?.work_spec || {};
+    const submissionDisplay = resolveSubmissionColumnDisplay({ event, assignment });
     const statusLabel = getWorkStatusLabel(assignment);
-    const submissionLabel = getSubmissionColumnLabel(assignment, event);
     const gradeLabel = getGradeColumnLabel(assignment, workSpec);
     const typeLabel = formatEventTypeLabel(event);
     const { chipBg, chipText } = getPlannerEventTypeColors(event);
@@ -257,7 +258,7 @@ export default function SubjectAllEventsSection({
           <Text style={styles.cellText} numberOfLines={1}>{statusLabel}</Text>
         </View>
         <View style={[styles.tableCell, styles.colReviewSubmission]}>
-          <Text style={styles.cellText} numberOfLines={1}>{submissionLabel}</Text>
+          <SubmissionColumnCell display={submissionDisplay} />
         </View>
         <View style={[styles.tableCell, styles.colReviewGrade]}>
           <Text style={[styles.cellText, styles.gradeText]} numberOfLines={1}>
@@ -336,7 +337,14 @@ export default function SubjectAllEventsSection({
     const { chipBg, chipText } = getPlannerEventTypeColors(event);
     const eventId = String(event?.id || '');
     const assignment = primaryAssignmentForEvent(assignmentsByEventId, eventId, eventChildIds);
-    const submissionLabel = getAllEventsSubmissionLabel(event, assignment);
+    const submissionDisplay = resolveSubmissionColumnDisplay({ event, assignment });
+    const handleSubmissionReview = () => {
+      if (assignment && typeof onAssignmentPress === 'function') {
+        onAssignmentPress(assignment, event);
+        return;
+      }
+      onEventPress?.(event);
+    };
     const handleRowContextMenu = (nativeEvent) => {
       if (Platform.OS !== 'web' || typeof window === 'undefined' || !onEventRightClick) return;
       nativeEvent?.preventDefault?.();
@@ -441,13 +449,15 @@ export default function SubjectAllEventsSection({
         </View>
 
         <View style={[styles.tableCell, styles.colSubmission]}>
-          {submissionLabel ? (
-            <Text style={[styles.cellText, styles.submissionText]} numberOfLines={1} ellipsizeMode="tail">
-              {submissionLabel}
-            </Text>
-          ) : (
-            <Text style={styles.emptyCellText}>—</Text>
-          )}
+          <SubmissionColumnCell
+            display={submissionDisplay}
+            muted={!useAttendanceSync && isDone}
+            onSubLabelPress={
+              submissionDisplay.state === SUBMISSION_COLUMN_STATES.SUBMITTED
+                ? handleSubmissionReview
+                : null
+            }
+          />
         </View>
 
         <View style={[styles.tableCell, styles.colGrade]}>
@@ -475,6 +485,7 @@ export default function SubjectAllEventsSection({
     resolveEventAttendanceState,
     onEventPress,
     onEventRightClick,
+    onAssignmentPress,
     renderAttachmentLinks,
   ]);
 

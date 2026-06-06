@@ -10,6 +10,7 @@ import {
 import {
   isWorkProducingEventType,
   normalizeWorkEventType,
+  normalizeQuizQuestions,
   parseWorkSpec,
   showsLearningGradingSwitches,
 } from '../../lib/workEventHelpers';
@@ -180,12 +181,15 @@ export function LearningSubmissionMethodsField({
 
   const patch = (partial) => onChange?.({ ...spec, ...partial });
   const patchMethods = (key, value) => {
-    patch({
-      submission_methods: {
-        ...spec.submission_methods,
-        [key]: value,
-      },
-    });
+    const nextMethods = {
+      ...spec.submission_methods,
+      [key]: value,
+    };
+    const partial = { submission_methods: nextMethods };
+    if (key === 'quiz' && value && normalizeQuizQuestions(spec).length === 0) {
+      partial.quiz_questions = [{ id: `q_${Date.now().toString(36)}`, prompt: '' }];
+    }
+    patch(partial);
   };
 
   return (
@@ -196,6 +200,7 @@ export function LearningSubmissionMethodsField({
         <MethodChip label="File upload" active={!!spec.submission_methods?.file} onPress={() => patchMethods('file', !spec.submission_methods?.file)} disabled={readOnly} />
         <MethodChip label="Photo" active={!!spec.submission_methods?.photo} onPress={() => patchMethods('photo', !spec.submission_methods?.photo)} disabled={readOnly} />
         <MethodChip label="Link" active={!!spec.submission_methods?.link} onPress={() => patchMethods('link', !spec.submission_methods?.link)} disabled={readOnly} />
+        <MethodChip label="Quiz / questions" active={!!spec.submission_methods?.quiz} onPress={() => patchMethods('quiz', !spec.submission_methods?.quiz)} disabled={readOnly} />
         <MethodChip label="Parent check-off" active={!!spec.submission_methods?.parent_checkoff} onPress={() => patchMethods('parent_checkoff', !spec.submission_methods?.parent_checkoff)} disabled={readOnly} />
       </View>
     </View>

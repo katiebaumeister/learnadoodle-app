@@ -64,7 +64,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import SubjectProgressPlanSection from './SubjectProgressPlanSection';
 import SubjectAllEventsSection from './SubjectAllEventsSection';
-import { getWorkStatusLabel } from '../../lib/workEventHelpers';
+import { getStudentSubmissionStatusLabel, getWorkStatusLabel } from '../../lib/workEventHelpers';
 import AssignmentMessageModal from './AssignmentMessageModal';
 import AssignmentSubmittalRequestModal from './AssignmentSubmittalRequestModal';
 import AssignmentReviewModal from '../assignments/AssignmentReviewModal';
@@ -2131,19 +2131,28 @@ export default function SubjectDetailPage({
     </>
   );
 
-  const openAssignedWorkItem = useCallback((a) => {
+  const openAssignedWorkItem = useCallback((a, linkedEvent = null) => {
     if (!a) return;
-    const eid = firstLinkedEventId(a.linked_event_ids);
+    const studentStatus = getStudentSubmissionStatusLabel(a);
+
+    if (isParentViewer && ['Submitted', 'Needs changes', 'Complete'].includes(studentStatus)) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openReviewForAssignment', { detail: { assignment: a } }));
+        return;
+      }
+    }
+
+    const eid = firstLinkedEventId(a.linked_event_ids) || linkedEvent?.id;
     if (eid && Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('openEventModal', {
-          detail: { eventId: eid, initialEvent: null, schedulingMode: true },
+          detail: { eventId: eid, initialEvent: linkedEvent || null, schedulingMode: true },
         })
       );
       return;
     }
     setAssignedDetailAssignment(a);
-  }, []);
+  }, [isParentViewer]);
 
   const handleOpenAssignedFromModal = useCallback(
     (a) => {
@@ -3093,7 +3102,7 @@ export default function SubjectDetailPage({
               children={children}
               assignmentsByEventId={assignmentsByEventId}
               reviewCenterMode={false}
-              onAssignmentPress={(assignment) => openAssignedWorkItem(assignment)}
+              onAssignmentPress={(assignment, event) => openAssignedWorkItem(assignment, event)}
               onEventPress={handleSubjectEventPress}
               onEventRightClick={handleEventContextMenu}
               onAttachmentPress={(_material, event) => {
@@ -4005,9 +4014,7 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingTop: 60,
     ...(Platform.OS === 'web' && {
-      maxWidth: 1400,
-      paddingHorizontal: 12,
-      marginHorizontal: 'auto',
+      paddingHorizontal: 24,
       width: '100%',
     }),
   },

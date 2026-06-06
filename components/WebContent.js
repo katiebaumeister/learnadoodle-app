@@ -753,6 +753,13 @@ import LessonPlans from './lesson-plans/LessonPlans'
 import PortfolioTimeline from './portfolio/PortfolioTimeline'
 import ReviewInboxScreen from './parent/ReviewInboxScreen'
 import MaterialsLibrary from './materials/MaterialsLibrary'
+import SectionNavLayout from './layout/SectionNavLayout'
+import SectionContentPanel from './layout/SectionContentPanel'
+import {
+  getSectionsForTab,
+  resolveSection,
+  SECTION_TITLE_BY_TAB,
+} from './layout/sectionNavConfig'
 // Archived: import IntelligenceHub from './intelligence/IntelligenceHub'
 import SubjectDetailPage from './subjects/SubjectDetailPage'
 import SubjectsPage from './subjects/SubjectsPage'
@@ -850,7 +857,7 @@ function readSubjectDetailSessionSnapshot(familyId) {
 
 import ParentHomeScreen from './home/ParentHomeScreen';
 
-export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null, onHomeInitialDataReady = null }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null, onHomeInitialDataReady = null, onViewAsChild = null, onExitChildView = null }) {
   /** Same user across Supabase token refresh; avoids re-running home/family effects on every tab focus. */
   const authUserId = user?.id ?? null;
 
@@ -4087,6 +4094,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const accessibleForHome = Array.isArray(propSession?.accessible_children) && propSession.accessible_children.length > 0
     ? propSession.accessible_children
     : accessibleChildren;
+  const parentViewingAsChildId = useMemo(() => {
+    if (roleForHome !== 'parent' && roleForHome != null) return null;
+    if (!propActiveChildId) return null;
+    const list = Array.isArray(propChildren) ? propChildren : [];
+    return list.some((c) => String(c.id) === String(propActiveChildId)) ? propActiveChildId : null;
+  }, [roleForHome, propActiveChildId, propChildren]);
 
   useEffect(() => {
     if (!isLearnerRole) return;
@@ -10227,6 +10240,169 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     </View>
   );
 
+  const subjectsSectionCallbacks = useMemo(() => ({
+    onAddSubject: () => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
+      }
+    },
+    onAddSyllabus: (subject) => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openSyllabusUpload', {
+          detail: { subjectId: subject.id },
+        }));
+      }
+    },
+    onAddEvent: (subject) => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const assignedChildren = subject.assignedChildren || [];
+        const firstAssignedChildId = assignedChildren.length > 0 ? assignedChildren[0] : null;
+        window.dispatchEvent(new CustomEvent('openTaskModal', {
+          detail: {
+            subjectId: subject.id,
+            eventType: 'Lesson',
+            date: new Date(),
+            childId: firstAssignedChildId,
+          },
+        }));
+      }
+    },
+    onAddMaterial: (subject) => {
+      const assignedChildIds = subject.assignedChildren && Array.isArray(subject.assignedChildren)
+        ? subject.assignedChildren
+        : (subject.assignedChildren ? [subject.assignedChildren] : []);
+      setAddMaterialModalDefaultRole(null);
+      setAddMaterialModalDefaultSubjectId(subject.id);
+      setAddMaterialModalDefaultSubjectName(subject.name);
+      setAddMaterialModalDefaultChildIds(assignedChildIds);
+      setShowAddMaterialModal(true);
+    },
+    onEditSubject: (subject) => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
+          detail: { subject },
+        }));
+      }
+    },
+    onEditChild,
+    onNavigateToPlanner: (params = {}) => {
+      if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+      if (onTabChange) onTabChange('planner', 'calendar');
+      const view = params.view || 'month';
+      const queryParams = new URLSearchParams();
+      if (params.subjectId) queryParams.set('subjectId', params.subjectId);
+      if (params.childId) queryParams.set('childId', params.childId);
+      if (params.date) queryParams.set('date', params.date);
+      queryParams.set('view', view);
+      const url = new URL(window.location.href);
+      url.pathname = '/planner';
+      url.search = queryParams.toString();
+      window.history.replaceState({}, '', url.toString());
+      const syncView = () => {
+        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: view }));
+      };
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(syncView);
+      } else {
+        setTimeout(syncView, 0);
+      }
+    },
+    onNavigateToPlannerAttendance: () => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        if (onTabChange) onTabChange('records', 'attendance');
+        window.history.pushState({}, '', '/records');
+      }
+    },
+  }), [onEditChild, onTabChange]);
+
+  const renderWithSectionNav = useCallback((tab, renderMainContent = null) => {
+    const sections = getSectionsForTab(tab);
+    if (!sections) return null;
+    const section = resolveSection(tab, activeSubtab);
+    const panelFamilyId = familyId || propSession?.family_id;
+    if (!panelFamilyId) {
+      return (
+        <View style={{ flex: 1, minHeight: 0, backgroundColor: '#FFFFFF' }} />
+      );
+    }
+    const handleSectionChange = (key) => {
+      if (onSubtabChange) onSubtabChange(key);
+      if (onTabChange) onTabChange(tab, key);
+    };
+    const usePlannerCalendarPane =
+      tab === 'planner' &&
+      section === 'calendar' &&
+      typeof renderMainContent === 'function';
+    return (
+      <SectionNavLayout
+        title={SECTION_TITLE_BY_TAB[tab]}
+        sections={sections}
+        activeSection={section}
+        onSectionChange={handleSectionChange}
+      >
+        {usePlannerCalendarPane ? (
+          renderMainContent()
+        ) : (
+          <SectionContentPanel
+            tab={tab}
+            section={section}
+            familyId={panelFamilyId}
+            children={children || []}
+            family={propFamily}
+            user={user}
+            profile={propProfile}
+            session={propSession}
+            userRole={roleForHome ?? userRole}
+            accessibleChildren={accessibleChildren}
+            preloadedPlanHealth={propPreloadedPlanHealth}
+            onFamilyUpdate={onFamilyUpdate}
+            subjectsOverviewCache={subjectsOverviewCache}
+            subjectDetailCache={subjectDetailCache}
+            onSubjectsOverviewUpdate={handleSubjectsOverviewUpdate}
+            onSubjectDetailUpdate={handleSubjectDetailUpdate}
+            onTabChange={onTabChange}
+            fullSubjects={propFullSubjects && propFullSubjects.length > 0 ? propFullSubjects : (propSubjects || [])}
+            materialsCache={materialsCache}
+            onMaterialsUpdate={(newMaterials) => {
+              setMaterialsCache(newMaterials);
+              setMaterialsCacheTimestamp(Date.now());
+            }}
+            subjectsCallbacks={subjectsSectionCallbacks}
+            viewingAsChildId={parentViewingAsChildId}
+            onViewAsChild={onViewAsChild}
+            onExitChildView={onExitChildView}
+          />
+        )}
+      </SectionNavLayout>
+    );
+  }, [
+    activeSubtab,
+    accessibleChildren,
+    children,
+    familyId,
+    handleSubjectDetailUpdate,
+    handleSubjectsOverviewUpdate,
+    materialsCache,
+    onFamilyUpdate,
+    onSubtabChange,
+    onTabChange,
+    propFamily,
+    propFullSubjects,
+    propPreloadedPlanHealth,
+    propProfile,
+    propSession,
+    propSubjects,
+    roleForHome,
+    subjectDetailCache,
+    subjectsOverviewCache,
+    subjectsSectionCallbacks,
+    user,
+    userRole,
+    parentViewingAsChildId,
+    onViewAsChild,
+    onExitChildView,
+  ]);
+
   const renderContent = (plannerTabsReturnNull = false) => {
     const homeFamilyIdForContent =
       familyId || propSession?.family_id || propProfile?.family_id || null;
@@ -10362,6 +10538,16 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     // Planner shell tabs: when web keeps planner mounted behind other tabs, return null here
     // and let the outer wrapper render a single persistent renderPlannerContent() instance.
     if (activeTab === 'calendar' || activeTab === 'planner' || activeTab === 'ai-planner') {
+      if (activeTab === 'planner') {
+        if (plannerTabsReturnNull) {
+          const plannerSection = resolveSection('planner', activeSubtab);
+          if (plannerSection && plannerSection !== 'calendar') {
+            return renderWithSectionNav('planner');
+          }
+          return null;
+        }
+        return renderWithSectionNav('planner', () => renderPlannerContent());
+      }
       if (plannerTabsReturnNull) return null;
       return renderCalendarContent();
     }
@@ -10496,7 +10682,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }
       }
       case 'intelligence':
-      case 'records':
       case 'review':
       case 'coach':
       case 'learning':
@@ -10505,103 +10690,51 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         if (!subjectsFamilyId) {
           return renderParentHomeCommon(homeFamilyIdForContent);
         }
-        const subjectsScreenMode = activeTab === 'learning' ? 'catalog' : 'records';
+        const learningTab = activeTab === 'learning' ? 'learning' : 'subjects';
         try {
-          return (
-            <SubjectsPage
-              familyId={subjectsFamilyId}
-              planningMode={propFamily?.default_planning_mode || null}
-              children={children || []}
-              preloadedSubjects={subjectsOverviewCache}
-              preloadedSubjectDetailCache={subjectDetailCache}
-              onSubjectsUpdate={handleSubjectsOverviewUpdate}
-              onSubjectDetailUpdate={handleSubjectDetailUpdate}
-              userRole={roleForHome ?? userRole}
-              accessibleChildren={accessibleChildren}
-              screenMode={subjectsScreenMode}
-              onAddSubject={() => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('openAddSubjectModal'));
-                }
-              }}
-              onAddSyllabus={(subject) => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('openSyllabusUpload', {
-                    detail: { subjectId: subject.id }
-                  }));
-                }
-              }}
-              onAddEvent={(subject) => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  // Get first assigned child ID for defaulting in modals
-                  const assignedChildren = subject.assignedChildren || [];
-                  const firstAssignedChildId = assignedChildren.length > 0 ? assignedChildren[0] : null;
-                  
-                  // Dispatch openTaskModal event (handled by both WebContent and WebLayout)
-                  window.dispatchEvent(new CustomEvent('openTaskModal', {
-                    detail: { 
-                      subjectId: subject.id, 
-                      eventType: 'Lesson', 
-                      date: new Date(),
-                      childId: firstAssignedChildId
-                    }
-                  }));
-                }
-              }}
-              onAddMaterial={(subject) => {
-                const assignedChildIds = subject.assignedChildren && Array.isArray(subject.assignedChildren)
-                  ? subject.assignedChildren
-                  : (subject.assignedChildren ? [subject.assignedChildren] : []);
-                setAddMaterialModalDefaultRole(null);
-                setAddMaterialModalDefaultSubjectId(subject.id);
-                setAddMaterialModalDefaultSubjectName(subject.name);
-                setAddMaterialModalDefaultChildIds(assignedChildIds);
-                setShowAddMaterialModal(true);
-              }}
-              onEditSubject={(subject) => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
-                    detail: { subject }
-                  }));
-                }
-              }}
-              onEditChild={onEditChild}
-              onNavigateToPlanner={(params = {}) => {
-                if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-                if (onTabChange) onTabChange('planner');
-                const view = params.view || 'month';
-                const queryParams = new URLSearchParams();
-                if (params.subjectId) queryParams.set('subjectId', params.subjectId);
-                if (params.childId) queryParams.set('childId', params.childId);
-                if (params.date) queryParams.set('date', params.date);
-                queryParams.set('view', view);
-                const url = new URL(window.location.href);
-                url.pathname = '/planner';
-                url.search = queryParams.toString();
-                window.history.replaceState({}, '', url.toString());
-                const syncView = () => {
-                  window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: view }));
-                };
-                if (typeof requestAnimationFrame === 'function') {
-                  requestAnimationFrame(syncView);
-                } else {
-                  setTimeout(syncView, 0);
-                }
-              }}
-              onNavigateToPlannerAttendance={() => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  if (onTabChange) onTabChange('planner');
-                  window.history.replaceState({}, '', '/planner?view=attendance');
-                  window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
-                }
-              }}
-            />
-          );
+          return renderWithSectionNav(learningTab);
         } catch (err) {
-          console.error('[WebContent] Error rendering SubjectsPage:', err);
+          console.error('[WebContent] Error rendering learning section nav:', err);
           return (
             <View style={styles.content}>
               <Text style={styles.title}>Error Loading Subjects</Text>
+              <Text style={styles.subtitle}>{err?.message || 'Unknown error'}</Text>
+            </View>
+          );
+        }
+      }
+      case 'records': {
+        const recordsFamilyId = familyId || propSession?.family_id;
+        if (!recordsFamilyId) {
+          return renderParentHomeCommon(homeFamilyIdForContent);
+        }
+        try {
+          return renderWithSectionNav('records');
+        } catch (err) {
+          console.error('[WebContent] Error rendering records section nav:', err);
+          return (
+            <View style={styles.content}>
+              <Text style={styles.title}>Error Loading Records</Text>
+              <Text style={styles.subtitle}>{err?.message || 'Unknown error'}</Text>
+            </View>
+          );
+        }
+      }
+      case 'family': {
+        const panelFamilyId =
+          familyId || propSession?.family_id || propProfile?.family_id || null;
+        if (user && !panelFamilyId) {
+          return (
+            <View style={{ flex: 1, minHeight: 0, backgroundColor: '#FFFFFF' }} />
+          );
+        }
+        try {
+          return renderWithSectionNav('family');
+        } catch (err) {
+          console.error('[WebContent] Error rendering family section nav:', err);
+          return (
+            <View style={styles.content}>
+              <Text style={styles.title}>Error Loading Family</Text>
               <Text style={styles.subtitle}>{err?.message || 'Unknown error'}</Text>
             </View>
           );
@@ -10629,7 +10762,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               preloadedSubjects={propFullSubjects && propFullSubjects.length > 0 ? propFullSubjects : (propSubjects || [])}
               userRole={roleForHome ?? userRole}
               currentChildId={(roleForHome === 'child' || roleForHome === 'student') ? (typeof accessibleForHome[0] === 'string' ? accessibleForHome[0] : accessibleForHome[0]?.id) ?? propSession?.child_id : null}
-              viewingAsChildId={(roleForHome === 'parent' || !roleForHome) && propActiveChildId ? propActiveChildId : null}
+              viewingAsChildId={parentViewingAsChildId}
+              onViewAsChild={onViewAsChild}
+              onExitChildView={onExitChildView}
               initialSection={activeTab === 'settings' ? (activeSubtab || 'profile') : undefined}
             />
           </View>
@@ -10659,8 +10794,12 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     activeTab === 'children-list';
   const persistPlannerWeb =
     Platform.OS === 'web' && !!(familyId || propSession?.family_id) && !isFamilyScreen;
+  const plannerActiveSection =
+    activeTab === 'planner' ? resolveSection('planner', activeSubtab) : 'calendar';
   const isPlannerShellTab =
-    activeTab === 'planner' || activeTab === 'calendar' || activeTab === 'ai-planner';
+    activeTab === 'calendar' ||
+    activeTab === 'ai-planner' ||
+    (activeTab === 'planner' && plannerActiveSection === 'calendar');
   const innerContent = renderContent(persistPlannerWeb);
 
   return (
@@ -10677,7 +10816,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               }}
               pointerEvents={isPlannerShellTab ? 'auto' : 'none'}
             >
-              {renderPlannerContent()}
+              {activeTab === 'planner' && isPlannerShellTab
+                ? renderWithSectionNav('planner', () => renderPlannerContent())
+                : renderPlannerContent()}
             </View>
             {!isPlannerShellTab && innerContent != null ? (
               <View

@@ -32,6 +32,29 @@ function formatConfirmationSentAt(isoString) {
   }
 }
 
+function mapSignInError(error) {
+  if (!error) return 'Sign in failed. Please try again.';
+  const msg = String(error.message || '').toLowerCase();
+  const code = String(error.code || '').toLowerCase();
+  if (
+    msg.includes('email not confirmed') ||
+    msg.includes('email not verified') ||
+    msg.includes('email address not verified') ||
+    msg.includes('confirm your email') ||
+    msg.includes('verification')
+  ) {
+    return 'Please check your email for verification!';
+  }
+  if (
+    code === 'invalid_credentials' ||
+    msg.includes('invalid login credentials') ||
+    msg.includes('invalid email or password')
+  ) {
+    return 'Incorrect email or password. Please try again.';
+  }
+  return error.message || 'Sign in failed. Please try again.';
+}
+
 export default function WebAuthScreen() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [isSignUp, setIsSignUp] = useState(false);
@@ -209,6 +232,7 @@ export default function WebAuthScreen() {
   }, [isSignUp, email]);
 
   const handleAuth = async () => {
+    if (emailAuthLoading || googleAuthLoading) return;
     clearMessages();
 
     if (isSignUp) {
@@ -341,15 +365,7 @@ export default function WebAuthScreen() {
       const { data, error } = await signIn(email, password);
 
       if (error) {
-        const errorMessage = error.message || '';
-        const errorLower = errorMessage.toLowerCase();
-        const isEmailNotVerified =
-          errorLower.includes('email not confirmed') ||
-          errorLower.includes('email not verified') ||
-          errorLower.includes('email address not verified') ||
-          errorLower.includes('confirm your email') ||
-          errorLower.includes('verification');
-        setErrorMessage(isEmailNotVerified ? 'Please check your email for verification!' : error.message);
+        setErrorMessage(mapSignInError(error));
       } else {
         setSuccessMessage('Signed in successfully!');
       }
@@ -763,9 +779,6 @@ export default function WebAuthScreen() {
             autoCapitalize="none"
             autoCorrect={false}
             onSubmitEditing={handleAuth}
-            onKeyPress={e => {
-              if (e.nativeEvent.key === 'Enter') handleAuth();
-            }}
           />
         </View>
         
@@ -781,9 +794,6 @@ export default function WebAuthScreen() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 onSubmitEditing={handleAuth}
-                onKeyPress={e => {
-                  if (e.nativeEvent.key === 'Enter') handleAuth();
-                }}
               />
               <TouchableOpacity
                 style={styles.eyeButton}

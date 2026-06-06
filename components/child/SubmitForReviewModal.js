@@ -17,6 +17,13 @@ import { createAssignment, updateAssignment } from '../../lib/services/assignmen
 import { createFileMaterial } from '../../lib/services/materialsClient';
 import { colors } from '../../theme/colors';
 import { assignmentRowLinksEventId } from '../../lib/assignmentLinkedEventUtils';
+import {
+  extractQuizAnswers,
+  formatQuizAnswersBlock,
+  getStudentSubmissionStatusLabel,
+  parseWorkSpec,
+  resolveStudentSubmissionModes,
+} from '../../lib/workEventHelpers';
 
 function formatContextLine(startTs, endTs) {
   if (!startTs) return null;
@@ -42,10 +49,55 @@ function formatContextLine(startTs, endTs) {
   return `${datePart} • ${startT}`;
 }
 
-function appendSubmissionNote(existingDescription, note) {
-  const block = `[Submission from student]\n${(note || '').trim()}`.trim();
+function appendSubmissionNote(existingDescription, note, linkUrl = null) {
+  const parts = [];
+  const trimmed = (note || '').trim();
+  if (trimmed) parts.push(`[Submission from student]\n${trimmed}`);
+  const link = String(linkUrl || '').trim();
+  if (link) parts.push(`[Link submission]\n${link}`);
+  if (parts.length === 0) return String(existingDescription || '').trim() || null;
+  const block = parts.join('\n\n');
   const prev = String(existingDescription || '').trim();
   return prev ? `${prev}\n\n${block}` : block;
+}
+
+function mergeSubmissionDescription(currentDescription, { note, linkUrl, quizAnswersById }) {
+  let desc = String(currentDescription || '').trim();
+  if (desc.includes('[Quiz answers]')) {
+    const afterMarker = desc.split('[Quiz answers]')[1] || '';
+    const trailing = afterMarker.includes('\n\n[')
+      ? afterMarker
+        .split('\n\n[')
+        .slice(1)
+        .map((part) => `[${part}`)
+        .join('\n\n[')
+        .trim()
+      : '';
+    const before = desc.split('[Quiz answers]')[0].trim();
+    desc = [before, trailing].filter(Boolean).join('\n\n');
+  }
+  const quizBlock = formatQuizAnswersBlock(quizAnswersById);
+  if (quizBlock) {
+    desc = desc ? `${desc}\n\n${quizBlock}` : quizBlock;
+  }
+  if (String(note || '').trim() || String(linkUrl || '').trim()) {
+    desc = appendSubmissionNote(desc, note, linkUrl);
+  }
+  return desc || null;
+}
+
+function formatDateYmd(value) {
+  if (!value) return null;
+  const raw = String(value).slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const d = new Date(`${raw}T12:00:00`);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function formatWhenShort(value) {
@@ -92,7 +144,7 @@ function extractSubmissionHistoryLines(assignment, reviewSnapshot = null) {
   if (reviewStatus) {
     const reviewLabel =
       reviewStatus === 'approved'
-        ? 'Approved'
+        ? 'Complete'
         : reviewStatus === 'needs_revision'
           ? 'Needs changes'
           : 'Reviewed';
@@ -139,19 +191,29 @@ export default function SubmitForReviewModal({
   viewOnly = false,
 }) {
   const [note, setNote] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
+  const [quizAnswers, setQuizAnswers] = useState({});
   const [sending, setSending] = useState(false);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [error, setError] = useState(null);
   const [attachment, setAttachment] = useState(null); // {id, name}
   const [reviewSnapshot, setReviewSnapshot] = useState(null);
+  const [linkedEventRow, setLinkedEventRow] = useState(null);
+  const [subjectName, setSubjectName] = useState(null);
+  const [reviewMarkupFiles, setReviewMarkupFiles] = useState([]);
 
   useEffect(() => {
     if (!visible) return;
     setNote('');
+    setLinkUrl('');
+    setQuizAnswers({});
     setError(null);
     setUploadingAttachment(false);
     setAttachment(null);
     setReviewSnapshot(null);
+    setLinkedEventRow(null);
+    setSubjectName(null);
+    setReviewMarkupFiles([]);
   }, [visible, assignment?.id, eventContext?.id]);
 
   const contextSubtitle = useMemo(() => {
@@ -170,6 +232,107 @@ export default function SubmitForReviewModal({
     () => linkedEventIdFromSources(assignment, eventContext),
     [assignment?.linked_event_ids, eventContext?.id]
   );
+
+  const resolvedEvent = eventContext || linkedEventRow;
+  const eventType = resolvedEvent?.event_type || 'Assignment';
+  const workSpec = useMemo(
+    () => parseWorkSpec(resolvedEvent?.work_spec, eventType),
+    [resolvedEvent?.work_spec, eventType]
+  );
+  const submissionModes = useMemo(
+    () => resolveStudentSubmissionModes(workSpec, eventType),
+    [workSpec, eventType]
+  );
+  const parentInstructions = String(workSpec?.instructions || '').trim();
+  const assignmentDesc = String(assignment?.description || '').trim();
+  const instructions = parentInstructions
+    || (assignmentDesc.includes('[Submission from student]') || assignmentDesc.includes('[Link submission]')
+      ? ''
+      : assignmentDesc);
+  const startWorkByLabel = formatDateYmd(assignment?.start_work_by);
+  const dueDateLabel = useMemo(() => {
+    if (resolvedEvent?.start_ts) return formatDateYmd(resolvedEvent.start_ts);
+    return formatDateYmd(assignment?.due_date);
+  }, [resolvedEvent?.start_ts, assignment?.due_date]);
+  const statusLabel = getStudentSubmissionStatusLabel(assignment);
+  const submitCtaLabel = submissionModes.parentCheckoff && !submissionModes.text && !submissionModes.file && !submissionModes.photo && !submissionModes.link && !submissionModes.quiz
+    ? 'Mark ready for parent review'
+    : 'Submit';
+
+  useEffect(() => {
+    if (!visible) return;
+    setQuizAnswers(extractQuizAnswers(assignment?.description));
+  }, [visible, assignment?.id, assignment?.description]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadReviewMarkup = async () => {
+      if (!visible || !assignment?.id) {
+        if (!cancelled) setReviewMarkupFiles([]);
+        return;
+      }
+      const rawIds = assignment?.linked_review_attachment_ids;
+      const ids = Array.isArray(rawIds) ? rawIds.map(String).filter(Boolean) : [];
+      if (ids.length === 0) {
+        if (!cancelled) setReviewMarkupFiles([]);
+        return;
+      }
+      try {
+        const { data, error: matErr } = await supabase
+          .from('materials')
+          .select('id, title, provider_url, url')
+          .in('id', ids);
+        if (cancelled || matErr) return;
+        setReviewMarkupFiles(data || []);
+      } catch (_) {
+        if (!cancelled) setReviewMarkupFiles([]);
+      }
+    };
+    loadReviewMarkup();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, assignment?.id, assignment?.linked_review_attachment_ids]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadEventBrief = async () => {
+      if (!visible) return;
+      const ctx = eventContext || null;
+      if (ctx?.work_spec != null || ctx?.id) {
+        if (!cancelled) setLinkedEventRow(ctx);
+        if (ctx?.subject_id) {
+          const { data } = await supabase.from('subjects').select('name').eq('id', ctx.subject_id).maybeSingle();
+          if (!cancelled) setSubjectName(data?.name || null);
+        }
+        return;
+      }
+      if (!linkedEventId || !isUuid(linkedEventId)) return;
+      try {
+        const { data, error: evErr } = await supabase
+          .from('events')
+          .select('id, title, event_type, work_spec, start_ts, end_ts, subject_id, description')
+          .eq('id', linkedEventId)
+          .maybeSingle();
+        if (cancelled || evErr) return;
+        setLinkedEventRow(data || null);
+        if (data?.subject_id) {
+          const { data: subRow } = await supabase
+            .from('subjects')
+            .select('name')
+            .eq('id', data.subject_id)
+            .maybeSingle();
+          if (!cancelled) setSubjectName(subRow?.name || null);
+        }
+      } catch (_) {
+        if (!cancelled) setLinkedEventRow(null);
+      }
+    };
+    loadEventBrief();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, eventContext, linkedEventId]);
   useEffect(() => {
     let cancelled = false;
     const loadReviewSnapshot = async () => {
@@ -238,7 +401,7 @@ export default function SubmitForReviewModal({
     ]
   );
 
-  const pickAttachment = async () => {
+  const pickAttachment = async ({ photoOnly = false } = {}) => {
     if (Platform.OS !== 'web') {
       Alert.alert('Not available', 'Attachment upload is currently available on web.');
       return;
@@ -251,7 +414,7 @@ export default function SubmitForReviewModal({
     setError(null);
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '*/*';
+    input.accept = photoOnly ? 'image/*' : '*/*';
     input.onchange = async (e) => {
       const file = e?.target?.files?.[0];
       if (!file) return;
@@ -291,13 +454,63 @@ export default function SubmitForReviewModal({
       setError('Missing account context.');
       return;
     }
+
+    const noteBlock = note.trim();
+    const linkBlock = linkUrl.trim();
+    const needsText = submissionModes.text && !submissionModes.parentCheckoff;
+    const needsFile = submissionModes.file;
+    const needsPhoto = submissionModes.photo;
+    const needsLink = submissionModes.link;
+    const needsQuiz = submissionModes.quiz;
+    const needsAttachment = needsFile || needsPhoto;
+
+    const offlineOnly =
+      submissionModes.parentCheckoff &&
+      !submissionModes.text &&
+      !submissionModes.file &&
+      !submissionModes.photo &&
+      !submissionModes.link &&
+      !submissionModes.quiz;
+
+    if (needsQuiz) {
+      for (let i = 0; i < submissionModes.quizQuestions.length; i += 1) {
+        const q = submissionModes.quizQuestions[i];
+        if (!String(quizAnswers[q.id] || '').trim()) {
+          setError(`Answer question ${i + 1} before submitting.`);
+          return;
+        }
+      }
+    }
+
+    if (!offlineOnly && !needsQuiz) {
+      if (needsText && !noteBlock && !needsAttachment && !needsLink) {
+        setError('Add your response before submitting.');
+        return;
+      }
+      if (needsLink && !linkBlock && !noteBlock && !attachment?.id) {
+        setError('Paste a link before submitting.');
+        return;
+      }
+      if (needsAttachment && !attachment?.id && !noteBlock && !linkBlock) {
+        setError(needsPhoto ? 'Upload a photo before submitting.' : 'Upload a file before submitting.');
+        return;
+      }
+    }
+
     setSending(true);
     setError(null);
 
     try {
       const nowIso = new Date().toISOString();
-      const noteBlock = note.trim();
       const evidenceIds = attachment?.id ? [String(attachment.id)] : [];
+      const buildDescription = (currentDescription) => {
+        if (offlineOnly && !noteBlock && !linkBlock) return currentDescription;
+        return mergeSubmissionDescription(currentDescription, {
+          note: noteBlock,
+          linkUrl: linkBlock,
+          quizAnswersById: needsQuiz ? quizAnswers : null,
+        });
+      };
 
       if (assignment?.id) {
         const { data: currentRow, error: currentErr } = await supabase
@@ -317,7 +530,7 @@ export default function SubmitForReviewModal({
           submitted_at: nowIso,
           review_status: null,
           need_help: false,
-          description: noteBlock ? appendSubmissionNote(currentRow?.description, noteBlock) : currentRow?.description,
+          description: buildDescription(currentRow?.description),
         };
         if (evidenceIds.length > 0) {
           updates.linked_evidence_ids = mergedEvidence;
@@ -351,7 +564,7 @@ export default function SubmitForReviewModal({
             review_status: null,
             need_help: false,
             linked_evidence_ids: mergedEvidence,
-            description: noteBlock ? appendSubmissionNote(linked?.description, noteBlock) : linked?.description,
+            description: buildDescription(linked?.description),
           });
           if (upErr) throw upErr;
         } else {
@@ -359,7 +572,7 @@ export default function SubmitForReviewModal({
             family_id: familyId,
             child_id: childId,
             title: `Submission: ${eventContext.title || 'Schoolwork'}`.slice(0, 200),
-            description: noteBlock ? appendSubmissionNote('', noteBlock) : null,
+            description: buildDescription(''),
             related_subject: eventContext.subject_id || null,
             due_date: eventContext.start_ts ? new Date(eventContext.start_ts).toISOString().split('T')[0] : null,
             status: 'submitted',
@@ -414,49 +627,163 @@ export default function SubmitForReviewModal({
             contentContainerStyle={styles.scrollContent}
           >
             <Text style={styles.contextTitle} numberOfLines={3}>{titleRef}</Text>
+            {subjectName ? <Text style={styles.contextMeta}>{subjectName}</Text> : null}
             {contextSubtitle ? <Text style={styles.contextWhen}>{contextSubtitle}</Text> : null}
-
-            <Text style={[styles.sectionLabel, { marginTop: 10 }]}>Add a message</Text>
-            {submissionHistoryLines.length > 0 ? (
-              <View style={styles.historyBox}>
-                {submissionHistoryLines.map((line, idx) => (
-                  <Text key={`submission-history-${idx}`} style={styles.historyText}>
-                    {line}
-                  </Text>
-                ))}
+            {dueDateLabel ? <Text style={styles.contextWhen}>Due {dueDateLabel}</Text> : null}
+            {startWorkByLabel ? (
+              <Text style={styles.contextWhen}>Start work by {startWorkByLabel}</Text>
+            ) : null}
+            {!viewOnly && statusLabel ? (
+              <View style={styles.statusPill}>
+                <Text style={styles.statusPillText}>{statusLabel}</Text>
               </View>
             ) : null}
-            <TextInput
-              style={styles.input}
-              placeholder={viewOnly ? 'Submission is locked after the saved date.' : 'Optional note for your parent...'}
-              placeholderTextColor={colors.muted}
-              value={note}
-              onChangeText={setNote}
-              multiline
-              textAlignVertical="top"
-              editable={!viewOnly}
-            />
 
-            <Text style={styles.sectionLabel}>Attachment</Text>
-            <TouchableOpacity
-              style={[styles.uploadButton, uploadingAttachment && styles.uploadButtonDisabled]}
-              onPress={pickAttachment}
-              disabled={viewOnly || uploadingAttachment || sending}
-              {...(Platform.OS === 'web' && { cursor: viewOnly || uploadingAttachment || sending ? 'not-allowed' : 'pointer' })}
-            >
-              {uploadingAttachment ? (
-                <ActivityIndicator size="small" color="#5B6880" />
-              ) : (
-                <View style={styles.uploadRow}>
-                  <View style={styles.uploadIconWrap}>
-                    {attachment?.id ? <Paperclip size={12} color="#5B6880" /> : <Upload size={12} color="#5B6880" />}
-                  </View>
-                  <Text style={styles.uploadText}>
-                    {attachment?.name ? attachment.name : 'Upload file'}
-                  </Text>
+            {instructions ? (
+              <>
+                <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Instructions</Text>
+                <Text style={styles.instructionsText}>{instructions}</Text>
+              </>
+            ) : null}
+
+            {submissionHistoryLines.length > 0 ? (
+              <>
+                <Text style={[styles.sectionLabel, { marginTop: 14 }]}>History</Text>
+                <View style={styles.historyBox}>
+                  {submissionHistoryLines.map((line, idx) => (
+                    <Text key={`submission-history-${idx}`} style={styles.historyText}>
+                      {line}
+                    </Text>
+                  ))}
                 </View>
-              )}
-            </TouchableOpacity>
+              </>
+            ) : null}
+
+            {reviewMarkupFiles.length > 0 ? (
+              <>
+                <Text style={[styles.sectionLabel, { marginTop: 14 }]}>Marked-up files from parent</Text>
+                <View style={styles.historyBox}>
+                  {reviewMarkupFiles.map((file) => (
+                    <TouchableOpacity
+                      key={file.id}
+                      onPress={() => {
+                        const url = String(file.provider_url || file.url || '').trim();
+                        if (url && Platform.OS === 'web' && typeof window !== 'undefined') {
+                          window.open(url, '_blank', 'noopener,noreferrer');
+                        }
+                      }}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                    >
+                      <Text style={styles.markupLink}>{file.title || 'Marked-up file'}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            ) : null}
+
+            {!viewOnly && submissionModes.quiz ? (
+              <>
+                <Text style={styles.sectionLabel}>Questions</Text>
+                {submissionModes.quizQuestions.map((q, index) => (
+                  <View key={q.id} style={styles.quizField}>
+                    <Text style={styles.quizPrompt}>
+                      {index + 1}. {q.prompt || `Question ${index + 1}`}
+                    </Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Your answer"
+                      placeholderTextColor={colors.muted}
+                      value={String(quizAnswers[q.id] || '')}
+                      onChangeText={(text) => setQuizAnswers((prev) => ({ ...prev, [q.id]: text }))}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  </View>
+                ))}
+              </>
+            ) : null}
+
+            {!viewOnly && submissionModes.text ? (
+              <>
+                <Text style={styles.sectionLabel}>
+                  {submissionModes.parentCheckoff ? 'Notes (optional)' : 'Your response'}
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Type your answer or notes..."
+                  placeholderTextColor={colors.muted}
+                  value={note}
+                  onChangeText={setNote}
+                  multiline
+                  textAlignVertical="top"
+                />
+              </>
+            ) : null}
+
+            {!viewOnly && submissionModes.link ? (
+              <>
+                <Text style={styles.sectionLabel}>Link</Text>
+                <TextInput
+                  style={styles.linkInput}
+                  placeholder="https://..."
+                  placeholderTextColor={colors.muted}
+                  value={linkUrl}
+                  onChangeText={setLinkUrl}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </>
+            ) : null}
+
+            {!viewOnly && submissionModes.file ? (
+              <>
+                <Text style={styles.sectionLabel}>Upload file</Text>
+                <TouchableOpacity
+                  style={[styles.uploadButton, uploadingAttachment && styles.uploadButtonDisabled]}
+                  onPress={() => pickAttachment({ photoOnly: false })}
+                  disabled={uploadingAttachment || sending}
+                  {...(Platform.OS === 'web' && { cursor: uploadingAttachment || sending ? 'not-allowed' : 'pointer' })}
+                >
+                  {uploadingAttachment ? (
+                    <ActivityIndicator size="small" color="#5B6880" />
+                  ) : (
+                    <View style={styles.uploadRow}>
+                      <View style={styles.uploadIconWrap}>
+                        {attachment?.id ? <Paperclip size={12} color="#5B6880" /> : <Upload size={12} color="#5B6880" />}
+                      </View>
+                      <Text style={styles.uploadText}>
+                        {attachment?.name ? attachment.name : 'Choose file'}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </>
+            ) : null}
+
+            {!viewOnly && submissionModes.photo ? (
+              <>
+                <Text style={styles.sectionLabel}>Upload photo</Text>
+                <TouchableOpacity
+                  style={[styles.uploadButton, uploadingAttachment && styles.uploadButtonDisabled]}
+                  onPress={() => pickAttachment({ photoOnly: true })}
+                  disabled={uploadingAttachment || sending}
+                  {...(Platform.OS === 'web' && { cursor: uploadingAttachment || sending ? 'not-allowed' : 'pointer' })}
+                >
+                  {uploadingAttachment ? (
+                    <ActivityIndicator size="small" color="#5B6880" />
+                  ) : (
+                    <View style={styles.uploadRow}>
+                      <View style={styles.uploadIconWrap}>
+                        {attachment?.id ? <Paperclip size={12} color="#5B6880" /> : <Upload size={12} color="#5B6880" />}
+                      </View>
+                      <Text style={styles.uploadText}>
+                        {attachment?.name ? attachment.name : 'Choose photo'}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </>
+            ) : null}
 
             {error ? <Text style={styles.err}>{error}</Text> : null}
 
@@ -476,7 +803,7 @@ export default function SubmitForReviewModal({
                         <Send size={12} color="#5B6880" />
                       </View>
                     ) : null}
-                    <Text style={styles.ctaText}>{viewOnly ? 'Close' : 'Submit for review'}</Text>
+                    <Text style={styles.ctaText}>{viewOnly ? 'Close' : submitCtaLabel}</Text>
                   </View>
                 )}
               </TouchableOpacity>
@@ -542,6 +869,66 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  contextMeta: {
+    marginTop: 4,
+    color: '#475569',
+    fontSize: 14,
+    fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  statusPill: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#F1F5F9',
+  },
+  statusPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  instructionsText: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: '#334155',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  linkInput: {
+    borderWidth: 1,
+    borderColor: '#D6DCE8',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      outlineStyle: 'none',
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  quizField: {
+    marginBottom: 10,
+    gap: 6,
+  },
+  quizPrompt: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#334155',
+    lineHeight: 20,
+  },
+  markupLink: {
+    fontSize: 13,
+    color: '#2563EB',
+    textDecorationLine: 'underline',
+    marginBottom: 4,
   },
   sectionLabel: {
     marginTop: 16,

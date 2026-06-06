@@ -1358,10 +1358,7 @@ const styles = StyleSheet.create({
     paddingTop: TOKENS.contentPadY,
     paddingBottom: 48,
     paddingHorizontal: TOKENS.contentPadX,
-    maxWidth: TOKENS.contentMax,
-    alignSelf: 'center',
     width: '100%',
-    ...(Platform.OS === 'web' && { marginLeft: 'auto', marginRight: 'auto' }),
   },
   sectionTitle: {
     fontSize: 20,

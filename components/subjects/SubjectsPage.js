@@ -196,6 +196,10 @@ export default function SubjectsPage({
   userRole = 'parent',
   accessibleChildren = [],
   screenMode = 'records',
+  hideModeSegments = false,
+  forcedModeFilter = null,
+  learningSection = null,
+  onTabChange = null,
 }) {
   const isCatalogScreen = screenMode === 'catalog';
   const toast = useToast();
@@ -259,7 +263,11 @@ export default function SubjectsPage({
     if (isChildView && childId) return [String(childId)];
     return (safeChildren || []).map((child) => String(child?.id || '')).filter(Boolean);
   });
-  const [selectedModeFilter, setSelectedModeFilter] = useState(() => readStoredSubjectsMode(modeStorageKey) || 'view');
+  const [selectedModeFilter, setSelectedModeFilter] = useState(() => {
+    if (forcedModeFilter) return forcedModeFilter;
+    return readStoredSubjectsMode(modeStorageKey) || 'view';
+  });
+  const effectiveModeFilter = forcedModeFilter || selectedModeFilter;
   const [selectedYearFilter, setSelectedYearFilter] = useState(() => getCurrentSchoolYear());
   const [selectedTermFilter, setSelectedTermFilter] = useState(ALL_TERMS_FILTER);
   const [selectedCourseSubjectIds, setSelectedCourseSubjectIds] = useState([]);
@@ -2170,10 +2178,17 @@ export default function SubjectsPage({
   }, [canShowChildScheduleTab, canShowChildProgressTab]);
 
   useEffect(() => {
+    if (forcedModeFilter) {
+      setSelectedModeFilter(forcedModeFilter);
+    }
+  }, [forcedModeFilter]);
+
+  useEffect(() => {
+    if (forcedModeFilter) return;
     if (!isChildView && selectedModeFilter !== 'view') {
       setSelectedModeFilter('view');
     }
-  }, [isChildView, selectedModeFilter]);
+  }, [isChildView, selectedModeFilter, forcedModeFilter]);
 
   useEffect(() => {
     if (selectedModeFilter === 'plan' && !canShowChildScheduleTab) {
@@ -2776,7 +2791,7 @@ export default function SubjectsPage({
             </TouchableOpacity>
           </View>
         ) : null}
-        {(!isChildView || isSelfManagedStudentViewer) && !isCatalogScreen && (
+        {(!isChildView || isSelfManagedStudentViewer) && !isCatalogScreen && !hideModeSegments && (
           <View style={[styles.headerModeWrap, !isChildView && styles.headerModeWrapNoPicker]}>
             <View style={styles.headerModeControls}>
               {isChildView && isSelfManagedStudentViewer ? (
@@ -4075,9 +4090,7 @@ const styles = StyleSheet.create({
   },
   /** Match MaterialsLibrary `childrenFilterRow` / `subjectsFilterRow` */
   filterRow: {
-    maxWidth: 1400,
     width: '100%',
-    marginHorizontal: 'auto',
     marginTop: 24,
     marginBottom: 8,
     paddingHorizontal: 24,

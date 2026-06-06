@@ -31,7 +31,7 @@ import {
   updateExclusion,
 } from '../lib/services/plannerSettingsClient';
 import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
-import { LearningGradingSwitchesRow, LearningSubmissionMethodsField } from './events/WorkDetailsSection';
+import StudentWorkSection from './events/StudentWorkSection';
 import { ensureAssignmentsForEvent } from '../lib/workAssignmentClient';
 import {
   defaultWorkSpec,
@@ -461,6 +461,7 @@ export default function TaskCreateModal({
   // New academic and metadata fields
   const [eventType, setEventType] = useState('Lesson'); // Default to "Lesson" for new events
   const [workSpec, setWorkSpec] = useState(() => defaultWorkSpec('Assignment'));
+  const [studentWorkExpanded, setStudentWorkExpanded] = useState(false);
   const [subjectIds, setSubjectIds] = useState(defaultSubjectId ? [defaultSubjectId] : []);
   const [subjectId, setSubjectId] = useState(defaultSubjectId || null);
   const [unit, setUnit] = useState('');
@@ -630,6 +631,12 @@ export default function TaskCreateModal({
       setTitle('');
     }
     setIsClassDayTitleAutofilled(false);
+    if (isWorkProducingEventType(nextType)) {
+      setWorkSpec(defaultWorkSpec(nextType));
+      setStudentWorkExpanded(true);
+    } else {
+      setStudentWorkExpanded(false);
+    }
   }, [eventType, isClassDayTitleAutofilled, title, applySubjectSelection]);
   
   // Handle standards selection from modal
@@ -646,6 +653,7 @@ export default function TaskCreateModal({
     fallback: ATTENDANCE_MODES.CLASS_DAY,
   });
   const isClassDayEvent = eventType === 'Class Day';
+  const showStudentWorkPanel = isWorkProducingEventType(eventType);
   const academicSectionTitle = 'Learning details';
   const handleBodyScroll = useCallback((evt) => {
     const nextY = Number(evt?.nativeEvent?.contentOffset?.y || 0);
@@ -5070,6 +5078,28 @@ export default function TaskCreateModal({
             )}
           </SafeView>
 
+            {/* Student Work — Assignment / Project / Exam */}
+            {showStudentWorkPanel ? (
+            <ModalSectionCard
+              Icon={FileText}
+              title="Student Work"
+              subtitle="Submission, instructions, and start date"
+              expanded={studentWorkExpanded}
+              onPress={() => setStudentWorkExpanded(!studentWorkExpanded)}
+              accent="#85C4F2"
+            >
+              <SafeView>
+                <StudentWorkSection
+                  workSpec={workSpec}
+                  eventType={eventType}
+                  onChange={setWorkSpec}
+                  inputStyle={styles.input}
+                  labelStyle={styles.fieldLabel}
+                />
+              </SafeView>
+            </ModalSectionCard>
+            ) : null}
+
             {/* Academic Details Section - after Schedule time */}
             {!hideLearningDetailsSection ? (
             <ModalSectionCard
@@ -5429,11 +5459,6 @@ export default function TaskCreateModal({
                     ) : null}
                   </View>
                 </View>
-                <LearningGradingSwitchesRow
-                  workSpec={workSpec}
-                  eventType={eventType}
-                  onChange={setWorkSpec}
-                />
                 {showLearningGradeFields ? (
                 <View style={styles.learningSectionGradesRow}>
                   <View style={[styles.field, styles.academicFieldPercent]}>
@@ -5499,11 +5524,6 @@ export default function TaskCreateModal({
                 </View>
                 ) : null}
               </SafeFieldRow>
-              <LearningSubmissionMethodsField
-                workSpec={workSpec}
-                eventType={eventType}
-                onChange={setWorkSpec}
-              />
                 </SafeView>
             </ModalSectionCard>
             ) : null}

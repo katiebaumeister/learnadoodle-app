@@ -29,6 +29,7 @@ export function resolveBundledAvatarSource(rawValue) {
 }
 
 export const LEARNADOODLE_LOGO_ASSET = require('./learnadoodle-logo.png');
+export const FAVICON_ASSET = require('./favicon.png');
 
 export const SIDEBAR_ICON_ASSETS = Object.freeze({
   home: require('./home.png'),

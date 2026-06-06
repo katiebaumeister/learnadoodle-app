@@ -38,10 +38,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       maxWidth: '100%',
       alignSelf: 'stretch',
-      /* Symmetric edge inset so left/right match top/bottom relative to AppShell inner area */
-      paddingHorizontal: 16,
-      paddingTop: 16,
-      paddingBottom: 16,
+      paddingHorizontal: 24,
+      paddingTop: 24,
+      paddingBottom: 24,
     }),
     ...(Platform.OS !== 'web' && {
       paddingHorizontal: 16,

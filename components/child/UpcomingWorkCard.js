@@ -90,7 +90,7 @@ export default function UpcomingWorkCard({ familyId, childId }) {
           <View style={styles.iconWrap}>
             <ClipboardList size={18} color="#0369A1" />
           </View>
-          <Text style={styles.title}>Upcoming work</Text>
+          <Text style={styles.title}>Due soon</Text>
         </View>
       </View>
 

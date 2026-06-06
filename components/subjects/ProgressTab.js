@@ -26,7 +26,7 @@ import {
   getPlanProgressStatusFromMetrics,
 } from './SubjectsPlanBuilder';
 import {
-  isWorkProducingEventType,
+  eventRequiresSubmission,
   primaryAssignmentForEvent,
 } from '../../lib/workEventHelpers';
 import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
@@ -1876,12 +1876,12 @@ export default function ProgressTab({
 
     const { events, assignmentsByEventId } = allEventsAggregate;
     const hasAssignedWorkInLog = (events || []).some((event) => {
-      if (isWorkProducingEventType(event?.event_type || event?.type)) return true;
-      return Boolean(primaryAssignmentForEvent(
+      const assignment = primaryAssignmentForEvent(
         assignmentsByEventId,
         event?.id,
         resolvedActiveChildIds
-      ));
+      );
+      return eventRequiresSubmission(event, assignment);
     });
 
     if (!hasAssignedWorkInLog && submittedArtifactsCount === 0) {

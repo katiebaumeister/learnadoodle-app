@@ -3,12 +3,11 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, Image, Linking } fr
 import { PanelLeftClose, PanelLeftOpen, Settings, Send, Search } from 'lucide-react';
 import LeftRail from '../LeftRail';
 
+const RAIL_ICON_WIDTH = 52;
+const RAIL_EXPANDED_WIDTH = 220;
+
 /**
- * Sidebar - Wrapper around LeftRail with bottom chips
- * 
- * Structure:
- * - Top: Navigation items (from LeftRail)
- * - Bottom: Settings and Feedback chips (sticky)
+ * Sidebar - Icon rail with hover-to-expand overlay (Supabase-style).
  */
 export default function Sidebar({
   topActive,
@@ -20,6 +19,7 @@ export default function Sidebar({
   activeChildSection = 'affirmation',
   onSelectChild,
   onSelectChildSection,
+  onExitChildView = null,
   onOpenNew,
   onOpenSearch,
   onAvatarPress,
@@ -27,9 +27,8 @@ export default function Sidebar({
   userRole = 'parent',
   onOpenSettings,
   onOpenFeedback,
-  onCollapsedChange,
 }) {
-  const [sidebarMode, setSidebarMode] = useState('expanded'); // 'expanded', 'collapsed'
+  const [isHovered, setIsHovered] = useState(false);
   const [showCollapseMenu, setShowCollapseMenu] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [hoveredMenuItem, setHoveredMenuItem] = useState(null);
@@ -42,30 +41,15 @@ export default function Sidebar({
   const feedbackButtonRef = useRef(null);
   const tooltipRef = useRef(null);
 
-  // Determine if sidebar should be collapsed based on mode (no hover-to-expand)
-  const isCollapsed = sidebarMode === 'collapsed';
+  const isExpanded = isHovered;
+  const isCollapsed = !isExpanded;
 
-  // Notify parent of collapsed state changes
-  useEffect(() => {
-    if (onCollapsedChange) {
-      onCollapsedChange(isCollapsed);
-    }
-  }, [isCollapsed, onCollapsedChange]);
-
-  const toggleCollapse = useCallback(() => {
-    // When clicking collapse button, toggle between expanded and collapsed modes
-    setSidebarMode(prev => prev === 'expanded' ? 'collapsed' : 'expanded');
-    // Close the menu when toggling
-    setShowCollapseMenu(false);
-    if (hideMenuTimeoutRef.current) {
-      clearTimeout(hideMenuTimeoutRef.current);
-      hideMenuTimeoutRef.current = null;
-    }
+  const handleRailMouseEnter = useCallback(() => {
+    setIsHovered(true);
   }, []);
 
-  const handleModeChange = useCallback((mode) => {
-    setSidebarMode(mode);
-    setShowCollapseMenu(false);
+  const handleRailMouseLeave = useCallback(() => {
+    setIsHovered(false);
   }, []);
 
   // Helper to show menu (clears any pending hide)
@@ -167,14 +151,25 @@ export default function Sidebar({
   }, []);
 
   return (
-    <View style={styles.container}>
-      {/* Top: Navigation */}
-      <View style={styles.navSection}>
+    <View
+      style={styles.container}
+      {...(Platform.OS === 'web' && {
+        onMouseEnter: handleRailMouseEnter,
+        onMouseLeave: handleRailMouseLeave,
+      })}
+    >
+      <View
+        style={[
+          styles.railOverlay,
+          isExpanded && styles.railOverlayExpanded,
+        ]}
+      >
         <LeftRail
           topActive={topActive}
           messagesPaneOpen={messagesPaneOpen}
           createPaneOpen={createPaneOpen}
           onSelectTop={onSelectTop}
+          onExitChildView={onExitChildView}
           childrenList={childrenList}
           activeChildId={activeChildId}
           activeChildSection={activeChildSection}
@@ -188,10 +183,13 @@ export default function Sidebar({
           onOpenSettings={onOpenSettings}
           onOpenFeedback={onOpenFeedback}
           isCollapsed={isCollapsed}
+          hideBrandLogo
+          hideProfileNav
+          iconRailMode
         />
       </View>
 
-      {/* Bottom: Settings, Feedback, and Collapse Button */}
+      {/* Bottom section archived — settings/profile live in top bar */}
       <View style={styles.collapseSection}>
         {/* Left Side: Settings, Feedback, and Search buttons - ARCHIVED */}
         {false && !isCollapsed && (
@@ -412,25 +410,40 @@ export default function Sidebar({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    flexDirection: 'column',
+    width: RAIL_ICON_WIDTH,
     height: '100%',
+    position: 'relative',
     ...(Platform.OS === 'web' && {
-      minHeight: '100vh',
+      minHeight: '100%',
     }),
   },
-  navSection: {
-    flex: 1,
+  railOverlay: {
+    width: RAIL_ICON_WIDTH,
+    height: '100%',
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(148, 163, 184, 0.2)',
+    ...(Platform.OS === 'web' && {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      bottom: 0,
+      zIndex: 100,
+      transitionProperty: 'width, box-shadow',
+      transitionDuration: '0.15s',
+      transitionTimingFunction: 'ease',
+    }),
+  },
+  railOverlayExpanded: {
+    width: RAIL_EXPANDED_WIDTH,
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '4px 0 16px rgba(15, 23, 42, 0.12)',
+    }),
   },
   collapseSection: {
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    paddingTop: 4,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    ...(Platform.OS === 'web' && {
-      marginTop: 'auto',
-    }),
+    display: 'none',
   },
   leftButtonsContainer: {
     flexDirection: 'row',

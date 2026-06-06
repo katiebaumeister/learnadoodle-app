@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import Sidebar from './Sidebar';
 
@@ -9,8 +9,11 @@ import Sidebar from './Sidebar';
  * and a sticky "Finish setup to begin planning" banner is shown. OnboardingModal
  * is rendered by WebLayout and blocks until setup is complete.
  */
+const RAIL_ICON_WIDTH = 52;
+
 export default function AppShell({ 
   sidebar, 
+  topBar = null,
   leftPane = null,
   children,
   onOpenSettings,
@@ -18,32 +21,24 @@ export default function AppShell({
   flushToEdge = false, // For planner: keeps border but removes padding inside
   disabled = false,   // When true, block interaction and show setup banner
 }) {
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-
-  const handleCollapsedChange = (collapsed) => {
-    setIsSidebarCollapsed(collapsed);
-  };
-
   const leftPaneWidth = leftPane?.width || 340;
 
   return (
     <View style={styles.appContainer}>
-      <View 
-        style={styles.outerFrame}
-        {...(Platform.OS === 'web' ? { className: 'glass-frame' } : {})}
-      >
+      <View style={styles.outerFrame}>
+        {topBar ? (
+          <View style={styles.topBarSlot}>
+            {topBar}
+          </View>
+        ) : null}
         <View style={styles.contentRow}>
-          {/* Sidebar */}
+          {/* Sidebar — fixed icon-rail slot; rail expands as overlay on hover */}
           {sidebar && (
-            <View style={[
-              styles.sidebarContainer,
-              isSidebarCollapsed && styles.sidebarContainerCollapsed
-            ]}>
+            <View style={styles.sidebarContainer}>
               <Sidebar
                 {...sidebar}
                 onOpenSettings={onOpenSettings}
                 onOpenFeedback={onOpenFeedback}
-                onCollapsedChange={handleCollapsedChange}
               />
             </View>
           )}
@@ -83,7 +78,6 @@ export default function AppShell({
                 : styles.mainSurfaceLeftPaneClosed),
               flushToEdge && styles.mainSurfaceFlush
             ]}
-            {...(Platform.OS === 'web' ? { className: 'glass-surface' } : {})}
           >
             {disabled && (
               <View style={[styles.setupBanner, { pointerEvents: 'box-none' }]}>
@@ -121,42 +115,39 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     minHeight: Platform.OS === 'web' ? '100vh' : '100%',
-    backgroundColor: '#F6F7FB', // App background
+    backgroundColor: '#FFFFFF',
   },
   outerFrame: {
     flex: 1,
     width: '100%',
     height: '100%',
-    backgroundColor: '#F6F7FB',
+    backgroundColor: '#FFFFFF',
     overflow: 'hidden',
+    flexDirection: 'column',
+  },
+  topBarSlot: {
+    width: '100%',
+    flexShrink: 0,
   },
   contentRow: {
     flexDirection: 'row',
     flex: 1,
     width: '100%',
-    backgroundColor: '#F6F7FB',
+    backgroundColor: '#FFFFFF',
+    minHeight: 0,
   },
   sidebarContainer: {
-    width: 240, // Desktop sidebar width (expanded)
-    height: '100%',
+    width: RAIL_ICON_WIDTH,
+    flexShrink: 0,
+    alignSelf: 'stretch',
     ...(Platform.OS === 'web' && {
-      minHeight: '100vh',
-      transition: 'width 0.2s ease',
-      position: 'relative', // Ensure stacking context
-      zIndex: 1, // Above background but below dropdown menu
-    }),
-  },
-  sidebarContainerCollapsed: {
-    width: 76, // Collapsed sidebar width (matches LeftRail collapsed width)
-    ...(Platform.OS === 'web' && {
-      transition: 'width 0.2s ease',
+      position: 'relative',
+      zIndex: 100,
     }),
   },
   leftPaneContainer: {
     alignSelf: 'stretch',
     flexShrink: 0,
-    marginTop: 16,
-    marginBottom: 16,
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       transitionProperty: 'width, max-width, opacity, margin-right',
@@ -216,23 +207,25 @@ const styles = StyleSheet.create({
     }),
   },
   mainSurfaceLeftPaneOpen: {
-    marginLeft: 8,
+    marginLeft: 0,
   },
   mainSurfaceLeftPaneClosed: {
-    marginLeft: 16,
+    marginLeft: 0,
   },
   mainSurface: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    borderRadius: 20, // --radius-md
-    borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.08)', // --stroke
-    margin: 16, // Gap between sidebar and surface (uniform on all sides)
+    borderRadius: 0,
+    borderWidth: 0,
+    marginTop: 0,
+    marginRight: 0,
+    marginBottom: 0,
+    marginLeft: 0,
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       overflowY: 'auto',
       overflowX: 'hidden',
-      minHeight: 'calc(100vh - 32px)', // Account for margin
+      minHeight: 0,
       display: 'flex',
       flexDirection: 'column',
       position: 'relative', // Ensure stacking context

@@ -43,8 +43,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     width: '100%',
-    maxWidth: 1280, // max-w-screen-xl
-    marginHorizontal: 'auto',
+    maxWidth: '100%',
+    marginHorizontal: 0,
     // On web, let CSS handle padding via layout-container class
     ...(Platform.OS === 'web' ? {} : {
       paddingHorizontal: 24, // Uses --layout-page-padding (24px)

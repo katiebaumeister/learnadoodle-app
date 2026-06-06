@@ -22,7 +22,10 @@ import {
 import {
   getAllEventsSubmissionLabel,
   primaryAssignmentForEvent,
+  resolveSubmissionColumnDisplay,
+  SUBMISSION_COLUMN_STATES,
 } from '../../lib/workEventHelpers';
+import SubmissionColumnCell from './SubmissionColumnCell';
 
 const DENSE_DATE_HEADER_HEIGHT = 32;
 const DENSE_EVENT_ROW_HEIGHT = 64;
@@ -156,7 +159,7 @@ export default function PlannerEventsListTable({
       try {
         const { data, error } = await supabase
           .from('assignments')
-          .select('id, child_id, linked_event_ids, status, review_status, submitted_at, progress_percent, grade_display, grade_value, due_date')
+          .select('id, child_id, linked_event_ids, status, review_status, submitted_at, progress_percent, grade_display, grade_value, due_date, start_work_by')
           .eq('family_id', familyId)
           .order('updated_at', { ascending: false })
           .limit(500);
@@ -178,7 +181,7 @@ export default function PlannerEventsListTable({
     const refresh = () => {
       supabase
         .from('assignments')
-        .select('id, child_id, linked_event_ids, status, review_status, submitted_at, progress_percent, grade_display, grade_value, due_date')
+        .select('id, child_id, linked_event_ids, status, review_status, submitted_at, progress_percent, grade_display, grade_value, due_date, start_work_by')
         .eq('family_id', familyId)
         .order('updated_at', { ascending: false })
         .limit(500)
@@ -414,7 +417,21 @@ export default function PlannerEventsListTable({
     const gradeLabel = formatEventGradeLabel(event);
     const materialIds = getEventMaterialIds(event);
     const assignment = primaryAssignmentForEvent(assignmentsByEventId, eventId, eventChildIds);
-    const submissionLabel = getAllEventsSubmissionLabel(event, assignment);
+    const submissionDisplay = resolveSubmissionColumnDisplay({ event, assignment });
+    const handleSubmissionReview = () => {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openEventModal', {
+          detail: {
+            eventId,
+            initialEvent: event,
+            parentEventFocus: 'submission',
+            assignment: assignment || null,
+          },
+        }));
+        return;
+      }
+      onEventPress?.(event);
+    };
     const hideAttendanceControl = isPlannerHolidayOrBreakType(event);
 
     const handleRowContextMenu = (nativeEvent) => {
@@ -513,13 +530,16 @@ export default function PlannerEventsListTable({
         </View>
 
         <View style={styles.denseColSubmission}>
-          {submissionLabel ? (
-            <Text style={[styles.denseCellText, styles.denseSubmissionText, isDone && styles.denseMutedText]} numberOfLines={1} ellipsizeMode="tail">
-              {submissionLabel}
-            </Text>
-          ) : (
-            <Text style={styles.denseEmptyCellText}>—</Text>
-          )}
+          <SubmissionColumnCell
+            display={submissionDisplay}
+            muted={isDone}
+            compact
+            onSubLabelPress={
+              submissionDisplay.state === SUBMISSION_COLUMN_STATES.SUBMITTED
+                ? handleSubmissionReview
+                : null
+            }
+          />
         </View>
 
         <View style={styles.denseColGrade}>

@@ -2769,9 +2769,7 @@ const styles = StyleSheet.create({
     }),
   },
   childrenLabelContainer: {
-    maxWidth: 1400,
     width: '100%',
-    marginHorizontal: 'auto',
     paddingHorizontal: 12,
     paddingBottom: 8,
     paddingTop: 4,
@@ -2788,9 +2786,7 @@ const styles = StyleSheet.create({
     }),
   },
   childrenFilterRow: {
-    maxWidth: 1400,
     width: '100%',
-    marginHorizontal: 'auto',
     // Add breathing room below the divider above the chips (match requested spacing)
     marginTop: 24,
     marginBottom: 16,
@@ -2812,9 +2808,7 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   subjectsLabelContainer: {
-    maxWidth: 1400,
     width: '100%',
-    marginHorizontal: 'auto',
     paddingHorizontal: 24,
     paddingBottom: 8,
     paddingTop: 4,
@@ -2831,9 +2825,7 @@ const styles = StyleSheet.create({
     }),
   },
   subjectsFilterRow: {
-    maxWidth: 1400,
     width: '100%',
-    marginHorizontal: 'auto',
     marginBottom: 16,
     paddingHorizontal: 24,
     flexDirection: 'row',
@@ -2857,9 +2849,7 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   typesLabelContainer: {
-    maxWidth: 1400,
     width: '100%',
-    marginHorizontal: 'auto',
     paddingHorizontal: 24,
     paddingBottom: 8,
     paddingTop: 4,
@@ -2876,9 +2866,7 @@ const styles = StyleSheet.create({
     }),
   },
   typesFilterRow: {
-    maxWidth: 1400,
     width: '100%',
-    marginHorizontal: 'auto',
     marginBottom: 16,
     paddingHorizontal: 24,
     flexDirection: 'row',
@@ -2905,9 +2893,7 @@ const styles = StyleSheet.create({
     }),
   },
   connectionsFilterRow: {
-    maxWidth: 1400,
     width: '100%',
-    marginHorizontal: 'auto',
     marginBottom: 16,
     paddingHorizontal: 24,
     flexDirection: 'row',
@@ -2926,9 +2912,7 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   recentlyDeletedLabelContainer: {
-    maxWidth: 1400,
     width: '100%',
-    marginHorizontal: 'auto',
     paddingHorizontal: 24,
     paddingBottom: 8,
     paddingTop: 10,
@@ -2945,9 +2929,7 @@ const styles = StyleSheet.create({
     }),
   },
   recentlyDeletedFilterRow: {
-    maxWidth: 1400,
     width: '100%',
-    marginHorizontal: 'auto',
     marginBottom: 16,
     paddingHorizontal: 24,
     flexDirection: 'row',
