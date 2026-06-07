@@ -158,6 +158,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       position: 'relative',
       zIndex: 100,
+      overflow: 'visible',
       transitionProperty: 'width',
       transitionDuration: '0.15s',
       transitionTimingFunction: 'ease',
@@ -206,9 +207,8 @@ const styles = StyleSheet.create({
   leftPaneInner: {
     flex: 1,
     height: '100%',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(15, 23, 42, 0.08)',
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(148, 163, 184, 0.24)',
     backgroundColor: '#FFFFFF',
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {

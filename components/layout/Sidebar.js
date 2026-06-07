@@ -99,21 +99,33 @@ export default function Sidebar({
     const buttonNode = controlButtonRef.current._nativeNode || controlButtonRef.current;
     if (!buttonNode?.getBoundingClientRect) return;
     const rect = buttonNode.getBoundingClientRect();
-    const menuWidth = 196;
-    const menuHeight = 168;
-    setMenuPosition({
-      top: rect.top + window.scrollY - menuHeight - 8,
-      left: rect.right + window.scrollX + 8,
-    });
+    const menuNode = controlMenuRef.current?._nativeNode || controlMenuRef.current;
+    const menuRect = menuNode?.getBoundingClientRect?.();
+    const menuWidth = menuRect?.width || 172;
+    const menuHeight = menuRect?.height || 108;
+    const gap = 4;
+    const viewportPadding = 8;
+
+    let left = rect.left;
+    if (left + menuWidth > window.innerWidth - viewportPadding) {
+      left = window.innerWidth - menuWidth - viewportPadding;
+    }
+    left = Math.max(viewportPadding, left);
+
+    const top = Math.max(viewportPadding, rect.top - menuHeight - gap);
+
+    setMenuPosition({ top, left });
   }, []);
 
   useEffect(() => {
     if (!showControlMenu) return;
     updateMenuPosition();
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const rafId = requestAnimationFrame(() => updateMenuPosition());
     window.addEventListener('scroll', updateMenuPosition, true);
     window.addEventListener('resize', updateMenuPosition);
     return () => {
+      cancelAnimationFrame(rafId);
       window.removeEventListener('scroll', updateMenuPosition, true);
       window.removeEventListener('resize', updateMenuPosition);
     };
@@ -143,15 +155,20 @@ export default function Sidebar({
   }, [showControlMenu]);
 
   return (
-    <View
-      style={styles.container}
-      {...(Platform.OS === 'web' && !isPinnedExpanded && {
-        onMouseEnter: handleRailMouseEnter,
-        onMouseLeave: handleRailMouseLeave,
-      })}
-    >
-      <View style={styles.railColumn}>
-        <View style={styles.railShell}>
+    <View style={styles.container}>
+      <View
+        style={styles.railColumn}
+        {...(Platform.OS === 'web' && !isPinnedExpanded && {
+          onMouseEnter: handleRailMouseEnter,
+          onMouseLeave: handleRailMouseLeave,
+        })}
+      >
+        <View
+          style={[
+            styles.railShell,
+            !isPinnedExpanded && isExpanded && styles.railShellHoverExpanded,
+          ]}
+        >
           <View
             style={[
               styles.railOverlay,
@@ -185,7 +202,12 @@ export default function Sidebar({
           </View>
         </View>
 
-        <View style={styles.controlFooter}>
+        <View
+          style={[
+            styles.controlFooter,
+            isPinnedExpanded && styles.controlFooterExpanded,
+          ]}
+        >
           <TouchableOpacity
             ref={controlButtonRef}
             style={[
@@ -259,6 +281,7 @@ const styles = StyleSheet.create({
     position: 'relative',
     ...(Platform.OS === 'web' && {
       minHeight: '100%',
+      overflow: 'visible',
     }),
   },
   railColumn: {
@@ -268,6 +291,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRightWidth: 1,
     borderRightColor: 'rgba(148, 163, 184, 0.2)',
+    ...(Platform.OS === 'web' && {
+      overflow: 'visible',
+    }),
   },
   railShell: {
     flex: 1,
@@ -275,6 +301,15 @@ const styles = StyleSheet.create({
     width: '100%',
     position: 'relative',
     overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      overflow: 'visible',
+    }),
+  },
+  railShellHoverExpanded: {
+    ...(Platform.OS === 'web' && {
+      overflow: 'visible',
+      zIndex: 120,
+    }),
   },
   railOverlay: {
     width: RAIL_ICON_WIDTH,
@@ -317,32 +352,33 @@ const styles = StyleSheet.create({
       zIndex: 2,
     }),
   },
+  controlFooterExpanded: {
+    alignItems: 'flex-start',
+    paddingLeft: 10,
+  },
   controlButton: {
     width: 32,
     height: 32,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.28)',
     backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
-      transition: 'background-color 0.15s ease, border-color 0.15s ease',
+      transition: 'background-color 0.15s ease',
     }),
   },
   controlButtonActive: {
     backgroundColor: '#FAFAFA',
-    borderColor: 'rgba(148, 163, 184, 0.4)',
   },
   controlMenu: {
     ...(Platform.OS === 'web'
       ? {
           position: 'fixed',
           backgroundColor: '#FFFFFF',
-          borderRadius: 10,
-          paddingVertical: 8,
-          minWidth: 196,
+          borderRadius: 8,
+          paddingVertical: 6,
+          minWidth: 172,
           borderWidth: 1,
           borderColor: 'rgba(148, 163, 184, 0.24)',
           boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
@@ -351,12 +387,12 @@ const styles = StyleSheet.create({
       : {}),
   },
   controlMenuTitle: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '500',
     color: 'rgba(15, 23, 42, 0.45)',
-    paddingHorizontal: 14,
-    paddingTop: 4,
-    paddingBottom: 8,
+    paddingHorizontal: 12,
+    paddingTop: 2,
+    paddingBottom: 6,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -364,15 +400,15 @@ const styles = StyleSheet.create({
   controlMenuDivider: {
     height: 1,
     backgroundColor: 'rgba(148, 163, 184, 0.2)',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   controlMenuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    marginHorizontal: 6,
-    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    marginHorizontal: 5,
+    borderRadius: 5,
     ...(Platform.OS === 'web' && {
       transition: 'background-color 0.15s ease',
     }),
@@ -384,19 +420,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.05)',
   },
   controlMenuItemLeading: {
-    width: 14,
+    width: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 6,
+    marginRight: 5,
   },
   controlMenuBullet: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: 'rgba(15, 23, 42, 0.65)',
   },
   controlMenuText: {
-    fontSize: 14,
+    fontSize: 12,
     color: 'rgba(15, 23, 42, 0.78)',
     fontWeight: '400',
     ...(Platform.OS === 'web' && {

@@ -6363,7 +6363,7 @@ function createStyles(tokens) {
       gap: 5,
       paddingVertical: 6,
       paddingHorizontal: 10,
-      borderRadius: 8,
+      borderRadius: 0,
       borderWidth: 1,
       borderColor: 'rgba(99, 102, 241, 0.22)',
       backgroundColor: '#FFFFFF',
@@ -6389,7 +6389,7 @@ function createStyles(tokens) {
       gap: 6,
       paddingVertical: 6,
       paddingHorizontal: 12,
-      borderRadius: 20,
+      borderRadius: 0,
       borderWidth: 1,
       borderColor: '#e5e7eb',
       backgroundColor: '#ffffff',
@@ -6414,7 +6414,8 @@ function createStyles(tokens) {
       alignItems: 'center',
       paddingVertical: 14,
       paddingHorizontal: 4,
-      borderRadius: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: '#e5e7eb',
       ...(Platform.OS === 'web' && {
         transition: 'background-color 0.2s ease',
       }),
@@ -6461,7 +6462,7 @@ function createStyles(tokens) {
     childStatusPill: {
       paddingHorizontal: 10,
       paddingVertical: 4,
-      borderRadius: 999,
+      borderRadius: 0,
       flexShrink: 0,
     },
     childStatusPillGreen: {
@@ -6571,7 +6572,7 @@ function createStyles(tokens) {
     memberRowActionButton: {
       width: 36,
       height: 36,
-      borderRadius: 18,
+      borderRadius: 0,
       backgroundColor: '#f9fafb',
       alignItems: 'center',
       justifyContent: 'center',

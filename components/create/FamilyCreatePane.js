@@ -130,10 +130,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
   },
-  containerLeft: {
-    borderRightWidth: 1,
-    borderRightColor: '#E2E8F0',
-  },
+  containerLeft: {},
   containerRight: {
     borderLeftWidth: 1,
     borderLeftColor: '#E2E8F0',

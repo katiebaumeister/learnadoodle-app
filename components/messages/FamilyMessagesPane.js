@@ -305,10 +305,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
   },
-  containerLeft: {
-    borderRightWidth: 1,
-    borderRightColor: '#E2E8F0',
-  },
+  containerLeft: {},
   containerRight: {
     borderLeftWidth: 1,
     borderLeftColor: '#E2E8F0',
@@ -351,7 +348,7 @@ const styles = StyleSheet.create({
   newMessageIconWrap: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: 0,
     backgroundColor: 'rgba(139, 92, 246, 0.15)',
     borderWidth: 1,
     borderColor: 'rgba(139, 92, 246, 0.5)',

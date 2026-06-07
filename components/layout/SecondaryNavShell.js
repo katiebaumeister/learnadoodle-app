@@ -83,8 +83,6 @@ const styles = StyleSheet.create({
   item: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    marginHorizontal: 8,
-    borderRadius: 8,
     ...(Platform.OS === 'web' && {
       transition: 'background-color 0.15s ease',
     }),

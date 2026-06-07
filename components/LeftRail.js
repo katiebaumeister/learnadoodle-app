@@ -345,7 +345,7 @@ export default function LeftRail({
                     </View>
                   ) : null}
                 </View>
-                {(!iconRailMode && isCollapsed) ? null : (
+                {isCollapsed ? null : (
                   <View style={[styles.navLabelContainer, iconRailMode && styles.navLabelContainerIconRail]}>
                     <Text style={[
                       styles.navLabel, 
@@ -379,6 +379,7 @@ const styles = StyleSheet.create({
     minWidth: ICON_RAIL_EXPANDED_WIDTH,
     backgroundColor: 'transparent',
     borderRightWidth: 0,
+    overflow: 'visible',
   },
   collapsed: {
     width: 76,
