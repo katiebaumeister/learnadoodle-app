@@ -349,11 +349,9 @@ const deriveSnapshotCacheKey = (familyId, schoolYearLabel) => {
 };
 
 const getInitialPlannerSettingsSnapshot = ({
-  embeddedInModal,
   familyId,
   lockedSchoolYearLabel,
 }) => {
-  if (!embeddedInModal) return null;
   const normalizedLocked = normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim());
   const initialYearLabel = deriveInitialSchoolYearLabel(normalizedLocked);
   const cacheKey = deriveSnapshotCacheKey(familyId, initialYearLabel);
@@ -373,7 +371,13 @@ export default function PlannerSettingsContent({
   lockedSchoolYearLabel = null,
 }) {
   const toast = useToast();
-  const [loading, setLoading] = useState(!initialData && !embeddedInModal);
+  const initialSnapshot = getInitialPlannerSettingsSnapshot({
+    familyId,
+    lockedSchoolYearLabel,
+  });
+  const [loading, setLoading] = useState(
+    embeddedInModal && !initialData && !initialSnapshot
+  );
   const [saving, setSaving] = useState(false);
   const [savedIndicator, setSavedIndicator] = useState(false);
   const [hasPendingModalSave, setHasPendingModalSave] = useState(false);
@@ -384,11 +388,6 @@ export default function PlannerSettingsContent({
   const resetDefaultsWhenNoSubjectsInFlightRef = useRef(false);
 
   const stateRef = useRef({});
-  const initialSnapshot = getInitialPlannerSettingsSnapshot({
-    embeddedInModal,
-    familyId,
-    lockedSchoolYearLabel,
-  });
   const initialAttendanceTrackingMode = getAttendanceMode({
     academicYearMode: initialSnapshot?.attendanceTrackingMode,
     fallback: ATTENDANCE_MODES.CLASS_DAY,
@@ -475,6 +474,10 @@ export default function PlannerSettingsContent({
   const attendanceModeTriggerRef = useRef(null);
   const hasHydratedSnapshotRef = useRef(Boolean(initialSnapshot));
   const appliedInitialDataKeyRef = useRef('');
+  const initialDataRef = useRef(initialData);
+  useEffect(() => {
+    initialDataRef.current = initialData;
+  }, [initialData]);
   const normalizedLockedSchoolYearLabel = useMemo(
     () => normalizeSchoolYearLabel(String(lockedSchoolYearLabel || '').trim()),
     [lockedSchoolYearLabel]
@@ -528,15 +531,13 @@ export default function PlannerSettingsContent({
   }, [isSchoolYearLocked]);
 
   useEffect(() => {
-    if (!embeddedInModal) return;
-    // When caller provides fresh initialData for this open, prefer it over
-    // any cached in-session snapshot so fields reflect stored/saved values.
+    // When caller provides fresh initialData, prefer it over cached snapshots.
     if (initialData) return;
     const inMemory = plannerSettingsSnapshotCache.get(snapshotCacheKey);
     if (applySnapshot(inMemory)) return;
     const persisted = readPlannerSettingsSessionSnapshot(snapshotCacheKey);
     applySnapshot(persisted);
-  }, [embeddedInModal, snapshotCacheKey, applySnapshot, initialData]);
+  }, [snapshotCacheKey, applySnapshot, initialData]);
 
   useEffect(() => {
     const resolvedScope = resolveTargetScopeForAttendanceMode(attendanceTrackingMode);
@@ -571,7 +572,6 @@ export default function PlannerSettingsContent({
   });
 
   useEffect(() => {
-    if (!embeddedInModal) return;
     const snapshotPayload = {
       targetScope,
       attendanceTrackingMode,
@@ -598,7 +598,6 @@ export default function PlannerSettingsContent({
     plannerSettingsSnapshotCache.set(snapshotCacheKey, snapshotPayload);
     writePlannerSettingsSessionSnapshot(snapshotCacheKey, snapshotPayload);
   }, [
-    embeddedInModal,
     snapshotCacheKey,
     targetScope,
     attendanceTrackingMode,
@@ -907,7 +906,7 @@ export default function PlannerSettingsContent({
         ? normalizedLockedSchoolYearLabel
         : selectedSchoolYearLabel
     );
-    if (!hasHydratedSnapshotRef.current) {
+    if (embeddedInModal && !hasHydratedSnapshotRef.current) {
       setLoading(true);
     }
     setError(null);
@@ -918,6 +917,17 @@ export default function PlannerSettingsContent({
       );
       if (planErr) throw planErr;
       if (requestId !== loadDefaultsRequestRef.current) return;
+      const preloadedYearLabel = normalizeSchoolYearLabel(
+        initialDataRef.current?.settings?.school_year_label
+        || initialDataRef.current?.settings?.default_school_year
+      );
+      if (
+        initialDataRef.current
+        && preloadedYearLabel
+        && requestedSchoolYearLabel === preloadedYearLabel
+      ) {
+        return;
+      }
       let resolvedYearMode = '';
       let hasAcademicYearRecord = false;
       let resolvedYearId = null;
@@ -2096,9 +2106,9 @@ export default function PlannerSettingsContent({
     attendanceTrackingMode === ATTENDANCE_MODES.SUBJECT || targetScope === 'per_subject';
   const isClassDayAttendanceActive = !isPerSubjectAttendanceActive;
   const attendanceModeLabel = isPerSubjectAttendanceActive ? 'Per subject' : 'Total class days';
-  if (loading && !embeddedInModal) {
+  if (loading && embeddedInModal) {
     return (
-      <View style={{ padding: embeddedInModal ? 20 : 32, alignItems: 'center' }}>
+      <View style={{ padding: 20, alignItems: 'center' }}>
         <ActivityIndicator size="large" color={ACCENT} />
         <Text style={{ marginTop: 12, fontSize: 14, color: TEXT_BLACK }}>Loading...</Text>
       </View>

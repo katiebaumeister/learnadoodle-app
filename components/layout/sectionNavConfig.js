@@ -15,9 +15,6 @@ export const LEARNING_SECTIONS = [
 export const RECORDS_SECTIONS = [
   { key: 'attendance', label: 'Attendance' },
   { key: 'learning-log', label: 'Learning log' },
-  { key: 'portfolio', label: 'Portfolio' },
-  { key: 'reports', label: 'Reports' },
-  { key: 'transcript', label: 'Transcript', future: true },
   { key: 'exports', label: 'Exports' },
 ];
 
@@ -81,4 +78,14 @@ export function resolveSection(tab, activeSubtab) {
   const keys = sections.map((s) => s.key);
   if (activeSubtab && keys.includes(activeSubtab)) return activeSubtab;
   return getDefaultSection(tab);
+}
+
+/** Map WebLayout activeTab to section-nav tab key, if any. */
+export function getSectionNavTab(activeTab) {
+  if (activeTab === 'learning') return 'learning';
+  if (activeTab === 'subjects') return 'subjects';
+  if (activeTab === 'planner' || activeTab === 'calendar') return 'planner';
+  if (activeTab === 'records') return 'records';
+  if (activeTab === 'family') return 'family';
+  return null;
 }

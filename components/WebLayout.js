@@ -22,7 +22,8 @@ import SearchModal from './SearchModal';
 import GlobalNewMenu from './GlobalNewMenu';
 import AppShell from './layout/AppShell.js';
 import AppTopBar from './layout/AppTopBar.js';
-import { resolveSection } from './layout/sectionNavConfig';
+import { resolveSection, getSectionNavTab, getSectionsForTab, SECTION_TITLE_BY_TAB } from './layout/sectionNavConfig';
+import SecondaryNavShell from './layout/SecondaryNavShell';
 import RightToolbar from './RightToolbar';
 import TaskCreateModal from './TaskCreateModal';
 import EventModal from './events/EventModal';
@@ -542,9 +543,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const childDoodleBotDisabled =
     session?.role_flags?.isChild === true &&
     familyUserControls.effectivePermissions?.canUseDoodleBot === false;
-  const hidePlannerNewForRestrictedChild =
-    session?.role_flags?.isChild === true && denyFamilyEventEdit;
-  const canShowPlannerNewButton = !isTutorUser && !hidePlannerNewForRestrictedChild;
   const learnerQuickStartSections = useMemo(() => {
     const isChild = session?.role_flags?.isChild === true;
     const isTutor = session?.role_flags?.isTutor === true;
@@ -3805,6 +3803,27 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     handleTabChange('home');
   }, [handleTabChange]);
 
+  const shellSectionNavTab = useMemo(() => getSectionNavTab(activeTab), [activeTab]);
+  const shellSectionNavSections = shellSectionNavTab ? getSectionsForTab(shellSectionNavTab) : null;
+  const shellActiveSection = shellSectionNavTab
+    ? resolveSection(shellSectionNavTab, activeSubtab)
+    : null;
+
+  const handleShellSectionChange = useCallback((key) => {
+    if (!shellSectionNavTab) return;
+    setActiveSubtab(key);
+    handleTabChange(shellSectionNavTab, key);
+  }, [shellSectionNavTab, handleTabChange]);
+
+  const shellSectionNav = shellSectionNavSections ? (
+    <SecondaryNavShell
+      title={SECTION_TITLE_BY_TAB[shellSectionNavTab]}
+      sections={shellSectionNavSections}
+      activeSection={shellActiveSection}
+      onSectionChange={handleShellSectionChange}
+    />
+  ) : null;
+
   // When user+session: one tree so loader never remounts; content is either preload placeholder or full app
   if (user && session) {
     return (
@@ -3820,6 +3839,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         <AppShell
           disabled={onboardingBlocked}
           flushToEdge
+          sectionNav={shellSectionNav}
           topBar={(
             <AppTopBar
               userName={profile?.name || profile?.first_name || ''}
@@ -4872,42 +4892,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     )}
                   </View>
 
-                  {/* New Event Button — parents only; tutors use read-first planner */}
-                  {canShowPlannerNewButton && (
-                  <TouchableOpacity
-                    {...(Platform.OS === 'web' ? { nativeID: 'explorer-tour-planner-new' } : {})}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 6,
-                      paddingVertical: 10,
-                      paddingHorizontal: 16,
-                      backgroundColor: '#111827',
-                      borderRadius: 20,
-                      borderWidth: 1,
-                      borderColor: '#111827',
-                    }}
-                    onPress={() => {
-                      if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('openTaskModal', { detail: { date: new Date() } }));
-                      }
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={{
-                      fontSize: 14,
-                      color: '#FFFFFF',
-                      fontWeight: '700',
-                      ...Platform.select({
-                        web: {
-                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                        },
-                      }),
-                    }}>
-                      + NEW
-                    </Text>
-                  </TouchableOpacity>
-                  )}
                 </View>
               </View>
 

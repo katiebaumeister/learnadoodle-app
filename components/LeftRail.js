@@ -18,6 +18,7 @@ const SHOW_CREATE_IN_SIDEBAR = false;
 
 const SIDEBAR_BRAND_LOGO = FAVICON_ASSET;
 const NAV_ICON_SIZE = 20;
+const ICON_RAIL_EXPANDED_WIDTH = 220;
 
 const resolveAvatarSource = (avatarKey) => {
   return resolveBundledAvatarSource(avatarKey);
@@ -229,8 +230,7 @@ export default function LeftRail({
     >
       <View style={[
         styles.wrap,
-        iconRailMode && isCollapsed && styles.wrapCollapsedIconRail,
-        iconRailMode && !isCollapsed && styles.wrapIconRailExpanded,
+        iconRailMode && styles.wrapIconRail,
         !iconRailMode && isCollapsed && styles.wrapCollapsed,
       ]}>
         {/* Brand logo — hidden when moved to top bar */}
@@ -298,11 +298,10 @@ export default function LeftRail({
                 {...(Platform.OS === 'web' && isPlanner ? { nativeID: 'explorer-tour-sidebar-planner' } : {})}
                 style={[
                   styles.navItem,
-                  iconRailMode && (isCollapsed ? styles.navItemIconRailCollapsed : styles.navItemIconRailExpanded),
+                  iconRailMode && styles.navItemIconRail,
+                  !iconRailMode && isCollapsed && styles.navItemCollapsed,
                   active && styles.navItemActive,
-                  active && iconRailMode && isCollapsed && styles.navItemActiveIconRail,
                   isHovered && styles.navItemHover,
-                  isCollapsed && !iconRailMode && styles.navItemCollapsed,
                 ]}
                 onPress={() => {
                   if (isMore) {
@@ -335,19 +334,19 @@ export default function LeftRail({
                   },
                 })}
               >
-                <View style={styles.iconWrapper}>
+                <View style={[styles.iconWrapper, iconRailMode && styles.iconRailIconColumn]}>
                   {NavIcon ? (
                     <View style={styles.iconContainer}>
                       <NavIcon
                         size={NAV_ICON_SIZE}
                         color={iconColor}
-                        strokeWidth={active ? 2.25 : 2}
+                        strokeWidth={2}
                       />
                     </View>
                   ) : null}
                 </View>
-                {!isCollapsed && (
-                  <View style={styles.navLabelContainer}>
+                {(!iconRailMode && isCollapsed) ? null : (
+                  <View style={[styles.navLabelContainer, iconRailMode && styles.navLabelContainerIconRail]}>
                     <Text style={[
                       styles.navLabel, 
                       active && styles.navLabelActive,
@@ -376,7 +375,8 @@ const styles = StyleSheet.create({
   containerIconRail: {
     paddingVertical: 8,
     height: '100%',
-    width: '100%',
+    width: ICON_RAIL_EXPANDED_WIDTH,
+    minWidth: ICON_RAIL_EXPANDED_WIDTH,
     backgroundColor: 'transparent',
     borderRightWidth: 0,
   },
@@ -403,13 +403,9 @@ const styles = StyleSheet.create({
   wrapCollapsed: {
     paddingHorizontal: 8,
   },
-  wrapCollapsedIconRail: {
+  wrapIconRail: {
     paddingHorizontal: 0,
-    alignItems: 'center',
-  },
-  wrapIconRailExpanded: {
-    paddingHorizontal: 8,
-    paddingTop: 4,
+    paddingTop: 8,
     alignItems: 'stretch',
     width: '100%',
   },
@@ -466,25 +462,15 @@ const styles = StyleSheet.create({
       cursor: 'pointer',
     }),
   },
-  navItemIconRailCollapsed: {
-    paddingVertical: 8,
-    paddingHorizontal: 0,
-    paddingLeft: 0,
-    paddingRight: 0,
-    marginHorizontal: 0,
-    marginLeft: 0,
-    marginRight: 0,
-    borderRadius: 8,
-    width: 52,
-    justifyContent: 'center',
+  navItemIconRail: {
+    flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'center',
-  },
-  navItemIconRailExpanded: {
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderRadius: 8,
+    height: 36,
+    minHeight: 36,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
     marginHorizontal: 0,
+    borderRadius: 8,
     width: '100%',
     alignSelf: 'stretch',
   },
@@ -492,14 +478,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FAFAFA',
     borderRadius: 8,
   },
-  navItemActiveIconRail: {
-    paddingLeft: 0,
-    paddingRight: 0,
-    marginLeft: 0,
-    marginRight: 0,
-  },
   navItemHover: {
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(15, 23, 42, 0.04)',
   },
   navItemCollapsed: {
     justifyContent: 'center',
@@ -514,6 +494,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       minWidth: 0,
     }),
+  },
+  navLabelContainerIconRail: {
+    flexShrink: 1,
+    marginLeft: 0,
+    paddingRight: 12,
   },
   navLabel: {
     fontSize: 13,
@@ -687,6 +672,13 @@ const styles = StyleSheet.create({
   },
   iconWrapper: {
     width: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconRailIconColumn: {
+    width: 52,
+    height: 36,
+    flexShrink: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },

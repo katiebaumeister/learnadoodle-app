@@ -52,14 +52,17 @@ export default function SecondaryNavShell({
 const styles = StyleSheet.create({
   shell: {
     width: 220,
+    flex: 1,
+    alignSelf: 'stretch',
     flexShrink: 0,
     borderRightWidth: 1,
     borderRightColor: 'rgba(148, 163, 184, 0.24)',
     backgroundColor: '#FFFFFF',
-    paddingTop: 20,
+    paddingTop: 16,
     paddingBottom: 16,
     ...(Platform.OS === 'web' && {
       minHeight: '100%',
+      height: '100%',
     }),
   },
   groupTitle: {

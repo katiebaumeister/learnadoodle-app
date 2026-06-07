@@ -6,7 +6,10 @@ import AttendanceView from '../planner/attendance/AttendanceView';
 import MaterialsLibrary from '../materials/MaterialsLibrary';
 import FamilyPanel from '../settings/FamilyPanel';
 import SubjectsPage from '../subjects/SubjectsPage';
-import RecordsPhase4 from '../records/RecordsPhase4';
+import AssignmentsListScreen from '../learning/AssignmentsListScreen';
+import SubmissionsListScreen from '../learning/SubmissionsListScreen';
+import GradesListScreen from '../learning/GradesListScreen';
+import LearningLogListScreen from '../learning/LearningLogListScreen';
 import { FAMILY_SECTION_TO_PANEL } from './sectionNavConfig';
 
 function PlaceholderPanel({ title, description }) {
@@ -30,6 +33,7 @@ export default function SectionContentPanel({
   userRole,
   accessibleChildren,
   preloadedPlanHealth,
+  preloadedPlannerSettings = null,
   onFamilyUpdate,
   subjectsOverviewCache,
   subjectDetailCache,
@@ -44,7 +48,10 @@ export default function SectionContentPanel({
   onViewAsChild = null,
   onExitChildView = null,
 }) {
-  const subjectsScreenMode = tab === 'learning' ? 'catalog' : 'records';
+  const subjectsScreenMode =
+    section === 'subjects' && (tab === 'learning' || tab === 'subjects')
+      ? 'catalog'
+      : 'records';
 
   if (tab === 'planner') {
     if (section === 'plan-health') {
@@ -57,10 +64,12 @@ export default function SectionContentPanel({
     }
     if (section === 'planning-preferences') {
       return (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.pageTitle}>Planning preferences</Text>
-          <PlannerSettingsContent familyId={familyId} />
-        </ScrollView>
+        <View style={styles.plannerSettingsContainer}>
+          <PlannerSettingsContent
+            familyId={familyId}
+            initialData={preloadedPlannerSettings}
+          />
+        </View>
       );
     }
     return null;
@@ -83,16 +92,41 @@ export default function SectionContentPanel({
     }
     if (section === 'submissions') {
       return (
-        <PlaceholderPanel
-          title="Submissions"
-          description="Review and respond to student submissions from the messages and learning log workflows."
+        <SubmissionsListScreen
+          familyId={familyId}
+          children={children || []}
+          subjects={fullSubjects || subjectsOverviewCache || []}
+          userRole={userRole}
+          accessibleChildren={accessibleChildren}
+          viewingAsChildId={viewingAsChildId}
         />
       );
     }
-    const forcedModeFilter =
-      section === 'assignments' || section === 'grades' || section === 'learning-log'
-        ? 'progress'
-        : 'view';
+    if (section === 'assignments') {
+      return (
+        <AssignmentsListScreen
+          familyId={familyId}
+          children={children || []}
+          subjects={fullSubjects || subjectsOverviewCache || []}
+          userRole={userRole}
+          accessibleChildren={accessibleChildren}
+          viewingAsChildId={viewingAsChildId}
+        />
+      );
+    }
+    if (section === 'grades') {
+      return (
+        <GradesListScreen
+          familyId={familyId}
+          children={children || []}
+          subjects={fullSubjects || subjectsOverviewCache || []}
+          userRole={userRole}
+          accessibleChildren={accessibleChildren}
+          viewingAsChildId={viewingAsChildId}
+        />
+      );
+    }
+    const forcedModeFilter = section === 'learning-log' ? 'progress' : 'view';
     return (
       <SubjectsPage
         familyId={familyId}
@@ -125,42 +159,24 @@ export default function SectionContentPanel({
     }
     if (section === 'learning-log') {
       return (
-        <SubjectsPage
+        <LearningLogListScreen
           familyId={familyId}
-          planningMode={family?.default_planning_mode || null}
           children={children || []}
-          preloadedSubjects={subjectsOverviewCache}
-          preloadedSubjectDetailCache={subjectDetailCache}
-          onSubjectsUpdate={onSubjectsOverviewUpdate}
-          onSubjectDetailUpdate={onSubjectDetailUpdate}
           userRole={userRole}
           accessibleChildren={accessibleChildren}
-          screenMode="records"
-          hideModeSegments
-          forcedModeFilter="progress"
-          learningSection="learning-log"
-          onTabChange={onTabChange}
-          {...subjectsCallbacks}
+          viewingAsChildId={viewingAsChildId}
         />
       );
-    }
-    if (section === 'portfolio' || section === 'reports') {
-      return <RecordsPhase4 familyId={familyId} />;
     }
     if (section === 'exports') {
       return (
         <PlaceholderPanel
           title="Exports"
-          description="Export attendance, grades, transcripts, and portfolio documents. Full export tools are coming soon."
+          description="Export attendance, grades, and learning records. Full export tools are coming soon."
         />
       );
     }
-    return (
-      <PlaceholderPanel
-        title="Transcript"
-        description="Transcript builder is coming soon."
-      />
-    );
+    return null;
   }
 
   if (tab === 'family') {
@@ -193,6 +209,11 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 24,
     gap: 16,
+  },
+  plannerSettingsContainer: {
+    flex: 1,
+    minHeight: 0,
+    padding: 24,
   },
   pageTitle: {
     fontSize: 22,

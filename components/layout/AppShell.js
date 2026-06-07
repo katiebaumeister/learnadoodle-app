@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import Sidebar from './Sidebar';
+import Sidebar, { RAIL_ICON_WIDTH } from './Sidebar';
 
 /**
  * AppShell - Global layout wrapper with liquid glass styling
@@ -9,11 +9,12 @@ import Sidebar from './Sidebar';
  * and a sticky "Finish setup to begin planning" banner is shown. OnboardingModal
  * is rendered by WebLayout and blocks until setup is complete.
  */
-const RAIL_ICON_WIDTH = 52;
+const RAIL_ICON_WIDTH_DEFAULT = RAIL_ICON_WIDTH;
 
 export default function AppShell({ 
   sidebar, 
   topBar = null,
+  sectionNav = null,
   leftPane = null,
   children,
   onOpenSettings,
@@ -22,6 +23,7 @@ export default function AppShell({
   disabled = false,   // When true, block interaction and show setup banner
 }) {
   const leftPaneWidth = leftPane?.width || 340;
+  const [sidebarReservedWidth, setSidebarReservedWidth] = useState(RAIL_ICON_WIDTH_DEFAULT);
 
   return (
     <View style={styles.appContainer}>
@@ -34,9 +36,15 @@ export default function AppShell({
         <View style={styles.contentRow}>
           {/* Sidebar — fixed icon-rail slot; rail expands as overlay on hover */}
           {sidebar && (
-            <View style={styles.sidebarContainer}>
+            <View
+              style={[
+                styles.sidebarContainer,
+                { width: sidebarReservedWidth },
+              ]}
+            >
               <Sidebar
                 {...sidebar}
+                onReservedWidthChange={setSidebarReservedWidth}
                 onOpenSettings={onOpenSettings}
                 onOpenFeedback={onOpenFeedback}
               />
@@ -68,10 +76,15 @@ export default function AppShell({
             </View>
           ) : null}
 
+          {sectionNav ? (
+            <View style={styles.sectionNavContainer}>{sectionNav}</View>
+          ) : null}
+
           {/* Main Content Surface */}
           <View 
             style={[
               styles.mainSurface,
+              styles.mainColumn,
               leftPane?.content && styles.mainSurfaceWithLeftPane,
               leftPane?.content && (leftPane.visible
                 ? styles.mainSurfaceLeftPaneOpen
@@ -128,6 +141,9 @@ const styles = StyleSheet.create({
   topBarSlot: {
     width: '100%',
     flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      zIndex: 250,
+    }),
   },
   contentRow: {
     flexDirection: 'row',
@@ -137,12 +153,14 @@ const styles = StyleSheet.create({
     minHeight: 0,
   },
   sidebarContainer: {
-    width: RAIL_ICON_WIDTH,
     flexShrink: 0,
     alignSelf: 'stretch',
     ...(Platform.OS === 'web' && {
       position: 'relative',
       zIndex: 100,
+      transitionProperty: 'width',
+      transitionDuration: '0.15s',
+      transitionTimingFunction: 'ease',
     }),
   },
   leftPaneContainer: {
@@ -198,6 +216,19 @@ const styles = StyleSheet.create({
       transitionDuration: '300ms',
       transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
     }),
+  },
+  sectionNavContainer: {
+    alignSelf: 'stretch',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      minHeight: '100%',
+      height: '100%',
+    }),
+  },
+  mainColumn: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
   },
   mainSurfaceWithLeftPane: {
     ...(Platform.OS === 'web' && {

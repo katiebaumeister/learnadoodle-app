@@ -869,15 +869,29 @@ export default function SubjectsPage({
       });
     }
 
-    // Filter by school year + term
-    if (selectedYearFilter !== ALL_YEARS_FILTER) {
+    // Filter by school year + term (catalog shows all years; use search to narrow)
+    if (!isCatalogScreen && selectedYearFilter !== ALL_YEARS_FILTER) {
       filteredEntries = filteredEntries.filter(
         ({ subject }) => (subject.school_year || '2025/26') === selectedYearFilter
       );
     }
-    if (selectedTermFilter !== ALL_TERMS_FILTER) {
+    if (!isCatalogScreen && selectedTermFilter !== ALL_TERMS_FILTER) {
       filteredEntries = filteredEntries.filter(
         ({ subject }) => normalizeSubjectTerm(subject?.school_term) === selectedTermFilter
+      );
+    }
+
+    if (
+      isCatalogScreen
+      && selectedModeFilter === 'view'
+      && !allSubjectsFilterActive
+      && selectedCourseSubjectIds.length > 0
+    ) {
+      const selectedSet = new Set(
+        selectedCourseSubjectIds.map((id) => String(id || '').trim()).filter(Boolean)
+      );
+      filteredEntries = filteredEntries.filter(({ subject }) =>
+        selectedSet.has(String(subject?.id || ''))
       );
     }
 
@@ -895,6 +909,41 @@ export default function SubjectsPage({
     selectedYearFilter,
     selectedTermFilter,
     searchQueryNormalized,
+    isCatalogScreen,
+    allSubjectsFilterActive,
+    selectedCourseSubjectIds,
+  ]);
+
+  const subjectsForSubjectFilterChips = useMemo(() => {
+    const list = subjects || [];
+    if (selectedModeFilter === 'view' && !isChildView) {
+      if (
+        effectiveCoursesChildIds.length > 0
+        && effectiveCoursesChildIds.length < allCourseChildIds.length
+      ) {
+        return list.filter((subject) => {
+          if (!subject.assignedChildren || subject.assignedChildren.length === 0) return true;
+          return subject.assignedChildren.some((id) =>
+            effectiveCoursesChildIds.includes(String(id))
+          );
+        });
+      }
+      return list;
+    }
+    if (selectedChildFilter !== 'all') {
+      return list.filter((subject) => {
+        if (!subject.assignedChildren || subject.assignedChildren.length === 0) return true;
+        return subject.assignedChildren.includes(selectedChildFilter);
+      });
+    }
+    return list;
+  }, [
+    subjects,
+    selectedModeFilter,
+    isChildView,
+    effectiveCoursesChildIds,
+    allCourseChildIds,
+    selectedChildFilter,
   ]);
 
   const toggleCourseChildFilter = useCallback((nextChildId) => {
@@ -913,8 +962,11 @@ export default function SubjectsPage({
   }, [isChildView]);
 
   const allCourseSubjectIds = useMemo(
-    () => (filteredSubjects || []).map((subject) => String(subject?.id || '').trim()).filter(Boolean),
-    [filteredSubjects]
+    () =>
+      (subjectsForSubjectFilterChips || [])
+        .map((subject) => String(subject?.id || '').trim())
+        .filter(Boolean),
+    [subjectsForSubjectFilterChips]
   );
 
   useEffect(() => {
@@ -1750,7 +1802,7 @@ export default function SubjectsPage({
                   All subjects
                 </Text>
               </TouchableOpacity>
-              {filteredSubjects.map((subject) => {
+              {subjectsForSubjectFilterChips.map((subject) => {
                 const subjectIdString = String(subject?.id || '').trim();
                 if (!subjectIdString) return null;
                 const isActive = !allSubjectsFilterActive
@@ -1798,7 +1850,7 @@ export default function SubjectsPage({
     safeChildren,
     registeredTerms,
     selectedTermFilter,
-    filteredSubjects,
+    subjectsForSubjectFilterChips,
     allCourseSubjectIds,
     allSubjectsFilterActive,
     effectiveCoursesSubjectIds,
@@ -2706,9 +2758,11 @@ export default function SubjectsPage({
   const subjectsHeaderTitle = isChildView
     ? 'YOUR SUBJECTS'
     : "YOUR FAMILY'S COURSES";
-  const showHeaderYearNavigator = !isChildView;
+  const showHeaderYearNavigator = !isChildView && !isCatalogScreen;
   return (
     <View style={styles.container}>
+      {!isCatalogScreen ? (
+        <>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTitleWrap}>
@@ -2917,23 +2971,24 @@ export default function SubjectsPage({
         )}
       </View>
       <View style={styles.divider} />
+        </>
+      ) : null}
       {renderPlanningPreferencesModal()}
       {renderSubjectsExportModal()}
       {renderLearningHeaderPickerModal()}
 
       {/* Content */}
       {isCatalogScreen ? (
-        error ? (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={loadSubjects}>
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        ) : filteredSubjects.length === 0 ? (
-          <View style={styles.coursesTabContent}>
-            {renderCoursesHeaderFilters()}
-
+        <View style={styles.coursesTabContent}>
+          {renderCoursesHeaderFilters({ showTermRow: false })}
+          {error ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+              <TouchableOpacity style={styles.retryButton} onPress={loadSubjects}>
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : filteredSubjects.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyTitle}>
                 {searchQuery ? 'No results found' : 'No subjects yet'}
@@ -2953,10 +3008,7 @@ export default function SubjectsPage({
                 </TouchableOpacity>
               ) : null}
             </View>
-          </View>
-        ) : (
-          <View style={styles.coursesTabContent}>
-            {renderCoursesHeaderFilters()}
+          ) : (
             <ScrollView
               style={styles.subjectsList}
               contentContainerStyle={styles.subjectsListContent}
@@ -2984,8 +3036,8 @@ export default function SubjectsPage({
                 />
               ))}
             </ScrollView>
-          </View>
-        )
+          )}
+        </View>
       ) : selectedModeFilter === 'plan' ? (
         <View style={styles.coursesTabContent}>
           {renderCoursesHeaderFilters({ showTermRow: false, showChildrenRow: false })}

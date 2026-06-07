@@ -635,6 +635,7 @@ import {
   prefetchPlannerAttendanceSnapshot,
   prefetchPlanEditListForFamily,
 } from '../lib/services/plannerPrefetch'
+import { getPlanDefaultsFromSettings } from '../lib/services/plannerSettingsClient'
 import DatePicker from 'react-datepicker'
 import 'react-datepicker/dist/react-datepicker.css'
 import SyllabusUpload from './SyllabusUpload'
@@ -753,12 +754,10 @@ import LessonPlans from './lesson-plans/LessonPlans'
 import PortfolioTimeline from './portfolio/PortfolioTimeline'
 import ReviewInboxScreen from './parent/ReviewInboxScreen'
 import MaterialsLibrary from './materials/MaterialsLibrary'
-import SectionNavLayout from './layout/SectionNavLayout'
 import SectionContentPanel from './layout/SectionContentPanel'
 import {
   getSectionsForTab,
   resolveSection,
-  SECTION_TITLE_BY_TAB,
 } from './layout/sectionNavConfig'
 // Archived: import IntelligenceHub from './intelligence/IntelligenceHub'
 import SubjectDetailPage from './subjects/SubjectDetailPage'
@@ -1040,6 +1039,43 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [familyId, setFamilyId] = useState(
     propFamilyId || propSession?.family_id || propProfile?.family_id || null
   );
+  const [preloadedPlannerSettings, setPreloadedPlannerSettings] = useState(null);
+  const loadPlannerSettingsRef = useRef(null);
+  loadPlannerSettingsRef.current = async () => {
+    if (!familyId) return;
+    try {
+      const { settings, exclusions, excluded_holiday_dates } = await getPlanDefaultsFromSettings(familyId);
+      const { data: subjectsData } = await supabase
+        .from('subject')
+        .select('id, name, school_year, default_constraint_mode, default_target_days, default_target_hours')
+        .eq('family_id', familyId)
+        .order('name');
+      setPreloadedPlannerSettings({
+        settings: settings || {},
+        exclusions: exclusions || [],
+        excluded_holiday_dates: excluded_holiday_dates || [],
+        subjects: subjectsData || [],
+      });
+    } catch (_) {
+      /* ignore preload failures; page renders from cache/defaults */
+    }
+  };
+
+  useEffect(() => {
+    if (!familyId) return;
+    loadPlannerSettingsRef.current?.();
+  }, [familyId]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined' || !familyId) return;
+    const refresh = () => loadPlannerSettingsRef.current?.();
+    window.addEventListener('refreshPlanDefaults', refresh);
+    window.addEventListener('refreshSubjects', refresh);
+    return () => {
+      window.removeEventListener('refreshPlanDefaults', refresh);
+      window.removeEventListener('refreshSubjects', refresh);
+    };
+  }, [familyId]);
 
   const _subjectsOverviewSessionInitial = readSubjectsOverviewSessionSnapshot(
     propFamilyId || propSession?.family_id || propProfile?.family_id || null
@@ -10325,55 +10361,43 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         <View style={{ flex: 1, minHeight: 0, backgroundColor: '#FFFFFF' }} />
       );
     }
-    const handleSectionChange = (key) => {
-      if (onSubtabChange) onSubtabChange(key);
-      if (onTabChange) onTabChange(tab, key);
-    };
     const usePlannerCalendarPane =
       tab === 'planner' &&
       section === 'calendar' &&
       typeof renderMainContent === 'function';
-    return (
-      <SectionNavLayout
-        title={SECTION_TITLE_BY_TAB[tab]}
-        sections={sections}
-        activeSection={section}
-        onSectionChange={handleSectionChange}
-      >
-        {usePlannerCalendarPane ? (
-          renderMainContent()
-        ) : (
-          <SectionContentPanel
-            tab={tab}
-            section={section}
-            familyId={panelFamilyId}
-            children={children || []}
-            family={propFamily}
-            user={user}
-            profile={propProfile}
-            session={propSession}
-            userRole={roleForHome ?? userRole}
-            accessibleChildren={accessibleChildren}
-            preloadedPlanHealth={propPreloadedPlanHealth}
-            onFamilyUpdate={onFamilyUpdate}
-            subjectsOverviewCache={subjectsOverviewCache}
-            subjectDetailCache={subjectDetailCache}
-            onSubjectsOverviewUpdate={handleSubjectsOverviewUpdate}
-            onSubjectDetailUpdate={handleSubjectDetailUpdate}
-            onTabChange={onTabChange}
-            fullSubjects={propFullSubjects && propFullSubjects.length > 0 ? propFullSubjects : (propSubjects || [])}
-            materialsCache={materialsCache}
-            onMaterialsUpdate={(newMaterials) => {
-              setMaterialsCache(newMaterials);
-              setMaterialsCacheTimestamp(Date.now());
-            }}
-            subjectsCallbacks={subjectsSectionCallbacks}
-            viewingAsChildId={parentViewingAsChildId}
-            onViewAsChild={onViewAsChild}
-            onExitChildView={onExitChildView}
-          />
-        )}
-      </SectionNavLayout>
+    return usePlannerCalendarPane ? (
+      renderMainContent()
+    ) : (
+      <SectionContentPanel
+        tab={tab}
+        section={section}
+        familyId={panelFamilyId}
+        children={children || []}
+        family={propFamily}
+        user={user}
+        profile={propProfile}
+        session={propSession}
+        userRole={roleForHome ?? userRole}
+        accessibleChildren={accessibleChildren}
+        preloadedPlanHealth={propPreloadedPlanHealth}
+        preloadedPlannerSettings={preloadedPlannerSettings}
+        onFamilyUpdate={onFamilyUpdate}
+        subjectsOverviewCache={subjectsOverviewCache}
+        subjectDetailCache={subjectDetailCache}
+        onSubjectsOverviewUpdate={handleSubjectsOverviewUpdate}
+        onSubjectDetailUpdate={handleSubjectDetailUpdate}
+        onTabChange={onTabChange}
+        fullSubjects={propFullSubjects && propFullSubjects.length > 0 ? propFullSubjects : (propSubjects || [])}
+        materialsCache={materialsCache}
+        onMaterialsUpdate={(newMaterials) => {
+          setMaterialsCache(newMaterials);
+          setMaterialsCacheTimestamp(Date.now());
+        }}
+        subjectsCallbacks={subjectsSectionCallbacks}
+        viewingAsChildId={parentViewingAsChildId}
+        onViewAsChild={onViewAsChild}
+        onExitChildView={onExitChildView}
+      />
     );
   }, [
     activeSubtab,
@@ -10389,6 +10413,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     propFamily,
     propFullSubjects,
     propPreloadedPlanHealth,
+    preloadedPlannerSettings,
     propProfile,
     propSession,
     propSubjects,

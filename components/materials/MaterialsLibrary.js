@@ -1278,69 +1278,6 @@ export default function MaterialsLibrary({
   return (
     <View style={styles.container}>
       <View style={styles.mainContent}>
-        {/* Filters */}
-        {!showDeletedBin && (
-        <View style={styles.filters}>
-        {/* Search, Add Material Button, and Trash */}
-        <View style={styles.searchRow}>
-          <Text style={styles.totalFilesText}>
-            Total Materials ({libraryReady ? allMaterials.length : '—'})
-          </Text>
-          <View style={styles.searchAndButtonContainer}>
-            <View style={styles.searchContainer}>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search library..."
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholderTextColor="#9ca3af"
-              />
-              {searchQuery.length > 0 ? (
-                <TouchableOpacity
-                  onPress={() => setSearchQuery('')}
-                  style={styles.clearButton}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <X size={18} color={colors.muted} />
-                </TouchableOpacity>
-              ) : (
-                <View style={styles.searchIconContainer}>
-                  <Search size={18} color={colors.muted} />
-                </View>
-              )}
-            </View>
-            {resolvedConnectedAccountProviders.includes('google') && (
-              <TouchableOpacity
-                style={styles.importDriveButton}
-                onPress={() => {
-                  if (!ensureCanEditMaterials()) return;
-                  setShowGoogleDriveImportModal(true);
-                }}
-                activeOpacity={0.8}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.importDriveButtonText}>Import Drive</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={styles.newButton}
-              onPress={() => {
-                if (!ensureCanEditMaterials()) return;
-                setAddModalDefaultRole(null);
-                setShowAddModal(true);
-              }}
-              activeOpacity={0.8}
-              {...(Platform.OS === 'web' && {
-                cursor: 'pointer',
-              })}
-            >
-              <Text style={styles.newButtonText}>+ NEW</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-        <View style={styles.divider} />
-      </View>
-      )}
 
       {/* Deleted (trash) bin */}
       {showDeletedBin && (
@@ -2787,8 +2724,7 @@ const styles = StyleSheet.create({
   },
   childrenFilterRow: {
     width: '100%',
-    // Add breathing room below the divider above the chips (match requested spacing)
-    marginTop: 24,
+    marginTop: 20,
     marginBottom: 16,
     // Align with Intelligence Hub chips (filtersContainer paddingHorizontal: 24)
     paddingHorizontal: 24,
