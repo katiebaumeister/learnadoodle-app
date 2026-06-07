@@ -129,10 +129,10 @@ const styles = StyleSheet.create({
     width: '100%',
     paddingVertical: 12,
     borderRadius: 999,
-    backgroundColor: '#4F46E5',
+    backgroundColor: '#2563EB',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
-      boxShadow: '0 4px 14px rgba(79, 70, 229, 0.28)',
+      boxShadow: '0 4px 14px rgba(37, 99, 235, 0.28)',
     }),
   },
   createButtonText: {

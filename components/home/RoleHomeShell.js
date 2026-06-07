@@ -34,7 +34,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     width: '100%',
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#FFFFFF',
     ...(Platform.OS === 'web' && {
       maxWidth: '100%',
       alignSelf: 'stretch',

@@ -118,20 +118,6 @@ const AppTopBar = forwardRef(function AppTopBar(
               cursor: doodleDisabled ? 'not-allowed' : 'text',
             })}
           />
-          {Platform.OS === 'web' ? (
-            <TouchableOpacity
-              style={styles.searchShortcutBtn}
-              onPress={() => {
-                if (doodleDisabled) return;
-                inputRef.current?.focus?.();
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Focus Doodle search"
-              {...(Platform.OS === 'web' && { cursor: doodleDisabled ? 'not-allowed' : 'pointer' })}
-            >
-              <Text style={styles.searchShortcut}>⌘K</Text>
-            </TouchableOpacity>
-          ) : null}
         </View>
       </View>
 
@@ -243,17 +229,6 @@ const styles = StyleSheet.create({
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       outlineStyle: 'none',
       borderWidth: 0,
-    }),
-  },
-  searchShortcutBtn: {
-    paddingHorizontal: 2,
-    paddingVertical: 2,
-  },
-  searchShortcut: {
-    fontSize: 12,
-    color: 'rgba(15, 23, 42, 0.38)',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   profileWrap: {

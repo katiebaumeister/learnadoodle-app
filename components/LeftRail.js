@@ -17,7 +17,7 @@ const SHOW_SUBJECTS_CATALOG_IN_SIDEBAR = false;
 const SHOW_CREATE_IN_SIDEBAR = false;
 
 const SIDEBAR_BRAND_LOGO = FAVICON_ASSET;
-const NAV_ICON_SIZE = 20;
+const NAV_ICON_SIZE = 22;
 const ICON_RAIL_EXPANDED_WIDTH = 220;
 
 const resolveAvatarSource = (avatarKey) => {
@@ -240,7 +240,7 @@ export default function LeftRail({
     const isPlanner = item.key === 'planner';
     const isMore = item.key === 'more';
     const iconColor = active
-      ? SIDEBAR_COLORS.activeText
+      ? (permanentSidebar ? '#2563EB' : SIDEBAR_COLORS.activeText)
       : isHovered
         ? '#374151'
         : 'rgba(15, 23, 42, 0.55)';
@@ -501,10 +501,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
   },
   brandHeading: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: '700',
     color: 'rgba(15,23,42,0.92)',
     flex: 1,
+    letterSpacing: -0.3,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -532,7 +533,7 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   navItemPermanentActive: {
-    backgroundColor: 'rgba(79, 70, 229, 0.1)',
+    backgroundColor: 'rgba(37, 99, 235, 0.1)',
   },
   navItemIconRail: {
     flexDirection: 'row',
@@ -602,7 +603,7 @@ const styles = StyleSheet.create({
     }),
   },
   navLabelPermanent: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: '500',
     textTransform: 'none',
     color: 'rgba(15, 23, 42, 0.78)',
@@ -612,7 +613,7 @@ const styles = StyleSheet.create({
     }),
   },
   navLabelPermanentActive: {
-    color: '#4F46E5',
+    color: '#2563EB',
     fontWeight: '600',
     textTransform: 'none',
   },
