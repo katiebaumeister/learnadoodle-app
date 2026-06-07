@@ -1,119 +1,119 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import Sidebar, { RAIL_ICON_WIDTH } from './Sidebar';
+import React from 'react';
+import { View, Text, StyleSheet, Platform } from 'react-native';
+import Sidebar, { RAIL_EXPANDED_WIDTH } from './Sidebar';
 
 /**
- * AppShell - Global layout wrapper with liquid glass styling
- * 
- * When disabled=true (onboarding incomplete): main content has pointer-events none
- * and a sticky "Finish setup to begin planning" banner is shown. OnboardingModal
- * is rendered by WebLayout and blocks until setup is complete.
+ * AppShell - Global layout wrapper
+ *
+ * Layout: permanent full-height sidebar | (top bar + main content column)
  */
-const RAIL_ICON_WIDTH_DEFAULT = RAIL_ICON_WIDTH;
-
-export default function AppShell({ 
-  sidebar, 
+export default function AppShell({
+  sidebar,
   topBar = null,
   sectionNav = null,
   leftPane = null,
   children,
   onOpenSettings,
   onOpenFeedback,
-  flushToEdge = false, // For planner: keeps border but removes padding inside
-  disabled = false,   // When true, block interaction and show setup banner
+  flushToEdge = false,
+  disabled = false,
 }) {
   const leftPaneWidth = leftPane?.width || 340;
-  const [sidebarReservedWidth, setSidebarReservedWidth] = useState(RAIL_ICON_WIDTH_DEFAULT);
 
   return (
     <View style={styles.appContainer}>
       <View style={styles.outerFrame}>
-        {topBar ? (
-          <View style={styles.topBarSlot}>
-            {topBar}
-          </View>
-        ) : null}
         <View style={styles.contentRow}>
-          {/* Sidebar — fixed icon-rail slot; rail expands as overlay on hover */}
-          {sidebar && (
-            <View
-              style={[
-                styles.sidebarContainer,
-                { width: sidebarReservedWidth },
-              ]}
-            >
+          {sidebar ? (
+            <View style={[styles.sidebarContainer, { width: RAIL_EXPANDED_WIDTH }]}>
               <Sidebar
                 {...sidebar}
-                onReservedWidthChange={setSidebarReservedWidth}
                 onOpenSettings={onOpenSettings}
                 onOpenFeedback={onOpenFeedback}
               />
             </View>
-          )}
+          ) : null}
 
-          {leftPane?.content ? (
-            <View
-              style={[
-                styles.leftPaneContainer,
-                leftPane.visible
-                  ? [styles.leftPaneContainerOpen, { width: leftPaneWidth, maxWidth: leftPaneWidth }]
-                  : styles.leftPaneContainerClosed,
-              ]}
-              {...(Platform.OS === 'web' && {
-                'aria-hidden': !leftPane.visible,
-              })}
-            >
+          <View style={styles.rightColumn}>
+            {topBar ? <View style={styles.topBarSlot}>{topBar}</View> : null}
+
+            <View style={styles.bodyRow}>
+              {leftPane?.content ? (
+                <View
+                  style={[
+                    styles.leftPaneContainer,
+                    leftPane.visible
+                      ? [
+                          styles.leftPaneContainerOpen,
+                          {
+                            width: leftPaneWidth,
+                            maxWidth: leftPaneWidth,
+                          },
+                        ]
+                      : styles.leftPaneContainerClosed,
+                  ]}
+                  {...(Platform.OS === 'web' && {
+                    'aria-hidden': !leftPane.visible,
+                  })}
+                >
+                  <View
+                    style={[
+                      styles.leftPaneInner,
+                      { width: leftPaneWidth },
+                      leftPane.visible ? styles.leftPaneInnerOpen : styles.leftPaneInnerClosed,
+                    ]}
+                    pointerEvents={leftPane.visible ? 'auto' : 'none'}
+                  >
+                    {leftPane.content}
+                  </View>
+                </View>
+              ) : null}
+
+              {sectionNav ? (
+                <View style={styles.sectionNavContainer}>{sectionNav}</View>
+              ) : null}
+
               <View
                 style={[
-                  styles.leftPaneInner,
-                  { width: leftPaneWidth },
-                  leftPane.visible ? styles.leftPaneInnerOpen : styles.leftPaneInnerClosed,
+                  styles.mainSurface,
+                  styles.mainColumn,
+                  leftPane?.content && styles.mainSurfaceWithLeftPane,
+                  leftPane?.content && (leftPane.visible
+                    ? styles.mainSurfaceLeftPaneOpen
+                    : styles.mainSurfaceLeftPaneClosed),
+                  flushToEdge && styles.mainSurfaceFlush,
                 ]}
-                pointerEvents={leftPane.visible ? 'auto' : 'none'}
               >
-                {leftPane.content}
-              </View>
-            </View>
-          ) : null}
-
-          {sectionNav ? (
-            <View style={styles.sectionNavContainer}>{sectionNav}</View>
-          ) : null}
-
-          {/* Main Content Surface */}
-          <View 
-            style={[
-              styles.mainSurface,
-              styles.mainColumn,
-              leftPane?.content && styles.mainSurfaceWithLeftPane,
-              leftPane?.content && (leftPane.visible
-                ? styles.mainSurfaceLeftPaneOpen
-                : styles.mainSurfaceLeftPaneClosed),
-              flushToEdge && styles.mainSurfaceFlush
-            ]}
-          >
-            {disabled && (
-              <View style={[styles.setupBanner, { pointerEvents: 'box-none' }]}>
-                <Text style={styles.setupBannerText}>Finish setup to begin planning</Text>
-                <Text style={styles.setupBannerHint}>Complete the quick setup above to use the planner, add events, and track progress.</Text>
-              </View>
-            )}
-            <View style={styles.mainContentWrap}>
-              {disabled && (
-                <View
-                  style={[styles.focusOverlay, { pointerEvents: 'auto' }]}
-                  {...(Platform.OS === 'web' && {
-                    tabIndex: 0,
-                    'aria-hidden': false,
-                    nativeID: 'onboarding-block-overlay',
-                  })}
-                />
-              )}
-              <View
-                style={[styles.contentInner, disabled && styles.mainContentWrapDisabled, { pointerEvents: disabled ? 'none' : 'auto' }]}
-                {...(disabled && Platform.OS === 'web' && { 'aria-hidden': true })}
-              >
-                {children}
+                {disabled && (
+                  <View style={[styles.setupBanner, { pointerEvents: 'box-none' }]}>
+                    <Text style={styles.setupBannerText}>Finish setup to begin planning</Text>
+                    <Text style={styles.setupBannerHint}>
+                      Complete the quick setup above to use the planner, add events, and track progress.
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.mainContentWrap}>
+                  {disabled && (
+                    <View
+                      style={[styles.focusOverlay, { pointerEvents: 'auto' }]}
+                      {...(Platform.OS === 'web' && {
+                        tabIndex: 0,
+                        'aria-hidden': false,
+                        nativeID: 'onboarding-block-overlay',
+                      })}
+                    />
+                  )}
+                  <View
+                    style={[
+                      styles.contentInner,
+                      disabled && styles.mainContentWrapDisabled,
+                      { pointerEvents: disabled ? 'none' : 'auto' },
+                    ]}
+                    {...(disabled && Platform.OS === 'web' && { 'aria-hidden': true })}
+                  >
+                    {children}
+                  </View>
+                </View>
               </View>
             </View>
           </View>
@@ -138,19 +138,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     flexDirection: 'column',
   },
-  topBarSlot: {
-    width: '100%',
-    flexShrink: 0,
-    ...(Platform.OS === 'web' && {
-      zIndex: 250,
-    }),
-  },
   contentRow: {
     flexDirection: 'row',
     flex: 1,
     width: '100%',
-    backgroundColor: '#FFFFFF',
     minHeight: 0,
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      minHeight: '100vh',
+    }),
   },
   sidebarContainer: {
     flexShrink: 0,
@@ -158,11 +154,28 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       position: 'relative',
       zIndex: 100,
-      overflow: 'visible',
-      transitionProperty: 'width',
-      transitionDuration: '0.15s',
-      transitionTimingFunction: 'ease',
+      minHeight: '100vh',
+      height: '100%',
     }),
+  },
+  rightColumn: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    flexDirection: 'column',
+  },
+  topBarSlot: {
+    width: '100%',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      zIndex: 250,
+    }),
+  },
+  bodyRow: {
+    flex: 1,
+    flexDirection: 'row',
+    minHeight: 0,
+    minWidth: 0,
   },
   leftPaneContainer: {
     alignSelf: 'stretch',
@@ -170,8 +183,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       transitionProperty: 'width, max-width, opacity, margin-right',
-      transitionDuration: '320ms',
-      transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+      transitionDuration: '150ms',
+      transitionTimingFunction: 'ease',
     }),
   },
   leftPaneContainerOpen: {
@@ -259,9 +272,8 @@ const styles = StyleSheet.create({
       minHeight: 0,
       display: 'flex',
       flexDirection: 'column',
-      position: 'relative', // Ensure stacking context
-      zIndex: 0, // Below dropdown menu
-      // Reserve space for scrollbar so centered content doesn’t look shifted vs top/bottom gutters
+      position: 'relative',
+      zIndex: 0,
       scrollbarGutter: 'stable',
     }),
   },
@@ -307,15 +319,7 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   mainSurfaceFlush: {
-    // Keep border and borderRadius for liquid glass effect
-    // Content inside will be flush to edges
     paddingHorizontal: 0,
     paddingVertical: 0,
   },
 });
-
-
-
-
-
-

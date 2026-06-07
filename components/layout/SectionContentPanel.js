@@ -1,7 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, Platform, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
 import PlannerSettingsContent from '../settings/PlannerSettingsContent';
 import PlanHealthBanner from '../planner/PlanHealthBanner';
+import PlanHealthConflicts from '../planner/PlanHealthConflicts';
+import SubjectsPlanBuilder from '../subjects/SubjectsPlanBuilder';
 import AttendanceView from '../planner/attendance/AttendanceView';
 import MaterialsLibrary from '../materials/MaterialsLibrary';
 import FamilyPanel from '../settings/FamilyPanel';
@@ -56,10 +58,24 @@ export default function SectionContentPanel({
   if (tab === 'planner') {
     if (section === 'plan-health') {
       return (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.pageTitle}>Plan health</Text>
-          <PlanHealthBanner familyId={familyId} visible initialHealth={preloadedPlanHealth} />
-        </ScrollView>
+        <View style={styles.planHealthContainer}>
+          <View style={styles.planHealthHeader}>
+            <Text style={styles.pageTitle}>Plan health</Text>
+            <PlanHealthBanner familyId={familyId} visible initialHealth={preloadedPlanHealth} />
+          </View>
+          <SubjectsPlanBuilder
+            familyId={familyId}
+            planningMode={family?.default_planning_mode ?? null}
+            children={children}
+            visibleSubjects={fullSubjects || []}
+            allSubjects={fullSubjects || []}
+            onOpenPlannerSettings={() => onTabChange?.('planner', 'planning-preferences')}
+            homeSections="subjectDays"
+            gapSectionFooter={(
+              <PlanHealthConflicts onOpenCalendar={() => onTabChange?.('planner', 'calendar')} />
+            )}
+          />
+        </View>
       );
     }
     if (section === 'planning-preferences') {
@@ -203,17 +219,20 @@ export default function SectionContentPanel({
 }
 
 const styles = StyleSheet.create({
-  scroll: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 24,
-    gap: 16,
-  },
   plannerSettingsContainer: {
     flex: 1,
     minHeight: 0,
     padding: 24,
+  },
+  planHealthContainer: {
+    flex: 1,
+    minHeight: 0,
+  },
+  planHealthHeader: {
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 8,
+    gap: 12,
   },
   pageTitle: {
     fontSize: 22,

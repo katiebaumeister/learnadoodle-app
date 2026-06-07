@@ -161,6 +161,7 @@ export default function AttendanceView({
   const [rangeReady, setRangeReady] = useState(false);
   const [markingRangeAttended, setMarkingRangeAttended] = useState(false);
   const [confirmRangeVisible, setConfirmRangeVisible] = useState(false);
+  const [heatmapChildIds, setHeatmapChildIds] = useState(() => new Set());
 
   const toast = useToast();
   const familyIdResolved = familyId || eventsProp[0]?.family_id || eventsProp[0]?.familyId;
@@ -382,6 +383,39 @@ export default function AttendanceView({
       };
     });
   }, [children, attendanceRecords, academicYear]);
+
+  useEffect(() => {
+    if (children.length === 0) {
+      setHeatmapChildIds(new Set());
+      return;
+    }
+    setHeatmapChildIds((prev) => {
+      const next = new Set();
+      children.forEach((c) => {
+        if (prev.size === 0 || prev.has(c.id)) next.add(c.id);
+      });
+      if (next.size === 0) children.forEach((c) => next.add(c.id));
+      return next;
+    });
+  }, [children]);
+
+  const toggleHeatmapChild = useCallback((childId) => {
+    setHeatmapChildIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(childId)) {
+        if (next.size <= 1) return prev;
+        next.delete(childId);
+      } else {
+        next.add(childId);
+      }
+      return next;
+    });
+  }, []);
+
+  const heatmapChildren = useMemo(
+    () => children.filter((c) => heatmapChildIds.has(c.id)),
+    [children, heatmapChildIds]
+  );
 
   const exceptions = useMemo(() => {
     const list = [];
@@ -1008,7 +1042,7 @@ export default function AttendanceView({
   }, [minStartKey, maxEndKey, yearRange.start]);
 
   const rangeRow = (
-    <View style={styles.rangeActionsWrap}>
+    <View style={styles.topToolbar}>
       <View style={styles.rangeRowWrap}>
         <Text style={styles.rangeRowLabel}>Attendance range</Text>
         <View style={styles.dateRangeRow}>
@@ -1065,6 +1099,30 @@ export default function AttendanceView({
         </View>
         </View>
       </View>
+      <View style={styles.childFilterChips}>
+        {children.map((child) => {
+          const selected = heatmapChildIds.has(child.id);
+          const summary = summaryPerChild.find((s) => s.childId === child.id);
+          const totalDays = summary?.daysAttended ?? 0;
+          const childName = child.first_name || child.name || 'Child';
+          return (
+            <TouchableOpacity
+              key={child.id}
+              style={[styles.childFilterChip, selected && styles.childFilterChipSelected]}
+              onPress={() => toggleHeatmapChild(child.id)}
+              activeOpacity={0.8}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={[styles.childFilterChipText, selected && styles.childFilterChipTextSelected]}>
+                {childName}
+              </Text>
+              <Text style={[styles.childFilterChipTotal, selected && styles.childFilterChipTextSelected]}>
+                Total: {totalDays}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
       <TouchableOpacity
         style={[styles.rangeBulkChip, (markingRangeAttended || children.length === 0) && styles.rangeBulkChipDisabled]}
         onPress={() => setConfirmRangeVisible(true)}
@@ -1084,25 +1142,25 @@ export default function AttendanceView({
       {children.length > 0 ? (
         <>
           {!isDrilldownMode && (
-            <YearHeatmapGrid
-              yearStart={yearRange.start.toISOString().slice(0, 10)}
-              yearEnd={yearRange.end.toISOString().slice(0, 10)}
-              children={children}
-              childSummaries={summaryPerChild}
-              dayStatusByChild={dayStatusByChild}
-              onMarkDayAttended={handleMarkDayAttended}
-              onEditChild={onEditChild}
-              onExport={() => {
-                setExportModalChildId(null);
-                setExportModalVisible(true);
-              }}
-              onChildNamePress={(child) => {
-                setExportModalChildId(child.id);
-                setExportModalVisible(true);
-              }}
-            />
+            <>
+              {rangeRow}
+              <YearHeatmapGrid
+                yearStart={yearRange.start.toISOString().slice(0, 10)}
+                yearEnd={yearRange.end.toISOString().slice(0, 10)}
+                children={heatmapChildren}
+                dayStatusByChild={dayStatusByChild}
+                onMarkDayAttended={handleMarkDayAttended}
+                onExport={() => {
+                  setExportModalChildId(null);
+                  setExportModalVisible(true);
+                }}
+                onChildNamePress={(child) => {
+                  setExportModalChildId(child.id);
+                  setExportModalVisible(true);
+                }}
+              />
+            </>
           )}
-          {!isDrilldownMode && rangeRow}
           {isDrilldownMode && (
             <View style={[styles.drilldownSection, styles.drilldownSectionStandalone]}>
               <Text style={styles.drilldownTitle}>Month drill-down</Text>
@@ -1440,6 +1498,48 @@ const styles = StyleSheet.create({
     marginTop: TOKENS.s4,
     alignItems: 'flex-start',
     gap: 10,
+  },
+  topToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: TOKENS.s4,
+  },
+  childFilterChips: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    flex: 1,
+    minWidth: 160,
+  },
+  childFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: TOKENS.border,
+    backgroundColor: '#FFFFFF',
+  },
+  childFilterChipSelected: {
+    backgroundColor: '#DBEAFE',
+    borderColor: '#93C5FD',
+  },
+  childFilterChipText: {
+    fontSize: TOKENS.fontSizeCaption,
+    fontWeight: '600',
+    color: TOKENS.textMuted,
+  },
+  childFilterChipTotal: {
+    fontSize: 11,
+    color: TOKENS.textFaint,
+  },
+  childFilterChipTextSelected: {
+    color: '#1E40AF',
   },
   rangeRowWrap: {
     flexDirection: 'row',

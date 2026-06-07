@@ -63,6 +63,7 @@ export default function LeftRail({
   hideBrandLogo = false,
   hideProfileNav = false,
   iconRailMode = false,
+  permanentSidebar = false,
 }) {
   const [expandedChildren, setExpandedChildren] = useState(new Set());
   const [hoveredItem, setHoveredItem] = useState(null);
@@ -137,23 +138,21 @@ export default function LeftRail({
     () => {
       const allItems = [
         { key: 'home', label: 'Home', icon: Home },
-        { key: 'learning', label: 'Subjects', icon: Layers },
         { key: 'subjects', label: 'Learning', icon: GraduationCap },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
         { key: 'records', label: 'Records', icon: FileText },
-        { key: 'family', label: 'Family', icon: Users },
-        { key: 'create', label: 'Create', icon: Plus },
+        { key: 'family', label: 'Family settings', icon: Users },
         { key: 'messages', label: 'Messages', icon: MessageCircle },
+        { key: 'learning', label: 'Subjects', icon: Layers },
+        { key: 'create', label: 'Create', icon: Plus },
         { key: 'materials', label: 'Materials', icon: Library },
         { key: 'profile', label: 'Settings', icon: UserCircle },
-        // { key: 'records', label: 'Records', icon: FileText }, // Archived - records screen removed
-        // { key: 'explore', label: 'Explore', icon: Compass }, // Archived - explore page removed
-        // { key: 'subjects', label: 'Records', icon: null }, // Hidden from sidebar
       ].filter((item) => {
         if (hideProfileNav && item.key === 'profile') return false;
         if (!SHOW_MATERIALS_IN_SIDEBAR && item.key === 'materials') return false;
         if (!SHOW_SUBJECTS_CATALOG_IN_SIDEBAR && item.key === 'learning') return false;
         if (!SHOW_CREATE_IN_SIDEBAR && item.key === 'create') return false;
+        if (permanentSidebar && item.key === 'create') return false;
         return true;
       });
 
@@ -167,20 +166,31 @@ export default function LeftRail({
           return true;
         });
       } else if (userRole === 'tutor') {
-        // Lean workspace: intervention + guidance — not family admin or full curriculum control.
         return [
           { key: 'home', label: 'Home', icon: Home },
           { key: 'tutor-students', label: 'My students', icon: Users },
           { key: 'planner', label: 'Planner', icon: CalendarDays },
           ...(SHOW_MATERIALS_IN_SIDEBAR ? [{ key: 'materials', label: 'Materials', icon: Library }] : []),
+          { key: 'messages', label: 'Messages', icon: MessageCircle },
         ];
       } else {
-        // Parents see everything except archived items
         return allItems.filter((item) => item.key !== 'explore');
       }
     },
-    [effectivePermissions.canViewLibrary, effectivePermissions.canViewPlanner, effectivePermissions.canViewSubjects, userRole, hideProfileNav]
+    [effectivePermissions.canViewLibrary, effectivePermissions.canViewPlanner, effectivePermissions.canViewSubjects, userRole, hideProfileNav, permanentSidebar]
   );
+
+  const primaryNavItems = useMemo(
+    () => topNavItems.filter((item) => item.key !== 'messages'),
+    [topNavItems],
+  );
+
+  const messagesNavItem = useMemo(
+    () => topNavItems.find((item) => item.key === 'messages') || null,
+    [topNavItems],
+  );
+
+  const showLabels = permanentSidebar || !isCollapsed;
 
   // Helper to validate if avatar_url is a valid URL (not just a UUID)
   const isValidAvatarUrl = (url) => {
@@ -214,28 +224,138 @@ export default function LeftRail({
     return <Image source={source} style={styles.childAvatar} />;
   };
 
-  // Apply glass class on web (not in icon rail — overlay uses solid background)
-  const containerClassName = Platform.OS === 'web' && !iconRailMode ? 'glass sidebarWash' : undefined;
+  // Apply glass class on web (not in permanent sidebar — solid background)
+  const containerClassName = Platform.OS === 'web' && !iconRailMode && !permanentSidebar ? 'glass sidebarWash' : undefined;
+
+  const renderNavItem = (item) => {
+    const NavIcon = item.icon;
+    const isMessages = item.key === 'messages';
+    const isCreate = item.key === 'create';
+    const active = messagesPaneOpen
+      ? isMessages
+      : createPaneOpen
+        ? isCreate
+        : topActive === item.key;
+    const isHovered = hoveredItem === item.key && !active;
+    const isPlanner = item.key === 'planner';
+    const isMore = item.key === 'more';
+    const iconColor = active
+      ? SIDEBAR_COLORS.activeText
+      : isHovered
+        ? '#374151'
+        : 'rgba(15, 23, 42, 0.55)';
+    return (
+      <TouchableOpacity
+        key={item.key}
+        ref={isMore ? moreButtonRef : null}
+        {...(Platform.OS === 'web' && isPlanner ? { nativeID: 'explorer-tour-sidebar-planner' } : {})}
+        style={[
+          styles.navItem,
+          permanentSidebar && styles.navItemPermanent,
+          iconRailMode && !permanentSidebar && styles.navItemIconRail,
+          iconRailMode && !permanentSidebar && isCollapsed && styles.navItemIconRailCollapsed,
+          !iconRailMode && !permanentSidebar && isCollapsed && styles.navItemCollapsed,
+          active && styles.navItemActive,
+          permanentSidebar && active && styles.navItemPermanentActive,
+          iconRailMode && !permanentSidebar && isCollapsed && active && styles.navItemIconRailCollapsedActive,
+          isHovered && styles.navItemHover,
+          iconRailMode && !permanentSidebar && isCollapsed && isHovered && styles.navItemIconRailCollapsedHover,
+        ]}
+        onPress={() => {
+          if (isMore) {
+            if (Platform.OS === 'web') {
+              setShowMoreMenu(!showMoreMenu);
+            } else {
+              setShowMoreMenu(true);
+            }
+          } else {
+            onSelectTop?.(item.key);
+          }
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={item.label}
+        {...(Platform.OS === 'web' && {
+          onMouseEnter: () => {
+            if (isMore) {
+              handleMoreMenuOpen();
+            } else if (!active) {
+              setHoveredItem(item.key);
+            }
+          },
+          onMouseLeave: () => {
+            if (isMore) {
+              handleMoreMenuClose();
+            } else {
+              setHoveredItem(null);
+            }
+          },
+        })}
+      >
+        <View
+          style={[
+            styles.iconWrapper,
+            permanentSidebar && styles.iconWrapperPermanent,
+            iconRailMode && !permanentSidebar && styles.iconRailIconColumn,
+            iconRailMode && !permanentSidebar && isCollapsed && active && styles.iconRailIconColumnActive,
+            iconRailMode && !permanentSidebar && isCollapsed && isHovered && styles.iconRailIconColumnHover,
+          ]}
+        >
+          {NavIcon ? (
+            <View style={styles.iconContainer}>
+              <NavIcon
+                size={NAV_ICON_SIZE}
+                color={iconColor}
+                strokeWidth={2}
+              />
+            </View>
+          ) : null}
+        </View>
+        {showLabels ? (
+          <View style={[
+            styles.navLabelContainer,
+            permanentSidebar && styles.navLabelContainerPermanent,
+            iconRailMode && !permanentSidebar && styles.navLabelContainerIconRail,
+          ]}>
+            <Text style={[
+              styles.navLabel,
+              permanentSidebar && styles.navLabelPermanent,
+              active && styles.navLabelActive,
+              permanentSidebar && active && styles.navLabelPermanentActive,
+              isHovered && styles.navLabelHover,
+            ]}>{item.label}</Text>
+          </View>
+        ) : null}
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View 
       style={[
         styles.container,
-        iconRailMode && styles.containerIconRail,
-        isCollapsed
+        permanentSidebar && styles.containerPermanent,
+        iconRailMode && !permanentSidebar && styles.containerIconRail,
+        isCollapsed && !permanentSidebar
           ? (iconRailMode ? styles.collapsedIconRail : styles.collapsed)
-          : (iconRailMode ? styles.expandedIconRail : styles.expanded),
+          : (iconRailMode && !permanentSidebar ? styles.expandedIconRail : styles.expanded),
       ]}
       {...(Platform.OS === 'web' && containerClassName ? { className: containerClassName } : {})}
     >
       <View style={[
         styles.wrap,
-        iconRailMode && styles.wrapIconRail,
-        !iconRailMode && isCollapsed && styles.wrapCollapsed,
+        permanentSidebar && styles.wrapPermanent,
+        iconRailMode && !permanentSidebar && styles.wrapIconRail,
+        !iconRailMode && !permanentSidebar && isCollapsed && styles.wrapCollapsed,
       ]}>
-        {/* Brand logo — hidden when moved to top bar */}
-        {!isCollapsed && !hideBrandLogo && (
-          <View style={styles.topIconContainer}>
+        {!hideBrandLogo && (
+          <TouchableOpacity
+            style={[styles.topIconContainer, permanentSidebar && styles.topIconContainerPermanent]}
+            onPress={() => onSelectTop?.('home')}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Learnadoodle home"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
             <View style={styles.topIconWrapper}>
               {renderStableSidebarImage({
                 imageKey: 'brandLogo',
@@ -244,11 +364,13 @@ export default function LeftRail({
                 placeholderStyle: styles.topIconPlaceholder,
               })}
             </View>
-          </View>
+            {permanentSidebar ? (
+              <Text style={styles.brandHeading} numberOfLines={1}>Learnadoodle</Text>
+            ) : null}
+          </TouchableOpacity>
         )}
 
-        {/* When parent is viewing as a child, show "Back to my view" */}
-        {!isCollapsed && userRole === 'parent' && activeChildId && childrenList?.length > 0 && (() => {
+        {showLabels && userRole === 'parent' && activeChildId && childrenList?.length > 0 && (() => {
           const viewingChild = childrenList.find((c) => String(c.id) === String(activeChildId));
           if (!viewingChild) return null;
           const viewingName = viewingChild.first_name || viewingChild.name || 'Child';
@@ -272,91 +394,14 @@ export default function LeftRail({
           );
         })()}
 
-        {/* Main menu section */}
         <View style={styles.sectionGroup}>
-          {topNavItems.map((item) => {
-            const NavIcon = item.icon;
-            const isMessages = item.key === 'messages';
-            const isCreate = item.key === 'create';
-            const active = messagesPaneOpen
-              ? isMessages
-              : createPaneOpen
-                ? isCreate
-                : topActive === item.key;
-            const isHovered = hoveredItem === item.key && !active;
-            const isPlanner = item.key === 'planner';
-            const isMore = item.key === 'more';
-            const iconColor = active
-              ? SIDEBAR_COLORS.activeText
-              : isHovered
-                ? '#374151'
-                : 'rgba(15, 23, 42, 0.55)';
-            return (
-              <TouchableOpacity
-                key={item.key}
-                ref={isMore ? moreButtonRef : null}
-                {...(Platform.OS === 'web' && isPlanner ? { nativeID: 'explorer-tour-sidebar-planner' } : {})}
-                style={[
-                  styles.navItem,
-                  iconRailMode && styles.navItemIconRail,
-                  !iconRailMode && isCollapsed && styles.navItemCollapsed,
-                  active && styles.navItemActive,
-                  isHovered && styles.navItemHover,
-                ]}
-                onPress={() => {
-                  if (isMore) {
-                    if (Platform.OS === 'web') {
-                      setShowMoreMenu(!showMoreMenu);
-                    } else {
-                      // On mobile, show menu on press
-                      setShowMoreMenu(true);
-                    }
-                  } else {
-                    onSelectTop?.(item.key);
-                  }
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={item.label}
-                {...(Platform.OS === 'web' && {
-                  onMouseEnter: () => {
-                    if (isMore) {
-                      handleMoreMenuOpen();
-                    } else if (!active) {
-                      setHoveredItem(item.key);
-                    }
-                  },
-                  onMouseLeave: () => {
-                    if (isMore) {
-                      handleMoreMenuClose();
-                    } else {
-                      setHoveredItem(null);
-                    }
-                  },
-                })}
-              >
-                <View style={[styles.iconWrapper, iconRailMode && styles.iconRailIconColumn]}>
-                  {NavIcon ? (
-                    <View style={styles.iconContainer}>
-                      <NavIcon
-                        size={NAV_ICON_SIZE}
-                        color={iconColor}
-                        strokeWidth={2}
-                      />
-                    </View>
-                  ) : null}
-                </View>
-                {isCollapsed ? null : (
-                  <View style={[styles.navLabelContainer, iconRailMode && styles.navLabelContainerIconRail]}>
-                    <Text style={[
-                      styles.navLabel, 
-                      active && styles.navLabelActive,
-                      isHovered && styles.navLabelHover,
-                    ]}>{item.label}</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          })}
+          {(permanentSidebar ? primaryNavItems : topNavItems).map((item) => renderNavItem(item))}
+          {permanentSidebar && messagesNavItem ? (
+            <>
+              <View style={styles.sidebarDivider} />
+              {renderNavItem(messagesNavItem)}
+            </>
+          ) : null}
         </View>
 
       </View>
@@ -369,11 +414,17 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? {} : { backgroundColor: SIDEBAR_COLORS.backgroundColor }),
     paddingVertical: 16,
     flex: 1,
-    minHeight: Platform.OS === 'web' ? '100%' : undefined,
+    minHeight: Platform.OS === 'web' ? 0 : undefined,
     overflow: 'hidden',
+  },
+  containerPermanent: {
+    paddingVertical: 0,
+    backgroundColor: 'transparent',
+    width: '100%',
   },
   containerIconRail: {
     paddingVertical: 8,
+    flex: 1,
     height: '100%',
     width: ICON_RAIL_EXPANDED_WIDTH,
     minWidth: ICON_RAIL_EXPANDED_WIDTH,
@@ -388,6 +439,7 @@ const styles = StyleSheet.create({
   collapsedIconRail: {
     width: '100%',
     paddingHorizontal: 0,
+    overflow: 'hidden',
   },
   expanded: {
     width: 240,
@@ -401,6 +453,13 @@ const styles = StyleSheet.create({
     gap: 8,
     flex: 1,
   },
+  wrapPermanent: {
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 8,
+    flex: 1,
+    minHeight: 0,
+  },
   wrapCollapsed: {
     paddingHorizontal: 8,
   },
@@ -409,6 +468,8 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     alignItems: 'stretch',
     width: '100%',
+    flex: 1,
+    minHeight: 0,
   },
   viewingAsRow: {
     marginBottom: 12,
@@ -440,9 +501,10 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }),
   },
   brandHeading: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
-    color: 'rgba(15,23,42,0.85)',
+    color: 'rgba(15,23,42,0.92)',
+    flex: 1,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -463,6 +525,15 @@ const styles = StyleSheet.create({
       cursor: 'pointer',
     }),
   },
+  navItemPermanent: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    marginBottom: 2,
+  },
+  navItemPermanentActive: {
+    backgroundColor: 'rgba(79, 70, 229, 0.1)',
+  },
   navItemIconRail: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -474,6 +545,17 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     width: '100%',
     alignSelf: 'stretch',
+  },
+  navItemIconRailCollapsed: {
+    width: 52,
+    maxWidth: 52,
+    alignSelf: 'flex-start',
+  },
+  navItemIconRailCollapsedActive: {
+    backgroundColor: 'transparent',
+  },
+  navItemIconRailCollapsedHover: {
+    backgroundColor: 'transparent',
   },
   navItemActive: {
     backgroundColor: '#FAFAFA',
@@ -496,6 +578,10 @@ const styles = StyleSheet.create({
       minWidth: 0,
     }),
   },
+  navLabelContainerPermanent: {
+    marginLeft: 10,
+    paddingRight: 4,
+  },
   navLabelContainerIconRail: {
     flexShrink: 1,
     marginLeft: 0,
@@ -514,6 +600,21 @@ const styles = StyleSheet.create({
       lineHeight: '18px',
       whiteSpace: 'nowrap',
     }),
+  },
+  navLabelPermanent: {
+    fontSize: 14,
+    fontWeight: '500',
+    textTransform: 'none',
+    color: 'rgba(15, 23, 42, 0.78)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      letterSpacing: '0',
+    }),
+  },
+  navLabelPermanentActive: {
+    color: '#4F46E5',
+    fontWeight: '600',
+    textTransform: 'none',
   },
   navLabelActive: {
     color: SIDEBAR_COLORS.activeText,
@@ -536,6 +637,17 @@ const styles = StyleSheet.create({
     gap: 0,
     width: '100%',
     overflow: 'hidden',
+  },
+  sidebarDivider: {
+    height: 1,
+    backgroundColor: 'rgba(148, 163, 184, 0.24)',
+    marginVertical: 8,
+    alignSelf: 'stretch',
+  },
+  iconWrapperPermanent: {
+    width: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   divider: {
     height: 1,
@@ -566,6 +678,12 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 8,
     paddingHorizontal: 20,
+  },
+  topIconContainerPermanent: {
+    paddingHorizontal: 10,
+    paddingTop: 0,
+    paddingBottom: 16,
+    gap: 10,
   },
   topIconWrapper: {
     width: 36,
@@ -682,6 +800,13 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 8,
+  },
+  iconRailIconColumnActive: {
+    backgroundColor: '#FAFAFA',
+  },
+  iconRailIconColumnHover: {
+    backgroundColor: 'rgba(15, 23, 42, 0.04)',
   },
   sidebarImagePlaceholder: {
     top: '13%',

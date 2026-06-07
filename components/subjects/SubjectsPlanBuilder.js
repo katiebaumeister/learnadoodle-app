@@ -1821,6 +1821,7 @@ export default function SubjectsPlanBuilder({
   homeSections = 'all',
   embeddedInScrollView = false,
   embeddedFooter = null,
+  gapSectionFooter = null,
 }) {
   const toast = useToast();
   const presentScope = useMemo(() => getPresentAcademicScope(new Date()), []);
@@ -7858,6 +7859,11 @@ export default function SubjectsPlanBuilder({
                 </View>
               );
             }) : null}
+            {showSubjectDaysSection && gapSectionFooter ? (
+              <View style={styles.gapSectionFooterWrap}>
+                {gapSectionFooter}
+              </View>
+            ) : null}
             {showYearTargetsSection && !hasAnySubjectPlans ? (
               <View style={styles.yearTargetsSection}>
                 <View style={styles.yearTargetsSectionHeaderRow}>
@@ -8911,6 +8917,10 @@ const styles = StyleSheet.create({
       display: 'flex',
       flexDirection: 'column',
     }),
+  },
+  gapSectionFooterWrap: {
+    width: '100%',
+    paddingHorizontal: 0,
   },
   scheduleEmptyCard: {
     borderWidth: 1,

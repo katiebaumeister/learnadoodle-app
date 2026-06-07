@@ -49,7 +49,7 @@ export const SECTION_TITLE_BY_TAB = {
   subjects: 'Learning',
   learning: 'Learning',
   records: 'Records',
-  family: 'Family',
+  family: 'Family settings',
 };
 
 export function getDefaultSection(tab) {

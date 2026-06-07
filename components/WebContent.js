@@ -13,7 +13,10 @@ import {
   Animated,
   Platform,
 } from 'react-native'
-import { getChildColorFromAvatar } from '../utils/avatarColors'
+import {
+  upsertDismissedConflict,
+  removeDismissedConflictByEventId,
+} from '../lib/plannerDismissedConflicts'
 import { AVATAR_ASSETS, AVATAR_KEYS } from '../assets/imageAssetMap';
 import { getSubjectsWithOverview, getSubjectDetail } from '../lib/services/subjectsClient'
 import { prefetchAllSubjectProgressPlans, prefetchSubjectProgressPlanEntry } from '../lib/prefetchSubjectProgressPlan'
@@ -2517,6 +2520,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
                 return prev;
               });
               if (typeof window !== 'undefined') {
+                removeDismissedConflictByEventId(eventId);
                 window.dispatchEvent(
                   new CustomEvent('plannerDragConflictResolved', {
                     detail: { eventId },
@@ -2568,6 +2572,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               return prev;
             });
             if (typeof window !== 'undefined') {
+              removeDismissedConflictByEventId(eventId);
               window.dispatchEvent(
                 new CustomEvent('plannerDragConflictResolved', {
                   detail: { eventId },
@@ -5481,6 +5486,25 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     }
   }, [conflictBanner.visible, conflictBanner.eventId, conflictBanner.conflictCount]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const handlePageHide = () => {
+      const active = window.__ldActiveConflictBanner;
+      if (!active?.visible || !active?.eventId) return;
+      upsertDismissedConflict({
+        eventId: active.eventId,
+        eventTitle: active.eventTitle || 'Event',
+        conflictCount: Number(active.conflictCount || 0),
+        conflictMessage: active.conflictMessage || null,
+        movedEvent: active.movedEvent || null,
+        conflictEvent: active.conflictEvent || null,
+        timestamp: Date.now(),
+      });
+    };
+    window.addEventListener('pagehide', handlePageHide);
+    return () => window.removeEventListener('pagehide', handlePageHide);
+  }, []);
+
   // Listen for clearConflictBanner event (from Quick Reschedule when conflicts are resolved)
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -5685,17 +5709,19 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     const hasMovedStart = !!(moved?.start_ts || moved?.start || moved?.start_local);
     const emitDismissed = () => {
       if (Platform.OS === 'web' && typeof window !== 'undefined' && id) {
+        const detail = {
+          eventId: id,
+          conflictCount: conflictBanner.conflictCount || 0,
+          eventTitle: conflictBanner.eventTitle || 'Event',
+          conflictMessage: conflictBanner.conflictMessage || null,
+          conflictEvent: conflictBanner.conflictEvent || null,
+          movedEvent: moved || null,
+          timestamp: Date.now(),
+        };
+        upsertDismissedConflict(detail);
         window.dispatchEvent(
           new CustomEvent('plannerDragConflictDismissed', {
-            detail: {
-              eventId: id,
-              conflictCount: conflictBanner.conflictCount || 0,
-              eventTitle: conflictBanner.eventTitle || 'Event',
-              conflictMessage: conflictBanner.conflictMessage || null,
-              conflictEvent: conflictBanner.conflictEvent || null,
-              movedEvent: moved || null,
-              timestamp: Date.now(),
-            },
+            detail,
           }),
         );
       }
@@ -9795,7 +9821,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           pendingCommit.kind === CHAT_COMMIT_KINDS.UPDATE_SUBJECT)
       ) {
         displayText +=
-          '\n\nOpen **Ask Learnadoodle** (floating button) to review and confirm — nothing is saved until you tap the button there.';
+          '\n\nOpen **Ask Learnadoodle** from the search bar at the top to review and confirm — nothing is saved until you tap the button there.';
       }
 
       await AIConversationService.addMessage(conversationId, 'assistant', displayText);

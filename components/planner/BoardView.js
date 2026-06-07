@@ -1,6 +1,6 @@
-import React, { useMemo, useRef, useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, Platform, Alert } from 'react-native';
-import { startOfWeek, addDays, format, isSameDay, isToday } from './utils/date';
+import React, { useMemo, useRef, useState, useCallback } from 'react';
+import { View, Text, Platform, Alert } from 'react-native';
+import { startOfWeek, addDays, format } from './utils/date';
 import EventChip from '../calendar/EventChip';
 import { rescheduleEvent } from '../../lib/services/plannerClientWithOffline';
 
@@ -50,8 +50,6 @@ const localYmd = (d) => {
 export default function BoardView({ weekAnchor, events = [], onEventPress, onEventRightClick, onEventComplete, children = [], familyId = null }) {
   const isPublicHolidayEvent = (ev) =>
     String(ev?.holiday_type || ev?.holidayType || '').toUpperCase() === 'GLOBAL_HOLIDAY';
-  const scrollViewRef = useRef(null);
-  const hasScrolledToToday = useRef(false);
   const lastMoveLogRef = useRef(0);
   const dayColumnRefs = useRef({});
   const suppressClickUntilRef = useRef(0);
@@ -64,31 +62,6 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
     return events.map((ev) => localOverrides[ev.id] ? { ...ev, ...localOverrides[ev.id] } : ev);
   }, [events, localOverrides]);
   const dayIsoList = useMemo(() => days.map((d) => localYmd(d)).filter(Boolean), [days]);
-  
-  // Auto-scroll to the weekAnchor day's column on mount or when weekAnchor changes
-  // (weekAnchor is the focused day — e.g. the day clicked in month view, or today when opening Board)
-  useEffect(() => {
-    hasScrolledToToday.current = false;
-    const weekStart = startOfWeek(weekAnchor);
-    const daysArray = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-    const anchorDate = weekAnchor instanceof Date ? weekAnchor : new Date(weekAnchor);
-    const targetIndex = daysArray.findIndex(d => isSameDay(d, anchorDate));
-    const indexToScroll = targetIndex >= 0 ? targetIndex : daysArray.findIndex(d => isSameDay(d, new Date()));
-
-    const scrollToColumn = () => {
-      if (!scrollViewRef.current || hasScrolledToToday.current || indexToScroll < 0) return;
-      const scrollPosition = indexToScroll * 288;
-      scrollViewRef.current.scrollTo({ x: scrollPosition, animated: false });
-      hasScrolledToToday.current = true;
-    };
-
-    requestAnimationFrame(() => {
-      scrollToColumn();
-      setTimeout(scrollToColumn, 50);
-      setTimeout(scrollToColumn, 200);
-      setTimeout(scrollToColumn, 500);
-    });
-  }, [weekAnchor]);
 
   // Expand Project events to show on all days they span (if within a week)
   const expandedEvents = useMemo(() => {
@@ -278,6 +251,19 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
     return null;
   }, [getDomNode]);
 
+  const getApproxColumnWidth = useCallback(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const domColumn = document.querySelector('[data-day-date]');
+      const rect = domColumn?.getBoundingClientRect?.();
+      if (rect?.width > 0) return rect.width;
+    }
+    const firstRef = dayColumnRefs.current?.[dayIsoList[0]];
+    const dom = getDomNode(firstRef);
+    const rect = dom?.getBoundingClientRect?.();
+    if (rect?.width > 0) return rect.width;
+    return 160;
+  }, [dayIsoList, getDomNode]);
+
   const handleMouseDragStart = useCallback((e, event) => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     if (!event?.id) return;
@@ -446,7 +432,7 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
         if (Math.abs(deltaX) >= 60 && dayIsoList.length > 0) {
           const sourceIdx = dayIsoList.indexOf(sourceDayIso);
           if (sourceIdx >= 0) {
-            const approxColumns = Math.round(deltaX / 288); // 280 width + ~8 gap
+            const approxColumns = Math.round(deltaX / getApproxColumnWidth());
             const nextIdx = Math.max(0, Math.min(dayIsoList.length - 1, sourceIdx + approxColumns));
             const inferred = dayIsoList[nextIdx];
             if (inferred && inferred !== sourceDayIso) {
@@ -713,7 +699,7 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
 
     document.addEventListener('mousemove', handleMouseMove, { passive: false });
     document.addEventListener('mouseup', handleMouseUp);
-  }, [events, familyId, debugDrag, resolveTargetDateFromPoint, dayIsoList]);
+  }, [events, familyId, debugDrag, resolveTargetDateFromPoint, dayIsoList, getApproxColumnWidth]);
 
   return (
     <View style={{ 
@@ -736,28 +722,25 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
           maxWidth: '100%',
         }),
       }}>
-    <ScrollView
-      ref={scrollViewRef}
-      horizontal
-          style={{ 
-            flex: 1, 
-            backgroundColor: 'transparent',
-            ...(Platform.OS === 'web' && {
-              width: '100%',
-              maxWidth: '100%',
-              overflowY: 'hidden',
-              overflowX: 'auto',
-              minHeight: 0,
-            }),
-          }}
-      contentContainerStyle={{ padding: 8, gap: 8 }}
-      showsHorizontalScrollIndicator={true}
+    <View
+      style={{
+        flex: 1,
+        flexDirection: 'row',
+        gap: 8,
+        padding: 8,
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        backgroundColor: 'transparent',
+        ...(Platform.OS === 'web' && {
+          overflowX: 'hidden',
+        }),
+      }}
     >
       {days.map(d => {
         const key = d.toDateString();
         const dayIso = localYmd(d);
         const dayPeriods = byDayAndPeriod.get(key) ?? new Map();
-        const isWeekend = d.getDay() === 0 || d.getDay() === 6; // Sunday (0) or Saturday (6)
         
         // Check if day has any events
         const hasEvents = Array.from(dayPeriods.values()).some(events => events.length > 0);
@@ -775,26 +758,26 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
               }
             }}
             style={{
-              width: 280,
+              flex: 1,
+              minWidth: 0,
               backgroundColor: 'transparent',
               borderRadius: 16,
               borderWidth: 1,
               borderColor: '#e5e7eb',
-              padding: 12,
+              padding: 10,
               minHeight: 400,
               ...(Platform.OS === 'web' && {
-                flexShrink: 0,
                 overflow: 'hidden',
                 maxHeight: '100%',
               }),
             }}
           >
             {/* Column header */}
-            <View style={{ marginBottom: 16 }}>
-              <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '700', marginBottom: 4 }}>
-                {format(d, 'EEEE')}
+            <View style={{ marginBottom: 12 }}>
+              <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '700', marginBottom: 2 }} numberOfLines={1}>
+                {format(d, 'EEE').toUpperCase()}
               </Text>
-              <Text style={{ fontSize: 18, fontWeight: '700', color: '#0f141a' }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: '#0f141a' }} numberOfLines={1}>
                 {format(d, 'MMM d')}
               </Text>
             </View>
@@ -905,7 +888,7 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
           </View>
         );
       })}
-    </ScrollView>
+    </View>
       </View>
     </View>
   );

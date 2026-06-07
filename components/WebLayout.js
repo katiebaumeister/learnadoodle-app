@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, Download, Bell } from 'lucide-react';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, Download } from 'lucide-react';
 import { sourceForChild } from './ui/ChildAvatarCluster';
 import { useAuth } from '../contexts/AuthContext';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
@@ -75,7 +75,6 @@ import RebalanceModal from './year/RebalanceModal';
 import FamilyMessagesPane from './messages/FamilyMessagesPane';
 import FamilyCreatePane from './create/FamilyCreatePane';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
-import { cleanPlannerEventId } from '../lib/utils/recurringEventUtils';
 import { AVATAR_KEYS } from '../assets/imageAssetMap';
 import { comingSoonModalStyles } from '../theme/comingSoonModalTheme';
 
@@ -102,15 +101,8 @@ const EXPLORER_PARENT_STEPS = [
   },
 ];
 
-const normalizeConflictEventId = (rawId) => {
-  const trimmed = String(rawId || '').trim();
-  if (!trimmed) return '';
-  return cleanPlannerEventId(trimmed) || trimmed;
-};
-
 const EXPORT_CALENDAR_WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY = 'ld_pending_subject_schedule_plan_open';
-const DISMISSED_CONFLICTS_STORAGE_KEY = 'ld_planner_dismissed_conflicts';
 function toLocalYYYYMMDD(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -224,8 +216,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [activeChildSection, setActiveChildSection] = useState('affirmation');
   const [showSyllabusUpload, setShowSyllabusUpload] = useState(false);
   const [showDoodleSearchModal, setShowDoodleSearchModal] = useState(false);
-  /** Optional prefilled prompt when opening Doodle from Library (or other callers). */
+  /** Optional prefilled prompt when opening Doodle from header search (or other callers). */
   const [doodleSearchInitialPrompt, setDoodleSearchInitialPrompt] = useState(null);
+  const [doodleSearchAutoSubmit, setDoodleSearchAutoSubmit] = useState(false);
   const [showPlanningModal, setShowPlanningModal] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showAddChildModal, setShowAddChildModal] = useState(false);
@@ -543,6 +536,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const childDoodleBotDisabled =
     session?.role_flags?.isChild === true &&
     familyUserControls.effectivePermissions?.canUseDoodleBot === false;
+
+  const openDoodleSearch = useCallback((options = {}) => {
+    if (childDoodleBotDisabled) return;
+    const prompt = typeof options === 'string' ? options : options?.prompt;
+    const autoSubmit = typeof options === 'object' ? !!options?.autoSubmit : false;
+    setDoodleSearchInitialPrompt(typeof prompt === 'string' && prompt.trim() ? prompt.trim() : null);
+    setDoodleSearchAutoSubmit(autoSubmit);
+    setShowDoodleSearchModal(true);
+  }, [childDoodleBotDisabled]);
+
+  const closeDoodleSearch = useCallback(() => {
+    setShowDoodleSearchModal(false);
+    setDoodleSearchInitialPrompt(null);
+    setDoodleSearchAutoSubmit(false);
+  }, []);
   const learnerQuickStartSections = useMemo(() => {
     const isChild = session?.role_flags?.isChild === true;
     const isTutor = session?.role_flags?.isTutor === true;
@@ -639,11 +647,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
   const [connectedAccountsComingSoonLabel, setConnectedAccountsComingSoonLabel] = useState(null);
   const topToolbarFiltersButtonRef = useRef(null);
-  const conflictNotificationsButtonRef = useRef(null);
-  const conflictNotificationsPopoverRef = useRef(null);
-  const conflictNotificationsCloseTimerRef = useRef(null);
-  const [showConflictNotificationsPopover, setShowConflictNotificationsPopover] = useState(false);
-  const [dismissedConflictNotifications, setDismissedConflictNotifications] = useState([]);
   const [showPlannerSettingsPopover, setShowPlannerSettingsPopover] = useState(false);
   const [plannerSettingsPopoverPosition, setPlannerSettingsPopoverPosition] = useState({ top: 0, left: 0 });
   const settingsButtonRef = useRef(null);
@@ -699,98 +702,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return Array.from(found).sort((a, b) => a.localeCompare(b));
   }, [session?.connected_accounts, session?.integrations, session?.provider_connections]);
 
-  const clearConflictNotificationsCloseTimer = useCallback(() => {
-    if (conflictNotificationsCloseTimerRef.current) {
-      clearTimeout(conflictNotificationsCloseTimerRef.current);
-      conflictNotificationsCloseTimerRef.current = null;
-    }
-  }, []);
-
-  const openConflictNotificationsPopover = useCallback(() => {
-    clearConflictNotificationsCloseTimer();
-    if (dismissedConflictNotifications.length === 0) return;
-    setShowConflictNotificationsPopover(true);
-  }, [clearConflictNotificationsCloseTimer, dismissedConflictNotifications.length]);
-
-  const scheduleConflictNotificationsClose = useCallback(() => {
-    clearConflictNotificationsCloseTimer();
-    conflictNotificationsCloseTimerRef.current = setTimeout(() => {
-      setShowConflictNotificationsPopover(false);
-      conflictNotificationsCloseTimerRef.current = null;
-    }, 140);
-  }, [clearConflictNotificationsCloseTimer]);
-
-  useEffect(() => () => clearConflictNotificationsCloseTimer(), [clearConflictNotificationsCloseTimer]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    try {
-      const raw = window.sessionStorage.getItem(DISMISSED_CONFLICTS_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return;
-      const normalized = parsed
-        .filter((item) => item && item.eventId)
-        .slice(0, 12)
-        .map((item) => ({
-          eventId: normalizeConflictEventId(item.eventId),
-          eventTitle: item.eventTitle || 'Event',
-          conflictCount: Number(item.conflictCount || 0),
-          conflictMessage: item.conflictMessage || null,
-          movedEvent: item.movedEvent || null,
-          conflictEvent: item.conflictEvent || null,
-          timestamp: Number(item.timestamp || Date.now()),
-        }));
-      setDismissedConflictNotifications(normalized);
-    } catch (_) {
-    }
-  }, []);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    try {
-      window.sessionStorage.setItem(
-        DISMISSED_CONFLICTS_STORAGE_KEY,
-        JSON.stringify((dismissedConflictNotifications || []).slice(0, 12)),
-      );
-    } catch (_) {
-    }
-  }, [dismissedConflictNotifications]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-
-    const handlePageHide = () => {
-      const active = window.__ldActiveConflictBanner;
-      if (!active?.visible || !active?.eventId) return;
-      try {
-        const raw = window.sessionStorage.getItem(DISMISSED_CONFLICTS_STORAGE_KEY);
-        const parsed = raw ? JSON.parse(raw) : [];
-        const current = Array.isArray(parsed) ? parsed : [];
-        const key = normalizeConflictEventId(active.eventId);
-        const remaining = current.filter(
-          (item) => normalizeConflictEventId(item?.eventId || '') !== key,
-        );
-        const next = [
-          {
-            eventId: key,
-            eventTitle: active.eventTitle || 'Event',
-            conflictCount: Number(active.conflictCount || 0),
-            conflictMessage: active.conflictMessage || null,
-            movedEvent: active.movedEvent || null,
-            conflictEvent: active.conflictEvent || null,
-            timestamp: Date.now(),
-          },
-          ...remaining,
-        ].slice(0, 12);
-        window.sessionStorage.setItem(DISMISSED_CONFLICTS_STORAGE_KEY, JSON.stringify(next));
-      } catch (_) {
-      }
-    };
-
-    window.addEventListener('pagehide', handlePageHide);
-    return () => window.removeEventListener('pagehide', handlePageHide);
-  }, []);
   const plannerConnectedProviderIds = useMemo(() => {
     const found = [];
     if (googleCalendarConnected) found.push('google');
@@ -1125,9 +1036,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, [showViewDropdown]);
 
-  // Update view chip slider position when currentView changes (Month / Week / To-do only)
+  // Update view chip slider position when currentView changes (Month / Week only)
   useEffect(() => {
-    const chipKeys = ['month', 'board', 'tasks'];
+    const chipKeys = ['month', 'board'];
     if (!chipKeys.includes(currentView)) {
       setViewChipSlider({ left: 0, width: 0 });
       return;
@@ -1161,86 +1072,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       };
     }
   }, [showFiltersDropdown]);
-
-  // Handle click outside conflict notifications popover
-  useEffect(() => {
-    if (showConflictNotificationsPopover && Platform.OS === 'web' && typeof document !== 'undefined') {
-      const handleClickOutside = (event) => {
-        const buttonNode = conflictNotificationsButtonRef.current?._nativeNode || conflictNotificationsButtonRef.current;
-        const popoverNode = conflictNotificationsPopoverRef.current?._nativeNode || conflictNotificationsPopoverRef.current;
-        const target = event.target;
-        const isInsideButton = buttonNode && (buttonNode === target || buttonNode.contains(target));
-        const isInsidePopover = popoverNode && (popoverNode === target || popoverNode.contains(target));
-        if (!isInsideButton && !isInsidePopover) {
-          setShowConflictNotificationsPopover(false);
-        }
-      };
-      document.addEventListener('click', handleClickOutside, true);
-      return () => document.removeEventListener('click', handleClickOutside, true);
-    }
-  }, [showConflictNotificationsPopover]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handleConflictDismissed = (event) => {
-      const detail = event?.detail || {};
-      if (!detail?.eventId) return;
-      const key = normalizeConflictEventId(detail.eventId);
-      setDismissedConflictNotifications((prev) => {
-        const remaining = prev.filter(
-          (item) => normalizeConflictEventId(item.eventId) !== key,
-        );
-        const next = [
-          {
-            eventId: key,
-            eventTitle: detail.eventTitle || 'Event',
-            conflictCount: Number(detail.conflictCount || 0),
-            conflictMessage: detail.conflictMessage || null,
-            movedEvent: detail.movedEvent || null,
-            conflictEvent: detail.conflictEvent || null,
-            timestamp: detail.timestamp || Date.now(),
-          },
-          ...remaining,
-        ];
-        return next.slice(0, 12);
-      });
-      setShowConflictNotificationsPopover(false);
-    };
-    window.addEventListener('plannerDragConflictDismissed', handleConflictDismissed);
-    return () => window.removeEventListener('plannerDragConflictDismissed', handleConflictDismissed);
-  }, []);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handleConflictResolved = (event) => {
-      const resolvedId = normalizeConflictEventId(event?.detail?.eventId || '');
-      if (!resolvedId) return;
-      setDismissedConflictNotifications((prev) =>
-        (prev || []).filter(
-          (item) => normalizeConflictEventId(item?.eventId || '') !== resolvedId,
-        ),
-      );
-    };
-    window.addEventListener('plannerDragConflictResolved', handleConflictResolved);
-    return () => window.removeEventListener('plannerDragConflictResolved', handleConflictResolved);
-  }, []);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handleEventRescheduled = (event) => {
-      const detail = event?.detail || {};
-      if (detail?.apiError) return;
-      const resolvedId = normalizeConflictEventId(detail?.eventId || '');
-      if (!resolvedId) return;
-      setDismissedConflictNotifications((prev) =>
-        (prev || []).filter(
-          (item) => normalizeConflictEventId(item?.eventId || '') !== resolvedId,
-        ),
-      );
-    };
-    window.addEventListener('eventRescheduled', handleEventRescheduled);
-    return () => window.removeEventListener('eventRescheduled', handleEventRescheduled);
-  }, []);
 
   // Handle click outside Planner Settings popover
   const plannerSettingsPopoverRef = useRef(null);
@@ -3167,12 +2998,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     const handler = (e) => {
       const d = e?.detail || {};
       const p = d.initialPrompt;
-      setDoodleSearchInitialPrompt(typeof p === 'string' && p.trim() ? p.trim() : null);
-      setShowDoodleSearchModal(true);
+      openDoodleSearch({
+        prompt: typeof p === 'string' && p.trim() ? p.trim() : null,
+        autoSubmit: !!d.autoSubmit,
+      });
     };
     window.addEventListener('openDoodleSearchModal', handler);
     return () => window.removeEventListener('openDoodleSearchModal', handler);
-  }, []);
+  }, [openDoodleSearch]);
 
   // Navigation handler for global search - expose via window for GlobalSearchModal
   const handleSearchNavigate = useCallback((tab, subtab = null, params = {}) => {
@@ -3196,7 +3029,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   // Doodle modal: when assistant returns navigate_*, close modal and go to that page
   const handleDoodleNavigate = useCallback((target) => {
-    setShowDoodleSearchModal(false);
+    closeDoodleSearch();
     if (target === 'navigate_planner_attendance') {
       handleTabChange('subjects');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -3249,7 +3082,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
       }
     }
-  }, [handleTabChange]);
+  }, [handleTabChange, closeDoodleSearch]);
 
   // Expose navigation handler globally for GlobalSearchModal
   useEffect(() => {
@@ -3445,6 +3278,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     },
     [handleTabChange, isCreatePaneOpen, isMessagesPaneOpen, syncTopNavFromActiveTab]
   );
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = () => handleTopSelect('messages');
+    window.addEventListener('openMessagesPane', handler);
+    return () => window.removeEventListener('openMessagesPane', handler);
+  }, [handleTopSelect]);
 
   const mergeExplorerTourInProfile = useCallback((patch) => {
     setProfile((p) => {
@@ -3799,10 +3639,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, [signOut]);
 
-  const handleShellLogoPress = useCallback(() => {
-    handleTabChange('home');
-  }, [handleTabChange]);
-
   const shellSectionNavTab = useMemo(() => getSectionNavTab(activeTab), [activeTab]);
   const shellSectionNavSections = shellSectionNavTab ? getSectionsForTab(shellSectionNavTab) : null;
   const shellActiveSection = shellSectionNavTab
@@ -3845,7 +3681,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               userName={profile?.name || profile?.first_name || ''}
               userEmail={user?.email || profile?.email || ''}
               userRole={resolvedShellUserRole}
-              onLogoPress={handleShellLogoPress}
+              doodleDisabled={childDoodleBotDisabled}
+              onOpenAskAI={openDoodleSearch}
               onOpenSettings={handleShellOpenSettings}
               onLogOut={handleShellLogOut}
             />
@@ -4498,7 +4335,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     {[
                       { key: 'month', label: 'Month' },
                       { key: 'board', label: 'Week' },
-                      { key: 'tasks', label: 'List' },
                     ].map((view) => {
                       const isActive = showTopPlannerSegmentHighlight && currentView === view.key;
                       return (
@@ -4552,7 +4388,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   
                   {/* Export icons - right of Filters (hidden for learner child accounts) */}
                   {showPlannerHeaderQuickActions ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0, position: 'relative' }}>
                     <TouchableOpacity
                       onPress={() => {
                         setTooltip({ visible: false, text: '', x: 0, y: 0 });
@@ -4567,7 +4402,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         setExportModalSubjectName(null);
                         setShowExportModal(true);
                       }}
-                      style={{ padding: 4 }}
+                      style={{ padding: 4, flexShrink: 0 }}
                       {...(Platform.OS === 'web' && {
                         cursor: 'pointer',
                         onMouseEnter: (e) => {
@@ -4587,129 +4422,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     >
                       <Download size={20} color="rgba(15,23,42,0.7)" />
                     </TouchableOpacity>
-                    <View style={{ position: 'relative' }}>
-                      <TouchableOpacity
-                        ref={conflictNotificationsButtonRef}
-                        onPress={() => {}}
-                        style={{ padding: 4, opacity: dismissedConflictNotifications.length > 0 ? 1 : 0.45 }}
-                        {...(Platform.OS === 'web' && {
-                          cursor: dismissedConflictNotifications.length > 0 ? 'pointer' : 'default',
-                          onMouseEnter: () => {
-                            if (dismissedConflictNotifications.length > 0) {
-                              openConflictNotificationsPopover();
-                            }
-                          },
-                          onMouseLeave: () => {
-                            if (dismissedConflictNotifications.length > 0) {
-                              scheduleConflictNotificationsClose();
-                            }
-                          },
-                        })}
-                      >
-                        <Bell size={20} color={dismissedConflictNotifications.length > 0 ? '#B45309' : 'rgba(15,23,42,0.5)'} />
-                        {dismissedConflictNotifications.length > 0 ? (
-                          <View
-                            style={{
-                              position: 'absolute',
-                              top: -2,
-                              right: -4,
-                              minWidth: 16,
-                              height: 16,
-                              borderRadius: 8,
-                              backgroundColor: '#F59E0B',
-                              paddingHorizontal: 4,
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                            }}
-                          >
-                            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
-                              {dismissedConflictNotifications.length > 9 ? '9+' : dismissedConflictNotifications.length}
-                            </Text>
-                          </View>
-                        ) : null}
-                      </TouchableOpacity>
-                      {showConflictNotificationsPopover && dismissedConflictNotifications.length > 0 ? (
-                        <View
-                          ref={conflictNotificationsPopoverRef}
-                          onMouseEnter={clearConflictNotificationsCloseTimer}
-                          onMouseLeave={scheduleConflictNotificationsClose}
-                          style={{
-                            position: 'absolute',
-                            top: 30,
-                            left: 4,
-                            width: 340,
-                            maxHeight: 280,
-                            backgroundColor: '#FFFFFF',
-                            borderRadius: 10,
-                            borderWidth: 1,
-                            borderColor: 'rgba(15,23,42,0.1)',
-                            boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
-                            zIndex: 1200,
-                            overflow: 'hidden',
-                          }}
-                        >
-                          <View style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(15,23,42,0.06)' }}>
-                            <Text style={{
-                              color: '#0F172A',
-                              fontSize: 13,
-                              fontWeight: '700',
-                              ...(Platform.OS === 'web' && {
-                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                              }),
-                            }}>Dismissed conflicts</Text>
-                          </View>
-                          <ScrollView style={{ maxHeight: 220 }}>
-                            {dismissedConflictNotifications.map((item) => (
-                              <TouchableOpacity
-                                key={`${item.eventId}-${item.timestamp}`}
-                                onPress={() => {
-                                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                                    window.dispatchEvent(
-                                      new CustomEvent('plannerDragConflictReopen', {
-                                        detail: {
-                                          eventId: item.eventId,
-                                          conflictCount: item.conflictCount || 0,
-                                          eventTitle: item.eventTitle || 'Event',
-                                          conflictMessage: item.conflictMessage || null,
-                                          conflictEvent: item.conflictEvent || null,
-                                          movedEvent: item.movedEvent || null,
-                                          timestamp: Date.now(),
-                                        },
-                                      }),
-                                    );
-                                  }
-                                  setShowConflictNotificationsPopover(false);
-                                }}
-                                style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(15,23,42,0.05)' }}
-                                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                              >
-                                <Text style={{
-                                  fontSize: 13,
-                                  color: '#0F172A',
-                                  fontWeight: '600',
-                                  ...(Platform.OS === 'web' && {
-                                    fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                                  }),
-                                }} numberOfLines={1}>
-                                  {item.eventTitle || 'Event'}
-                                </Text>
-                                <Text style={{
-                                  fontSize: 12,
-                                  color: '#6B7280',
-                                  marginTop: 2,
-                                  ...(Platform.OS === 'web' && {
-                                    fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                                  }),
-                                }} numberOfLines={2}>
-                                  {item.conflictMessage || `Conflicts: ${item.conflictCount || 1}`}
-                                </Text>
-                              </TouchableOpacity>
-                            ))}
-                          </ScrollView>
-                        </View>
-                      ) : null}
-                    </View>
-                    </View>
                   ) : null}
                   
                 </View>
@@ -5256,37 +4968,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       />
 
       {/* Doodle bot search modal — keep mounted while logged in so chat state persists when closed */}
-      {user && (
+      {user && !childDoodleBotDisabled && (
         <SearchModal
           visible={showDoodleSearchModal}
-          onClose={() => {
-            setShowDoodleSearchModal(false);
-            setDoodleSearchInitialPrompt(null);
-          }}
+          onClose={closeDoodleSearch}
           onNavigate={handleDoodleNavigate}
           initialPrompt={doodleSearchInitialPrompt}
+          autoSubmitInitialPrompt={doodleSearchAutoSubmit}
         />
-      )}
-
-      {/* Ask AI — floating button (all main tabs including Home) */}
-      {user && !childDoodleBotDisabled && (
-        <View style={styles.fabAskAIWrap}>
-          <TouchableOpacity
-            onPress={() => {
-              setDoodleSearchInitialPrompt(null);
-              setShowDoodleSearchModal(true);
-            }}
-            style={styles.fabAskAI}
-            activeOpacity={0.85}
-            accessibilityLabel="Ask Learnadoodle"
-            {...(Platform.OS === 'web' && {
-              cursor: 'pointer',
-              title: 'Ask Learnadoodle',
-            })}
-          >
-            <Image source={require('../assets/icon.png')} style={styles.fabAskAIIcon} resizeMode="contain" />
-          </TouchableOpacity>
-        </View>
       )}
 
       {/* Add/Edit Subject Modal */}
@@ -6476,49 +6165,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#ffffff',
-  },
-  fabAskAIWrap: {
-    position: Platform.OS === 'web' ? 'fixed' : 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 60,
-    height: 60,
-    ...(Platform.OS === 'web' && { zIndex: 9998 }),
-  },
-  fabAskAI: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#9ECFFB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.85)',
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 14px rgba(158, 207, 251, 0.4)',
-    }),
-    ...(Platform.OS !== 'web' && {
-      elevation: 8,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.25,
-      shadowRadius: 4,
-    }),
-  },
-  fabSetupBadge: {
-    position: 'absolute',
-    top: 2,
-    right: 2,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#7c3aed',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  fabAskAIIcon: {
-    width: 58,
-    height: 58,
   },
   planningModalOverlay: {
     flex: 1,

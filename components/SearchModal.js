@@ -65,7 +65,13 @@ function writeDoodleChatSession(userId, familyId, conversationId, messages) {
   }
 }
 
-export default function SearchModal({ visible, onClose, onNavigate, initialPrompt = null }) {
+export default function SearchModal({
+  visible,
+  onClose,
+  onNavigate,
+  initialPrompt = null,
+  autoSubmitInitialPrompt = false,
+}) {
   const { user } = useAuth()
   const [searchQuery, setSearchQuery] = useState('')
   const [messages, setMessages] = useState([])
@@ -77,6 +83,7 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
   const scaleAnim = useRef(new Animated.Value(0.8)).current
   const searchInputRef = useRef(null)
   const handleSearchRef = useRef(null)
+  const autoSubmittedPromptRef = useRef(null)
   /** After first hydrate attempt for this user+family so we do not overwrite session before load */
   const [sessionHydrationComplete, setSessionHydrationComplete] = useState(false)
 
@@ -135,12 +142,28 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
     }
   }, [visible])
 
-  // Prefill composer when opened via Library / deep link (see openDoodleSearchModal in WebLayout)
+  // Prefill composer when opened via header search / deep link (see openDoodleSearchModal in WebLayout)
   useEffect(() => {
     if (!visible || !initialPrompt || typeof initialPrompt !== 'string') return
     const t = initialPrompt.trim()
     if (t) setSearchQuery(t)
   }, [visible, initialPrompt])
+
+  useEffect(() => {
+    if (!visible) {
+      autoSubmittedPromptRef.current = null
+      return
+    }
+    if (!autoSubmitInitialPrompt || !initialPrompt || typeof initialPrompt !== 'string') return
+    const t = initialPrompt.trim()
+    if (!t) return
+    if (autoSubmittedPromptRef.current === t) return
+    autoSubmittedPromptRef.current = t
+    const timer = setTimeout(() => {
+      handleSearchRef.current?.(t)
+    }, 120)
+    return () => clearTimeout(timer)
+  }, [visible, initialPrompt, autoSubmitInitialPrompt])
 
   // Restore chat from sessionStorage (same tab / full reload); in-memory state is kept by leaving SearchModal mounted when user is logged in
   useEffect(() => {
@@ -184,12 +207,11 @@ export default function SearchModal({ visible, onClose, onNavigate, initialPromp
   const INTRO_TEXT = `Hi! I'm Doodle , your fast chat assistant. Ask away... 🐩💌`
   const showCenteredIntro = messages.length === 0
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) {
-      return;
+  const handleSearch = async (overrideMessage) => {
+    const userMessage = String(overrideMessage ?? searchQuery ?? '').trim()
+    if (!userMessage) {
+      return
     }
-
-    const userMessage = searchQuery.trim();
 
     setSearchQuery('')
     setIsLoading(true)
