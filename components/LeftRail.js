@@ -171,6 +171,7 @@ export default function LeftRail({
           { key: 'tutor-students', label: 'My students', icon: Users },
           { key: 'planner', label: 'Planner', icon: CalendarDays },
           ...(SHOW_MATERIALS_IN_SIDEBAR ? [{ key: 'materials', label: 'Materials', icon: Library }] : []),
+          { key: 'create', label: 'Create', icon: Plus },
           { key: 'messages', label: 'Messages', icon: MessageCircle },
         ];
       } else {
@@ -181,13 +182,18 @@ export default function LeftRail({
   );
 
   const primaryNavItems = useMemo(
-    () => topNavItems.filter((item) => item.key !== 'messages'),
+    () => topNavItems.filter((item) => item.key !== 'messages' && item.key !== 'create'),
     [topNavItems],
   );
 
   const messagesNavItem = useMemo(
     () => topNavItems.find((item) => item.key === 'messages') || null,
     [topNavItems],
+  );
+
+  const createNavItem = useMemo(
+    () => ({ key: 'create', label: 'Create', icon: Plus }),
+    [],
   );
 
   const showLabels = permanentSidebar || !isCollapsed;
@@ -395,13 +401,16 @@ export default function LeftRail({
         })()}
 
         <View style={styles.sectionGroup}>
-          {(permanentSidebar ? primaryNavItems : topNavItems).map((item) => renderNavItem(item))}
-          {permanentSidebar && messagesNavItem ? (
+          {permanentSidebar ? (
             <>
+              {primaryNavItems.map((item) => renderNavItem(item))}
               <View style={styles.sidebarDivider} />
-              {renderNavItem(messagesNavItem)}
+              {renderNavItem(createNavItem)}
+              {messagesNavItem ? renderNavItem(messagesNavItem) : null}
             </>
-          ) : null}
+          ) : (
+            topNavItems.map((item) => renderNavItem(item))
+          )}
         </View>
 
       </View>

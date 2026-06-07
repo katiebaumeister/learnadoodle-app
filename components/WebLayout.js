@@ -26,6 +26,7 @@ import { resolveSection, getSectionNavTab, getSectionsForTab, SECTION_TITLE_BY_T
 import SecondaryNavShell from './layout/SecondaryNavShell';
 import RightToolbar from './RightToolbar';
 import TaskCreateModal from './TaskCreateModal';
+import AssignmentSubmittalRequestModal from './subjects/AssignmentSubmittalRequestModal';
 import EventModal from './events/EventModal';
 import AddChildModal from './AddChildModal';
 import InviteChildModal from './InviteChildModal';
@@ -258,6 +259,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [taskModalDefaultStartTime, setTaskModalDefaultStartTime] = useState(null);
   const [taskModalDefaultTitle, setTaskModalDefaultTitle] = useState(null);
   const [taskModalDefaultMaterialId, setTaskModalDefaultMaterialId] = useState(null);
+  const [taskModalSubmittalAfterCreate, setTaskModalSubmittalAfterCreate] = useState(false);
+  const taskModalSubmittalAfterCreateRef = useRef(false);
+  const [submittalRequestContext, setSubmittalRequestContext] = useState(null);
   const [newMenuPosition, setNewMenuPosition] = useState({ x: 320, y: 88 });
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -3130,6 +3134,31 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
             return;
           }
+          setTaskModalSubmittalAfterCreate(false);
+          taskModalSubmittalAfterCreateRef.current = false;
+          setTaskModalDefaultEventType(null);
+          setTaskModalDate(new Date());
+          setShowTaskModal(true);
+          break;
+        case 'assignment':
+          if (sessionRestricted && !familyUserControls.allowed('events')) {
+            Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
+            return;
+          }
+          setTaskModalSubmittalAfterCreate(false);
+          taskModalSubmittalAfterCreateRef.current = false;
+          setTaskModalDefaultEventType('Assignment');
+          setTaskModalDate(new Date());
+          setShowTaskModal(true);
+          break;
+        case 'submission_request':
+          if (sessionRestricted && !familyUserControls.allowed('events')) {
+            Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
+            return;
+          }
+          setTaskModalSubmittalAfterCreate(true);
+          taskModalSubmittalAfterCreateRef.current = true;
+          setTaskModalDefaultEventType('Assignment');
           setTaskModalDate(new Date());
           setShowTaskModal(true);
           break;
@@ -3700,6 +3729,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 onSelectOption={handleCreatePaneSelect}
                 disabledOptions={{
                   event: denyFamilyEventEdit,
+                  assignment: denyFamilyEventEdit,
+                  submission_request: denyFamilyEventEdit,
                   subject: sessionRestricted && !familyUserControls.allowed('subjects'),
                   child:
                     resolvedShellUserRole === 'child'
@@ -5170,6 +5201,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             setTaskModalDefaultStartTime(null);
             setTaskModalDefaultTitle(null);
             setTaskModalDefaultMaterialId(null);
+            setTaskModalSubmittalAfterCreate(false);
+            taskModalSubmittalAfterCreateRef.current = false;
           }}
           defaultDate={taskModalDate}
           defaultChildId={taskModalChildId}
@@ -5190,6 +5223,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             }))
           ]}
           onCreated={async (task) => {
+            if (taskModalSubmittalAfterCreateRef.current && task?.id) {
+              setSubmittalRequestContext({ event: task, assignment: null });
+              setTaskModalSubmittalAfterCreate(false);
+              taskModalSubmittalAfterCreateRef.current = false;
+            }
             // Refresh calendar data if we're on a calendar screen
             if (activeTab === 'calendar' || activeTab === 'planner') {
               // Trigger a refresh by changing and changing back the tab
@@ -5200,6 +5238,26 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             }
           }}
       />
+      ) : null}
+
+      {submittalRequestContext ? (
+        <AssignmentSubmittalRequestModal
+          visible
+          onClose={() => setSubmittalRequestContext(null)}
+          onRequested={() => setSubmittalRequestContext(null)}
+          familyId={familyId}
+          event={submittalRequestContext.event}
+          assignment={submittalRequestContext.assignment}
+          subjectId={submittalRequestContext.event?.subject_id || null}
+          assignedChildIds={
+            Array.isArray(submittalRequestContext.event?.child_ids)
+              ? submittalRequestContext.event.child_ids
+              : submittalRequestContext.event?.child_id
+                ? [submittalRequestContext.event.child_id]
+                : []
+          }
+          children={children}
+        />
       ) : null}
 
       {showDirectSubmitForReviewModal ? (

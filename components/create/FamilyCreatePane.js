@@ -7,7 +7,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { Calendar, BookOpen, Smile, Paperclip } from 'lucide-react';
+import { Calendar, BookOpen, Smile, Upload, FileText, Send } from 'lucide-react';
 import MessagesPaneCloseButton from '../messages/MessagesPaneCloseButton';
 
 /** Match AppModalShell hero icons on add modals (TaskCreateModal, AddSubjectModal, etc.) */
@@ -17,34 +17,24 @@ const CREATE_ICON_STYLE = {
   iconColor: '#9ECFFB',
 };
 
-const CREATE_OPTIONS = [
+const CREATE_SECTIONS = [
   {
-    id: 'event',
-    label: 'New event',
-    description: 'Schedule a lesson, exam, or activity',
-    icon: Calendar,
-    ...CREATE_ICON_STYLE,
+    options: [
+      { id: 'event', label: 'New Event', icon: Calendar, ...CREATE_ICON_STYLE },
+      { id: 'assignment', label: 'New Assignment', icon: FileText, ...CREATE_ICON_STYLE },
+      { id: 'submission_request', label: 'New Submission Request', icon: Send, ...CREATE_ICON_STYLE },
+    ],
   },
   {
-    id: 'subject',
-    label: 'New subject',
-    description: 'Add a course for your school year',
-    icon: BookOpen,
-    ...CREATE_ICON_STYLE,
+    options: [
+      { id: 'subject', label: 'New Subject', icon: BookOpen, ...CREATE_ICON_STYLE },
+      { id: 'child', label: 'New Child', icon: Smile, ...CREATE_ICON_STYLE },
+    ],
   },
   {
-    id: 'child',
-    label: 'New child',
-    description: 'Add a student to your family',
-    icon: Smile,
-    ...CREATE_ICON_STYLE,
-  },
-  {
-    id: 'material',
-    label: 'New material',
-    description: 'Add a book, link, or resource',
-    icon: Paperclip,
-    ...CREATE_ICON_STYLE,
+    options: [
+      { id: 'material', label: 'Upload Resource', icon: Upload, ...CREATE_ICON_STYLE },
+    ],
   },
 ];
 
@@ -55,6 +45,40 @@ export default function FamilyCreatePane({
   disabledOptions = {},
 }) {
   const showPaneClose = placement === 'left' && typeof onClosePane === 'function';
+
+  const renderOption = (option) => {
+    const Icon = option.icon;
+    const disabled = Boolean(disabledOptions[option.id]);
+    return (
+      <TouchableOpacity
+        key={option.id}
+        style={[styles.optionRow, disabled && styles.optionRowDisabled]}
+        onPress={() => {
+          if (disabled) return;
+          onSelectOption?.(option.id);
+        }}
+        disabled={disabled}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel={option.label}
+        accessibilityState={{ disabled }}
+        {...(Platform.OS === 'web' && { cursor: disabled ? 'default' : 'pointer' })}
+      >
+        <View style={[
+          styles.optionIconWrap,
+          {
+            backgroundColor: option.iconBg,
+            borderColor: option.iconBorder,
+          },
+        ]}>
+          <Icon size={26} color={disabled ? '#94A3B8' : option.iconColor} />
+        </View>
+        <Text style={[styles.optionLabel, disabled && styles.optionLabelDisabled]}>
+          {option.label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={[
@@ -78,44 +102,12 @@ export default function FamilyCreatePane({
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.sectionLabel}>Create new</Text>
-        {CREATE_OPTIONS.map((option) => {
-          const Icon = option.icon;
-          const disabled = Boolean(disabledOptions[option.id]);
-          return (
-            <TouchableOpacity
-              key={option.id}
-              style={[styles.optionRow, disabled && styles.optionRowDisabled]}
-              onPress={() => {
-                if (disabled) return;
-                onSelectOption?.(option.id);
-              }}
-              disabled={disabled}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel={option.label}
-              accessibilityState={{ disabled }}
-              {...(Platform.OS === 'web' && { cursor: disabled ? 'default' : 'pointer' })}
-            >
-              <View style={[
-                styles.optionIconWrap,
-                {
-                  backgroundColor: option.iconBg,
-                  borderColor: option.iconBorder,
-                },
-              ]}>
-                <Icon size={26} color={disabled ? '#94A3B8' : option.iconColor} />
-              </View>
-              <View style={styles.optionBody}>
-                <Text style={[styles.optionLabel, disabled && styles.optionLabelDisabled]}>
-                  {option.label}
-                </Text>
-                <Text style={[styles.optionDescription, disabled && styles.optionDescriptionDisabled]}>
-                  {option.description}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
+        {CREATE_SECTIONS.map((section, sectionIndex) => (
+          <View key={`section-${sectionIndex}`}>
+            {sectionIndex > 0 ? <View style={styles.sectionDivider} /> : null}
+            {section.options.map((option) => renderOption(option))}
+          </View>
+        ))}
       </ScrollView>
     </View>
   );
@@ -167,6 +159,12 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: 6,
   },
+  sectionDivider: {
+    height: 1,
+    backgroundColor: 'rgba(148, 163, 184, 0.28)',
+    marginHorizontal: 16,
+    marginVertical: 8,
+  },
   optionRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -184,13 +182,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  optionBody: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
+    flexShrink: 0,
   },
   optionLabel: {
+    flex: 1,
     fontSize: 16,
     fontWeight: '600',
     color: '#0F172A',
@@ -200,15 +195,5 @@ const styles = StyleSheet.create({
   },
   optionLabelDisabled: {
     color: '#94A3B8',
-  },
-  optionDescription: {
-    fontSize: 13,
-    color: '#64748B',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  optionDescriptionDisabled: {
-    color: '#CBD5E1',
   },
 });

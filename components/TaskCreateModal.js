@@ -20,6 +20,7 @@ import {
 } from './planner/conflictBannerShared';
 import { getEventTypeChipTextColor } from './planner/plannerListTableUtils';
 import AppModalShell from './ui/AppModalShell';
+import { MODAL_SIZE } from './ui/modalSystem';
 import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
 import { ATTENDANCE_MODES, getAttendanceMode } from '../lib/attendanceMode';
@@ -3758,13 +3759,13 @@ export default function TaskCreateModal({
           ]}
         >
           <AppModalShell
-            mode="add"
-            title="New event"
-            eyebrow="EVENT"
-            accent="#9ECFFB"
-            accentSoft="#F0F8FF"
-            HeroIcon={Calendar}
+            size={MODAL_SIZE.fullscreen}
+            title="New Event"
+            description="Schedule a lesson, activity, or assignment on your calendar."
             onClose={handleDismiss}
+            onGenerate={() => {
+              toast.push('AI activity generation is coming soon.', 'info');
+            }}
             shellStyle={styles.modalShell}
             contentContainerStyle={styles.bodyContent}
             bodyStyle={styles.shellBody}
@@ -3772,13 +3773,12 @@ export default function TaskCreateModal({
             footer={(
               <ModalFooter
                 mode="add"
-                primaryLabel={submitting ? 'Adding…' : 'Add Event'}
+                primaryLabel={submitting ? 'Creating…' : 'Create'}
                 onCancel={handleDismiss}
                 onPrimary={handleCreate}
                 onBlockedPrimary={() => {
                   validateFields({ showBanner: true });
                 }}
-                accent="#9ECFFB"
                 disabled={submitting}
                 visuallyDisabled={!isFormValid()}
                 loading={submitting}

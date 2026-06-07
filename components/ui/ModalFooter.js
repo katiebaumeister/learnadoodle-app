@@ -1,14 +1,21 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Check, Sparkles, Trash2 } from 'lucide-react';
+import { Check, Trash2 } from 'lucide-react';
+import { MODAL_VISUAL } from './modalSystem';
 
+/**
+ * Sticky modal footer — always Cancel on the right cluster with primary action.
+ * Optional Save Draft between Cancel and primary for long forms.
+ */
 export function ModalFooter({
   mode = 'add',
   primaryLabel,
+  draftLabel = null,
   onCancel,
+  onDraft = null,
   onPrimary,
   onDelete,
-  accent = '#7C70F4',
+  accent = MODAL_VISUAL.primaryBlue,
   destructiveLabel,
   disabled,
   visuallyDisabled = false,
@@ -17,38 +24,46 @@ export function ModalFooter({
 }) {
   const isPrimaryBlocked = Boolean(disabled || visuallyDisabled);
   const showDelete = mode === 'edit' && !!destructiveLabel;
+
   return (
     <View style={styles.row}>
       <View style={styles.left}>
-        {showDelete && (
+        {showDelete ? (
           <TouchableOpacity
             onPress={onDelete}
             disabled={loading}
-            style={[
-              styles.cancelButton,
-              styles.cancelButtonWithIcon,
-              loading && styles.cancelButtonDisabled,
-            ]}
+            style={[styles.ghostButton, styles.ghostButtonWithIcon, loading && styles.buttonDisabled]}
             activeOpacity={0.9}
             {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
           >
-            <Trash2 size={17} color="#374151" />
-            <Text style={[styles.cancelButtonText, loading && styles.cancelButtonTextDisabled]}>
+            <Trash2 size={16} color="#DC2626" />
+            <Text style={[styles.destructiveText, loading && styles.buttonTextDisabled]}>
               {destructiveLabel}
             </Text>
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
       <View style={styles.right}>
         <TouchableOpacity
           onPress={onCancel}
           disabled={loading}
-          style={[styles.cancelButton, loading && styles.cancelButtonDisabled]}
+          style={[styles.cancelButton, loading && styles.buttonDisabled]}
           activeOpacity={0.9}
           {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
         >
           <Text style={styles.cancelButtonText}>Cancel</Text>
         </TouchableOpacity>
+        {draftLabel && onDraft ? (
+          <TouchableOpacity
+            onPress={onDraft}
+            disabled={loading}
+            style={[styles.draftButton, loading && styles.buttonDisabled]}
+            activeOpacity={0.9}
+            {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
+          >
+            <Text style={styles.draftButtonText}>{draftLabel}</Text>
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity
           onPress={() => {
             if (loading) return;
@@ -61,16 +76,12 @@ export function ModalFooter({
           disabled={loading}
           style={[
             styles.primary,
-            { backgroundColor: loading ? '#B7BFCD' : accent },
+            { backgroundColor: loading ? '#94A3B8' : accent },
           ]}
           activeOpacity={0.9}
           {...(Platform.OS === 'web' && { cursor: loading ? 'not-allowed' : 'pointer' })}
         >
-          {mode === 'edit' ? (
-            <Check size={16} color="#FFF" />
-          ) : (
-            <Sparkles size={16} color="#FFF" />
-          )}
+          {mode === 'edit' ? <Check size={16} color="#FFF" /> : null}
           <Text style={styles.primaryText}>{primaryLabel}</Text>
         </TouchableOpacity>
       </View>
@@ -81,68 +92,98 @@ export function ModalFooter({
 const styles = StyleSheet.create({
   row: {
     width: '100%',
-    minHeight: 64,
+    minHeight: 52,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 12,
   },
   left: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flex: 1,
+    minWidth: 0,
   },
   right: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'flex-end',
+    gap: 10,
+    flexShrink: 0,
   },
   cancelButton: {
-    minHeight: 50,
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-    borderRadius: 16,
-    backgroundColor: '#E5E7EB',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    backgroundColor: MODAL_VISUAL.cancelBg,
     alignItems: 'center',
     justifyContent: 'center',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  cancelButtonWithIcon: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 18,
-  },
-  cancelButtonDisabled: {
-    opacity: 0.65,
-    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
   },
   cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#374151',
+    fontSize: 15,
+    fontWeight: '600',
+    color: MODAL_VISUAL.cancelText,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  cancelButtonTextDisabled: {
-    opacity: 0.8,
+  draftButton: {
+    minHeight: 44,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: MODAL_VISUAL.borderColor,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  draftButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#475569',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   primary: {
-    height: 50,
-    borderRadius: 16,
-    paddingHorizontal: 18,
+    minHeight: 44,
+    borderRadius: 12,
+    paddingHorizontal: 20,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   primaryText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: '800',
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  ghostButton: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ghostButtonWithIcon: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  destructiveText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#DC2626',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+    ...(Platform.OS === 'web' && { cursor: 'not-allowed' }),
+  },
+  buttonTextDisabled: {
+    opacity: 0.8,
   },
 });

@@ -11,6 +11,7 @@ import { getSubjectProgressCache, mergeSubjectProgressCache } from '../lib/subje
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
+import { MODAL_SIZE } from './ui/modalSystem';
 import { ModalSectionCard } from './ui/ModalSectionCard';
 import ConfirmDialog from './ConfirmDialog';
 import {
@@ -984,26 +985,25 @@ export default function AddSubjectModal({
         />
         <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalWrap}>
           <AppModalShell
-            mode={subject ? 'edit' : 'add'}
-            title={subject ? 'Edit subject' : 'New subject'}
-            eyebrow="SUBJECT"
-            accent="#9ECFFB"
-            accentSoft="#F0F8FF"
-            HeroIcon={BookOpen}
+            size={MODAL_SIZE.standard}
+            title={subject ? 'Edit Subject' : 'New Subject'}
+            description={subject ? 'Update course details for your school year.' : 'Add a course for your student.'}
             onClose={handleCloseWithDraftCleanup}
+            onGenerate={() => {
+              if (toast?.push) toast.push('AI subject generation is coming soon.', 'info');
+            }}
             shellStyle={styles.compactSubjectShell}
             contentContainerStyle={styles.scrollContent}
             bodyStyle={styles.shellBody}
             footer={(
               <ModalFooter
                 mode={subject ? 'edit' : 'add'}
-                primaryLabel={isSubmitting ? 'Saving...' : (subject ? 'Save changes' : 'Save Subject')}
+                primaryLabel={isSubmitting ? 'Saving…' : (subject ? 'Save' : 'Create')}
                 destructiveLabel={subject?.id ? (deletingSubject ? 'Deleting...' : 'Delete subject') : undefined}
                 onCancel={handleCloseWithDraftCleanup}
                 onDelete={subject?.id ? () => setShowDeleteSubjectConfirm(true) : undefined}
                 onPrimary={handleSubmit}
                 onBlockedPrimary={handleBlockedSubmit}
-                accent="#9ECFFB"
                 disabled={isSubmitting || deletingSubject}
                 visuallyDisabled={!canSubmit}
                 loading={isSubmitting || deletingSubject}
