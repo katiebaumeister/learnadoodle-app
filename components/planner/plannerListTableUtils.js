@@ -355,3 +355,24 @@ export function getPlannerEventTypeColors(event) {
 export function getEventTypeChipTextColor(eventType) {
   return getPlannerEventTypeColors({ event_type: eventType }).chipText;
 }
+
+/** Calendar legend entries — matches EventChip / planner filter colors. */
+export function getPlannerCalendarLegendItems() {
+  return [
+    { label: 'Lessons', color: getPlannerEventTypeColors({ event_type: 'Lesson' }).chipBg },
+    { label: 'Assignments', color: getPlannerEventTypeColors({ event_type: 'Assignment' }).chipBg },
+    { label: 'Activities', color: getPlannerEventTypeColors({ event_type: 'Activity' }).chipBg },
+    { label: 'Projects', color: getPlannerEventTypeColors({ event_type: 'Project' }).chipBg },
+    { label: 'Exams & assessments', color: getPlannerEventTypeColors({ event_type: 'Exam' }).chipBg },
+    {
+      label: 'Days off',
+      color: getPlannerEventTypeColors({ event_type: 'day off', holiday_type: 'CUSTOM_HOLIDAY' }).chipBg,
+    },
+    {
+      label: 'Breaks',
+      color: getPlannerEventTypeColors({ event_type: 'break', holiday_type: 'CUSTOM_BREAK' }).chipBg,
+    },
+    { label: 'Public holidays', color: '#6BB3E8' },
+    { label: 'Other', color: getPlannerEventTypeColors({ event_type: 'Appointment' }).chipBg },
+  ];
+}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -8,60 +8,25 @@ import {
   TextInput,
 } from 'react-native';
 import { Sparkles } from 'lucide-react';
-import PlanHealthBanner from './PlanHealthBanner';
 import { familyCardStyle } from '../family/familyDesignTokens';
-
-const LEGEND = [
-  { label: 'Academic', color: '#059669' },
-  { label: 'Science', color: '#EC4899' },
-  { label: 'Activities', color: '#2563EB' },
-  { label: 'Writing', color: '#7C3AED' },
-  { label: 'History', color: '#EA580C' },
-  { label: 'Other', color: '#94A3B8' },
-];
-
-function readConflictSummary() {
-  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
-  const active = window.__ldActiveConflictBanner;
-  if (!active?.visible) return null;
-  return active.eventTitle || active.conflictMessage || '1 conflict';
-}
+import { getPlannerCalendarLegendItems } from './plannerListTableUtils';
+import { PlannerUpcomingWeekSummary } from './PlannerSummaryCards';
 
 export default function PlannerRightRail({
-  familyId,
-  preloadedPlanHealth,
-  onFixGap,
+  weekEventCount = null,
+  weekAssignmentCount = null,
+  onViewWeek,
   onOpenAskAI,
 }) {
-  const [conflictSummary, setConflictSummary] = useState(() => readConflictSummary());
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
-    const refresh = () => setConflictSummary(readConflictSummary());
-    window.addEventListener('plannerDragConflictActive', refresh);
-    window.addEventListener('plannerDragConflictResolved', refresh);
-    window.addEventListener('clearConflictBanner', refresh);
-    return () => {
-      window.removeEventListener('plannerDragConflictActive', refresh);
-      window.removeEventListener('plannerDragConflictResolved', refresh);
-      window.removeEventListener('clearConflictBanner', refresh);
-    };
-  }, []);
+  const legendItems = getPlannerCalendarLegendItems();
 
   return (
     <View style={styles.rail}>
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Family Health</Text>
-        <PlanHealthBanner familyId={familyId} visible initialHealth={preloadedPlanHealth} />
-        {conflictSummary ? (
-          <View style={styles.alertBox}>
-            <Text style={styles.alertText}>{conflictSummary}</Text>
-            <TouchableOpacity onPress={onFixGap} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={styles.alertAction}>Fix Gap</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-      </View>
+      <PlannerUpcomingWeekSummary
+        weekEventCount={weekEventCount}
+        weekAssignmentCount={weekAssignmentCount}
+        onViewWeek={onViewWeek}
+      />
 
       <View style={styles.card}>
         <View style={styles.betaRow}>
@@ -90,7 +55,7 @@ export default function PlannerRightRail({
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Calendar Legend</Text>
-        {LEGEND.map((item) => (
+        {legendItems.map((item) => (
           <View key={item.label} style={styles.legendRow}>
             <View style={[styles.legendDot, { backgroundColor: item.color }]} />
             <Text style={styles.legendLabel}>{item.label}</Text>
@@ -120,22 +85,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#0F172A',
-  },
-  alertBox: {
-    padding: 12,
-    borderRadius: 10,
-    backgroundColor: 'rgba(124, 58, 237, 0.08)',
-    gap: 6,
-  },
-  alertText: {
-    fontSize: 13,
-    color: '#0F172A',
-    lineHeight: 18,
-  },
-  alertAction: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#2563EB',
   },
   betaRow: {
     flexDirection: 'row',

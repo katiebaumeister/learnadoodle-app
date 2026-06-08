@@ -20,6 +20,7 @@ import {
   Award,
   Files,
 } from 'lucide-react';
+import { MAIN_NAV_ICONS, MAIN_NAV_PAGE_ICON_COLOR, MAIN_NAV_PAGE_ICON_SIZE } from '../layout/mainNavIcons';
 import { supabase } from '../../lib/supabase';
 import RecordsOverviewView from './RecordsOverviewView';
 import RecordsPlaceholderView from './RecordsPlaceholderView';
@@ -200,6 +201,8 @@ export default function RecordsSectionView({
     }
   };
 
+  const PageIcon = MAIN_NAV_ICONS.records;
+
   return (
     <View style={styles.shell}>
       <ScrollView
@@ -211,7 +214,7 @@ export default function RecordsSectionView({
           <View style={styles.titleRow}>
             <View style={styles.titleBlock}>
               <View style={styles.titleLine}>
-                <FileText size={22} color="#2563EB" />
+                <PageIcon size={MAIN_NAV_PAGE_ICON_SIZE} color={MAIN_NAV_PAGE_ICON_COLOR} strokeWidth={2} />
                 <Text style={styles.pageTitle}>Records</Text>
               </View>
             </View>

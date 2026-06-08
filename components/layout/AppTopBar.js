@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { UserCircle, Settings, LogOut, Sparkles } from 'lucide-react';
+import { UserCircle, Settings, LogOut, Sparkles, HelpCircle } from 'lucide-react';
 import Dropdown from '../ui/Dropdown';
 
 function formatUserRole(role) {
@@ -51,7 +51,12 @@ const AppTopBar = forwardRef(function AppTopBar(
 
   const handleOpenSettings = useCallback(() => {
     setMenuOpen(false);
-    onOpenSettings?.();
+    onOpenSettings?.('profile');
+  }, [onOpenSettings]);
+
+  const handleOpenHelp = useCallback(() => {
+    setMenuOpen(false);
+    onOpenSettings?.('help');
   }, [onOpenSettings]);
 
   const handleLogOut = useCallback(() => {
@@ -128,6 +133,17 @@ const AppTopBar = forwardRef(function AppTopBar(
           >
             <Settings size={16} color="rgba(15, 23, 42, 0.75)" />
             <Text style={styles.menuItemText}>Settings</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={handleOpenHelp}
+            accessibilityRole="button"
+            accessibilityLabel="Open help and FAQ"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <HelpCircle size={16} color="rgba(15, 23, 42, 0.75)" />
+            <Text style={styles.menuItemText}>Help</Text>
           </TouchableOpacity>
 
           <TouchableOpacity

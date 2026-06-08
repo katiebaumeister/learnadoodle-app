@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Image } from 'react-native';
-import { Plus, Home, CalendarDays, UserCircle, MessageCircle, Users, GraduationCap, Layers, Library, FileText } from 'lucide-react';
 import Dropdown, { DropdownItem } from './ui/Dropdown';
 import StableImage from './ui/StableImage';
 import { safeImageUri } from '../lib/safeImageUri';
@@ -10,6 +9,7 @@ import {
   FAVICON_ASSET,
   resolveBundledAvatarSource,
 } from '../assets/imageAssetMap';
+import { MAIN_NAV_ICONS } from './layout/mainNavIcons';
 
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
 const SHOW_MATERIALS_IN_SIDEBAR = false;
@@ -19,6 +19,8 @@ const SHOW_CREATE_IN_SIDEBAR = false;
 const SIDEBAR_BRAND_LOGO = FAVICON_ASSET;
 const NAV_ICON_SIZE = 22;
 const ICON_RAIL_EXPANDED_WIDTH = 220;
+/** Horizontal inset for permanent sidebar nav pills (matches footer padding). */
+const PERMANENT_SIDEBAR_NAV_INSET = 28;
 
 const resolveAvatarSource = (avatarKey) => {
   return resolveBundledAvatarSource(avatarKey);
@@ -30,8 +32,10 @@ const SIDEBAR_COLORS = {
   accent: '#4F46E5',
   accentSoft: 'rgba(79, 70, 229, 0.18)',
   accentSofter: 'rgba(79, 70, 229, 0.12)',
-  activeTint: 'rgba(129, 193, 225, 0.12)',
-  activeText: '#0F172A',
+  /** Brand sky blue (#81C1E1) — matches Learning planning banner tint */
+  activeTint: 'rgba(129, 193, 225, 0.18)',
+  activeAccent: '#000000',
+  activeText: '#000000',
   avatar: 'rgba(148, 163, 184, 0.28)',
 };
 
@@ -137,16 +141,16 @@ export default function LeftRail({
   const topNavItems = useMemo(
     () => {
       const allItems = [
-        { key: 'home', label: 'Home', icon: Home },
-        { key: 'subjects', label: 'Learning', icon: GraduationCap },
-        { key: 'planner', label: 'Planner', icon: CalendarDays },
-        { key: 'records', label: 'Records', icon: FileText },
-        { key: 'family', label: 'Family', icon: Users },
-        { key: 'messages', label: 'Messages', icon: MessageCircle },
-        { key: 'learning', label: 'Subjects', icon: Layers },
-        { key: 'create', label: 'Create', icon: Plus },
-        { key: 'materials', label: 'Materials', icon: Library },
-        { key: 'profile', label: 'Settings', icon: UserCircle },
+        { key: 'home', label: 'Home', icon: MAIN_NAV_ICONS.home },
+        { key: 'subjects', label: 'Learning', icon: MAIN_NAV_ICONS.subjects },
+        { key: 'planner', label: 'Planner', icon: MAIN_NAV_ICONS.planner },
+        { key: 'records', label: 'Records', icon: MAIN_NAV_ICONS.records },
+        { key: 'family', label: 'Family', icon: MAIN_NAV_ICONS.family },
+        { key: 'messages', label: 'Messages', icon: MAIN_NAV_ICONS.messages },
+        { key: 'learning', label: 'Subjects', icon: MAIN_NAV_ICONS.subjects },
+        { key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create },
+        { key: 'materials', label: 'Materials', icon: MAIN_NAV_ICONS.materials },
+        { key: 'profile', label: 'Settings', icon: MAIN_NAV_ICONS.profile },
       ].filter((item) => {
         if (hideProfileNav && item.key === 'profile') return false;
         if (!SHOW_MATERIALS_IN_SIDEBAR && item.key === 'materials') return false;
@@ -167,12 +171,12 @@ export default function LeftRail({
         });
       } else if (userRole === 'tutor') {
         return [
-          { key: 'home', label: 'Home', icon: Home },
-          { key: 'tutor-students', label: 'My students', icon: Users },
-          { key: 'planner', label: 'Planner', icon: CalendarDays },
-          ...(SHOW_MATERIALS_IN_SIDEBAR ? [{ key: 'materials', label: 'Materials', icon: Library }] : []),
-          { key: 'create', label: 'Create', icon: Plus },
-          { key: 'messages', label: 'Messages', icon: MessageCircle },
+          { key: 'home', label: 'Home', icon: MAIN_NAV_ICONS.home },
+          { key: 'tutor-students', label: 'My students', icon: MAIN_NAV_ICONS.family },
+          { key: 'planner', label: 'Planner', icon: MAIN_NAV_ICONS.planner },
+          ...(SHOW_MATERIALS_IN_SIDEBAR ? [{ key: 'materials', label: 'Materials', icon: MAIN_NAV_ICONS.materials }] : []),
+          { key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create },
+          { key: 'messages', label: 'Messages', icon: MAIN_NAV_ICONS.messages },
         ];
       } else {
         return allItems.filter((item) => item.key !== 'explore');
@@ -192,7 +196,7 @@ export default function LeftRail({
   );
 
   const createNavItem = useMemo(
-    () => ({ key: 'create', label: 'Create', icon: Plus }),
+    () => ({ key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create }),
     [],
   );
 
@@ -246,57 +250,12 @@ export default function LeftRail({
     const isPlanner = item.key === 'planner';
     const isMore = item.key === 'more';
     const iconColor = active
-      ? (permanentSidebar ? '#2563EB' : SIDEBAR_COLORS.activeText)
+      ? SIDEBAR_COLORS.activeText
       : isHovered
         ? '#374151'
         : 'rgba(15, 23, 42, 0.55)';
-    return (
-      <TouchableOpacity
-        key={item.key}
-        ref={isMore ? moreButtonRef : null}
-        {...(Platform.OS === 'web' && isPlanner ? { nativeID: 'explorer-tour-sidebar-planner' } : {})}
-        style={[
-          styles.navItem,
-          permanentSidebar && styles.navItemPermanent,
-          iconRailMode && !permanentSidebar && styles.navItemIconRail,
-          iconRailMode && !permanentSidebar && isCollapsed && styles.navItemIconRailCollapsed,
-          !iconRailMode && !permanentSidebar && isCollapsed && styles.navItemCollapsed,
-          active && styles.navItemActive,
-          permanentSidebar && active && styles.navItemPermanentActive,
-          iconRailMode && !permanentSidebar && isCollapsed && active && styles.navItemIconRailCollapsedActive,
-          isHovered && styles.navItemHover,
-          iconRailMode && !permanentSidebar && isCollapsed && isHovered && styles.navItemIconRailCollapsedHover,
-        ]}
-        onPress={() => {
-          if (isMore) {
-            if (Platform.OS === 'web') {
-              setShowMoreMenu(!showMoreMenu);
-            } else {
-              setShowMoreMenu(true);
-            }
-          } else {
-            onSelectTop?.(item.key);
-          }
-        }}
-        accessibilityRole="button"
-        accessibilityLabel={item.label}
-        {...(Platform.OS === 'web' && {
-          onMouseEnter: () => {
-            if (isMore) {
-              handleMoreMenuOpen();
-            } else if (!active) {
-              setHoveredItem(item.key);
-            }
-          },
-          onMouseLeave: () => {
-            if (isMore) {
-              handleMoreMenuClose();
-            } else {
-              setHoveredItem(null);
-            }
-          },
-        })}
-      >
+    const navContent = (
+      <>
         <View
           style={[
             styles.iconWrapper,
@@ -331,6 +290,68 @@ export default function LeftRail({
             ]}>{item.label}</Text>
           </View>
         ) : null}
+      </>
+    );
+
+    return (
+      <TouchableOpacity
+        key={item.key}
+        ref={isMore ? moreButtonRef : null}
+        {...(Platform.OS === 'web' && isPlanner ? { nativeID: 'explorer-tour-sidebar-planner' } : {})}
+        style={[
+          styles.navItem,
+          permanentSidebar && styles.navItemPermanent,
+          iconRailMode && !permanentSidebar && styles.navItemIconRail,
+          iconRailMode && !permanentSidebar && isCollapsed && styles.navItemIconRailCollapsed,
+          !iconRailMode && !permanentSidebar && isCollapsed && styles.navItemCollapsed,
+          active && !permanentSidebar && styles.navItemActive,
+          isHovered && !permanentSidebar && styles.navItemHover,
+          iconRailMode && !permanentSidebar && isCollapsed && active && styles.navItemIconRailCollapsedActive,
+          iconRailMode && !permanentSidebar && isCollapsed && isHovered && styles.navItemIconRailCollapsedHover,
+        ]}
+        onPress={() => {
+          if (isMore) {
+            if (Platform.OS === 'web') {
+              setShowMoreMenu(!showMoreMenu);
+            } else {
+              setShowMoreMenu(true);
+            }
+          } else {
+            onSelectTop?.(item.key);
+          }
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={item.label}
+        {...(Platform.OS === 'web' && {
+          onMouseEnter: () => {
+            if (isMore) {
+              handleMoreMenuOpen();
+            } else if (!active) {
+              setHoveredItem(item.key);
+            }
+          },
+          onMouseLeave: () => {
+            if (isMore) {
+              handleMoreMenuClose();
+            } else {
+              setHoveredItem(null);
+            }
+          },
+        })}
+      >
+        {permanentSidebar ? (
+          <View
+            style={[
+              styles.navItemPermanentPill,
+              active && styles.navItemPermanentActive,
+              isHovered && !active && styles.navItemPermanentHover,
+            ]}
+          >
+            {navContent}
+          </View>
+        ) : (
+          navContent
+        )}
       </TouchableOpacity>
     );
   };
@@ -400,7 +421,7 @@ export default function LeftRail({
           );
         })()}
 
-        <View style={styles.sectionGroup}>
+        <View style={[styles.sectionGroup, permanentSidebar && styles.sectionGroupPermanent]}>
           {permanentSidebar ? (
             <>
               {primaryNavItems.map((item) => renderNavItem(item))}
@@ -430,6 +451,7 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     backgroundColor: 'transparent',
     width: '100%',
+    overflow: 'visible',
   },
   containerIconRail: {
     paddingVertical: 8,
@@ -463,11 +485,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   wrapPermanent: {
-    paddingHorizontal: 12,
+    paddingHorizontal: PERMANENT_SIDEBAR_NAV_INSET,
     paddingTop: 16,
     paddingBottom: 8,
     flex: 1,
     minHeight: 0,
+    overflow: 'visible',
   },
   wrapCollapsed: {
     paddingHorizontal: 8,
@@ -482,6 +505,7 @@ const styles = StyleSheet.create({
   },
   viewingAsRow: {
     marginBottom: 12,
+    marginHorizontal: 0,
     paddingVertical: 8,
     paddingHorizontal: 12,
     backgroundColor: 'rgba(79, 70, 229, 0.08)',
@@ -536,13 +560,34 @@ const styles = StyleSheet.create({
     }),
   },
   navItemPermanent: {
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    marginBottom: 2,
+    marginHorizontal: 0,
+    backgroundColor: 'transparent',
+    borderRadius: 0,
+    alignSelf: 'stretch',
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
+  },
+  navItemPermanentPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'stretch',
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderRadius: 10,
-    marginBottom: 2,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
   },
   navItemPermanentActive: {
-    backgroundColor: 'rgba(37, 99, 235, 0.1)',
+    backgroundColor: SIDEBAR_COLORS.activeTint,
+  },
+  navItemPermanentHover: {
+    backgroundColor: 'rgba(15, 23, 42, 0.04)',
   },
   navItemIconRail: {
     flexDirection: 'row',
@@ -622,7 +667,7 @@ const styles = StyleSheet.create({
     }),
   },
   navLabelPermanentActive: {
-    color: '#2563EB',
+    color: SIDEBAR_COLORS.activeText,
     fontWeight: '600',
     textTransform: 'none',
   },
@@ -648,10 +693,19 @@ const styles = StyleSheet.create({
     width: '100%',
     overflow: 'hidden',
   },
+  sectionGroupPermanent: {
+    overflow: 'visible',
+    paddingHorizontal: 0,
+    ...(Platform.OS === 'web' && {
+      width: '100%',
+      boxSizing: 'border-box',
+    }),
+  },
   sidebarDivider: {
     height: 1,
     backgroundColor: 'rgba(148, 163, 184, 0.24)',
     marginVertical: 8,
+    marginHorizontal: 0,
     alignSelf: 'stretch',
   },
   iconWrapperPermanent: {
@@ -690,7 +744,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   topIconContainerPermanent: {
-    paddingHorizontal: 10,
+    marginHorizontal: 0,
+    paddingHorizontal: 0,
     paddingTop: 0,
     paddingBottom: 16,
     gap: 10,

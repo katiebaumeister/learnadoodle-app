@@ -389,6 +389,7 @@ export default function FamilyOverviewView({
 const styles = StyleSheet.create({
   container: {
     ...familyStyles.pageContent,
+    paddingTop: 0,
   },
   statsRow: {
     flexDirection: 'row',

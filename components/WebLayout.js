@@ -1093,18 +1093,14 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
       setShowFiltersDropdown(true);
     };
-    const openSmartActions = () => setShowAIToolsModal(true);
     window.addEventListener('openPlanWeekModal', openPlanWeek);
     window.addEventListener('openPlannerFilters', openFilters);
-    window.addEventListener('openPlannerSmartActions', openSmartActions);
     return () => {
       window.removeEventListener('openPlanWeekModal', openPlanWeek);
       window.removeEventListener('openPlannerFilters', openFilters);
-      window.removeEventListener('openPlannerSmartActions', openSmartActions);
     };
   }, []);
 
-  // Handle click outside Planner Settings popover
   const plannerSettingsPopoverRef = useRef(null);
   useEffect(() => {
     if (showPlannerSettingsPopover && Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -2802,6 +2798,45 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('openYearWizard', handler);
   }, [navigateToIntelligence]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const handler = (event) => {
+      const modeId = event?.detail?.modeId;
+      switch (modeId) {
+        case 'rebalance':
+          setRebalanceEvent(null);
+          setRebalanceYearPlanId(null);
+          setShowRebalanceModal(true);
+          break;
+        case 'catch-up':
+          setShowCatchUpModal(true);
+          break;
+        case 'pack-week':
+          setShowPackWeekModal(true);
+          break;
+        case 'plan-year':
+          setShowPlanYearWizard(true);
+          break;
+        case 'what-if':
+          setShowWhatIfModal(true);
+          break;
+        case 'summarize-progress':
+          setShowSummarizeProgressModal(true);
+          break;
+        case 'analytics':
+          setShowAnalyticsDashboard(true);
+          break;
+        case 'heatmap':
+          navigateToIntelligence({ tab: 'planner-ai', tool: 'heatmap' });
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener('plannerSmartAction', handler);
+    return () => window.removeEventListener('plannerSmartAction', handler);
+  }, [navigateToIntelligence]);
+
   // Listen for openPlanYearModal event (from PlanHealthBanner / FixItSuggestionsModal / EventDetails / AddSubjectModal / MagicExtract / Library)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -3658,8 +3693,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     handleTabChange('settings', 'profile');
   }, [resolvedShellUserRole, handleTabChange]);
 
-  const handleShellOpenSettings = useCallback(() => {
-    handleTabChange('settings', 'profile');
+  const handleShellOpenSettings = useCallback((section = 'profile') => {
+    handleTabChange('settings', section);
   }, [handleTabChange]);
 
   const handleShellLogOut = useCallback(async () => {

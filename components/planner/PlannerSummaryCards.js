@@ -19,9 +19,10 @@ function SummaryCard({
   actionLabel,
   onAction,
   actionTone = 'link',
+  rail = false,
 }) {
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, rail && styles.cardRail]}>
       <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
         <Icon size={18} color={iconColor} />
       </View>
@@ -43,14 +44,39 @@ function SummaryCard({
   );
 }
 
-export default function PlannerSummaryCards({
-  planHealth,
+export function PlannerUpcomingWeekSummary({
   weekEventCount = null,
   weekAssignmentCount = null,
+  onViewWeek,
+}) {
+  return (
+    <SummaryCard
+      rail
+      icon={CalendarDays}
+      iconColor="#2563EB"
+      iconBg="rgba(37, 99, 235, 0.12)"
+      title="Upcoming This Week"
+      value={
+        weekEventCount != null
+          ? `${weekEventCount} event${weekEventCount === 1 ? '' : 's'}`
+          : '—'
+      }
+      meta={
+        weekAssignmentCount != null
+          ? `${weekAssignmentCount} assignment${weekAssignmentCount === 1 ? '' : 's'}`
+          : 'This week'
+      }
+      actionLabel="View Week"
+      onAction={onViewWeek}
+    />
+  );
+}
+
+export default function PlannerSummaryCards({
+  planHealth,
   conflictLabel = null,
   onViewDetails,
   onFixGap,
-  onViewWeek,
   onResolveConflict,
 }) {
   const progress = useMemo(() => {
@@ -99,24 +125,6 @@ export default function PlannerSummaryCards({
         onAction={onFixGap}
       />
       <SummaryCard
-        icon={CalendarDays}
-        iconColor="#2563EB"
-        iconBg="rgba(37, 99, 235, 0.12)"
-        title="Upcoming This Week"
-        value={
-          weekEventCount != null
-            ? `${weekEventCount} event${weekEventCount === 1 ? '' : 's'}`
-            : '—'
-        }
-        meta={
-          weekAssignmentCount != null
-            ? `${weekAssignmentCount} assignment${weekAssignmentCount === 1 ? '' : 's'}`
-            : 'This week'
-        }
-        actionLabel="View Week"
-        onAction={onViewWeek}
-      />
-      <SummaryCard
         icon={Zap}
         iconColor="#7C3AED"
         iconBg="rgba(124, 58, 237, 0.12)"
@@ -142,6 +150,12 @@ const styles = StyleSheet.create({
     flexBasis: 180,
     ...familyCardStyle,
     gap: 4,
+  },
+  cardRail: {
+    minWidth: 0,
+    flexBasis: 'auto',
+    flexGrow: 0,
+    width: '100%',
   },
   iconWrap: {
     width: 34,

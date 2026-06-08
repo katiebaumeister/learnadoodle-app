@@ -1,14 +1,11 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { HelpCircle, Settings } from 'lucide-react';
+import { View, StyleSheet, Platform } from 'react-native';
 import LeftRail from '../LeftRail';
 
 export const RAIL_ICON_WIDTH = 52;
 export const RAIL_EXPANDED_WIDTH = 220;
 /** @deprecated Hover-expand removed; kept for any legacy imports */
 export const RAIL_HOVER_EXPAND_OFFSET = 0;
-
-const NAV_ICON_SIZE = 22;
 
 /**
  * Sidebar — permanent expanded rail (full viewport height).
@@ -42,22 +39,6 @@ export default function Sidebar({
     onHoverOverlayChange?.(false);
   }, [onHoverOverlayChange]);
 
-  const renderFooterItem = (label, Icon, onPress, accessibilityLabel) => (
-    <TouchableOpacity
-      style={styles.footerNavItem}
-      onPress={onPress}
-      activeOpacity={0.85}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel || label}
-      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-    >
-      <View style={styles.footerIconWrap}>
-        <Icon size={NAV_ICON_SIZE} color="rgba(15, 23, 42, 0.55)" strokeWidth={2} />
-      </View>
-      <Text style={styles.footerNavLabel}>{label}</Text>
-    </TouchableOpacity>
-  );
-
   return (
     <View style={styles.container}>
       <View style={styles.rail}>
@@ -85,11 +66,6 @@ export default function Sidebar({
             hideProfileNav
             permanentSidebar
           />
-        </View>
-
-        <View style={styles.sidebarFooter}>
-          {renderFooterItem('Help', HelpCircle, () => onOpenSettings?.('help'), 'Open help and FAQ')}
-          {renderFooterItem('Settings', Settings, () => onOpenSettings?.('profile'), 'Open settings')}
         </View>
       </View>
     </View>
@@ -121,39 +97,6 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     width: '100%',
-    overflow: 'hidden',
-  },
-  sidebarFooter: {
-    flexShrink: 0,
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 16,
-    gap: 2,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(148, 163, 184, 0.24)',
-    backgroundColor: '#FFFFFF',
-  },
-  footerNavItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 0,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-  },
-  footerIconWrap: {
-    width: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  footerNavLabel: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '500',
-    color: 'rgba(15, 23, 42, 0.78)',
-    marginLeft: 10,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
+    ...(Platform.OS === 'web' ? { overflow: 'visible' } : { overflow: 'hidden' }),
   },
 });

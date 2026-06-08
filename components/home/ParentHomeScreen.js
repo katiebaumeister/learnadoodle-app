@@ -4,9 +4,8 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
-import { AlertTriangle, Clock, HelpCircle } from 'lucide-react';
+import { AlertTriangle, Clock, HelpCircle, TrendingUp, CalendarDays, Star } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
-import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
 import { getPlanHealth } from '../../lib/services/academicYearClient';
@@ -93,15 +92,6 @@ async function hydrateLearningAssignees(learning = [], familyId) {
   }
 }
 
-function resolveUserDisplayName(authUser) {
-  const meta = authUser?.user_metadata || {};
-  const fromMeta = meta.first_name || meta.full_name || meta.name;
-  if (fromMeta && String(fromMeta).trim()) return String(fromMeta).trim().split(' ')[0];
-  const email = authUser?.email || '';
-  if (email.includes('@')) return email.split('@')[0];
-  return '';
-}
-
 export default function ParentHomeScreen({
   familyId: propFamilyId,
   onNavigate,
@@ -110,7 +100,6 @@ export default function ParentHomeScreen({
   onInitialDataReady = null,
 }) {
   const session = useSession();
-  const { user: authUser } = useAuth();
   const [homeData, setHomeData] = useState(null);
   const [dashboardExtras, setDashboardExtras] = useState({
     dueAssignments: [],
@@ -131,7 +120,6 @@ export default function ParentHomeScreen({
   }, []);
 
   const familyId = propFamilyId || session?.family_id;
-  const userDisplayName = resolveUserDisplayName(authUser);
 
   const CACHE_TTL_MS = 5 * 60 * 1000;
   const getHomeDataCacheKey = (fid, date) => `home_data_${fid}_${date}`;
@@ -526,6 +514,11 @@ export default function ParentHomeScreen({
       return {
         childId: child.id,
         name: child.first_name || child.name || 'Child',
+        gradeLabel:
+          child.grade != null && child.grade !== ''
+            ? `${child.grade}${String(child.grade).toLowerCase().includes('grade') ? '' : ' Grade'}`
+            : null,
+        avatarColor: child.avatar_color || child.avatarColor || null,
         tone,
         statusLabel: statusLabel(tone, deltaDays, targetDays, plannedDays),
         plannedDays,
@@ -561,10 +554,11 @@ export default function ParentHomeScreen({
         const days = Math.abs(Math.round(delta));
         items.push({
           id: `behind-${childId}-${subjectId}`,
-          message: `${subjectName} is ${days} day${days === 1 ? '' : 's'} behind for ${childName}. We recommend running Fix Gap.`,
+          title: `${subjectName} is ${days} day${days === 1 ? '' : 's'} behind`,
+          subtitle: 'We recommend running Fix Gap',
           icon: AlertTriangle,
-          iconBg: '#fef2f2',
-          iconColor: '#dc2626',
+          iconBg: '#FEF2F2',
+          iconColor: '#DC2626',
           onPress: navigateToPlannerFixGap,
         });
       });
@@ -579,10 +573,11 @@ export default function ParentHomeScreen({
         const childName = child.first_name || child.name || 'A child';
         items.push({
           id: `behind-child-${child.id}`,
-          message: `${childName} is ${days} day${days === 1 ? '' : 's'} behind schedule. We recommend running Fix Gap.`,
+          title: `${childName} is ${days} day${days === 1 ? '' : 's'} behind`,
+          subtitle: 'We recommend running Fix Gap',
           icon: AlertTriangle,
-          iconBg: '#fef2f2',
-          iconColor: '#dc2626',
+          iconBg: '#FEF2F2',
+          iconColor: '#DC2626',
           onPress: navigateToPlannerFixGap,
         });
       });
@@ -592,10 +587,11 @@ export default function ParentHomeScreen({
     if (pendingCount > 0) {
       items.push({
         id: 'pending-submissions',
-        message: `${pendingCount} submission${pendingCount === 1 ? '' : 's'} waiting for review.`,
+        title: `${pendingCount} submission${pendingCount === 1 ? '' : 's'} waiting for review`,
+        subtitle: 'Open submissions to review work',
         icon: Clock,
-        iconBg: '#fff7ed',
-        iconColor: '#ea580c',
+        iconBg: '#FFF7ED',
+        iconColor: '#EA580C',
         onPress: () => onNavigate?.('learning', 'submissions'),
       });
     }
@@ -604,10 +600,11 @@ export default function ParentHomeScreen({
     if (missingCount > 0) {
       items.push({
         id: 'missing-submissions',
-        message: `${missingCount} assignment${missingCount === 1 ? '' : 's'} past due without submission.`,
+        title: `${missingCount} assignment${missingCount === 1 ? '' : 's'} past due`,
+        subtitle: 'Without submission',
         icon: Clock,
-        iconBg: '#fff7ed',
-        iconColor: '#ea580c',
+        iconBg: '#FFF7ED',
+        iconColor: '#EA580C',
         onPress: () => onNavigate?.('learning', 'assignments'),
       });
     }
@@ -615,10 +612,11 @@ export default function ParentHomeScreen({
     (dashboardExtras.helpRequests || []).slice(0, 3).forEach((assignment) => {
       items.push({
         id: `help-${assignment.id}`,
-        message: `${assignment.child?.first_name || 'A child'} requested help on ${assignment.title || 'an assignment'}.`,
+        title: `${assignment.child?.first_name || 'A child'} requested help`,
+        subtitle: assignment.title || 'Assignment help',
         icon: HelpCircle,
-        iconBg: '#eef2ff',
-        iconColor: '#4f46e5',
+        iconBg: '#EEF2FF',
+        iconColor: '#6366F1',
         onPress: () => onNavigate?.('learning', 'assignments'),
       });
     });
@@ -631,6 +629,55 @@ export default function ParentHomeScreen({
     navigateToPlannerFixGap,
     onNavigate,
   ]);
+
+  const aiInsights = useMemo(() => {
+    const insights = [];
+    const childrenList = effectiveHomeData.children || [];
+    const planHealth = dashboardExtras.planHealth;
+    const subjects = effectiveHomeData.subjects || [];
+
+    childrenList.forEach((child) => {
+      const childName = child.first_name || child.name || 'Your child';
+      const stats = planHealth?.per_child?.[String(child.id)];
+      const delta = Number(stats?.delta_days);
+      if (Number.isFinite(delta) && delta > 1) {
+        insights.push({
+          id: `ahead-${child.id}`,
+          icon: TrendingUp,
+          iconBg: '#ECFDF5',
+          iconColor: '#059669',
+          text: `Great job! ${childName} is ahead of schedule by about ${Math.round(delta)} day${Math.round(delta) === 1 ? '' : 's'}.`,
+        });
+      }
+    });
+
+    childrenList.forEach((child) => {
+      const childName = child.first_name || child.name || 'Your child';
+      const stats = planHealth?.per_child?.[String(child.id)];
+      const delta = Number(stats?.delta_days);
+      if (Number.isFinite(delta) && delta < -1) {
+        insights.push({
+          id: `behind-insight-${child.id}`,
+          icon: CalendarDays,
+          iconBg: '#FFF7ED',
+          iconColor: '#EA580C',
+          text: `${childName} is ${Math.abs(Math.round(delta))} day${Math.abs(Math.round(delta)) === 1 ? '' : 's'} behind schedule. Consider rescheduling with Fix Gap.`,
+        });
+      }
+    });
+
+    (dashboardExtras.helpRequests || []).slice(0, 1).forEach((assignment) => {
+      insights.push({
+        id: `help-insight-${assignment.id}`,
+        icon: Star,
+        iconBg: '#F3E8FF',
+        iconColor: '#9333EA',
+        text: `${assignment.child?.first_name || 'Your child'} asked for help on ${assignment.title || 'an assignment'}.`,
+      });
+    });
+
+    return insights.slice(0, 3);
+  }, [dashboardExtras, effectiveHomeData.children]);
 
   if (error && !homeData) {
     return (
@@ -647,14 +694,13 @@ export default function ParentHomeScreen({
     <RoleHomeShell
       main={
         <ParentHomeDashboard
-          userDisplayName={userDisplayName}
           children={effectiveHomeData.children || []}
           subjects={effectiveHomeData.subjects || []}
           todayEvents={todayEvents}
-          upcomingGroups={upcomingGroups}
           dueAssignments={dashboardExtras.dueAssignments}
           pendingSubmissions={dashboardExtras.pendingSubmissions}
           alerts={alerts}
+          aiInsights={aiInsights}
           familySnapshot={familySnapshot}
           onNavigate={onNavigate}
           onAddEvent={onAddEvent}

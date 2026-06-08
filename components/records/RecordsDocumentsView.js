@@ -47,7 +47,17 @@ function materialMatchesChildIds(material, childIds) {
 }
 
 function getMaterialTitle(material) {
-  return (material?.title || material?.filename || 'Untitled file').trim();
+  const title = (material?.title || '').trim();
+  if (title) return title;
+  const fromPath = material?.storage_path?.split('/').pop()?.split('?')[0];
+  if (fromPath) {
+    try {
+      return decodeURIComponent(fromPath);
+    } catch {
+      return fromPath;
+    }
+  }
+  return 'Untitled file';
 }
 
 export default function RecordsDocumentsView({
@@ -57,7 +67,7 @@ export default function RecordsDocumentsView({
   accessibleChildren = [],
   viewingAsChildId = null,
 }) {
-  const toast = useToast();
+  const { push: toastPush } = useToast();
   const isChildView = userRole === 'child' || userRole === 'student';
   const scopedChildIds = useMemo(() => {
     if (viewingAsChildId) return [String(viewingAsChildId)];
@@ -102,7 +112,6 @@ export default function RecordsDocumentsView({
         .select(`
           id,
           title,
-          filename,
           storage_path,
           created_at,
           mime,
@@ -132,12 +141,12 @@ export default function RecordsDocumentsView({
       setMaterials(rows);
     } catch (err) {
       console.error('[RecordsDocumentsView] load error:', err);
-      toast.push('Could not load uploaded materials.', 'error');
+      toastPush('Could not load uploaded materials.', 'error');
       setMaterials([]);
     } finally {
       setLoading(false);
     }
-  }, [familyId, scopedChildIds, toast]);
+  }, [familyId, scopedChildIds, toastPush]);
 
   useEffect(() => {
     loadMaterials();
@@ -159,7 +168,7 @@ export default function RecordsDocumentsView({
   const openMaterial = useCallback(async (material) => {
     const resolved = await resolveMaterialDocViewerUrl(material.id);
     if (resolved.error || !resolved.url) {
-      toast.push(resolved.error || 'Unable to open this file.', 'error');
+      toastPush(resolved.error || 'Unable to open this file.', 'error');
       return;
     }
     setViewer({
@@ -168,7 +177,7 @@ export default function RecordsDocumentsView({
       title: resolved.title || material.displayTitle,
       viewerKind: resolved.viewerKind || inferMaterialViewerKind(material),
     });
-  }, [toast]);
+  }, [toastPush]);
 
   if (loading) {
     return (

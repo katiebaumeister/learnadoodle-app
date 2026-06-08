@@ -7,7 +7,8 @@ import {
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
-import { Users, Settings, ChevronLeft } from 'lucide-react';
+import { Settings, ChevronLeft } from 'lucide-react';
+import { MAIN_NAV_ICONS, MAIN_NAV_PAGE_ICON_COLOR, MAIN_NAV_PAGE_ICON_SIZE } from '../layout/mainNavIcons';
 import { supabase } from '../../lib/supabase';
 import FamilyPanel from '../settings/FamilyPanel';
 import FamilyOverviewView from './FamilyOverviewView';
@@ -17,11 +18,17 @@ import FamilyLearningPreferencesView from './FamilyLearningPreferencesView';
 import {
   buildChildSectionKey,
   FAMILY_CHILD_TABS,
-  FAMILY_MAIN_TABS,
   getChildDisplayName,
   parseFamilySection,
 } from './familySectionRouting';
 import { useOptionalFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
+
+const SUB_VIEW_TITLES = {
+  members: 'Members',
+  'learning-preferences': 'Learning Preferences',
+  'academic-years': 'Academic Years',
+  'academic-year': 'Academic Year',
+};
 
 function FamilyTabBar({ tabs, activeKey, onChange }) {
   return (
@@ -114,10 +121,6 @@ export default function FamilySectionView({
     onTabChange?.('family', nextSection);
   }, [onTabChange]);
 
-  const handleMainTabChange = useCallback((tabKey) => {
-    navigateSection(tabKey);
-  }, [navigateSection]);
-
   const handleSelectChild = useCallback((childId) => {
     navigateSection(buildChildSectionKey(childId, 'overview'));
   }, [navigateSection]);
@@ -147,7 +150,9 @@ export default function FamilySectionView({
   const readOnlyPreferences =
     familyUserControls.isRestrictedViewer && !familyUserControls.allowed('planning_preferences');
 
-  const mainTabKey = parsed.view === 'academic-year' ? 'academic-years' : parsed.view;
+  const isChildView = parsed.view === 'child' && selectedChild;
+  const isSubView = !isChildView && parsed.view !== 'overview';
+  const subViewTitle = SUB_VIEW_TITLES[parsed.view] || 'Family';
 
   const renderContent = () => {
     if (parsed.view === 'child' && selectedChild) {
@@ -223,6 +228,8 @@ export default function FamilySectionView({
     }
   };
 
+  const PageIcon = MAIN_NAV_ICONS.family;
+
   return (
     <View style={styles.shell}>
       <ScrollView
@@ -230,7 +237,7 @@ export default function FamilySectionView({
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {parsed.view === 'child' && selectedChild ? (
+        {isChildView ? (
           <View style={styles.pageHeader}>
             <TouchableOpacity
               style={styles.backRow}
@@ -247,12 +254,24 @@ export default function FamilySectionView({
               onChange={handleChildTabChange}
             />
           </View>
+        ) : isSubView ? (
+          <View style={styles.pageHeader}>
+            <TouchableOpacity
+              style={styles.backRow}
+              onPress={() => navigateSection('overview')}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <ChevronLeft size={18} color="#2563EB" />
+              <Text style={styles.backText}>Family</Text>
+            </TouchableOpacity>
+            <Text style={styles.childTitle}>{subViewTitle}</Text>
+          </View>
         ) : (
           <View style={styles.pageHeader}>
             <View style={styles.titleRow}>
               <View style={styles.titleBlock}>
                 <View style={styles.titleLine}>
-                  <Users size={22} color="#2563EB" />
+                  <PageIcon size={MAIN_NAV_PAGE_ICON_SIZE} color={MAIN_NAV_PAGE_ICON_COLOR} strokeWidth={2} />
                   <Text style={styles.pageTitle}>Family</Text>
                 </View>
               </View>
@@ -265,11 +284,6 @@ export default function FamilySectionView({
                 <Text style={styles.settingsButtonText}>Family Settings</Text>
               </TouchableOpacity>
             </View>
-            <FamilyTabBar
-              tabs={FAMILY_MAIN_TABS}
-              activeKey={mainTabKey}
-              onChange={handleMainTabChange}
-            />
           </View>
         )}
 
@@ -303,7 +317,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 16,
-    marginBottom: 16,
+    marginBottom: 0,
   },
   titleBlock: {
     flex: 1,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,13 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import { BookOpen, Search, SlidersHorizontal, Sparkles, Wrench, CalendarDays, Plus, X } from 'lucide-react';
+import { Search, Sparkles, Wrench, CalendarDays, Plus, X } from 'lucide-react';
+import { MAIN_NAV_ICONS, MAIN_NAV_PAGE_ICON_COLOR, MAIN_NAV_PAGE_ICON_SIZE } from '../layout/mainNavIcons';
 import { colors } from '../../theme/colors';
 import LearningSubjectRow from './LearningSubjectRow';
+
+const BRAND_SKY_BLUE = '#81C1E1';
+const BRAND_SKY_BLUE_FAINT = 'rgba(129, 193, 225, 0.18)';
 
 export default function LearningSubjectsListView({
   subjects = [],
@@ -32,29 +36,18 @@ export default function LearningSubjectsListView({
   emptyTitle = 'No subjects yet',
   emptyText = 'Create subjects to organize learning.',
 }) {
-  const [showFilters, setShowFilters] = useState(false);
+  const PageIcon = MAIN_NAV_ICONS.subjects;
 
   return (
     <View style={styles.container}>
       <View style={styles.pageHeader}>
         <View style={styles.pageHeaderLeft}>
-          <View style={styles.pageIconWrap}>
-            <BookOpen size={22} color="#3B82F6" strokeWidth={2} />
-          </View>
-          <View style={styles.pageTitleWrap}>
+          <View style={styles.titleLine}>
+            <PageIcon size={MAIN_NAV_PAGE_ICON_SIZE} color={MAIN_NAV_PAGE_ICON_COLOR} strokeWidth={2} />
             <Text style={styles.pageTitle}>Learning</Text>
           </View>
         </View>
         <View style={styles.pageHeaderActions}>
-          <TouchableOpacity
-            style={[styles.filterBtn, showFilters && styles.filterBtnActive]}
-            onPress={() => setShowFilters((prev) => !prev)}
-            accessibilityRole="button"
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <SlidersHorizontal size={16} color={showFilters ? '#2563EB' : '#64748B'} />
-            <Text style={[styles.filterBtnText, showFilters && styles.filterBtnTextActive]}>Filter</Text>
-          </TouchableOpacity>
           <View style={styles.searchWrap}>
             <Search size={16} color="#94A3B8" />
             <TextInput
@@ -83,10 +76,6 @@ export default function LearningSubjectsListView({
           ) : null}
         </View>
       </View>
-
-      {showFilters && filterContent ? (
-        <View style={styles.filtersPanel}>{filterContent}</View>
-      ) : null}
 
       <View style={styles.tableCard}>
         <View style={styles.tableHeader}>
@@ -131,7 +120,7 @@ export default function LearningSubjectsListView({
       <View style={styles.planningBanner}>
         <View style={styles.planningBannerLeft}>
           <View style={styles.planningIconWrap}>
-            <Sparkles size={18} color="#2563EB" />
+            <Sparkles size={18} color="#0F172A" />
           </View>
           <Text style={styles.planningText}>
             Need help planning? Use Fix Gap to get back on track or Plan Week to organize upcoming lessons.
@@ -169,22 +158,13 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   pageHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 14,
     flex: 1,
     minWidth: 260,
   },
-  pageIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: '#EFF6FF',
+  titleLine: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pageTitleWrap: {
-    flex: 1,
+    gap: 10,
   },
   pageTitle: {
     fontSize: 28,
@@ -200,29 +180,6 @@ const styles = StyleSheet.create({
     gap: 10,
     flexWrap: 'wrap',
     justifyContent: 'flex-end',
-  },
-  filterBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-  },
-  filterBtnActive: {
-    borderColor: '#BFDBFE',
-    backgroundColor: '#EFF6FF',
-  },
-  filterBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  filterBtnTextActive: {
-    color: '#2563EB',
   },
   searchWrap: {
     flexDirection: 'row',
@@ -250,15 +207,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12,
-    backgroundColor: '#2563EB',
+    backgroundColor: BRAND_SKY_BLUE,
   },
   addBtnText: {
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
-  },
-  filtersPanel: {
-    paddingBottom: 4,
+    textTransform: 'uppercase',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      letterSpacing: '0.04em',
+    }),
   },
   tableCard: {
     flex: 1,
@@ -333,9 +292,7 @@ const styles = StyleSheet.create({
     gap: 16,
     padding: 16,
     borderRadius: 16,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1,
-    borderColor: '#DBEAFE',
+    backgroundColor: BRAND_SKY_BLUE_FAINT,
     flexWrap: 'wrap',
   },
   planningBannerLeft: {
@@ -357,7 +314,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     lineHeight: 20,
-    color: '#1E3A8A',
+    color: '#0F172A',
   },
   planningActions: {
     flexDirection: 'row',

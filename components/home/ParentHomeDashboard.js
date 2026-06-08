@@ -1,20 +1,26 @@
 /**
- * Parent home dashboard — "What requires attention today?"
+ * Parent home dashboard — two-column layout with Today timeline, AI Insights, Alerts, Family, Quick Actions.
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
 import {
   AlertTriangle,
   Clock,
   HelpCircle,
-  FileText,
   Wrench,
   Plus,
   MessageCircle,
-  BookOpen,
+  ClipboardList,
+  FlaskConical,
+  MessageSquare,
+  Sparkles,
+  ChevronRight,
+  CalendarDays,
+  TrendingUp,
+  Star,
+  Circle,
 } from 'lucide-react';
-import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 
 function formatTime(timeString) {
@@ -88,12 +94,39 @@ function statusLabel(tone, deltaDays, targetDays, plannedDays) {
   return 'On Track';
 }
 
-function DashboardCard({ title, headerRight, children, style }) {
+function getEventTheme(event, subjects) {
+  const subject = getSubjectLabel(event, subjects).toLowerCase();
+  const eventType = String(event?.event_type || event?.type || '').toLowerCase();
+  if (subject.includes('science') || eventType.includes('science')) {
+    return { dot: '#9333EA', iconBg: '#F3E8FF', iconColor: '#9333EA', Icon: FlaskConical };
+  }
+  if (subject.includes('writ') || eventType.includes('writ')) {
+    return { dot: '#059669', iconBg: '#ECFDF5', iconColor: '#059669', Icon: MessageSquare };
+  }
+  if (
+    subject.includes('soccer') ||
+    subject.includes('sport') ||
+    eventType.includes('activity') ||
+    eventType.includes('sport')
+  ) {
+    return { dot: '#EA580C', iconBg: '#FFF7ED', iconColor: '#EA580C', Icon: Circle };
+  }
+  return { dot: '#2563EB', iconBg: '#EFF6FF', iconColor: '#2563EB', Icon: ClipboardList };
+}
+
+function DashboardCard({ title, titleIcon: TitleIcon, titleAccent, headerRight, children, style }) {
   return (
     <View style={[styles.card, style]}>
       {(title || headerRight) && (
         <View style={styles.cardHeader}>
-          {title ? <Text style={styles.cardTitle}>{title}</Text> : <View />}
+          {title ? (
+            <View style={styles.cardTitleRow}>
+              {TitleIcon ? <TitleIcon size={16} color={titleAccent || '#6366F1'} /> : null}
+              <Text style={[styles.cardTitle, titleAccent && { color: titleAccent }]}>{title}</Text>
+            </View>
+          ) : (
+            <View />
+          )}
           {headerRight || null}
         </View>
       )}
@@ -111,61 +144,88 @@ function HeaderLink({ label, onPress }) {
   );
 }
 
-function EmptyLine({ text }) {
-  return <Text style={styles.emptyLine}>{text}</Text>;
-}
+function TodayTimelineItem({
+  item,
+  isLast,
+  onPress,
+  onSubmit,
+}) {
+  const theme = item.theme || {
+    dot: '#2563EB',
+    iconBg: '#EFF6FF',
+    iconColor: '#2563EB',
+    Icon: ClipboardList,
+  };
+  const Icon = theme.Icon;
 
-function EventRow({ event, subjects, children, showDueTag }) {
-  const time = formatTime(event.start_ts || event.start);
-  const subject = getSubjectLabel(event, subjects);
-  const title = event.title && event.title !== subject ? event.title : null;
-  const childIds = getEventChildIdsForDisplay(event, children);
-  const childLine =
-    childIds.length > 0
-      ? childIds.map((id) => {
-          const c = children.find((ch) => String(ch.id) === String(id));
-          return getChildLabel(c);
-        }).join(', ')
-      : null;
-
-  return (
-    <View style={styles.eventRow}>
-      <Text style={styles.eventTime}>{time || '—'}</Text>
-      <View style={styles.eventBody}>
-        <View style={styles.eventTitleRow}>
-          <BookOpen size={14} color="#6366f1" style={styles.eventIcon} />
-          <Text style={styles.eventTitle} numberOfLines={1}>
-            {subject}
-            {title ? ` — ${title}` : ''}
-          </Text>
-          {showDueTag ? (
+  const content = (
+    <View style={styles.timelineRow}>
+      <View style={styles.timelineRail}>
+        <View style={[styles.timelineDot, { backgroundColor: theme.dot }]} />
+        {!isLast ? <View style={styles.timelineLine} /> : null}
+      </View>
+      <View style={styles.timelineBody}>
+        <Text style={styles.timelineTime}>{item.time || '—'}</Text>
+        <View style={styles.timelineEvent}>
+          <View style={[styles.timelineIconWrap, { backgroundColor: theme.iconBg }]}>
+            <Icon size={16} color={theme.iconColor} />
+          </View>
+          <View style={styles.timelineTextBlock}>
+            <Text style={styles.timelineTitle} numberOfLines={1}>
+              {item.title}
+            </Text>
+            {item.subtitle ? (
+              <Text style={styles.timelineSubtitle} numberOfLines={2}>
+                {item.subtitle}
+              </Text>
+            ) : null}
+          </View>
+          {item.showDueTag ? (
             <View style={styles.dueTodayTag}>
-              <Text style={styles.dueTodayTagText}>Due Today</Text>
+              <Text style={styles.dueTodayTagText}>Due today</Text>
             </View>
           ) : null}
+          {item.showSubmit ? (
+            <TouchableOpacity
+              style={styles.submitBtn}
+              onPress={onSubmit}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.submitBtnText}>Submit</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
-        {childLine ? <Text style={styles.eventMeta}>{childLine}</Text> : null}
       </View>
     </View>
   );
+
+  if (onPress) {
+    return (
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={onPress}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        {content}
+      </TouchableOpacity>
+    );
+  }
+  return content;
 }
 
 export default function ParentHomeDashboard({
-  userDisplayName = '',
   children = [],
   subjects = [],
   todayEvents = [],
-  upcomingGroups = [],
   dueAssignments = [],
   pendingSubmissions = [],
   alerts = [],
+  aiInsights = [],
   familySnapshot = [],
   onNavigate,
   onAddEvent,
   onOpenEvent,
 }) {
-  const greetingName = userDisplayName?.trim() || 'there';
-
   const handleFixGap = () => {
     onNavigate?.('planner', 'calendar');
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -174,6 +234,7 @@ export default function ParentHomeDashboard({
       });
     }
   };
+  const handlePlanWeek = () => onNavigate?.('planner', 'calendar');
   const handleSendMessage = () => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('openMessagesPane'));
@@ -182,31 +243,68 @@ export default function ParentHomeDashboard({
   const handleViewPlanner = () => onNavigate?.('planner', 'calendar');
   const handleViewSubmissions = () => onNavigate?.('learning', 'submissions');
 
+  const todayTimelineItems = useMemo(() => {
+    const items = [];
+
+    todayEvents.forEach((event) => {
+      const subject = getSubjectLabel(event, subjects);
+      const title = event.title && event.title !== subject ? event.title : subject;
+      const subtitle =
+        event.title && event.title !== subject
+          ? event.title
+          : event.description || event.notes || null;
+      const eventType = String(event?.event_type || event?.type || '').toLowerCase();
+      items.push({
+        id: `event-${event.id}`,
+        sortKey: getEventTimestamp(event)?.getTime() || 0,
+        time: formatTime(event.start_ts || event.start),
+        title: subject,
+        subtitle: subtitle && subtitle !== subject ? subtitle : null,
+        theme: getEventTheme(event, subjects),
+        showDueTag: eventType === 'assignment' || eventType === 'project',
+        showSubmit: false,
+        event,
+      });
+    });
+
+    dueAssignments.slice(0, 4).forEach((assignment) => {
+      items.push({
+        id: `due-${assignment.id}`,
+        sortKey: 12 * 60,
+        time: 'Due today',
+        title: assignment.title || 'Assignment',
+        subtitle: assignment.child?.first_name
+          ? `${assignment.child.first_name}${assignment.subject?.name ? ` · ${assignment.subject.name}` : ''}`
+          : assignment.subject?.name || null,
+        theme: { dot: '#9333EA', iconBg: '#F3E8FF', iconColor: '#9333EA', Icon: FlaskConical },
+        showDueTag: true,
+        showSubmit: false,
+        assignment,
+      });
+    });
+
+    pendingSubmissions.slice(0, 2).forEach((assignment) => {
+      items.push({
+        id: `submit-${assignment.id}`,
+        sortKey: 13 * 60,
+        time: formatTime(assignment.due_date ? `${assignment.due_date}T12:00:00` : null) || 'Review',
+        title: assignment.title || 'Submission',
+        subtitle: assignment.child?.first_name ? `${assignment.child.first_name} · awaiting review` : 'Awaiting review',
+        theme: { dot: '#059669', iconBg: '#ECFDF5', iconColor: '#059669', Icon: MessageSquare },
+        showDueTag: false,
+        showSubmit: true,
+        assignment,
+      });
+    });
+
+    return items.sort((a, b) => a.sortKey - b.sortKey);
+  }, [todayEvents, dueAssignments, pendingSubmissions, subjects]);
+
   const quickActions = [
-    {
-      id: 'fix_gap',
-      label: 'Fix Gap',
-      icon: Wrench,
-      bg: '#ecfdf5',
-      color: '#059669',
-      onPress: handleFixGap,
-    },
-    {
-      id: 'create_event',
-      label: 'Create Event',
-      icon: Plus,
-      bg: '#eef2ff',
-      color: '#4f46e5',
-      onPress: onAddEvent,
-    },
-    {
-      id: 'send_message',
-      label: 'Send Message',
-      icon: MessageCircle,
-      bg: '#fff7ed',
-      color: '#ea580c',
-      onPress: handleSendMessage,
-    },
+    { id: 'fix_gap', label: 'Fix Gap', icon: Wrench, bg: '#ECFDF5', color: '#059669', onPress: handleFixGap },
+    { id: 'plan_week', label: 'Plan Week', icon: CalendarDays, bg: '#EFF6FF', color: '#2563EB', onPress: handlePlanWeek },
+    { id: 'create_event', label: 'Create Event', icon: Plus, bg: '#F3E8FF', color: '#9333EA', onPress: onAddEvent },
+    { id: 'send_message', label: 'Send Message', icon: MessageCircle, bg: '#FFF7ED', color: '#EA580C', onPress: handleSendMessage },
   ];
 
   return (
@@ -216,189 +314,161 @@ export default function ParentHomeDashboard({
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.hero}>
-        <Text style={styles.greeting}>
-          {getTimeBasedGreeting()}, {greetingName}! ☀️
-        </Text>
-        <Text style={styles.heroSubtext}>Here&apos;s what requires attention today.</Text>
+        <Text style={styles.greeting}>{getTimeBasedGreeting()}</Text>
       </View>
 
       <View style={styles.grid}>
-        {/* Column 1 — Today */}
         <View style={styles.column}>
           <DashboardCard
             title="Today"
             headerRight={<HeaderLink label="View full day" onPress={handleViewPlanner} />}
           >
-            {todayEvents.length === 0 ? (
-              <EmptyLine text="No events scheduled for today." />
+            {todayTimelineItems.length === 0 ? (
+              <Text style={styles.emptyLine}>No events scheduled for today.</Text>
             ) : (
-              <View style={styles.listGap}>
-                {todayEvents.map((event) => (
-                  <TouchableOpacity
-                    key={String(event.id)}
-                    onPress={() => onOpenEvent?.(event)}
-                    activeOpacity={0.7}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <EventRow
-                      event={event}
-                      subjects={subjects}
-                      children={children}
-                      showDueTag={
-                        (event.event_type || event.type) === 'Assignment' ||
-                        (event.event_type || event.type) === 'Project'
-                      }
-                    />
-                  </TouchableOpacity>
-                ))}
-              </View>
+              todayTimelineItems.map((item, index) => (
+                <TodayTimelineItem
+                  key={item.id}
+                  item={item}
+                  isLast={index === todayTimelineItems.length - 1}
+                  onPress={
+                    item.event
+                      ? () => onOpenEvent?.(item.event)
+                      : item.assignment
+                        ? handleViewSubmissions
+                        : undefined
+                  }
+                  onSubmit={handleViewSubmissions}
+                />
+              ))
             )}
+          </DashboardCard>
 
-            {dueAssignments.length > 0 && (
-              <View style={styles.subSection}>
-                <Text style={styles.subSectionTitle}>Due assignments</Text>
-                {dueAssignments.slice(0, 4).map((a) => (
-                  <TouchableOpacity
-                    key={a.id}
-                    style={styles.compactRow}
-                    onPress={handleViewSubmissions}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <FileText size={14} color="#6366f1" />
-                    <Text style={styles.compactRowText} numberOfLines={1}>
-                      {a.title || 'Assignment'}
-                      {a.child?.first_name ? ` · ${a.child.first_name}` : ''}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+          <DashboardCard
+            title="AI Insights"
+            titleIcon={Sparkles}
+            titleAccent="#6366F1"
+            headerRight={<HeaderLink label="View all" onPress={handleViewPlanner} />}
+          >
+            {aiInsights.length === 0 ? (
+              <Text style={styles.emptyLine}>Insights will appear as you plan and track learning.</Text>
+            ) : (
+              aiInsights.map((insight) => {
+                const Icon = insight.icon || Sparkles;
+                return (
+                  <View key={insight.id} style={styles.insightRow}>
+                    <View style={[styles.insightIconWrap, { backgroundColor: insight.iconBg || '#EEF2FF' }]}>
+                      <Icon size={16} color={insight.iconColor || '#6366F1'} />
+                    </View>
+                    <Text style={styles.insightText}>{insight.text}</Text>
+                  </View>
+                );
+              })
             )}
-
-            {pendingSubmissions.length > 0 && (
-              <View style={styles.subSection}>
-                <Text style={styles.subSectionTitle}>Due submissions</Text>
-                {pendingSubmissions.slice(0, 4).map((a) => (
-                  <TouchableOpacity
-                    key={a.id}
-                    style={styles.compactRow}
-                    onPress={handleViewSubmissions}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Clock size={14} color="#ea580c" />
-                    <Text style={styles.compactRowText} numberOfLines={1}>
-                      {a.child?.first_name ? `${a.child.first_name}: ` : ''}
-                      {a.title || 'Submission'} — review
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-
-            <TouchableOpacity
-              style={styles.addEventLink}
-              onPress={onAddEvent}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={14} color="#6366f1" />
-              <Text style={styles.addEventLinkText}>Add Event</Text>
-            </TouchableOpacity>
           </DashboardCard>
         </View>
 
-        {/* Column 2 — Alerts, Family, Quick Actions */}
         <View style={styles.column}>
           <DashboardCard
             title="Alerts"
             headerRight={
-              alerts.length > 0 ? (
-                <View style={styles.badgeRow}>
+              <View style={styles.badgeRow}>
+                {alerts.length > 0 ? (
                   <View style={styles.alertBadge}>
                     <Text style={styles.alertBadgeText}>{alerts.length}</Text>
                   </View>
-                  <HeaderLink label="View all" onPress={handleViewSubmissions} />
-                </View>
-              ) : (
+                ) : null}
                 <HeaderLink label="View all" onPress={handleViewSubmissions} />
-              )
+              </View>
             }
           >
             {alerts.length === 0 ? (
-              <EmptyLine text="Nothing urgent — you're caught up." />
+              <Text style={styles.emptyLine}>Nothing urgent — you&apos;re caught up.</Text>
             ) : (
-              <View style={styles.listGap}>
-                {alerts.map((alert) => {
-                  const Icon = alert.icon || AlertTriangle;
-                  return (
-                    <TouchableOpacity
-                      key={alert.id}
-                      style={styles.alertRow}
-                      onPress={alert.onPress}
-                      activeOpacity={0.7}
-                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                    >
-                      <View style={[styles.alertIconWrap, { backgroundColor: alert.iconBg || '#fef2f2' }]}>
-                        <Icon size={16} color={alert.iconColor || '#dc2626'} />
-                      </View>
-                      <Text style={styles.alertText}>{alert.message}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+              alerts.map((alert) => {
+                const Icon = alert.icon || AlertTriangle;
+                return (
+                  <TouchableOpacity
+                    key={alert.id}
+                    style={styles.alertRow}
+                    onPress={alert.onPress}
+                    activeOpacity={0.7}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <View style={[styles.alertIconWrap, { backgroundColor: alert.iconBg || '#FEF2F2' }]}>
+                      <Icon size={16} color={alert.iconColor || '#DC2626'} />
+                    </View>
+                    <View style={styles.alertCopy}>
+                      <Text style={styles.alertTitle}>{alert.title || alert.message}</Text>
+                      {alert.subtitle ? (
+                        <Text style={styles.alertSubtitle}>{alert.subtitle}</Text>
+                      ) : null}
+                    </View>
+                    <ChevronRight size={16} color="#94A3B8" />
+                  </TouchableOpacity>
+                );
+              })
             )}
           </DashboardCard>
 
           <DashboardCard
             title="Family Snapshot"
-            headerRight={<HeaderLink label="View all" onPress={() => onNavigate?.('family', 'members')} />}
+            headerRight={<HeaderLink label="View all" onPress={() => onNavigate?.('family', 'overview')} />}
           >
             {familySnapshot.length === 0 ? (
-              <EmptyLine text="Add children to see progress at a glance." />
+              <Text style={styles.emptyLine}>Add children to see progress at a glance.</Text>
             ) : (
-              <View style={styles.listGap}>
-                {familySnapshot.map((row) => (
-                  <View key={row.childId} style={styles.snapshotRow}>
-                    <View style={styles.snapshotHeader}>
-                      <Text style={styles.snapshotName}>{row.name}</Text>
+              familySnapshot.map((row) => (
+                <View key={row.childId} style={styles.snapshotRow}>
+                  <View style={styles.snapshotTop}>
+                    <View style={styles.snapshotIdentity}>
                       <View
                         style={[
-                          styles.statusChip,
-                          row.tone === 'behind' && styles.statusChipBehind,
-                          row.tone === 'ahead' && styles.statusChipAhead,
-                          row.tone === 'on_track' && styles.statusChipOnTrack,
+                          styles.snapshotAvatar,
+                          { backgroundColor: row.avatarColor || '#94A3B8' },
                         ]}
                       >
-                        <Text
-                          style={[
-                            styles.statusChipText,
-                            row.tone === 'behind' && styles.statusChipTextBehind,
-                            row.tone === 'ahead' && styles.statusChipTextAhead,
-                            row.tone === 'on_track' && styles.statusChipTextOnTrack,
-                          ]}
-                        >
-                          {row.statusLabel}
+                        <Text style={styles.snapshotAvatarText}>
+                          {(row.name || '?').charAt(0).toUpperCase()}
                         </Text>
                       </View>
+                      <View>
+                        <Text style={styles.snapshotName}>{row.name}</Text>
+                        {row.gradeLabel ? (
+                          <Text style={styles.snapshotGrade}>{row.gradeLabel}</Text>
+                        ) : null}
+                      </View>
                     </View>
-                    {row.targetDays ? (
-                      <>
-                        <View style={styles.progressTrack}>
-                          <View
-                            style={[
-                              styles.progressFill,
-                              row.tone === 'behind' && styles.progressFillBehind,
-                              row.tone === 'ahead' && styles.progressFillAhead,
-                              { width: `${Math.min(100, row.progressPct || 0)}%` },
-                            ]}
-                          />
-                        </View>
-                        <Text style={styles.progressCaption}>
-                          {row.plannedDays}/{row.targetDays} days
-                        </Text>
-                      </>
-                    ) : null}
+                    <Text
+                      style={[
+                        styles.snapshotStatus,
+                        row.tone === 'behind' && styles.snapshotStatusBehind,
+                        row.tone === 'ahead' && styles.snapshotStatusAhead,
+                        row.tone === 'on_track' && styles.snapshotStatusOnTrack,
+                      ]}
+                    >
+                      {row.statusLabel}
+                    </Text>
                   </View>
-                ))}
-              </View>
+                  {row.targetDays ? (
+                    <>
+                      <View style={styles.progressTrack}>
+                        <View
+                          style={[
+                            styles.progressFill,
+                            row.tone === 'behind' && styles.progressFillBehind,
+                            row.tone === 'ahead' && styles.progressFillAhead,
+                            { width: `${Math.min(100, row.progressPct || 0)}%` },
+                          ]}
+                        />
+                      </View>
+                      <Text style={styles.progressCaption}>
+                        {row.plannedDays}/{row.targetDays} days
+                      </Text>
+                    </>
+                  ) : null}
+                </View>
+              ))
             )}
           </DashboardCard>
 
@@ -414,60 +484,12 @@ export default function ParentHomeDashboard({
                     activeOpacity={0.8}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Icon size={18} color={action.color} />
+                    <Icon size={20} color={action.color} />
                     <Text style={[styles.quickActionLabel, { color: action.color }]}>{action.label}</Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
-          </DashboardCard>
-        </View>
-
-        {/* Column 3 — Upcoming */}
-        <View style={styles.column}>
-          <DashboardCard
-            title="Upcoming"
-            headerRight={<HeaderLink label="View calendar" onPress={handleViewPlanner} />}
-          >
-            {upcomingGroups.length === 0 ? (
-              <EmptyLine text="No upcoming events this week." />
-            ) : (
-              <View style={styles.listGap}>
-                {upcomingGroups.map((group) => (
-                  <View key={group.dateKey}>
-                    <Text style={styles.upcomingDateLabel}>{group.label}</Text>
-                    {group.events.map((event) => (
-                      <TouchableOpacity
-                        key={String(event.id)}
-                        onPress={() => onOpenEvent?.(event)}
-                        activeOpacity={0.7}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <View style={styles.upcomingRow}>
-                          <Text style={styles.upcomingTime}>
-                            {formatTime(event.start_ts || event.start)}
-                          </Text>
-                          <Text style={styles.upcomingTitle} numberOfLines={1}>
-                            {getSubjectLabel(event, subjects)}
-                            {event.title && event.title !== getSubjectLabel(event, subjects)
-                              ? ` — ${event.title}`
-                              : ''}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                ))}
-              </View>
-            )}
-            <TouchableOpacity
-              style={styles.addEventLink}
-              onPress={onAddEvent}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={14} color="#6366f1" />
-              <Text style={styles.addEventLinkText}>Add Event</Text>
-            </TouchableOpacity>
           </DashboardCard>
         </View>
       </View>
@@ -490,7 +512,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 32,
-    gap: 16,
+    gap: 20,
   },
   hero: {
     gap: 4,
@@ -498,24 +520,17 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#0f172a',
+    color: '#0F172A',
     letterSpacing: -0.4,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  heroSubtext: {
-    fontSize: 14,
-    color: '#64748b',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   grid: {
     gap: 16,
     ...(Platform.OS === 'web' && {
       display: 'grid',
-      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+      gridTemplateColumns: '1fr 1fr',
       alignItems: 'start',
     }),
   },
@@ -528,14 +543,14 @@ const styles = StyleSheet.create({
     }),
   },
   card: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.18)',
-    padding: 16,
-    gap: 12,
+    padding: 18,
+    gap: 14,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.05)',
+      boxShadow: '0 2px 10px rgba(15, 23, 42, 0.06)',
     }),
   },
   cardHeader: {
@@ -544,18 +559,23 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 8,
   },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   cardTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#1e293b',
+    color: '#1E293B',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   headerLink: {
     fontSize: 13,
-    fontWeight: '500',
-    color: '#6366f1',
+    fontWeight: '600',
+    color: '#6366F1',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -566,10 +586,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   alertBadge: {
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#ef4444',
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#EF4444',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 6,
@@ -577,105 +597,122 @@ const styles = StyleSheet.create({
   alertBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#fff',
-  },
-  listGap: {
-    gap: 10,
+    color: '#FFFFFF',
   },
   emptyLine: {
     fontSize: 13,
-    color: '#94a3b8',
+    color: '#94A3B8',
     lineHeight: 20,
   },
-  eventRow: {
+  timelineRow: {
     flexDirection: 'row',
-    gap: 10,
-    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 4,
   },
-  eventTime: {
-    width: 72,
+  timelineRail: {
+    width: 12,
+    alignItems: 'center',
+  },
+  timelineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 6,
+  },
+  timelineLine: {
+    flex: 1,
+    width: 2,
+    backgroundColor: 'rgba(148, 163, 184, 0.35)',
+    marginTop: 4,
+    minHeight: 48,
+  },
+  timelineBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+  },
+  timelineTime: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#64748b',
-    paddingTop: 2,
+    color: '#64748B',
   },
-  eventBody: {
+  timelineEvent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  timelineIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  timelineTextBlock: {
     flex: 1,
     minWidth: 0,
     gap: 2,
   },
-  eventTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
-  },
-  eventIcon: {
-    flexShrink: 0,
-  },
-  eventTitle: {
-    flex: 1,
+  timelineTitle: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#1e293b',
-    minWidth: 0,
+    fontWeight: '700',
+    color: '#1E293B',
   },
-  eventMeta: {
+  timelineSubtitle: {
     fontSize: 12,
-    color: '#94a3b8',
+    color: '#64748B',
+    lineHeight: 17,
   },
   dueTodayTag: {
-    backgroundColor: '#fef2f2',
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    flexShrink: 0,
   },
   dueTodayTagText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#dc2626',
-    textTransform: 'uppercase',
+    color: '#DC2626',
   },
-  subSection: {
-    marginTop: 4,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(148, 163, 184, 0.15)',
-    gap: 8,
+  submitBtn: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    flexShrink: 0,
   },
-  subSectionTitle: {
+  submitBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#64748b',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
+    color: '#2563EB',
   },
-  compactRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  compactRowText: {
-    flex: 1,
-    fontSize: 13,
-    color: '#334155',
-  },
-  addEventLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 4,
-    paddingTop: 8,
-  },
-  addEventLinkText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#6366f1',
-  },
-  alertRow: {
+  insightRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
+    marginBottom: 4,
+  },
+  insightIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  insightText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 19,
+  },
+  alertRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 4,
   },
   alertIconWrap: {
     width: 32,
@@ -685,73 +722,92 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
-  alertText: {
+  alertCopy: {
     flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  alertTitle: {
     fontSize: 13,
-    color: '#334155',
-    lineHeight: 19,
+    fontWeight: '600',
+    color: '#1E293B',
+  },
+  alertSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
   },
   snapshotRow: {
-    gap: 6,
+    gap: 8,
+    marginBottom: 4,
   },
-  snapshotHeader: {
+  snapshotTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
   },
+  snapshotIdentity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    minWidth: 0,
+  },
+  snapshotAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  snapshotAvatarText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
   snapshotName: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#1e293b',
-  },
-  statusChip: {
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  statusChipOnTrack: {
-    backgroundColor: '#ecfdf5',
-  },
-  statusChipBehind: {
-    backgroundColor: '#fff7ed',
-  },
-  statusChipAhead: {
-    backgroundColor: '#ecfdf5',
-  },
-  statusChipText: {
-    fontSize: 11,
     fontWeight: '700',
+    color: '#1E293B',
   },
-  statusChipTextOnTrack: {
+  snapshotGrade: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+  snapshotStatus: {
+    fontSize: 12,
+    fontWeight: '700',
+    flexShrink: 0,
+  },
+  snapshotStatusOnTrack: {
     color: '#059669',
   },
-  statusChipTextBehind: {
-    color: '#ea580c',
+  snapshotStatusBehind: {
+    color: '#EA580C',
   },
-  statusChipTextAhead: {
+  snapshotStatusAhead: {
     color: '#059669',
   },
   progressTrack: {
     height: 6,
     borderRadius: 999,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#F1F5F9',
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
     borderRadius: 999,
-    backgroundColor: '#22c55e',
+    backgroundColor: '#22C55E',
   },
   progressFillBehind: {
-    backgroundColor: '#f97316',
+    backgroundColor: '#F97316',
   },
   progressFillAhead: {
-    backgroundColor: '#22c55e',
+    backgroundColor: '#22C55E',
   },
   progressCaption: {
     fontSize: 11,
-    color: '#94a3b8',
+    color: '#94A3B8',
   },
   quickActionsGrid: {
     flexDirection: 'row',
@@ -762,41 +818,16 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexBasis: '45%',
     minWidth: 120,
-    borderRadius: 12,
-    paddingVertical: 14,
+    borderRadius: 14,
+    paddingVertical: 18,
     paddingHorizontal: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 8,
   },
   quickActionLabel: {
     fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  upcomingDateLabel: {
-    fontSize: 12,
     fontWeight: '700',
-    color: '#64748b',
-    marginBottom: 6,
-    marginTop: 4,
-  },
-  upcomingRow: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingVertical: 4,
-    alignItems: 'center',
-  },
-  upcomingTime: {
-    width: 72,
-    fontSize: 12,
-    color: '#64748b',
-    fontWeight: '500',
-  },
-  upcomingTitle: {
-    flex: 1,
-    fontSize: 13,
-    color: '#334155',
-    minWidth: 0,
+    textAlign: 'center',
   },
 });

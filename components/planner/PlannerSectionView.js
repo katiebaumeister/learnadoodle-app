@@ -8,14 +8,15 @@ import {
   ScrollView,
 } from 'react-native';
 import {
-  Calendar,
   ChevronDown,
   Sparkles,
 } from 'lucide-react';
+import { MAIN_NAV_ICONS, MAIN_NAV_PAGE_ICON_COLOR, MAIN_NAV_PAGE_ICON_SIZE } from '../layout/mainNavIcons';
 import PlannerSummaryCards from './PlannerSummaryCards';
 import PlannerCalendarToolbar from './PlannerCalendarToolbar';
 import PlannerRightRail from './PlannerRightRail';
 import PlanHealthConflicts from './PlanHealthConflicts';
+import PlannerSmartActionsMenu from './PlannerSmartActionsMenu';
 import SubjectsPlanBuilder from '../subjects/SubjectsPlanBuilder';
 import { parsePlannerSection } from './plannerSectionRouting';
 import { familyStyles } from '../family/familyDesignTokens';
@@ -44,7 +45,9 @@ export default function PlannerSectionView({
 }) {
   const parsed = useMemo(() => parsePlannerSection(section), [section]);
   const [conflictLabel, setConflictLabel] = useState(null);
+  const [showSmartActionsMenu, setShowSmartActionsMenu] = useState(false);
   const fixGapContainerRef = useRef(null);
+  const smartActionsButtonRef = useRef(null);
 
   const scrollToFixGap = useCallback(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -112,9 +115,7 @@ export default function PlannerSectionView({
   }, []);
 
   const openSmartActions = useCallback(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openPlannerSmartActions'));
-    }
+    setShowSmartActionsMenu((open) => !open);
   }, []);
 
   const handleOpenAskAI = useCallback(() => {
@@ -133,19 +134,12 @@ export default function PlannerSectionView({
     }
 
     return (
-      <View style={familyStyles.pageContent}>
+      <View style={styles.pageContent}>
         <PlannerSummaryCards
           planHealth={preloadedPlanHealth}
-          weekEventCount={weekEventCount}
-          weekAssignmentCount={weekAssignmentCount}
           conflictLabel={conflictLabel}
           onViewDetails={scrollToFixGap}
           onFixGap={scrollToFixGap}
-          onViewWeek={() => {
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'board' }));
-            }
-          }}
           onResolveConflict={() => navigateSection('calendar')}
         />
         <View style={styles.calendarLayout}>
@@ -165,9 +159,13 @@ export default function PlannerSectionView({
             </View>
           </View>
           <PlannerRightRail
-            familyId={familyId}
-            preloadedPlanHealth={preloadedPlanHealth}
-            onFixGap={scrollToFixGap}
+            weekEventCount={weekEventCount}
+            weekAssignmentCount={weekAssignmentCount}
+            onViewWeek={() => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'board' }));
+              }
+            }}
             onOpenAskAI={handleOpenAskAI}
           />
         </View>
@@ -193,6 +191,8 @@ export default function PlannerSectionView({
     );
   };
 
+  const PageIcon = MAIN_NAV_ICONS.planner;
+
   return (
     <View style={styles.shell}>
       <ScrollView
@@ -204,7 +204,7 @@ export default function PlannerSectionView({
           <View style={styles.titleRow}>
             <View style={styles.titleBlock}>
               <View style={styles.titleLine}>
-                <Calendar size={22} color="#2563EB" />
+                <PageIcon size={MAIN_NAV_PAGE_ICON_SIZE} color={MAIN_NAV_PAGE_ICON_COLOR} strokeWidth={2} />
                 <Text style={styles.pageTitle}>Planner</Text>
               </View>
             </View>
@@ -218,6 +218,7 @@ export default function PlannerSectionView({
                 <Text style={styles.planWeekText}>Plan Week</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                ref={smartActionsButtonRef}
                 style={styles.smartActionsBtn}
                 onPress={openSmartActions}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -225,10 +226,15 @@ export default function PlannerSectionView({
                 <Text style={styles.smartActionsText}>Smart Actions</Text>
                 <ChevronDown size={14} color="#6B7280" />
               </TouchableOpacity>
+              <PlannerSmartActionsMenu
+                visible={showSmartActionsMenu}
+                triggerRef={smartActionsButtonRef}
+                onClose={() => setShowSmartActionsMenu(false)}
+              />
             </View>
           </View>
         </View>
-        <View style={styles.content}>{renderContent()}</View>
+        {renderContent()}
       </ScrollView>
     </View>
   );
@@ -258,7 +264,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 16,
-    marginBottom: 16,
+    marginBottom: 0,
     flexWrap: 'wrap',
   },
   titleBlock: {
@@ -321,9 +327,9 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 16,
   },
-  content: {
-    flex: 1,
-    minHeight: 0,
+  pageContent: {
+    ...familyStyles.pageContent,
+    paddingTop: 0,
   },
   calendarLayout: {
     flexDirection: 'row',
