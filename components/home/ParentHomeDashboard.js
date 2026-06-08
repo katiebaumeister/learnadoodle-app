@@ -166,7 +166,14 @@ export default function ParentHomeDashboard({
 }) {
   const greetingName = userDisplayName?.trim() || 'there';
 
-  const handleFixGap = () => onNavigate?.('planner', 'plan-health');
+  const handleFixGap = () => {
+    onNavigate?.('planner', 'calendar');
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent('plannerScrollToFixGap'));
+      });
+    }
+  };
   const handleSendMessage = () => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('openMessagesPane'));

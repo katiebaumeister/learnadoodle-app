@@ -1,42 +1,24 @@
 import React, { useMemo, useRef, useState, useCallback } from 'react';
-import { View, Text, Platform, Alert } from 'react-native';
+import { View, Text, Platform, Alert, StyleSheet } from 'react-native';
 import { startOfWeek, addDays, format } from './utils/date';
 import EventChip from '../calendar/EventChip';
 import { rescheduleEvent } from '../../lib/services/plannerClientWithOffline';
 
-// Time-of-day periods
+// Time-of-day periods — split each day into morning and afternoon only.
 const TIME_PERIODS = [
-  { key: 'morning', label: 'Morning', start: 5, end: 12 },
-  { key: 'afternoon', label: 'Afternoon', start: 12, end: 17 },
-  { key: 'evening', label: 'Evening', start: 17, end: 22 },
-  { key: 'late', label: 'Late', start: 22, end: 29 }, // 22:00-05:00 (wraps to next day)
+  { key: 'morning', label: 'Morning', start: 0, end: 12 },
+  { key: 'afternoon', label: 'Afternoon', start: 12, end: 24 },
 ];
 
-// Get time period for an event
 const getTimePeriod = (event) => {
   const startTime = event.start || event.start_ts || event.start_local;
-  if (!startTime) return 'morning'; // Default
-  
+  if (!startTime) return 'morning';
+
   const eventDate = new Date(startTime);
   if (Number.isNaN(eventDate.getTime())) return 'morning';
-  
+
   const hour = eventDate.getHours();
-  
-  // Handle late period (22:00-05:00)
-  if (hour >= 22 || hour < 5) {
-    return 'late';
-  }
-  
-  // Check other periods
-  for (const period of TIME_PERIODS) {
-    if (period.key === 'late') continue; // Already handled
-    
-    if (hour >= period.start && hour < period.end) {
-      return period.key;
-    }
-  }
-  
-  return 'morning'; // Default fallback
+  return hour < 12 ? 'morning' : 'afternoon';
 };
 
 const localYmd = (d) => {
@@ -742,9 +724,6 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
         const dayIso = localYmd(d);
         const dayPeriods = byDayAndPeriod.get(key) ?? new Map();
         
-        // Check if day has any events
-        const hasEvents = Array.from(dayPeriods.values()).some(events => events.length > 0);
-        
         return (
           <View
             key={key}
@@ -782,60 +761,29 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
               </Text>
             </View>
 
-            {/* Events grouped by time period */}
-            {!hasEvents ? (
-              <View
-                style={{
-                  height: 56,
-                  borderWidth: 1,
-                  borderColor: '#e5e7eb',
-                  borderRadius: 12,
-                  backgroundColor: 'transparent',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                <Text style={{ color: '#9aa3af', fontSize: 12 }}>No tasks</Text>
-              </View>
-            ) : (
-              <View style={{ gap: 16 }}>
-                {TIME_PERIODS.map((period, periodIndex) => {
-                  const periodEvents = dayPeriods.get(period.key) ?? [];
-                  
-                  if (periodEvents.length === 0) return null;
-                  
-                  // Check if there's a previous non-empty period
-                  const hasPreviousPeriod = TIME_PERIODS.slice(0, periodIndex).some(p => {
-                    const prevEvents = dayPeriods.get(p.key) ?? [];
-                    return prevEvents.length > 0;
-                  });
-                  
-                  return (
-                    <View key={period.key} style={{ gap: 8 }}>
-                      {/* Section header with divider */}
-                      {hasPreviousPeriod && (
-                        <View style={{
-                          height: 1,
-                          backgroundColor: '#e5e7eb',
-                          marginBottom: 8,
-                          marginTop: -8
-                        }} />
-                      )}
-                      
-                      <View style={{ marginBottom: 8 }}>
-                        <Text style={{
-                          fontSize: 11,
-                          fontWeight: '600',
-                          color: '#64748b',
-                          textTransform: 'uppercase',
-                          letterSpacing: 0.5
-                        }}>
-                          {period.label}
-                        </Text>
+            {/* Events grouped by morning / afternoon */}
+            <View style={styles.dayPeriodStack}>
+              {TIME_PERIODS.map((period, periodIndex) => {
+                const periodEvents = dayPeriods.get(period.key) ?? [];
+
+                return (
+                  <View
+                    key={period.key}
+                    style={[
+                      styles.dayPeriodSection,
+                      periodIndex === 0 && styles.dayPeriodSectionFirst,
+                    ]}
+                  >
+                    {periodIndex > 0 ? <View style={styles.dayPeriodDivider} /> : null}
+
+                    <Text style={styles.dayPeriodLabel}>{period.label}</Text>
+
+                    {periodEvents.length === 0 ? (
+                      <View style={styles.dayPeriodEmpty}>
+                        <Text style={styles.dayPeriodEmptyText}>No tasks</Text>
                       </View>
-                      
-                      {/* Events in this period */}
-                      <View style={{ gap: 4 }}>
+                    ) : (
+                      <View style={styles.dayPeriodEvents}>
                         {periodEvents.map(ev => {
                           const canonicalId = ev._originalId || ev.id;
                           const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
@@ -880,11 +828,11 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
                           );
                         })}
                       </View>
-                    </View>
-                  );
-                })}
-              </View>
-            )}
+                    )}
+                  </View>
+                );
+              })}
+            </View>
           </View>
         );
       })}
@@ -894,3 +842,47 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
   );
 }
 
+const styles = StyleSheet.create({
+  dayPeriodStack: {
+    flex: 1,
+    gap: 0,
+    minHeight: 320,
+  },
+  dayPeriodSection: {
+    flex: 1,
+    gap: 8,
+    paddingTop: 4,
+  },
+  dayPeriodSectionFirst: {
+    paddingTop: 0,
+  },
+  dayPeriodDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginBottom: 12,
+  },
+  dayPeriodLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  dayPeriodEmpty: {
+    minHeight: 56,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dayPeriodEmptyText: {
+    color: '#9aa3af',
+    fontSize: 12,
+  },
+  dayPeriodEvents: {
+    gap: 4,
+  },
+});

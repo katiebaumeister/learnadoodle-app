@@ -369,6 +369,9 @@ export default function PlannerSettingsContent({
   readOnly = false,
   embeddedInModal = false,
   lockedSchoolYearLabel = null,
+  pageTitle = null,
+  embeddedInFamily = false,
+  hidePageTitle = false,
 }) {
   const toast = useToast();
   const initialSnapshot = getInitialPlannerSettingsSnapshot({
@@ -1945,9 +1948,11 @@ export default function PlannerSettingsContent({
     }),
   };
   const pageTitleStyle = {
-    ...SettingsTypography.pageTitle,
-    color: '#111827',
-    marginBottom: SettingsLayout.dividerSpacing,
+    ...(embeddedInFamily
+      ? { fontSize: 16, fontWeight: '700' }
+      : SettingsTypography.pageTitle),
+    color: embeddedInFamily ? '#0F172A' : '#111827',
+    marginBottom: embeddedInFamily ? 14 : SettingsLayout.dividerSpacing,
     fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
   };
   const chip = (active) => ({
@@ -2154,9 +2159,9 @@ export default function PlannerSettingsContent({
             </Text>
           </View>
         ) : null}
-        {!embeddedInModal ? (
+        {!embeddedInModal && !hidePageTitle ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={pageTitleStyle}>Planning Preferences</Text>
+            <Text style={pageTitleStyle}>{pageTitle || 'Planning Preferences'}</Text>
             {savedIndicator && (
               <Text style={{ fontSize: 13, color: '#10b981', fontWeight: '500' }}>Saved</Text>
             )}

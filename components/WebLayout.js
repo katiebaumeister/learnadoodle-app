@@ -1077,6 +1077,33 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, [showFiltersDropdown]);
 
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const openPlanWeek = () => setShowPlanWeekModal(true);
+    const openFilters = () => {
+      if (topToolbarFiltersButtonRef.current) {
+        const node = topToolbarFiltersButtonRef.current._nativeNode || topToolbarFiltersButtonRef.current;
+        if (node && typeof node.getBoundingClientRect === 'function') {
+          const rect = node.getBoundingClientRect();
+          setFiltersDropdownPosition({
+            top: rect.bottom + 4,
+            left: rect.left,
+          });
+        }
+      }
+      setShowFiltersDropdown(true);
+    };
+    const openSmartActions = () => setShowAIToolsModal(true);
+    window.addEventListener('openPlanWeekModal', openPlanWeek);
+    window.addEventListener('openPlannerFilters', openFilters);
+    window.addEventListener('openPlannerSmartActions', openSmartActions);
+    return () => {
+      window.removeEventListener('openPlanWeekModal', openPlanWeek);
+      window.removeEventListener('openPlannerFilters', openFilters);
+      window.removeEventListener('openPlannerSmartActions', openSmartActions);
+    };
+  }, []);
+
   // Handle click outside Planner Settings popover
   const plannerSettingsPopoverRef = useRef(null);
   useEffect(() => {
@@ -3290,7 +3317,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
           break;
         case 'family':
-          handleTabChange('family', 'members');
+          handleTabChange('family', 'overview');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.history.pushState({}, '', '/family');
           }
@@ -3516,14 +3543,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     prevActiveTabRef.current = activeTab;
   }, [activeTab, currentView, planYearFromSubjectDetail, resetInlinePlanYearOpenState]);
 
-  const plannerSection = activeTab === 'planner' ? resolveSection('planner', activeSubtab) : null;
   const isCalendarScreen =
-    activeTab === 'calendar' ||
-    (activeTab === 'planner' && plannerSection === 'calendar');
+    activeTab === 'calendar';
 
   /** Schedule setup / preferences replace the main pane in URL state but must not unmount WebContent (month grid stays warm). */
   const isPlanYearInline =
-    isCalendarScreen && (currentView === 'plan-year' || currentView === 'edit-year');
+    (activeTab === 'planner' || isCalendarScreen)
+    && (currentView === 'plan-year' || currentView === 'edit-year');
   const plannerViewForWebContent = isPlanYearInline
     ? (() => {
         const r = planYearReturnViewRef.current || defaultView || 'month';
@@ -3566,33 +3592,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (activeTab === 'home') {
       crumbs.push({ label: 'Home' });
     } else if (activeTab === 'planner' || activeTab === 'calendar') {
-      crumbs.push({ 
-        label: 'Calendar',
-        onPress: () => handleTabChange('planner'),
-      });
-      
-      // Check URL params for view mode (lowercase in URL, capitalize for display)
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        const urlParams = new URLSearchParams(window.location.search);
-        const view = urlParams.get('view');
-        if (view) {
-          const viewMap = {
-            'week': 'Week',
-            'month': 'Month',
-            'day': 'Day',
-            'board': 'Board',
-            'attendance': 'Attendance',
-            'attendance-drilldown': 'Attendance drill-down',
-            'Week': 'Week',
-            'Month': 'Month',
-            'Day': 'Day',
-            'Board': 'Board',
-            'Attendance': 'Attendance',
-          };
-          const viewLabel = viewMap[view] || view.charAt(0).toUpperCase() + view.slice(1);
-          crumbs.push({ label: viewLabel });
-        }
-      }
+      crumbs.push({ label: 'Planner' });
     } else if (activeTab === 'materials') {
       crumbs.push({ label: 'Materials' });
     } else if (activeTab === 'subjects') {
@@ -3614,6 +3614,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       }
     } else if (activeTab === 'records') {
       crumbs.push({ label: 'Records' });
+    } else if (activeTab === 'family') {
+      crumbs.push({ label: 'Family' });
     } else if (activeTab === 'intelligence') {
       crumbs.push({ label: 'Intelligence' });
     } else if (activeTab === 'explore') {
@@ -3668,7 +3670,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, [signOut]);
 
-  const shellSectionNavTab = useMemo(() => getSectionNavTab(activeTab), [activeTab]);
+  const shellSectionNavTab = useMemo(() => {
+    const tab = getSectionNavTab(activeTab);
+    // Learning, Family, Records, and Planner use in-content navigation without the shell secondary pane.
+    if (tab === 'subjects' || tab === 'learning' || tab === 'family' || tab === 'records' || tab === 'planner') return null;
+    return tab;
+  }, [activeTab]);
   const shellSectionNavSections = shellSectionNavTab ? getSectionsForTab(shellSectionNavTab) : null;
   const shellActiveSection = shellSectionNavTab
     ? resolveSection(shellSectionNavTab, activeSubtab)
@@ -4774,6 +4781,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 session={session}
                 profile={profile}
                 preloadedPlanHealth={preloadedPlanHealth}
+                preloadedAcademicYears={preloadedAcademicYears}
                 onHomeInitialDataReady={handleHomeInitialDataReady}
                 onViewAsChild={handleChildSelect}
                 onExitChildView={handleExitChildView}

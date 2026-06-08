@@ -23,11 +23,9 @@ import { parseChildIds } from '../../lib/services/subjectsClient';
 import { DOCUMENT_ROLE_CHIPS } from '../../lib/docs/roles';
 import { useModalStackElevation, NESTED_MODAL_STACK_Z } from '../hooks/useModalStackElevation';
 import AppModalShell from '../ui/AppModalShell';
-import { MODAL_SIZE } from '../ui/modalSystem';
 import { ModalFooter } from '../ui/ModalFooter';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
 import ConfirmDialog from '../ConfirmDialog';
-import { useToast } from '../Toast';
 
 const ROLE_OPTIONS = DOCUMENT_ROLE_CHIPS.filter((c) => c.value !== 'all');
 
@@ -122,7 +120,6 @@ export default function AddMaterialModal({
   defaultProviderUrl = null,
   connectedProviderIds = [],
 }) {
-  const toast = useToast();
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [validationError, setValidationError] = useState('');
@@ -1068,25 +1065,26 @@ export default function AddMaterialModal({
         />
         <View style={[styles.modalWrap, { pointerEvents: 'box-none' }]}>
           <AppModalShell
-            size={MODAL_SIZE.standard}
-            title={isEditingExistingMaterial ? 'Edit Resource' : 'Upload Resource'}
-            description={isEditingExistingMaterial ? 'Update this book, link, or file.' : 'Add a book, link, or resource to your library.'}
+            mode={isEditingExistingMaterial ? 'edit' : 'add'}
+            title={isEditingExistingMaterial ? 'Edit material' : 'Add material'}
+            eyebrow="MATERIAL"
+            accent="#9ECFFB"
+            accentSoft="#F0F8FF"
+            HeroIcon={Paperclip}
             onClose={handleDismiss}
-            onGenerate={() => {
-              toast.push('AI resource suggestions are coming soon.', 'info');
-            }}
             shellStyle={styles.shellAutoHeight}
             contentContainerStyle={styles.contentContainer}
             bodyStyle={styles.shellBody}
             footer={(
               <ModalFooter
                 mode={isEditingExistingMaterial ? 'edit' : 'add'}
-                primaryLabel={loading ? 'Saving…' : (isEditingExistingMaterial ? 'Save' : 'Create')}
+                primaryLabel={loading ? 'Saving...' : (isEditingExistingMaterial ? 'Save changes' : 'Add Material')}
                 destructiveLabel={isEditingExistingMaterial && typeof onDelete === 'function' ? 'Delete Material' : undefined}
                 onCancel={handleDismiss}
                 onDelete={isEditingExistingMaterial && typeof onDelete === 'function' ? () => setShowDeleteConfirm(true) : undefined}
                 onPrimary={handleSave}
                 onBlockedPrimary={showBlockedSaveFeedback}
+                accent="#9ECFFB"
                 disabled={loading}
                 visuallyDisabled={!isFormValid}
                 loading={loading}

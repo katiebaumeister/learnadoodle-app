@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { UserCircle, Settings, LogOut, Sparkles } from 'lucide-react';
 import Dropdown from '../ui/Dropdown';
 
@@ -32,32 +32,22 @@ const AppTopBar = forwardRef(function AppTopBar(
   ref
 ) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [query, setQuery] = useState('');
   const profileButtonRef = useRef(null);
-  const inputRef = useRef(null);
 
   const displayName = (userName || userEmail || 'Account').trim();
   const roleLabel = formatUserRole(userRole);
 
   useImperativeHandle(ref, () => ({
     focusInput: () => {
-      inputRef.current?.focus?.();
+      if (doodleDisabled) return;
+      onOpenAskAI?.();
     },
   }));
 
-  const submitQuery = useCallback(
-    (rawValue) => {
-      if (doodleDisabled) return;
-      const trimmed = String(rawValue ?? query ?? '').trim();
-      setQuery('');
-      if (trimmed) {
-        onOpenAskAI?.({ prompt: trimmed, autoSubmit: true });
-      } else {
-        onOpenAskAI?.();
-      }
-    },
-    [doodleDisabled, onOpenAskAI, query]
-  );
+  const openSearchModal = useCallback(() => {
+    if (doodleDisabled) return;
+    onOpenAskAI?.();
+  }, [doodleDisabled, onOpenAskAI]);
 
   const handleOpenSettings = useCallback(() => {
     setMenuOpen(false);
@@ -74,51 +64,30 @@ const AppTopBar = forwardRef(function AppTopBar(
     const handler = (e) => {
       if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 'k') {
         e.preventDefault();
-        inputRef.current?.focus?.();
+        openSearchModal();
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [doodleDisabled]);
+  }, [doodleDisabled, openSearchModal]);
 
   return (
     <View style={styles.bar}>
       <View style={styles.searchCenter}>
-        <View
+        <TouchableOpacity
           style={[
             styles.searchBar,
             doodleDisabled && styles.searchBarDisabled,
           ]}
+          onPress={openSearchModal}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Search or ask anything"
+          {...(Platform.OS === 'web' && { cursor: doodleDisabled ? 'not-allowed' : 'pointer' })}
         >
-          <TouchableOpacity
-            onPress={() => {
-              if (doodleDisabled) return;
-              onOpenAskAI?.();
-            }}
-            accessibilityRole="button"
-            accessibilityLabel="Open Doodle chat"
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
-            {...(Platform.OS === 'web' && { cursor: doodleDisabled ? 'not-allowed' : 'pointer' })}
-          >
-            <Sparkles size={16} color="#8B5CF6" strokeWidth={2} />
-          </TouchableOpacity>
-          <TextInput
-            ref={inputRef}
-            style={styles.searchInput}
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Ask Learnadoodle anything..."
-            placeholderTextColor="rgba(15, 23, 42, 0.45)"
-            editable={!doodleDisabled}
-            returnKeyType="send"
-            onSubmitEditing={() => submitQuery()}
-            accessibilityLabel="Ask Doodle"
-            accessibilityHint="Type a question and press enter to chat with Doodle"
-            {...(Platform.OS === 'web' && {
-              cursor: doodleDisabled ? 'not-allowed' : 'text',
-            })}
-          />
-        </View>
+          <Sparkles size={16} color="#8B5CF6" strokeWidth={2} />
+          <Text style={styles.searchPlaceholder}>Search or ask anything</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.profileWrap}>
@@ -220,15 +189,13 @@ const styles = StyleSheet.create({
   searchBarDisabled: {
     opacity: 0.55,
   },
-  searchInput: {
+  searchPlaceholder: {
     flex: 1,
     fontSize: 14,
-    color: '#0f172a',
-    paddingVertical: 0,
+    color: 'rgba(15, 23, 42, 0.45)',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      outlineStyle: 'none',
-      borderWidth: 0,
+      userSelect: 'none',
     }),
   },
   profileWrap: {

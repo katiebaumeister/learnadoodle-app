@@ -141,7 +141,7 @@ export default function LeftRail({
         { key: 'subjects', label: 'Learning', icon: GraduationCap },
         { key: 'planner', label: 'Planner', icon: CalendarDays },
         { key: 'records', label: 'Records', icon: FileText },
-        { key: 'family', label: 'Family settings', icon: Users },
+        { key: 'family', label: 'Family', icon: Users },
         { key: 'messages', label: 'Messages', icon: MessageCircle },
         { key: 'learning', label: 'Subjects', icon: Layers },
         { key: 'create', label: 'Create', icon: Plus },

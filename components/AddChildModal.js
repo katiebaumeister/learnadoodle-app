@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Modal as RNModal } from 'react-native';
+import { Smile } from 'lucide-react';
 import AddChildForm from './AddChildForm';
 import { addChild } from '../lib/apiClient';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
-import AppModalOverlay from './ui/AppModalOverlay';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
-import { MODAL_SIZE } from './ui/modalSystem';
 
 /**
  * Add Child Modal - Matches Learnadoodle onboarding spec
@@ -136,54 +135,79 @@ export default function AddChildModal({
   };
 
   return (
-    <AppModalOverlay
+    <RNModal
       visible={visible}
-      onClose={onClose}
-      size={MODAL_SIZE.standard}
-      overlayRef={overlayRef}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={onClose}
     >
-      <AppModalShell
-        title="New Child"
-        description="Add a student to your family."
-        onClose={onClose}
-        onGenerate={() => {
-          if (toast?.push) toast.push('AI child setup suggestions are coming soon.', 'info');
-        }}
-        size={MODAL_SIZE.standard}
-        footer={(
-          <ModalFooter
-            mode="add"
-            primaryLabel={isSubmitting ? 'Creating…' : 'Create'}
-            onCancel={onClose}
-            onPrimary={() => {
-              if (formRef.current?.submit) formRef.current.submit();
-            }}
-            onBlockedPrimary={() => {
-              setError('Please complete all required fields before saving.');
-            }}
-            disabled={isSubmitting}
-            visuallyDisabled={!canSubmit}
-            loading={isSubmitting}
-          />
-        )}
-      >
-        {error ? (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        ) : null}
-        <AddChildForm
-          ref={formRef}
-          onSubmit={handleSubmit}
-          submitting={isSubmitting}
-          onValidationChange={setCanSubmit}
+      <View ref={overlayRef} style={styles.overlay}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
         />
-      </AppModalShell>
-    </AppModalOverlay>
+        <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalWrap}>
+          <AppModalShell
+            mode="add"
+            title="Add child"
+            eyebrow="CHILD"
+            accent="#9ECFFB"
+            accentSoft="#F0F8FF"
+            HeroIcon={Smile}
+            onClose={onClose}
+            contentContainerStyle={styles.scrollContent}
+            footer={(
+              <ModalFooter
+                mode="add"
+                primaryLabel={isSubmitting ? 'Saving...' : 'Save Student'}
+                onCancel={onClose}
+                onPrimary={() => {
+                  if (formRef.current?.submit) formRef.current.submit();
+                }}
+                onBlockedPrimary={() => {
+                  setError('Please complete all required fields before saving.');
+                }}
+                accent="#9ECFFB"
+                disabled={isSubmitting}
+                visuallyDisabled={!canSubmit}
+                loading={isSubmitting}
+              />
+            )}
+          >
+            {error && (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            )}
+            <AddChildForm
+              ref={formRef}
+              onSubmit={handleSubmit}
+              submitting={isSubmitting}
+              onValidationChange={setCanSubmit}
+            />
+          </AppModalShell>
+        </TouchableOpacity>
+      </View>
+    </RNModal>
   );
 }
 
 const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalWrap: {
+    width: '100%',
+    maxWidth: 860,
+  },
+  scrollContent: {
+    paddingBottom: 16,
+  },
   errorContainer: {
     backgroundColor: '#fef2f2',
     borderWidth: 1,

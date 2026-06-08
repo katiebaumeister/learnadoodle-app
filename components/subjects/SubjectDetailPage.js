@@ -72,6 +72,7 @@ import SubmitForReviewModal from '../child/SubmitForReviewModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import MaterialDetailsModal from '../materials/MaterialDetailsModal';
 import { archiveMaterial } from '../../lib/services/materialsClient';
+import LearningSubjectDetailView from '../learning/LearningSubjectDetailView';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_EVENTS_SECTION = true;
@@ -442,6 +443,7 @@ export default function SubjectDetailPage({
   initialScrollToSectionId = null,
   initialOpenMaterialId = null,
   initialProgressAction = null,
+  layoutVariant = 'default',
 }) {
   const initialSubjectIdForProgressCache = subjectId || preloadedSubjectData?.subject?.id;
   const preloadedProgressCache = initialSubjectIdForProgressCache
@@ -3002,6 +3004,59 @@ export default function SubjectDetailPage({
 
   return (
     <View style={styles.container}>
+      {layoutVariant === 'learning' ? (
+        <LearningSubjectDetailView
+          subject={subject}
+          familyId={familyId}
+          children={children}
+          onBack={onBack}
+          progressPercent={subjectData?.progressPercent}
+          progressCompleted={subjectData?.progressCompleted}
+          progressTotal={subjectData?.progressTotal}
+          nextItem={nextItem}
+          status={
+            (subjectData?.overdueItems || []).length > 0
+            || (subjectData?.progressPercent != null
+              && subjectData.progressPercent < 50
+              && (subjectEvents || []).length > 5)
+              ? 'needs_attention'
+              : (
+                (subjectData?.progressPercent == null || subjectData.progressPercent === 0)
+                && !(subjectData?.progressCompleted > 0)
+                && (subjectEvents || []).length === 0
+              )
+                ? 'not_started'
+                : 'on_track'
+          }
+          subjectEvents={subjectEvents}
+          subjectAssignments={subjectAssignments}
+          assignmentsNeedingHelp={assignmentsNeedingHelp}
+          materials={materials}
+          onCreateEvent={() => {
+            if (Platform.OS === 'web' && typeof window !== 'undefined' && subject?.id) {
+              window.dispatchEvent(new CustomEvent('openTaskModal', {
+                detail: {
+                  subjectId: subject.id,
+                  eventType: 'Lesson',
+                  date: new Date(),
+                  childIds: assignedChildren,
+                },
+              }));
+            }
+          }}
+          onMessage={() => {
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('openMessagesPane'));
+            }
+          }}
+          onEventPress={handleSubjectEventPress}
+          onEventRightClick={handleEventContextMenu}
+          onAssignmentPress={(assignment) => openAssignedWorkItem(assignment)}
+          onMaterialPress={handleMaterialChipPress}
+          onAddMaterial={openAddMaterialModal}
+          canManageMaterials={canManageMaterials}
+        />
+      ) : (
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -3638,6 +3693,7 @@ export default function SubjectDetailPage({
         ) : null}
 
       </ScrollView>
+      )}
       <Modal
         visible={showLearningGoalsMethodModal}
         transparent

@@ -30,13 +30,9 @@ test.describe('Learnadoodle shell interactions', () => {
     await expect(page.locator('text=Connect Google Drive')).toBeVisible();
   });
 
-  test('top bar search submits on enter', async ({ page }) => {
-    const searchBox = page.getByPlaceholder('Search lessons, events, evidence, people…');
-    await searchBox.click();
-    await searchBox.fill('Reading plan for Lilly');
-    await searchBox.press('Enter');
-
-    await expect(page.locator('text=Ask Doodle')).toBeVisible();
+  test('top bar search opens doodle modal', async ({ page }) => {
+    await page.getByRole('button', { name: 'Search or ask anything' }).click();
+    await expect(page.getByPlaceholder('Search or ask anything')).toBeVisible();
     await page.getByRole('button', { name: /Close search modal/i }).click();
   });
 });

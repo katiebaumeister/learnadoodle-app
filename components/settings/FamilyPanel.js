@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, TextInput, Alert, ScrollView, Platform, Switch, Modal, Image } from 'react-native';
 import { Edit, Plus, Copy, ExternalLink, LogOut, Trash2, ShoppingBag, HelpCircle, BookOpen, MessageSquare, ChevronRight, ChevronLeft, ChevronDown, Key, X, Heart, FileText, Sparkles, Send, Eye, EyeOff, Pencil, Check, User, Link2, Bell, CreditCard, AlertTriangle, RotateCw } from 'lucide-react';
-import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount, setOnboardingPlanningMode } from '../../lib/apiClient';
+import { getFamilyMembers, inviteTutor, updateTutorScope, getMe, resetFamilyData, updateFamilyName, getAPIBase, deleteAccount, requestPersonalDataExport, setOnboardingPlanningMode } from '../../lib/apiClient';
 import { getPlanDefaultsFromSettings } from '../../lib/services/plannerSettingsClient';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
@@ -30,6 +30,7 @@ import TaskCreateModal from '../TaskCreateModal';
 import ParsePlainTextModal from '../ParsePlainTextModal';
 import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
+import FamilyApproachSelector from './FamilyApproachSelector';
 import GoogleDriveImportModal from './GoogleDriveImportModal';
 import { SettingsLayout, SettingsTypography } from './settingsDesignTokens';
 import SubscriptionScreen from '../../screens/profile/SubscriptionScreen';
@@ -125,6 +126,24 @@ const ONBOARDING_GOAL_OPTIONS = [
   { id: 'NONE', label: 'Just scheduling' },
 ];
 
+const SETTINGS_SIDEBAR_ITEMS = [
+  { key: 'profile', label: 'Profile' },
+  { key: 'appearance', label: 'Appearance' },
+  { key: 'notifications', label: 'Notifications' },
+  { key: 'datavault', label: 'Backup data' },
+  { key: 'subscription', label: 'Billing', requiresSubscription: true },
+  { key: 'feedback', label: 'Feedback' },
+  { key: 'about', label: 'About' },
+  { key: 'terms', label: 'Terms' },
+  { key: 'privacy', label: 'Privacy' },
+];
+
+/** Re-enable when billing checkout is live. */
+const SHOW_BILLING_TAB = false;
+
+/** Re-enable when account deletion is ready for general use. */
+const SHOW_DANGER_ZONE = false;
+
 const TUTOR_PERMISSION_OPTIONS = [
   { id: 'viewer', label: 'Viewer Tutor' },
   { id: 'teaching', label: 'Teaching Tutor' },
@@ -169,7 +188,7 @@ function confirmParentReinvite(email) {
   });
 }
 
-export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null, hideInternalSidebar = false, onViewAsChild = null, onExitChildView = null }) {
+export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null, hideInternalSidebar = false, embeddedInFamily = false, onViewAsChild = null, onExitChildView = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
   const currentChildId = propCurrentChildId ?? null;
   const viewingAsChildId = propViewingAsChildId ?? null;
@@ -191,7 +210,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [hoveredChildId, setHoveredChildId] = useState(null);
   const [hoveredTutorId, setHoveredTutorId] = useState(null);
   const [familyNameRowHovered, setFamilyNameRowHovered] = useState(false);
-  const [logoutHovered, setLogoutHovered] = useState(false);
   
   // Profile state
   const [profile, setProfile] = useState(propProfile);
@@ -222,6 +240,36 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     if (!isChildMode) return true;
     return isSelfManagedStudent;
   }, [isTutorViewer, isChildMode, isSelfManagedStudent]);
+
+  const visibleSidebarItems = useMemo(() => {
+    let items = SETTINGS_SIDEBAR_ITEMS.filter(
+      (item) => (!item.requiresSubscription || showFamilySubscriptionCard) && (SHOW_BILLING_TAB || item.key !== 'subscription')
+    );
+    if (isChildRestrictedView) {
+      items = items.filter((item) => item.key === 'profile');
+    }
+    return items;
+  }, [showFamilySubscriptionCard, isChildRestrictedView]);
+
+  const handleSettingsNavPress = useCallback((sectionKey) => {
+    if (['about', 'terms', 'privacy'].includes(sectionKey)) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.history.pushState({ section: sectionKey }, '', window.location.pathname);
+      }
+    }
+    setActiveSection(sectionKey);
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    setLoggingOut(true);
+    try {
+      await signOut();
+    } catch (error) {
+      // signOut handles local fallback
+    } finally {
+      setLoggingOut(false);
+    }
+  }, [signOut]);
   
   // Profile editing state
   const [editingProfile, setEditingProfile] = useState(false);
@@ -286,6 +334,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     if (isChildRestrictedView) return 'profile';
     const normalized = String(section || '').trim().toLowerCase();
     if (normalized === 'user-controls') return 'members';
+    if (normalized === 'billing') return SHOW_BILLING_TAB ? 'subscription' : 'profile';
+    if (normalized === 'subscription' && !SHOW_BILLING_TAB) return 'profile';
+    if (normalized === 'preferences') return 'appearance';
     return normalized || 'profile';
   }, [isChildRestrictedView]);
   const [activeSection, setActiveSection] = useState(normalizeSettingsSection(propInitialSection));
@@ -294,14 +345,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   /** Mirrors Subscription screen current plan for sidebar label (stub until billing API). */
   const [subscriptionPlanKey, setSubscriptionPlanKey] = useState('family');
 
-  // Sync activeSection when initialSection prop changes (e.g. navigated from planner toolbar)
+  // Sync activeSection when initialSection prop changes (e.g. navigated from shell)
   useEffect(() => {
     if (!propInitialSection || !String(propInitialSection).trim()) return;
-    const nextSection = normalizeSettingsSection(propInitialSection);
-    if (nextSection && nextSection !== activeSection) {
-      setActiveSection(nextSection);
-    }
-  }, [activeSection, normalizeSettingsSection, propInitialSection]);
+    setActiveSection(normalizeSettingsSection(propInitialSection));
+  }, [normalizeSettingsSection, propInitialSection]);
 
   useEffect(() => {
     if (!isChildRestrictedView) return;
@@ -386,7 +434,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     };
   }, [showCoursesSchoolYearDropdown]);
   // Account deletion (Profile Danger Zone)
-  const [showDangerZoneAccount, setShowDangerZoneAccount] = useState(false);
   const [confirmDeleteAccountPhrase, setConfirmDeleteAccountPhrase] = useState('');
   const [deletingAccount, setDeletingAccount] = useState(false);
   
@@ -398,9 +445,31 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   
   // Data Vault state
-  const [dataExportRequested, setDataExportRequested] = useState(false);
-  const [dataDeleteRequested, setDataDeleteRequested] = useState(false);
+  const [dataVaultModal, setDataVaultModal] = useState(null);
+  const [requestingPersonalData, setRequestingPersonalData] = useState(false);
   const [resetFamilyDataInProgress, setResetFamilyDataInProgress] = useState(false);
+
+  const handleRequestPersonalDataExport = useCallback(async () => {
+    if (requestingPersonalData) return;
+    setRequestingPersonalData(true);
+    try {
+      const { data, error } = await requestPersonalDataExport();
+      if (error) {
+        const msg = error?.message || error?.detail || (typeof error === 'string' ? error : 'Could not submit your request. Please try again.');
+        toast.push(msg, 'error');
+        return;
+      }
+      if (data?.success) {
+        setDataVaultModal('export-success');
+        return;
+      }
+      toast.push(data?.message || 'Could not submit your request. Please try again.', 'error');
+    } catch (err) {
+      toast.push(err?.message || 'Could not submit your request. Please try again.', 'error');
+    } finally {
+      setRequestingPersonalData(false);
+    }
+  }, [requestingPersonalData, toast]);
   
   // Tutor invite state
   const [inviteEmail, setInviteEmail] = useState('');
@@ -2892,71 +2961,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           </View>
         );
       
-      case 'preferences':
-        const CustomToggle = ({ value, onValueChange }) => (
-          <TouchableOpacity
-            style={[styles.customToggleTrack, value && styles.customToggleTrackOn]}
-            onPress={() => onValueChange(!value)}
-            activeOpacity={0.8}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <View style={[styles.customToggleThumb, value && styles.customToggleThumbOn]} />
-          </TouchableOpacity>
-        );
-        
-        return (
-          <View style={styles.mainContentInner}>
-            <Text style={styles.mainContentTitle}>Preferences</Text>
-            
-            <Text style={styles.subsectionTitle}>Lesson experience</Text>
-            <View style={styles.subsectionDivider} />
-            
-            <View style={styles.preferenceRow}>
-              <Text style={styles.preferenceLabel}>Sound effects</Text>
-              <CustomToggle
-                value={soundEffectsEnabled}
-                onValueChange={setSoundEffectsEnabled}
-              />
-            </View>
-            
-            <View style={styles.preferenceRow}>
-              <Text style={styles.preferenceLabel}>Animations</Text>
-              <CustomToggle
-                value={animationsEnabled}
-                onValueChange={setAnimationsEnabled}
-              />
-            </View>
-            
-            <View style={styles.preferenceRow}>
-              <Text style={styles.preferenceLabel}>Motivational messages</Text>
-              <CustomToggle
-                value={motivationalMessagesEnabled}
-                onValueChange={setMotivationalMessagesEnabled}
-              />
-            </View>
-            
-            <View style={styles.preferencesSectionSpacer}>
-              <Text style={styles.subsectionTitle}>Appearance</Text>
-              <View style={styles.subsectionDivider} />
-              
-              <View style={styles.preferenceRow}>
-                <Text style={styles.preferenceLabel}>Dark mode</Text>
-                <CustomToggle
-                  value={darkMode === 'on'}
-                  onValueChange={(value) => setDarkMode(value ? 'on' : 'off')}
-                />
-              </View>
-            </View>
-          </View>
-        );
-      
-      case 'profile': {
+      case 'profile':
         const isViewingAsChild = Boolean(viewingAsChildId);
         const displayEmail = isViewingAsChild ? (viewingAsChildEmail ?? 'No account linked') : profileEmail;
         const hasProfileChanges = !isViewingAsChild && (profileEmail.trim() !== (profile?.email || user?.email || ''));
-        const onboardingGoalId = family?.default_planning_mode || null;
-        const onboardingGoalLabel = getOnboardingGoalLabel(onboardingGoalId);
-        const canEditOnboardingGoal = !isViewingAsChild && !isChildRestrictedView && !isTutorViewer && !profileEditLocked && Boolean(family?.id || familyId);
         
         return (
           <View style={styles.mainContentInner}>
@@ -3035,7 +3043,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 </View>
                 
                 {/* Reset Password Button */}
-                <View style={[styles.profileFieldGroup, styles.profileFieldGroupLast]}>
+                <View style={styles.profileFieldGroup}>
                   <Text style={styles.profileFieldLabel}>Password</Text>
                   <TouchableOpacity
                     style={styles.profileResetPasswordButton}
@@ -3053,76 +3061,26 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     We'll send you an email with a link to reset your password.
                   </Text>
                 </View>
+
+                {!isChildRestrictedView ? (
+                  <View style={[styles.profileFieldGroup, styles.profileFieldGroupLast, styles.profileLogoutFieldGroup]}>
+                    <TouchableOpacity
+                      style={styles.profileLogoutButton}
+                      onPress={handleSignOut}
+                      disabled={loggingOut}
+                      {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
+                    >
+                      {loggingOut ? (
+                        <ActivityIndicator size="small" color="#dc2626" />
+                      ) : (
+                        <Text style={styles.profileLogoutButtonText}>Log out</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
               </View>
             </View>
 
-            {!isChildRestrictedView ? (
-              <View style={[styles.profileSection, canEditOnboardingGoal && showGoalDropdown && styles.profileSectionDropdownOpen]}>
-                <View style={styles.profileSectionHeader}>
-                  <Text style={[styles.subsectionTitle, styles.profileSectionTitle]}>User Experience</Text>
-                </View>
-                <View style={styles.profileSectionBody}>
-                  <View
-                    style={[
-                      styles.profileFieldGroup,
-                      styles.profileFieldGroupLast,
-                      canEditOnboardingGoal && showGoalDropdown && styles.profileFieldGroupDropdownOpen,
-                    ]}
-                  >
-                    <Text style={styles.profileFieldLabel}>Goal</Text>
-                    {canEditOnboardingGoal ? (
-                      <>
-                        <View ref={goalDropdownRef} style={styles.profileGoalDropdownWrap}>
-                          <TouchableOpacity
-                            style={[styles.profileReadOnlyValue, styles.profileGoalInlineTrigger]}
-                            onPress={() => setShowGoalDropdown((prev) => !prev)}
-                            disabled={savingOnboardingGoal}
-                            {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
-                          >
-                            <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
-                            <ChevronDown
-                              size={16}
-                              color="#6b7280"
-                              style={showGoalDropdown ? { transform: [{ rotate: '180deg' }] } : undefined}
-                            />
-                          </TouchableOpacity>
-                          {showGoalDropdown && (
-                            <View style={styles.profileGoalDropdownMenu}>
-                              {ONBOARDING_GOAL_OPTIONS.map((option) => {
-                                const selected = onboardingGoalId === option.id;
-                                return (
-                                  <TouchableOpacity
-                                    key={option.id}
-                                    style={styles.profileGoalDropdownItem}
-                                    onPress={() => handleRequestGoalChange(option.id)}
-                                    disabled={savingOnboardingGoal}
-                                    {...(Platform.OS === 'web' && { cursor: savingOnboardingGoal ? 'not-allowed' : 'pointer' })}
-                                  >
-                                    <Text style={[styles.profileGoalDropdownItemText, selected && styles.profileGoalDropdownItemTextSelected]}>
-                                      {option.label}
-                                    </Text>
-                                    {selected ? <Check size={14} color="#111827" /> : null}
-                                  </TouchableOpacity>
-                                );
-                              })}
-                            </View>
-                          )}
-                        </View>
-                        <Text style={styles.profileGoalHint}>
-                          Switching this changes parts of your planning experience, but all your existing data stays intact.
-                        </Text>
-                      </>
-                    ) : (
-                      <View style={styles.profileReadOnlyValue}>
-                        <Text style={styles.profileReadOnlyValueText}>{onboardingGoalLabel}</Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
-              </View>
-            ) : null}
-
-            {/* Child-mode footer action */}
             {isChildRestrictedView ? (
               <View style={styles.dangerZoneAccount}>
                 <TouchableOpacity
@@ -3138,93 +3096,129 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   )}
                 </TouchableOpacity>
               </View>
-            ) : (
-              /* Danger Zone - Delete account (parents only) */
+            ) : SHOW_DANGER_ZONE ? (
               <View style={styles.dangerZoneAccount}>
-                <TouchableOpacity
-                  style={styles.dangerZoneToggle}
-                  onPress={() => {
-                    setShowDangerZoneAccount(!showDangerZoneAccount);
-                    if (showDangerZoneAccount) setConfirmDeleteAccountPhrase('');
-                  }}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
+                <View style={styles.dangerZoneAccountHeader}>
                   <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-                  <Text style={styles.dangerZoneTitle}>
-                    {showDangerZoneAccount ? 'Hide' : 'Show'} Danger Zone
+                  <Text style={styles.dangerZoneTitle}>Danger Zone</Text>
+                </View>
+                <View style={styles.dangerZoneAccountContent}>
+                  <Text style={styles.dangerZoneAccountHeading}>Delete your account & all linked accounts</Text>
+                  <Text style={styles.dangerZoneAccountMessage}>
+                    This will permanently delete your account & all linked accounts, along with all data for your family, including:
                   </Text>
-                </TouchableOpacity>
-                {showDangerZoneAccount && (
-                  <View style={styles.dangerZoneAccountContent}>
-                    <Text style={styles.dangerZoneAccountHeading}>Delete your account & all linked accounts</Text>
-                    <Text style={styles.dangerZoneAccountMessage}>
-                      This will permanently delete your account & all linked accounts, along with all data for your family, including:
-                    </Text>
-                    <Text style={styles.dangerZoneAccountBullets}>
-                      • Your profile and sign-in{'\n'}
-                      • Your family and all family members{'\n'}
-                      • All learners (children) and their profiles, courses, and progress{'\n'}
-                      • Any linked child or tutor accounts in this family
-                    </Text>
-                    <Text style={styles.dangerZoneAccountConfirmLabel}>
-                      Type DELETE to confirm
-                    </Text>
-                    <TextInput
-                      style={styles.dangerZoneAccountInput}
-                      value={confirmDeleteAccountPhrase}
-                      onChangeText={setConfirmDeleteAccountPhrase}
-                      placeholder="DELETE"
-                      placeholderTextColor="#9ca3af"
-                      autoCapitalize="characters"
-                      autoCorrect={false}
-                      editable={!deletingAccount}
-                    />
-                    <TouchableOpacity
-                      style={[
-                        styles.dangerZoneAccountButton,
-                        (confirmDeleteAccountPhrase.trim().toUpperCase() !== 'DELETE' || deletingAccount) && styles.dangerZoneAccountButtonDisabled,
-                      ]}
-                      onPress={async () => {
-                        if (confirmDeleteAccountPhrase.trim().toUpperCase() !== 'DELETE' || deletingAccount) return;
-                        setDeletingAccount(true);
-                        try {
-                          const { data, error } = await deleteAccount(confirmDeleteAccountPhrase.trim());
-                          if (error) {
-                            const msg = error?.message || error?.detail || (typeof error === 'string' ? error : 'Failed to delete account');
-                            toast.push(msg, 'error');
-                            return;
-                          }
-                          if (data?.success) {
-                            toast.push('Account deleted. Signing out.', 'success');
-                            await signOutLocal();
-                          } else {
-                            toast.push(data?.message || 'Account could not be deleted.', 'error');
-                          }
-                        } catch (err) {
-                          toast.push(err?.message || 'Failed to delete account.', 'error');
-                        } finally {
-                          setDeletingAccount(false);
+                  <Text style={styles.dangerZoneAccountBullets}>
+                    • Your profile and sign-in{'\n'}
+                    • Your family and all family members{'\n'}
+                    • All learners (children) and their profiles, courses, and progress{'\n'}
+                    • Any linked child or tutor accounts in this family
+                  </Text>
+                  <Text style={styles.dangerZoneAccountConfirmLabel}>
+                    Type DELETE to confirm
+                  </Text>
+                  <TextInput
+                    style={styles.dangerZoneAccountInput}
+                    value={confirmDeleteAccountPhrase}
+                    onChangeText={setConfirmDeleteAccountPhrase}
+                    placeholder="DELETE"
+                    placeholderTextColor="#9ca3af"
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    editable={!deletingAccount}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.dangerZoneAccountButton,
+                      (confirmDeleteAccountPhrase.trim().toUpperCase() !== 'DELETE' || deletingAccount) && styles.dangerZoneAccountButtonDisabled,
+                    ]}
+                    onPress={async () => {
+                      if (confirmDeleteAccountPhrase.trim().toUpperCase() !== 'DELETE' || deletingAccount) return;
+                      setDeletingAccount(true);
+                      try {
+                        const { data, error } = await deleteAccount(confirmDeleteAccountPhrase.trim());
+                        if (error) {
+                          const msg = error?.message || error?.detail || (typeof error === 'string' ? error : 'Failed to delete account');
+                          toast.push(msg, 'error');
+                          return;
                         }
-                      }}
-                      disabled={confirmDeleteAccountPhrase.trim().toUpperCase() !== 'DELETE' || deletingAccount}
-                      {...(Platform.OS === 'web' && {
-                        cursor: confirmDeleteAccountPhrase.trim().toUpperCase() === 'DELETE' && !deletingAccount ? 'pointer' : 'not-allowed',
-                      })}
-                    >
-                      {deletingAccount ? (
-                        <ActivityIndicator size="small" color="#ffffff" />
-                      ) : (
-                        <Text style={styles.dangerZoneAccountButtonText}>Delete my account</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                )}
+                        if (data?.success) {
+                          toast.push('Account deleted. Signing out.', 'success');
+                          await signOutLocal();
+                        } else {
+                          toast.push(data?.message || 'Account could not be deleted.', 'error');
+                        }
+                      } catch (err) {
+                        toast.push(err?.message || 'Failed to delete account.', 'error');
+                      } finally {
+                        setDeletingAccount(false);
+                      }
+                    }}
+                    disabled={confirmDeleteAccountPhrase.trim().toUpperCase() !== 'DELETE' || deletingAccount}
+                    {...(Platform.OS === 'web' && {
+                      cursor: confirmDeleteAccountPhrase.trim().toUpperCase() === 'DELETE' && !deletingAccount ? 'pointer' : 'not-allowed',
+                    })}
+                  >
+                    {deletingAccount ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.dangerZoneAccountButtonText}>Delete my account</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
               </View>
-            )}
+            ) : null}
           </View>
         );
-      }
+
+      case 'appearance':
+        return (
+          <View style={styles.mainContentInner}>
+            <Text style={styles.mainContentTitle}>Appearance</Text>
+            <FamilyApproachSelector
+              familyId={familyId || family?.id}
+              family={family}
+              onFamilyUpdate={(updatedFamily) => {
+                setFamily(updatedFamily);
+                onFamilyUpdate?.(updatedFamily);
+              }}
+              readOnly={familyUserControls.isRestrictedViewer && !familyUserControls.allowed('planning_preferences')}
+              description="Days vs hours, learning days, and breaks are saved per school year in Family → Learning preferences."
+            />
+          </View>
+        );
       
+      case 'security':
+        return (
+          <View style={styles.mainContentInner}>
+            <Text style={styles.mainContentTitle}>Security</Text>
+            <View style={[styles.profileSection, styles.profileSectionFirst]}>
+              <View style={styles.profileSectionHeader}>
+                <Text style={[styles.subsectionTitle, styles.profileSectionTitle]}>Account security</Text>
+              </View>
+              <View style={styles.profileSectionBody}>
+                <View style={[styles.profileFieldGroup, styles.profileFieldGroupLast]}>
+                  <Text style={styles.profileFieldLabel}>Password</Text>
+                  <TouchableOpacity
+                    style={styles.profileResetPasswordButton}
+                    onPress={handleResetPassword}
+                    disabled={resettingPassword}
+                    {...(Platform.OS === 'web' && { cursor: resettingPassword ? 'not-allowed' : 'pointer' })}
+                  >
+                    {resettingPassword ? (
+                      <ActivityIndicator size="small" color="#374151" />
+                    ) : (
+                      <Text style={styles.profileResetPasswordButtonText}>Reset password</Text>
+                    )}
+                  </TouchableOpacity>
+                  <Text style={styles.profileResetPasswordHint}>
+                    We&apos;ll send you an email with a link to reset your password.
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        );
+
       case 'notifications':
         const NotificationCheckbox = ({ value, onValueChange, label }) => (
           <View style={styles.notifRow}>
@@ -3290,8 +3284,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       
       case 'members':
         return (
-          <View style={styles.mainContentInner}>
-            <Text style={styles.mainContentTitle}>Family Members</Text>
+          <View style={[styles.mainContentInner, embeddedInFamily && styles.mainContentInnerFamilyEmbedded]}>
+            <Text style={[styles.mainContentTitle, embeddedInFamily && styles.mainContentTitleFamilyEmbedded]}>
+              Family Members
+            </Text>
 
             {propUserRole === 'parent' && !isChildRestrictedView && viewingAsChildId ? (() => {
               const previewChild = children.find((c) => String(c.id) === String(viewingAsChildId));
@@ -4119,7 +4115,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         return (
           <View style={styles.mainContentInner}>
             <Text style={styles.mainContentTitle}>Feedback</Text>
-            <Text style={styles.feedbackSubtitle}>What can we help you with?</Text>
             
             <View style={styles.feedbackFormContainer}>
               <View style={styles.feedbackLeftColumn}>
@@ -4250,93 +4245,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         );
       
       case 'datavault':
-        // Show data export confirmation screen
-        if (dataExportRequested) {
-          return (
-            <View style={styles.mainContentInner}>
-              <Text style={styles.mainContentTitle}>Learnadoodle Data Vault</Text>
-              
-              <View style={styles.dataVaultSection}>
-                <View style={styles.dataVaultSectionHeader}>
-                  <Text style={styles.dataVaultSectionTitle}>Access Personal Data</Text>
-                </View>
-                <View style={styles.dataVaultSectionContent}>
-                  <Text style={styles.dataVaultDescription}>
-                    We're busy gathering up all of your personal data into a zip file, which can take up to 7 days. When we're finished we'll send you an email with instructions for how to download your data file.
-                  </Text>
-                  <Text style={[styles.dataVaultDescription, { marginTop: 16 }]}>
-                    We've also sent you a confirmation email to the address on your account.
-                  </Text>
-                  
-                  <View style={styles.dataVaultIconContainer}>
-                    <FileText size={64} color="#3b82f6" />
-                  </View>
-                </View>
-              </View>
-              
-              <TouchableOpacity
-                style={styles.dataVaultBackButton}
-                onPress={() => {
-                  setDataExportRequested(false);
-                  setActiveSection('profile');
-                }}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <ChevronLeft size={16} color="#3b82f6" />
-                <Text style={styles.dataVaultBackButtonText}>Back to Profile</Text>
-              </TouchableOpacity>
-            </View>
-          );
-        }
-        
-        // Show data deletion confirmation screen
-        if (dataDeleteRequested) {
-          return (
-            <View style={styles.mainContentInner}>
-              <Text style={styles.mainContentTitle}>Learnadoodle Data Vault</Text>
-              
-              <View style={styles.dataVaultSection}>
-                <View style={styles.dataVaultSectionHeader}>
-                  <Text style={styles.dataVaultSectionTitle}>Delete Personal Data</Text>
-                </View>
-                <View style={styles.dataVaultSectionContent}>
-                  <Text style={styles.dataVaultDescription}>
-                    Thank you for letting us know you would like to delete all of your Learnadoodle data. Just to be sure we've sent you an email to confirm.
-                  </Text>
-                  
-                  <Text style={[styles.dataVaultDescription, { marginTop: 16 }]}>
-                    If you still want to delete all your data: When you open the email, please click on the "Delete my data" link to confirm that you would like to have your account deleted. We then give you a 7 day grace period during which you can change your mind. After the 7 days this process cannot be stopped! We will then start deleting your data which can take up to 23 days and we'll email you when we're finished.
-                  </Text>
-                  
-                  <View style={styles.dataVaultIconContainer}>
-                    <Trash2 size={64} color="#ef4444" />
-                  </View>
-                  
-                  <Text style={[styles.dataVaultDescription, { marginTop: 16, fontStyle: 'italic', color: '#6b7280' }]}>
-                    If you've already changed your mind: Don't worry, just ignore the email we've just sent you and carry on enjoying Learnadoodle!
-                  </Text>
-                </View>
-              </View>
-              
-              <TouchableOpacity
-                style={styles.dataVaultBackButton}
-                onPress={() => {
-                  setDataDeleteRequested(false);
-                  setActiveSection('profile');
-                }}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <ChevronLeft size={16} color="#3b82f6" />
-                <Text style={styles.dataVaultBackButtonText}>Back to Profile</Text>
-              </TouchableOpacity>
-            </View>
-          );
-        }
-        
-        // Default Data Vault view
         return (
-          <View style={styles.mainContentInner}>
-            <Text style={styles.mainContentTitle}>Learnadoodle Data Vault</Text>
+          <View style={styles.aboutPageContainer}>
+            <Text style={styles.aboutPageTitle}>Backup data</Text>
             
             {/* Access Personal Data Section */}
             <View style={styles.dataVaultSection}>
@@ -4351,7 +4262,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 <View style={styles.dataVaultButtonContainer}>
                   <TouchableOpacity
                     style={styles.dataVaultPrimaryButton}
-                    onPress={() => setDataExportRequested(true)}
+                    onPress={() => setDataVaultModal('export-confirm')}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <FileText size={18} color="#ffffff" />
@@ -4368,18 +4279,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               </View>
               <View style={styles.dataVaultSectionContent}>
                 <Text style={styles.dataVaultDescription}>
-                  Click this button to delete your Learnadoodle account and erase all of your personal data stored by Learnadoodle. You will lose your family data, children profiles, learning progress, and achievements.{' '}
+                  Click this button to delete your Learnadoodle account and erase all of your personal data stored by Learnadoodle. Linked accounts for children, tutors, and other parents in your family will also be removed. You will lose your family data, children profiles, learning progress, and achievements.{' '}
                   <Text style={styles.dataVaultWarningBold}>Once completed this action cannot be undone.</Text>
                 </Text>
                 
                 <Text style={styles.dataVaultNote}>
-                  Please note: this action will NOT cancel an existing Learnadoodle Premium subscription. Please cancel your subscription in the App Store or Google Play Store before deleting your account.
+                  Please note: this action will NOT cancel an existing Learnadoodle subscription. Please cancel your subscription in the App Store or Google Play Store before deleting your account.
                 </Text>
                 
                 <View style={styles.dataVaultButtonContainer}>
                   <TouchableOpacity
                     style={styles.dataVaultDangerButton}
-                    onPress={() => setDataDeleteRequested(true)}
+                    onPress={() => setDataVaultModal('delete-confirm')}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <Trash2 size={18} color="#ffffff" />
@@ -4388,16 +4299,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 </View>
               </View>
             </View>
-            
-            {/* Back button */}
-            <TouchableOpacity
-              style={styles.dataVaultBackButton}
-              onPress={() => setActiveSection('profile')}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <ChevronLeft size={16} color="#3b82f6" />
-              <Text style={styles.dataVaultBackButtonText}>Back to Profile</Text>
-            </TouchableOpacity>
           </View>
         );
       
@@ -5090,161 +4991,61 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
+  const mainContentContainerStyle = [
+    styles.mainContentContainer,
+    embeddedInFamily && styles.mainContentContainerFamilyEmbedded,
+    (activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy' || activeSection === 'datavault') && styles.mainContentContainerAbout,
+    activeSection === 'subscription' && styles.mainContentContainerSubscriptionFill,
+  ];
+  const mainContentPanelStyle = [
+    styles.mainContent,
+    isChildRestrictedView && styles.mainContentFullWidth,
+  ];
+
   return (
     <View style={styles.container}>
       <View style={styles.twoColumnLayout}>
-        {/* Left: Scrollable main content */}
-        <ScrollView 
-          style={[
-            styles.mainContent,
-            ((activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') || isChildRestrictedView) && styles.mainContentFullWidth
-          ]} 
-          contentContainerStyle={[
-            styles.mainContentContainer,
-            (activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy') && styles.mainContentContainerAbout,
-            activeSection === 'subscription' && styles.mainContentContainerSubscriptionFill,
-          ]}
-        >
-          {renderMainContent()}
-        </ScrollView>
-
-        {/* Right: Fixed sidebar - hidden on About, Terms, and Privacy pages */}
-        {!hideInternalSidebar && !isChildRestrictedView && activeSection !== 'about' && activeSection !== 'terms' && activeSection !== 'privacy' && (
+        {/* Left: Settings secondary nav */}
+        {!hideInternalSidebar && (
           <View style={styles.sidebar}>
-          <View style={styles.sidebarContent}>
-          {/* Account Card */}
-          <View style={styles.sidebarCard}>
-            <Text style={styles.sidebarCardTitle}>Account</Text>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'profile' && styles.sidebarButtonActive]} onPress={() => setActiveSection('profile')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'profile' && styles.sidebarButtonTextActive]}>Profile</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'members' && styles.sidebarButtonActive]} onPress={() => setActiveSection('members')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'members' && styles.sidebarButtonTextActive]}>Family Members</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'courses' && styles.sidebarButtonActive]} onPress={() => setActiveSection('courses')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'courses' && styles.sidebarButtonTextActive]}>Subjects</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'planner-settings' && styles.sidebarButtonActive]} onPress={() => setActiveSection('planner-settings')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'planner-settings' && styles.sidebarButtonTextActive]}>Planning Preferences</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.sidebarButton, activeSection === 'notifications' && styles.sidebarButtonActive]}
-              onPress={() => setActiveSection('notifications')}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={[styles.sidebarButtonText, activeSection === 'notifications' && styles.sidebarButtonTextActive]}>
-                Notifications
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.sidebarButton, activeSection === 'connections' && styles.sidebarButtonActive]}
-              onPress={() => setShowComingSoonModal(true)}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={[styles.sidebarButtonText, activeSection === 'connections' && styles.sidebarButtonTextActive]}>
-                Connected accounts
-              </Text>
-            </TouchableOpacity>
+            <View style={styles.sidebarNavList}>
+              {visibleSidebarItems.map((item) => {
+                const active = activeSection === item.key;
+                return (
+                  <TouchableOpacity
+                    key={item.key}
+                    style={[styles.sidebarNavItem, active && styles.sidebarNavItemActive]}
+                    onPress={() => handleSettingsNavPress(item.key)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={[styles.sidebarNavItemText, active && styles.sidebarNavItemTextActive]}>
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
+        )}
 
-          {/* Subscription Card — hidden for linked tutors/children; child self-signup from onboarding only */}
-          {showFamilySubscriptionCard ? (
-            <TouchableOpacity
-              style={[
-                styles.sidebarCard,
-                activeSection === 'subscription' && styles.sidebarSubscriptionCardActive,
-              ]}
-              onPress={() => setShowComingSoonModal(true)}
-              activeOpacity={0.9}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.sidebarCardTitle}>Subscription</Text>
-              <View style={styles.sidebarSubscriptionContent}>
-                <View style={styles.sidebarSubscriptionInfo}>
-                  <Text style={styles.sidebarSubscriptionPlan}>
-                    {subscriptionSidebarProductLabel(subscriptionPlanKey)}
-                  </Text>
-                  <View style={styles.sidebarSubscriptionStatusRow}>
-                    <View style={styles.sidebarSubscriptionStatusChip}>
-                      <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
-                    </View>
-                    <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
-                  </View>
-                </View>
-              </View>
-            </TouchableOpacity>
-          ) : null}
-
-          {/* Support Card */}
-          <View style={styles.sidebarCard}>
-            <Text style={styles.sidebarCardTitle}>Support</Text>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'help' && styles.sidebarButtonActive]} onPress={() => setActiveSection('help')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'help' && styles.sidebarButtonTextActive]}>Help</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.sidebarButton, activeSection === 'feedback' && styles.sidebarButtonActive]} onPress={() => setActiveSection('feedback')} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-              <Text style={[styles.sidebarButtonText, activeSection === 'feedback' && styles.sidebarButtonTextActive]}>Feedback</Text>
-            </TouchableOpacity>
+        {/* Main settings content */}
+        {Platform.OS === 'web' ? (
+          <View style={mainContentPanelStyle}>
+            <View style={mainContentContainerStyle}>
+              {renderMainContent()}
+            </View>
           </View>
-          </View>
-
-          {/* Log Out Button */}
-          <TouchableOpacity
-            style={[styles.logoutButtonSidebar, logoutHovered && styles.logoutButtonSidebarHovered]}
-            onPress={async () => {
-              setLoggingOut(true);
-              try { await signOut(); } catch (error) {} finally { setLoggingOut(false); }
-            }}
-            disabled={loggingOut}
-            onMouseEnter={() => setLogoutHovered(true)}
-            onMouseLeave={() => setLogoutHovered(false)}
-            {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
+        ) : (
+          <ScrollView
+            style={mainContentPanelStyle}
+            contentContainerStyle={mainContentContainerStyle}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
           >
-            <Text style={styles.logoutButtonText}>{loggingOut ? 'LOGGING OUT...' : 'LOG OUT'}</Text>
-          </TouchableOpacity>
-
-          {/* Footer Links */}
-          <View style={styles.footerLinksContainer}>
-            <TouchableOpacity
-              style={styles.footerLink}
-              onPress={() => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  // Use browser history for navigation
-                  window.history.pushState({ section: 'about' }, '', window.location.pathname);
-                  setActiveSection('about');
-                }
-              }}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.footerLinkText}>ABOUT</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.footerLink}
-              onPress={() => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  // Use browser history for navigation
-                  window.history.pushState({ section: 'terms' }, '', window.location.pathname);
-                  setActiveSection('terms');
-                }
-              }}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.footerLinkText}>TERMS</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.footerLink}
-              onPress={() => {
-                if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  // Use browser history for navigation
-                  window.history.pushState({ section: 'privacy' }, '', window.location.pathname);
-                  setActiveSection('privacy');
-                }
-              }}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.footerLinkText}>PRIVACY</Text>
-            </TouchableOpacity>
-          </View>
-          </View>
+            {renderMainContent()}
+          </ScrollView>
         )}
       </View>
 
@@ -5394,6 +5195,157 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 )}
               </TouchableOpacity>
             </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={Boolean(dataVaultModal)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (requestingPersonalData) return;
+          setDataVaultModal(null);
+        }}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            if (requestingPersonalData) return;
+            setDataVaultModal(null);
+          }}
+        >
+          <TouchableOpacity style={styles.inviteUrlModal} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.inviteUrlModalHeader}>
+              <Text style={styles.inviteUrlModalTitle}>
+                {dataVaultModal === 'export-confirm' && 'Request your data?'}
+                {dataVaultModal === 'export-success' && 'Request received'}
+                {dataVaultModal === 'delete-confirm' && 'Erase personal data?'}
+                {dataVaultModal === 'delete-success' && 'Check your email'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  if (requestingPersonalData) return;
+                  setDataVaultModal(null);
+                }}
+                style={styles.inviteUrlModalClose}
+                {...(Platform.OS === 'web' && { cursor: requestingPersonalData ? 'not-allowed' : 'pointer' })}
+                disabled={requestingPersonalData}
+              >
+                <X size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+
+            {dataVaultModal === 'export-confirm' && (
+              <>
+                <Text style={styles.inviteUrlModalDescription}>
+                  We&apos;ll gather your family information, children profiles, subjects, schedules, materials, and learning records into a zip file. This can take up to 7 days.
+                </Text>
+                <Text style={styles.goalConfirmBodyText}>
+                  We&apos;ll email you at the address on your account when your export is ready.
+                </Text>
+                <View style={styles.inviteUrlModalActions}>
+                  <TouchableOpacity
+                    style={styles.inviteUrlDoneButton}
+                    onPress={() => setDataVaultModal(null)}
+                    disabled={requestingPersonalData}
+                    {...(Platform.OS === 'web' && { cursor: requestingPersonalData ? 'not-allowed' : 'pointer' })}
+                  >
+                    <Text style={styles.inviteUrlDoneButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.inviteUrlCopyButton, requestingPersonalData && styles.inviteUrlCopyButtonDisabled]}
+                    onPress={handleRequestPersonalDataExport}
+                    disabled={requestingPersonalData}
+                    {...(Platform.OS === 'web' && { cursor: requestingPersonalData ? 'not-allowed' : 'pointer' })}
+                  >
+                    {requestingPersonalData ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.inviteUrlCopyButtonText}>Request export</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+
+            {dataVaultModal === 'export-success' && (
+              <>
+                <Text style={styles.inviteUrlModalDescription}>
+                  We&apos;re gathering your personal data into a zip file, which can take up to 7 days. When we&apos;re finished, we&apos;ll send you an email with download instructions.
+                </Text>
+                <Text style={styles.goalConfirmBodyText}>
+                  We&apos;ve also sent a confirmation email to the address on your account.
+                </Text>
+                <View style={styles.dataVaultIconContainer}>
+                  <FileText size={48} color="#3b82f6" />
+                </View>
+                <View style={styles.inviteUrlModalActions}>
+                  <TouchableOpacity
+                    style={styles.inviteUrlCopyButton}
+                    onPress={() => setDataVaultModal(null)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.inviteUrlCopyButtonText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+
+            {dataVaultModal === 'delete-confirm' && (
+              <>
+                <Text style={styles.inviteUrlModalDescription}>
+                  This will delete your Learnadoodle account and erase all personal data we store for you, including family data, children profiles, learning progress, and achievements. Linked accounts for children, tutors, and other parents in your family will also be removed.{' '}
+                  <Text style={styles.dataVaultWarningBold}>Once completed this action cannot be undone.</Text>
+                </Text>
+                <Text style={styles.dataVaultNote}>
+                  This will not cancel an existing Learnadoodle subscription. Cancel billing in the App Store, Google Play, or your subscription settings before proceeding.
+                </Text>
+                <View style={styles.inviteUrlModalActions}>
+                  <TouchableOpacity
+                    style={styles.inviteUrlDoneButton}
+                    onPress={() => setDataVaultModal(null)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.inviteUrlDoneButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.inviteUrlCopyButton, styles.dataVaultModalDangerButton]}
+                    onPress={() => setDataVaultModal('delete-success')}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.inviteUrlCopyButtonText}>Continue</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+
+            {dataVaultModal === 'delete-success' && (
+              <>
+                <Text style={styles.inviteUrlModalDescription}>
+                  We&apos;ve sent you an email to confirm this request.
+                </Text>
+                <Text style={styles.goalConfirmBodyText}>
+                  To proceed, open the email and click &quot;Delete my data.&quot; You&apos;ll have a 7-day grace period to change your mind. After that, deletion cannot be stopped and may take up to 23 days. We&apos;ll email you when it&apos;s finished.
+                </Text>
+                <View style={styles.dataVaultIconContainer}>
+                  <Trash2 size={48} color="#ef4444" />
+                </View>
+                <Text style={[styles.goalConfirmBodyText, { fontStyle: 'italic', color: '#6b7280' }]}>
+                  Changed your mind? Ignore the email and keep using Learnadoodle.
+                </Text>
+                <View style={styles.inviteUrlModalActions}>
+                  <TouchableOpacity
+                    style={styles.inviteUrlCopyButton}
+                    onPress={() => setDataVaultModal(null)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={styles.inviteUrlCopyButtonText}>Done</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
@@ -6097,20 +6049,26 @@ function createStyles(tokens) {
       flex: 1,
       width: '100%',
       height: '100%',
+      minHeight: 0,
       backgroundColor: '#FFFFFF',
     },
     twoColumnLayout: {
       flex: 1,
       flexDirection: 'row',
+      minHeight: 0,
       ...(Platform.OS === 'web' && {
         height: '100%',
+        overflow: 'hidden',
       }),
     },
     mainContent: {
       flex: 1,
+      minWidth: 0,
+      minHeight: 0,
       backgroundColor: '#ffffff',
       ...(Platform.OS === 'web' && {
         overflowY: 'auto',
+        overflowX: 'hidden',
       }),
     },
     mainContentFullWidth: {
@@ -6119,7 +6077,10 @@ function createStyles(tokens) {
     },
     mainContentContainer: {
       padding: SettingsLayout.pageHorizontalPadding,
-      paddingRight: 16,
+    },
+    mainContentContainerFamilyEmbedded: {
+      padding: 24,
+      paddingRight: 24,
     },
     mainContentCard: {
       backgroundColor: '#ffffff',
@@ -6132,7 +6093,9 @@ function createStyles(tokens) {
       alignItems: 'center',
     },
     mainContentContainerSubscriptionFill: {
-      flexGrow: 1,
+      ...(Platform.OS === 'web'
+        ? { minHeight: '100%' }
+        : { flexGrow: 1 }),
     },
     mainContentSubscriptionShell: {
       flex: 1,
@@ -6146,6 +6109,13 @@ function createStyles(tokens) {
     mainContentInner: {
       width: '100%',
     },
+    mainContentInnerFamilyEmbedded: {
+      padding: 18,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: 'rgba(148, 163, 184, 0.24)',
+      backgroundColor: '#FFFFFF',
+    },
     mainContentTitle: {
       ...SettingsTypography.pageTitle,
       color: '#111827',
@@ -6153,6 +6123,11 @@ function createStyles(tokens) {
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
+    },
+    mainContentTitleFamilyEmbedded: {
+      fontSize: 16,
+      marginBottom: 14,
+      color: '#0F172A',
     },
     selfManagedStudentBadge: {
       marginTop: -8,
@@ -6623,17 +6598,50 @@ function createStyles(tokens) {
       backgroundColor: '#6BB3E8',
     },
     sidebar: {
-      width: 280,
-      padding: 16,
+      width: 240,
+      flexShrink: 0,
+      paddingTop: 16,
+      paddingBottom: 16,
+      paddingHorizontal: 8,
       backgroundColor: '#ffffff',
+      borderRightWidth: 1,
+      borderRightColor: 'rgba(148, 163, 184, 0.24)',
       display: 'flex',
       flexDirection: 'column',
       ...(Platform.OS === 'web' && {
         position: 'sticky',
         top: 0,
-        height: '100vh',
+        alignSelf: 'flex-start',
+        height: '100%',
+        maxHeight: '100%',
         overflowY: 'auto',
+        zIndex: 20,
       }),
+    },
+    sidebarNavList: {
+      flexDirection: 'column',
+      gap: 2,
+      paddingHorizontal: 8,
+    },
+    sidebarNavItem: {
+      paddingVertical: 9,
+      paddingHorizontal: 12,
+      borderRadius: 8,
+    },
+    sidebarNavItemActive: {
+      backgroundColor: '#f3f4f6',
+    },
+    sidebarNavItemText: {
+      fontSize: 15,
+      fontWeight: '500',
+      color: 'rgba(15, 23, 42, 0.72)',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    sidebarNavItemTextActive: {
+      color: '#0F172A',
+      fontWeight: '600',
     },
     sidebarContent: {
       display: 'flex',
@@ -7434,6 +7442,34 @@ function createStyles(tokens) {
       marginTop: 10,
       lineHeight: 18,
     },
+    profileLogoutFieldGroup: {
+      marginTop: 8,
+      paddingTop: 8,
+    },
+    profileLogoutButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 10,
+      paddingHorizontal: 16,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: '#fecaca',
+      backgroundColor: '#ffffff',
+      alignSelf: 'flex-start',
+      minWidth: 120,
+      ...(Platform.OS === 'web' && {
+        transition: 'all 0.2s ease',
+      }),
+    },
+    profileLogoutButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#dc2626',
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
     profileReadOnlyValue: {
       minHeight: SettingsLayout.rowHeight,
       width: '100%',
@@ -7611,17 +7647,17 @@ function createStyles(tokens) {
     },
     dataVaultSectionContent: {
       padding: 24,
-      alignItems: 'center',
+      alignItems: 'flex-start',
     },
     dataVaultDescription: {
-      fontSize: 14,
+      fontSize: 16,
       color: '#374151',
-      lineHeight: 22,
-      textAlign: 'center',
-      maxWidth: 600,
+      lineHeight: 24,
+      textAlign: 'left',
+      width: '100%',
       marginBottom: 16,
       ...(Platform.OS === 'web' && {
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     dataVaultWarningBold: {
@@ -7629,15 +7665,15 @@ function createStyles(tokens) {
       color: '#111827',
     },
     dataVaultNote: {
-      fontSize: 13,
-      color: '#6b7280',
-      lineHeight: 20,
-      textAlign: 'center',
-      maxWidth: 600,
+      fontSize: 16,
+      color: '#374151',
+      lineHeight: 24,
+      textAlign: 'left',
+      width: '100%',
       marginBottom: 24,
       fontStyle: 'italic',
       ...(Platform.OS === 'web' && {
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
     dataVaultButtonContainer: {
@@ -7681,25 +7717,17 @@ function createStyles(tokens) {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
     },
-    dataVaultBackButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      marginTop: 16,
-    },
-    dataVaultBackButtonText: {
-      fontSize: 14,
-      fontWeight: '500',
-      color: '#3b82f6',
-      ...(Platform.OS === 'web' && {
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }),
-    },
     dataVaultIconContainer: {
-      marginTop: 32,
-      marginBottom: 16,
+      marginTop: 24,
+      marginBottom: 8,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    dataVaultModalDangerButton: {
+      backgroundColor: '#dc2626',
+      ...(Platform.OS === 'web' && {
+        boxShadow: '0 2px 6px rgba(220,38,38,0.3)',
+      }),
     },
     editButton: {
       flexDirection: 'row',
@@ -8941,8 +8969,13 @@ function createStyles(tokens) {
       borderTopWidth: 1,
       borderTopColor: '#e5e7eb',
     },
+    dangerZoneAccountHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
     dangerZoneAccountContent: {
-      marginTop: 16,
+      marginTop: 12,
       backgroundColor: 'rgba(254, 242, 242, 0.35)',
       borderRadius: 8,
       borderWidth: 1,

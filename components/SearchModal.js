@@ -1483,13 +1483,19 @@ export default function SearchModal({
               styles.modalContent,
               {
                 transform: [
-                  { translateY: slideAnim.interpolate({ inputRange: [0, 1], outputRange: [100, 0] }) },
-                  { scale: scaleAnim }
-                ]
+                  { translateY: slideAnim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) },
+                  { scale: scaleAnim },
+                ],
               }
             ]}
           >
-          <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.closeButton}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel="Close search modal"
+          >
             <X size={20} color="#666" />
           </TouchableOpacity>
 
@@ -1543,7 +1549,7 @@ export default function SearchModal({
               style={styles.searchInput}
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholder="Ask Doodle anything..."
+              placeholder="Search or ask anything"
               placeholderTextColor="#b8b8b8"
               onSubmitEditing={handleSearch}
               onKeyDown={Platform.OS === 'web' ? (e) => {
@@ -1590,18 +1596,22 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     zIndex: 1000,
-    justifyContent: 'flex-end',
-    alignItems: 'flex-end',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
   },
   modalContentTouchable: {
-    marginBottom: 20,
-    marginRight: 20,
+    width: '100%',
+    maxWidth: 640,
+    alignItems: 'center',
   },
   modalContent: {
     backgroundColor: '#ffffff',
     borderRadius: 20,
-    width: 400,
-    height: 500,
+    width: '100%',
+    maxWidth: 640,
+    height: 560,
+    maxHeight: '85vh',
     borderWidth: 1,
     borderColor: '#f1f3f4',
     boxShadow: '0 25px 80px rgba(0, 0, 0, 0.25)',

@@ -88,7 +88,7 @@ export default function Sidebar({
         </View>
 
         <View style={styles.sidebarFooter}>
-          {renderFooterItem('Help', HelpCircle, () => onOpenFeedback?.(), 'Get help')}
+          {renderFooterItem('Help', HelpCircle, () => onOpenSettings?.('help'), 'Open help and FAQ')}
           {renderFooterItem('Settings', Settings, () => onOpenSettings?.('profile'), 'Open settings')}
         </View>
       </View>

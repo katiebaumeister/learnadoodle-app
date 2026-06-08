@@ -2,21 +2,17 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
+  Modal,
+  TouchableOpacity,
   TextInput,
   StyleSheet,
   Platform,
-  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
 } from 'react-native';
-import { Paperclip } from 'lucide-react';
+import { X, Send, Paperclip } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../Toast';
-import AppModalOverlay from '../ui/AppModalOverlay';
-import AppModalShell from '../ui/AppModalShell';
-import { ModalFooter } from '../ui/ModalFooter';
-import ModalField from '../ui/ModalField';
-import ModalSection from '../ui/ModalSection';
-import { MODAL_SIZE } from '../ui/modalSystem';
-import { modalFieldStyles } from '../ui/modalFieldStyles';
 import {
   appendAssignmentMessage,
   dispatchAssignmentRefreshEvents,
@@ -153,33 +149,23 @@ export default function AssignmentSubmittalRequestModal({
   if (!visible) return null;
 
   return (
-    <AppModalOverlay visible={visible} onClose={onClose} size={MODAL_SIZE.standard}>
-      <AppModalShell
-        title="New Submission Request"
-        description={`Send work instructions to ${childName}.`}
-        onClose={onClose}
-        onGenerate={() => {
-          toast.push('AI generation for submission requests is coming soon.', 'info');
-        }}
-        generateLabel="Generate"
-        size={MODAL_SIZE.standard}
-        footer={(
-          <ModalFooter
-            mode="add"
-            primaryLabel={sending ? 'Sending…' : 'Create'}
-            onCancel={onClose}
-            onPrimary={handleRequest}
-            onBlockedPrimary={() => setError('Add instructions or attachments before sending.')}
-            disabled={sending}
-            loading={sending}
-          />
-        )}
-      >
-        <ModalSection title="Details" showDividerAfter={false}>
-          <ModalField label="Instructions" required>
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
+        <View style={styles.sheet}>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+            <X size={20} color="#6B7280" />
+          </TouchableOpacity>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scrollContent}>
+            <Text style={styles.title}>Request submittal</Text>
+            <Text style={styles.helperText}>
+              Send a focused work request to {childName}. Use instructions below and any event attachments as the artifact to complete.
+            </Text>
+
+            <Text style={styles.fieldLabel}>Instructions for student</Text>
             <TextInput
-              style={[modalFieldStyles.input, styles.multilineInput]}
-              placeholder="What should they submit?"
+              style={styles.input}
+              placeholder="What should they submit? (e.g. complete worksheet, upload photo of work…)"
               placeholderTextColor="#9CA3AF"
               value={instructions}
               onChangeText={(value) => {
@@ -189,13 +175,8 @@ export default function AssignmentSubmittalRequestModal({
               multiline
               textAlignVertical="top"
             />
-          </ModalField>
 
-          <ModalField label="Submission type">
-            <Text style={styles.staticValue}>Student upload / completion</Text>
-          </ModalField>
-
-          <ModalField label="Included attachments">
+            <Text style={styles.fieldLabel}>Included attachments</Text>
             {attachmentItems.length === 0 ? (
               <Text style={styles.emptyAttachments}>No attachments on this event yet.</Text>
             ) : (
@@ -205,36 +186,111 @@ export default function AssignmentSubmittalRequestModal({
                     key={item.id}
                     style={styles.attachmentRow}
                     onPress={() => onOpenAttachment?.(item.material)}
-                    {...(Platform.OS === 'web' && { cursor: onOpenAttachment ? 'pointer' : 'default' })}
+                    {...(Platform.OS === 'web' && { cursor: onOpenAttachment ? 'pointer' : 'default', title: item.label })}
                   >
                     <Paperclip size={14} color="#2563EB" />
-                    <Text style={styles.attachmentText} numberOfLines={1}>
+                    <Text style={styles.attachmentText} numberOfLines={1} ellipsizeMode="tail">
                       {item.label}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
             )}
-          </ModalField>
-        </ModalSection>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-      </AppModalShell>
-    </AppModalOverlay>
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+            <TouchableOpacity
+              style={[styles.sendButton, sending && styles.sendButtonDisabled]}
+              onPress={handleRequest}
+              disabled={sending}
+              {...(Platform.OS === 'web' && { cursor: sending ? 'not-allowed' : 'pointer' })}
+            >
+              {sending ? (
+                <ActivityIndicator color="#5B6880" />
+              ) : (
+                <View style={styles.sendRow}>
+                  <Send size={14} color="#5B6880" />
+                  <Text style={styles.sendText}>Request submittal</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  multilineInput: {
-    minHeight: 120,
-    height: 'auto',
-    paddingTop: 14,
-    paddingBottom: 14,
-    textAlignVertical: 'top',
+  overlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
   },
-  staticValue: {
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+  },
+  sheet: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '84%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    zIndex: 2,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  scrollContent: {
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 24,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    paddingRight: 36,
+  },
+  helperText: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#6B7280',
+  },
+  fieldLabel: {
+    marginTop: 16,
+    marginBottom: 8,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 15,
-    color: '#475569',
+    color: '#111827',
+    minHeight: 120,
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
   },
   emptyAttachments: {
     fontSize: 13,
@@ -252,14 +308,43 @@ const styles = StyleSheet.create({
   },
   attachmentText: {
     flex: 1,
+    minWidth: 0,
     fontSize: 13,
     fontWeight: '600',
     color: '#2563EB',
     textDecorationLine: 'underline',
+    ...(Platform.OS === 'web' && {
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    }),
   },
   errorText: {
-    marginTop: 4,
+    marginTop: 8,
     fontSize: 13,
     color: '#DC2626',
+  },
+  sendButton: {
+    marginTop: 20,
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+  },
+  sendButtonDisabled: {
+    opacity: 0.6,
+  },
+  sendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sendText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
   },
 });

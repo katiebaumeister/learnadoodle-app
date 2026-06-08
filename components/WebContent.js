@@ -743,6 +743,7 @@ import { getTodaySummary, getTodayInsights, getMultiDaySummary, getHomeTilesSumm
 import { generateInsights, buildInsightContext } from '../lib/services/insightEngine'
 import AIActions from './planner/AIActions'
 import CenterPane from './planner/CenterPane'
+import PlannerSectionView from './planner/PlannerSectionView'
 import SchedulingAssistant from './planner/SchedulingAssistant'
 import ChildProfile from './ChildProfile'
 import ChildHomeScreen from './child/ChildHomeScreen'
@@ -859,7 +860,7 @@ function readSubjectDetailSessionSnapshot(familyId) {
 
 import ParentHomeScreen from './home/ParentHomeScreen';
 
-export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null, onHomeInitialDataReady = null, onViewAsChild = null, onExitChildView = null }) {
+export default function WebContent({ activeTab, activeSubtab, activeChildId: propActiveChildId = null, activeChildSection, user, onChildAdded, navigation, showSyllabusUpload, onSyllabusProcessed, onCloseSyllabusUpload, onTabChange, onSubtabChange, pendingDoodlePrompt, onConsumeDoodlePrompt, showAddChildModal, onCloseAddChildModal, showAddSubjectModal, onCloseAddSubjectModal, onRightSidebarRender, onOpenSettings, onEditChild, onAddSyllabus, selectedCalendarChildren: propSelectedCalendarChildren, onSelectedCalendarChildrenChange, selectedEventTypes: propSelectedEventTypes, onSelectedEventTypesChange, onCurrentMonthChange, onCalendarViewChange, plannerView: propPlannerView = 'month', subjects: propSubjects = [], fullSubjects: propFullSubjects = [], familyId: propFamilyId = null, children: propChildren = [], family: propFamily = null, onFamilyUpdate = null, profile: propProfile = null, session: propSession = null, preloadedPlanHealth: propPreloadedPlanHealth = null, preloadedAcademicYears: propPreloadedAcademicYears = null, onHomeInitialDataReady = null, onViewAsChild = null, onExitChildView = null }) {
   /** Same user across Supabase token refresh; avoids re-running home/family effects on every tab focus. */
   const authUserId = user?.id ?? null;
 
@@ -9821,7 +9822,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           pendingCommit.kind === CHAT_COMMIT_KINDS.UPDATE_SUBJECT)
       ) {
         displayText +=
-          '\n\nOpen **Ask Learnadoodle** from the search bar at the top to review and confirm — nothing is saved until you tap the button there.';
+          '\n\nOpen **Search or ask anything** from the search bar at the top to review and confirm — nothing is saved until you tap the button there.';
       }
 
       await AIConversationService.addMessage(conversationId, 'assistant', displayText);
@@ -10071,7 +10072,30 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     return Array.from(byKey.values());
   }, [plannerDate, calendarDataCache, calendarEvents, plannerHolidaysCache, plannerSpilloverEventsByDate, plannerExclusionsCache]);
 
-  const renderPlannerContent = () => {
+  const plannerWeekStats = useMemo(() => {
+    const anchor = plannerDate instanceof Date && !Number.isNaN(plannerDate.getTime())
+      ? plannerDate
+      : new Date();
+    const start = new Date(anchor);
+    start.setDate(anchor.getDate() - anchor.getDay());
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 7);
+    let events = 0;
+    let assignments = 0;
+    (plannerEventsForMonth || []).forEach((ev) => {
+      const ts = ev.start_ts || ev.start || ev.start_local;
+      if (!ts) return;
+      const d = new Date(ts);
+      if (Number.isNaN(d.getTime()) || d < start || d >= end) return;
+      events += 1;
+      const type = String(ev.event_type || ev.type || '').toLowerCase();
+      if (type.includes('assignment')) assignments += 1;
+    });
+    return { events, assignments };
+  }, [plannerDate, plannerEventsForMonth]);
+
+  const renderPlannerCalendarCore = () => {
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
     return (
       <View
@@ -10109,8 +10133,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
           />
         ) : null}
-        <View style={{ flex: 1, minHeight: 0, flexDirection: 'row' }}>
-        <View style={{ flex: 1, minWidth: 0 }}>
         <CenterPane
         date={date}
         events={plannerEventsForMonth}
@@ -10269,10 +10291,39 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         plannerShellVisible={isPlannerShellTab}
       />
       </View>
-      </View>
-      </View>
     );
   };
+
+  const renderPlannerShell = () => {
+    const section = resolveSection('planner', activeSubtab);
+    const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
+    return (
+      <PlannerSectionView
+        section={section}
+        familyId={familyId}
+        children={children || []}
+        family={propFamily}
+        fullSubjects={propFullSubjects && propFullSubjects.length > 0 ? propFullSubjects : (propSubjects || [])}
+        preloadedPlanHealth={propPreloadedPlanHealth}
+        plannerDate={date}
+        plannerView={propPlannerView}
+        onPlannerDateChange={(d) => {
+          setPlannerDate(d);
+          if (onCurrentMonthChange) onCurrentMonthChange(d);
+        }}
+        weekEventCount={plannerWeekStats.events}
+        weekAssignmentCount={plannerWeekStats.assignments}
+        selectedCalendarChildren={propSelectedCalendarChildren}
+        onSelectedCalendarChildrenChange={onSelectedCalendarChildrenChange}
+        selectedEventTypes={propSelectedEventTypes}
+        onSelectedEventTypesChange={onSelectedEventTypesChange}
+        onTabChange={onTabChange}
+        calendarContent={renderPlannerCalendarCore()}
+      />
+    );
+  };
+
+  const renderPlannerContent = () => renderPlannerShell();
 
   const renderCalendarContent = () => {
     return renderPlannerContent();
@@ -10407,6 +10458,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         accessibleChildren={accessibleChildren}
         preloadedPlanHealth={propPreloadedPlanHealth}
         preloadedPlannerSettings={preloadedPlannerSettings}
+        preloadedAcademicYears={propPreloadedAcademicYears}
         onFamilyUpdate={onFamilyUpdate}
         subjectsOverviewCache={subjectsOverviewCache}
         subjectDetailCache={subjectDetailCache}
@@ -10423,6 +10475,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         viewingAsChildId={parentViewingAsChildId}
         onViewAsChild={onViewAsChild}
         onExitChildView={onExitChildView}
+        onEditChild={onEditChild}
       />
     );
   }, [
@@ -10452,6 +10505,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     parentViewingAsChildId,
     onViewAsChild,
     onExitChildView,
+    onEditChild,
+    propPreloadedAcademicYears,
   ]);
 
   const renderContent = (plannerTabsReturnNull = false) => {
@@ -10507,6 +10562,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             subjectId={subjectId}
             familyId={subjectFamilyId}
             children={children || []}
+            layoutVariant="learning"
             onOpenPlannerSettings={() => {
               if (typeof onTabChange === 'function') {
                 onTabChange('settings', 'planner-settings');
@@ -10590,14 +10646,8 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     // and let the outer wrapper render a single persistent renderPlannerContent() instance.
     if (activeTab === 'calendar' || activeTab === 'planner' || activeTab === 'ai-planner') {
       if (activeTab === 'planner') {
-        if (plannerTabsReturnNull) {
-          const plannerSection = resolveSection('planner', activeSubtab);
-          if (plannerSection && plannerSection !== 'calendar') {
-            return renderWithSectionNav('planner');
-          }
-          return null;
-        }
-        return renderWithSectionNav('planner', () => renderPlannerContent());
+        if (plannerTabsReturnNull) return null;
+        return renderPlannerShell();
       }
       if (plannerTabsReturnNull) return null;
       return renderCalendarContent();
@@ -10803,7 +10853,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           );
         }
         return (
-          <View style={{ flex: 1, minHeight: 0 }}>
+          <View style={{ flex: 1, minHeight: 0, ...(Platform.OS === 'web' && { overflow: 'hidden' }) }}>
             <FamilyPanel
               user={user}
               family={propFamily}
@@ -10845,12 +10895,10 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     activeTab === 'children-list';
   const persistPlannerWeb =
     Platform.OS === 'web' && !!(familyId || propSession?.family_id) && !isFamilyScreen;
-  const plannerActiveSection =
-    activeTab === 'planner' ? resolveSection('planner', activeSubtab) : 'calendar';
   const isPlannerShellTab =
     activeTab === 'calendar' ||
     activeTab === 'ai-planner' ||
-    (activeTab === 'planner' && plannerActiveSection === 'calendar');
+    activeTab === 'planner';
   const innerContent = renderContent(persistPlannerWeb);
 
   return (
@@ -10863,13 +10911,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
                 flex: 1,
                 minHeight: 0,
                 zIndex: 0,
-                ...(Platform.OS === 'web' && !isPlannerShellTab ? { opacity: 0 } : {}),
+                ...(Platform.OS === 'web' && activeTab !== 'planner' && !isPlannerShellTab ? { opacity: 0 } : {}),
               }}
               pointerEvents={isPlannerShellTab ? 'auto' : 'none'}
             >
-              {activeTab === 'planner' && isPlannerShellTab
-                ? renderWithSectionNav('planner', () => renderPlannerContent())
-                : renderPlannerContent()}
+              {activeTab === 'planner'
+                ? renderPlannerShell()
+                : renderPlannerCalendarCore()}
             </View>
             {!isPlannerShellTab && innerContent != null ? (
               <View

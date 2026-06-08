@@ -39,10 +39,16 @@ import { useSession } from '../../contexts/SessionContext';
 import { useOptionalFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
 import SubjectOverviewCard from './SubjectOverviewCard';
 import SubjectDetailPage from './SubjectDetailPage';
+import LearningSubjectsListView from '../learning/LearningSubjectsListView';
 import ComplianceRequirementModal from '../compliance/ComplianceRequirementModal';
 import SubjectsPlanBuilder from './SubjectsPlanBuilder';
 import ProgressTab from './ProgressTab';
+import ConfirmDialog from '../ConfirmDialog';
 import { useToast } from '../Toast';
+import {
+  deleteSubjectCascadeForFamily,
+  dispatchSubjectDeletedSideEffects,
+} from '../../lib/services/deleteSubjectCascade';
 import PlannerSettingsContent from '../settings/PlannerSettingsContent';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
 
@@ -287,6 +293,8 @@ export default function SubjectsPage({
   const preloadingRef = useRef(false);
   const [showSubjectsExportModal, setShowSubjectsExportModal] = useState(false);
   const [learningHeaderPickerKind, setLearningHeaderPickerKind] = useState(null);
+  const [archiveSubjectTarget, setArchiveSubjectTarget] = useState(null);
+  const [archivingSubject, setArchivingSubject] = useState(false);
   const [showPlanningPreferencesModal, setShowPlanningPreferencesModal] = useState(false);
   const [planningPreferencesSchoolYearLabel, setPlanningPreferencesSchoolYearLabel] = useState(null);
   const [planningPreferencesInitialDataByYear, setPlanningPreferencesInitialDataByYear] = useState({});
@@ -2208,6 +2216,63 @@ export default function SubjectsPage({
     }
   };
 
+  const handleSendMessageForSubject = useCallback(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openMessagesPane'));
+    }
+  }, []);
+
+  const handleEditSubjectForSubject = useCallback((subject) => {
+    if (!subject) return;
+    if (typeof onEditSubject === 'function') {
+      onEditSubject(subject);
+      return;
+    }
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
+        detail: { subject },
+      }));
+    }
+  }, [onEditSubject]);
+
+  const handleArchiveSubjectRequest = useCallback((subject) => {
+    if (!subject?.id || !canManageSubjectsActions) return;
+    setArchiveSubjectTarget(subject);
+  }, [canManageSubjectsActions]);
+
+  const handleConfirmArchiveSubject = useCallback(async () => {
+    const subject = archiveSubjectTarget;
+    if (!subject?.id || !familyId || archivingSubject) return;
+    setArchivingSubject(true);
+    try {
+      const deletedName = subject.name || 'Subject';
+      const result = await deleteSubjectCascadeForFamily(familyId, subject.id, deletedName);
+      if (!result.ok) throw new Error(result.error || 'Archive failed');
+      dispatchSubjectDeletedSideEffects(familyId);
+      setSubjects((prev) => {
+        const next = (prev || []).filter((row) => String(row?.id) !== String(subject.id));
+        if (onSubjectsUpdate) onSubjectsUpdate(next);
+        return next;
+      });
+      if (String(selectedSubjectId) === String(subject.id)) {
+        setSelectedSubjectId(null);
+      }
+      toast.push(`"${deletedName}" has been archived.`, 'success');
+      setArchiveSubjectTarget(null);
+    } catch (err) {
+      toast.push(`Failed to archive subject: ${err?.message || 'Unknown error'}`, 'error');
+    } finally {
+      setArchivingSubject(false);
+    }
+  }, [
+    archiveSubjectTarget,
+    familyId,
+    archivingSubject,
+    selectedSubjectId,
+    onSubjectsUpdate,
+    toast,
+  ]);
+
   const handleNavigateToPlanner = (params) => {
     if (onNavigateToPlanner) {
       onNavigateToPlanner(params);
@@ -2718,6 +2783,7 @@ export default function SubjectsPage({
           subjectId={selectedSubjectId}
           familyId={familyId}
           children={safeChildren}
+          layoutVariant={isCatalogScreen ? 'learning' : 'default'}
           onOpenPlannerSettings={openPlanningPreferencesModal}
           preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
           initialScrollToSectionId={pendingScrollToSectionId}
@@ -2976,68 +3042,52 @@ export default function SubjectsPage({
       {renderPlanningPreferencesModal()}
       {renderSubjectsExportModal()}
       {renderLearningHeaderPickerModal()}
+      <ConfirmDialog
+        visible={Boolean(archiveSubjectTarget)}
+        title="Archive subject?"
+        message={`Archive "${archiveSubjectTarget?.name || 'this subject'}"? This removes it from your subject list and related planning links.`}
+        confirmLabel={archivingSubject ? 'Archiving…' : 'Archive Subject'}
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={handleConfirmArchiveSubject}
+        onCancel={() => {
+          if (!archivingSubject) setArchiveSubjectTarget(null);
+        }}
+      />
 
       {/* Content */}
       {isCatalogScreen ? (
-        <View style={styles.coursesTabContent}>
-          {renderCoursesHeaderFilters({ showTermRow: false })}
-          {error ? (
-            <View style={styles.errorContainer}>
-              <Text style={styles.errorText}>{error}</Text>
-              <TouchableOpacity style={styles.retryButton} onPress={loadSubjects}>
-                <Text style={styles.retryButtonText}>Retry</Text>
-              </TouchableOpacity>
-            </View>
-          ) : filteredSubjects.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyTitle}>
-                {searchQuery ? 'No results found' : 'No subjects yet'}
-              </Text>
-              <Text style={styles.emptyText}>
-                {searchQuery
-                  ? 'Please try something else'
-                  : 'Create subjects to organize learning.'}
-              </Text>
-              {!searchQuery && canManageSubjectsActions ? (
-                <TouchableOpacity
-                  style={styles.emptyButton}
-                  onPress={openAddSubjectWithCurrentHeaders}
-                >
-                  <Plus size={16} color="#5AAEF2" />
-                  <Text style={styles.emptyButtonText}>Add</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          ) : (
-            <ScrollView
-              style={styles.subjectsList}
-              contentContainerStyle={styles.subjectsListContent}
-              showsVerticalScrollIndicator={false}
-            >
-              {(filteredSubjects || []).filter((subject) => subject?.id).map((subject) => (
-                <SubjectOverviewCard
-                  key={subject.id}
-                  subject={subject}
-                  children={safeChildren}
-                  selectedChildFilter={selectedChildFilterForCards}
-                  onCardClick={handleSubjectClick}
-                  onNeedsHelpPress={(entry) => openSubjectToSection(entry.id, 'needs-help-section')}
-                  onNavigateToPlanner={handleNavigateToPlanner}
-                  onAddSyllabus={handleAddSyllabus}
-                  onAddEvent={onAddEvent}
-                  onAddMaterial={onAddMaterial}
-                  searchPreviewSectionId={activeSearchPreviewSectionId}
-                  searchPreviewData={subjectDetailCache[subject.id] || null}
-                  searchPreviewTokens={searchTokens}
-                  onSearchPreviewMaterialPress={(entry, materialId) =>
-                    handleSubjectClick(entry, 'materials-section', materialId)
-                  }
-                  isSearchResultCompact={Boolean(searchQuery.trim())}
-                />
-              ))}
-            </ScrollView>
-          )}
-        </View>
+        <LearningSubjectsListView
+          subjects={filteredSubjects || []}
+          children={safeChildren}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          onSearchSubmit={handleSearchSubmit}
+          onSubjectPress={handleSubjectClick}
+          onViewSubject={handleSubjectClick}
+          onCreateEvent={handleAddEvent}
+          onSendMessage={handleSendMessageForSubject}
+          onEditSubject={handleEditSubjectForSubject}
+          onArchiveSubject={handleArchiveSubjectRequest}
+          onAddSubject={openAddSubjectWithCurrentHeaders}
+          canManageSubjects={canManageSubjectsActions}
+          filterContent={renderCoursesHeaderFilters({ showTermRow: false })}
+          onFixGap={() => {
+            onTabChange?.('planner', 'calendar');
+            if (Platform.OS === 'web' && typeof window !== 'undefined') {
+              window.requestAnimationFrame(() => {
+                window.dispatchEvent(new CustomEvent('plannerScrollToFixGap'));
+              });
+            }
+          }}
+          onPlanWeek={() => onTabChange?.('planner', 'calendar')}
+          emptyTitle={searchQuery ? 'No results found' : 'No subjects yet'}
+          emptyText={
+            searchQuery
+              ? 'Please try something else'
+              : 'Create subjects to organize learning.'
+          }
+        />
       ) : selectedModeFilter === 'plan' ? (
         <View style={styles.coursesTabContent}>
           {renderCoursesHeaderFilters({ showTermRow: false, showChildrenRow: false })}

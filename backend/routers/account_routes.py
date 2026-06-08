@@ -11,6 +11,7 @@ import traceback
 from auth import get_current_user, rate_limiter
 from logger import log_event
 from supabase_client import get_admin_client
+from email_service import send_personal_data_request_emails
 
 router = APIRouter(prefix="/api/account", tags=["account"])
 
@@ -25,6 +26,110 @@ class DeleteAccountIn(BaseModel):
 class DeleteAccountOut(BaseModel):
     success: bool
     message: str
+
+
+class PersonalDataRequestOut(BaseModel):
+    success: bool
+    message: str
+
+
+@router.post("/personal-data-request", response_model=PersonalDataRequestOut)
+async def request_personal_data_export(
+    user: dict = Depends(get_current_user),
+    _: None = Depends(rate_limiter),
+):
+    """Send internal + user confirmation emails for a GDPR/CCPA data access request."""
+    supabase = get_admin_client()
+    user_id = user["id"]
+    account_email = (user.get("email") or "").strip()
+
+    profile_res = (
+        supabase.table("profiles")
+        .select("family_id, role, first_name, name, email")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    profile = profile_res.data[0] if profile_res.data else None
+    if not account_email and profile:
+        account_email = (profile.get("email") or "").strip()
+    if not account_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No email address is linked to this account.",
+        )
+
+    display_name = None
+    if profile:
+        display_name = (profile.get("first_name") or profile.get("name") or "").strip() or None
+
+    family_id = profile.get("family_id") if profile else None
+    family_name = None
+    learner_names: list[str] = []
+
+    if family_id:
+        try:
+            family_res = (
+                supabase.table("family")
+                .select("family_name, name")
+                .eq("id", family_id)
+                .maybe_single()
+                .execute()
+            )
+            if family_res.data:
+                family_name = family_res.data.get("family_name") or family_res.data.get("name")
+        except Exception:
+            pass
+        try:
+            children_res = (
+                supabase.table("children")
+                .select("first_name, name, nickname")
+                .eq("family_id", family_id)
+                .execute()
+            )
+            for child in children_res.data or []:
+                label = (
+                    (child.get("nickname") or "").strip()
+                    or (child.get("first_name") or "").strip()
+                    or (child.get("name") or "").strip()
+                )
+                if label:
+                    learner_names.append(label)
+        except Exception:
+            pass
+
+    internal_sent, user_sent = send_personal_data_request_emails(
+        account_email=account_email,
+        user_id=user_id,
+        display_name=display_name,
+        role=(profile or {}).get("role"),
+        family_id=family_id,
+        family_name=family_name,
+        learner_names=learner_names,
+    )
+
+    if not internal_sent and not user_sent:
+        log_event("account.personal_data_request.email_failed", user_id=user_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not send email right now. Please try again in a few minutes or contact contact@learnadoodle.com.",
+        )
+
+    if not user_sent:
+        log_event("account.personal_data_request.user_email_failed", user_id=user_id, internal_sent=internal_sent)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="We logged your request but couldn't send your confirmation email. Please contact contact@learnadoodle.com.",
+        )
+
+    if not internal_sent:
+        log_event("account.personal_data_request.internal_email_failed", user_id=user_id)
+
+    log_event("account.personal_data_request.success", user_id=user_id, family_id=family_id)
+    return PersonalDataRequestOut(
+        success=True,
+        message="Your personal data request was received. Check your email for confirmation.",
+    )
 
 
 @router.post("/delete", response_model=DeleteAccountOut)

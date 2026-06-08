@@ -3,6 +3,7 @@ Email service using Postmark for sending transactional emails
 """
 import html
 import os
+from datetime import datetime, timezone
 from typing import Optional
 from postmarker.core import PostmarkClient
 from logger import log_event
@@ -11,6 +12,7 @@ from logger import log_event
 POSTMARK_API_TOKEN = os.environ.get("POSTMARK_API_TOKEN")
 POSTMARK_SENDER_EMAIL = os.environ.get("POSTMARK_SENDER_EMAIL", "contact@learnadoodle.com")
 POSTMARK_SENDER_NAME = os.environ.get("POSTMARK_SENDER_NAME", "Learnadoodle")
+CONTACT_EMAIL = os.environ.get("LEARNADOODLE_CONTACT_EMAIL", "contact@learnadoodle.com")
 
 postmark_client = None
 if POSTMARK_API_TOKEN:
@@ -351,3 +353,133 @@ If you didn't expect this invitation, you can safely ignore this email.
         import traceback
         traceback.print_exc()
         return False
+
+
+def _postmark_send(*, to_email: str, subject: str, html_body: str, text_body: str) -> bool:
+    if not postmark_client:
+        log_event(
+            "email_service.send.skipped",
+            reason="Postmark client not initialized",
+            to_email=to_email,
+            has_token=bool(POSTMARK_API_TOKEN),
+        )
+        return False
+    try:
+        response = postmark_client.emails.send(
+            From=f"{POSTMARK_SENDER_NAME} <{POSTMARK_SENDER_EMAIL}>",
+            ReplyTo=CONTACT_EMAIL,
+            To=to_email,
+            Subject=subject,
+            HtmlBody=html_body,
+            TextBody=text_body,
+            MessageStream="outbound",
+        )
+        log_event(
+            "email_service.send.success",
+            to_email=to_email,
+            subject=subject,
+            message_id=response.get("MessageID"),
+        )
+        return True
+    except Exception as e:
+        log_event(
+            "email_service.send.error",
+            to_email=to_email,
+            subject=subject,
+            error=str(e),
+        )
+        print(f"[EMAIL ERROR] Failed to send to {to_email}: {e}")
+        return False
+
+
+def send_personal_data_request_emails(
+    *,
+    account_email: str,
+    user_id: str,
+    display_name: Optional[str] = None,
+    role: Optional[str] = None,
+    family_id: Optional[str] = None,
+    family_name: Optional[str] = None,
+    learner_names: Optional[list[str]] = None,
+) -> tuple[bool, bool]:
+    """
+    Notify support and confirm with the requester when a personal data export is requested.
+
+    Returns:
+        (internal_sent, user_confirmation_sent)
+    """
+    requested_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    safe_email = html.escape(account_email or "")
+    safe_user_id = html.escape(user_id or "")
+    safe_name = html.escape(display_name or "—")
+    safe_role = html.escape(role or "—")
+    safe_family_id = html.escape(family_id or "—")
+    safe_family_name = html.escape(family_name or "—")
+    learners = learner_names or []
+    learners_text = ", ".join(learners) if learners else "—"
+    safe_learners = html.escape(learners_text)
+
+    internal_subject = "Personal Data Request"
+    internal_text = f"""A Learnadoodle user requested a copy of their personal data.
+
+Account details:
+- User ID: {user_id}
+- Email: {account_email}
+- Name: {display_name or '—'}
+- Role: {role or '—'}
+- Family ID: {family_id or '—'}
+- Family name: {family_name or '—'}
+- Learners: {learners_text}
+- Requested at: {requested_at}
+
+Please prepare their export within 7 days and follow up with download instructions.
+"""
+    internal_html = f"""<html><body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111827; line-height: 1.5;">
+<p>A Learnadoodle user requested a copy of their personal data.</p>
+<h3 style="margin-bottom: 8px;">Account details</h3>
+<ul>
+  <li><strong>User ID:</strong> {safe_user_id}</li>
+  <li><strong>Email:</strong> {safe_email}</li>
+  <li><strong>Name:</strong> {safe_name}</li>
+  <li><strong>Role:</strong> {safe_role}</li>
+  <li><strong>Family ID:</strong> {safe_family_id}</li>
+  <li><strong>Family name:</strong> {safe_family_name}</li>
+  <li><strong>Learners:</strong> {safe_learners}</li>
+  <li><strong>Requested at:</strong> {requested_at}</li>
+</ul>
+<p>Please prepare their export within 7 days and follow up with download instructions.</p>
+</body></html>"""
+
+    user_subject = "Your Learnadoodle personal data request"
+    user_text = f"""Hi{(' ' + display_name) if display_name else ''},
+
+We received your request to access the personal data stored in your Learnadoodle account ({account_email}).
+
+We're gathering your family information, children profiles, subjects, schedules, materials, and learning records into a zip file. This can take up to 7 days. When we're finished, we'll email you with download instructions.
+
+If you didn't make this request, please contact us at {CONTACT_EMAIL}.
+
+Best regards,
+The Learnadoodle Team
+"""
+    user_html = f"""<html><body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111827; line-height: 1.5;">
+<p>Hi{(' ' + safe_name) if display_name else ''},</p>
+<p>We received your request to access the personal data stored in your Learnadoodle account (<strong>{safe_email}</strong>).</p>
+<p>We're gathering your family information, children profiles, subjects, schedules, materials, and learning records into a zip file. This can take up to 7 days. When we're finished, we'll email you with download instructions.</p>
+<p>If you didn't make this request, please contact us at <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>.</p>
+<p>Best regards,<br>The Learnadoodle Team</p>
+</body></html>"""
+
+    internal_sent = _postmark_send(
+        to_email=CONTACT_EMAIL,
+        subject=internal_subject,
+        html_body=internal_html,
+        text_body=internal_text,
+    )
+    user_confirmation_sent = _postmark_send(
+        to_email=account_email,
+        subject=user_subject,
+        html_body=user_html,
+        text_body=user_text,
+    )
+    return internal_sent, user_confirmation_sent

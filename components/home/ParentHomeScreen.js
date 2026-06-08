@@ -535,6 +535,15 @@ export default function ParentHomeScreen({
     });
   }, [effectiveHomeData.children, dashboardExtras.planHealth]);
 
+  const navigateToPlannerFixGap = useCallback(() => {
+    onNavigate?.('planner', 'calendar');
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent('plannerScrollToFixGap'));
+      });
+    }
+  }, [onNavigate]);
+
   const alerts = useMemo(() => {
     const items = [];
     const subjects = effectiveHomeData.subjects || [];
@@ -556,7 +565,7 @@ export default function ParentHomeScreen({
           icon: AlertTriangle,
           iconBg: '#fef2f2',
           iconColor: '#dc2626',
-          onPress: () => onNavigate?.('planner', 'plan-health'),
+          onPress: navigateToPlannerFixGap,
         });
       });
     });
@@ -574,7 +583,7 @@ export default function ParentHomeScreen({
           icon: AlertTriangle,
           iconBg: '#fef2f2',
           iconColor: '#dc2626',
-          onPress: () => onNavigate?.('planner', 'plan-health'),
+          onPress: navigateToPlannerFixGap,
         });
       });
     }
@@ -619,6 +628,7 @@ export default function ParentHomeScreen({
     dashboardExtras,
     effectiveHomeData.children,
     effectiveHomeData.subjects,
+    navigateToPlannerFixGap,
     onNavigate,
   ]);
 
