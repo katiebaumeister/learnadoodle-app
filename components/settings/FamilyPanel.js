@@ -458,6 +458,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const [feedbackSubject, setFeedbackSubject] = useState('');
   const [feedbackDescription, setFeedbackDescription] = useState('');
   const [feedbackType, setFeedbackType] = useState('');
+  const [feedbackFieldErrors, setFeedbackFieldErrors] = useState({
+    subject: '',
+    description: '',
+    type: '',
+  });
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   
@@ -3378,7 +3383,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       onPress={() => openIdCardModal('parent', parents)} 
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <CreditCard size={16} color="#5AAEF2" />
+                      <CreditCard size={16} color="#374151" />
                       <Text style={styles.membersInviteButtonText}>Generate ID</Text>
                     </TouchableOpacity>
                   )}
@@ -3392,7 +3397,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       }} 
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Plus size={16} color="#5AAEF2" />
+                      <Plus size={16} color="#374151" />
                       <Text style={styles.membersInviteButtonText}>{isSelfManagedStudent ? 'Request Parent' : 'Invite Parent'}</Text>
                     </TouchableOpacity>
                   )}
@@ -3512,7 +3517,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       onPress={() => openIdCardModal('child', children)} 
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <CreditCard size={16} color="#5AAEF2" />
+                      <CreditCard size={16} color="#374151" />
                       <Text style={styles.membersInviteButtonText}>Generate ID</Text>
                     </TouchableOpacity>
                   )}
@@ -3523,7 +3528,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         onPress={() => setShowAddChildModal(true)} 
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Plus size={16} color="#5AAEF2" />
+                        <Plus size={16} color="#374151" />
                         <Text style={styles.membersInviteButtonText}>Add Child</Text>
                       </TouchableOpacity>
                       <TouchableOpacity 
@@ -3531,7 +3536,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         onPress={() => handleOpenChildInviteModal(null)}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Plus size={16} color="#5AAEF2" />
+                        <Plus size={16} color="#374151" />
                         <Text style={styles.membersInviteButtonText}>Invite Child</Text>
                       </TouchableOpacity>
                     </>
@@ -3669,7 +3674,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           }
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
-                          <Eye size={14} color="#5AAEF2" />
+                          <Eye size={14} color="#374151" />
                           <Text style={styles.viewAsChildButtonText}>
                             {viewingAsChildId != null && String(viewingAsChildId) === String(child.id)
                               ? 'Viewing'
@@ -3704,7 +3709,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       onPress={() => openIdCardModal('tutor', tutors)} 
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <CreditCard size={16} color="#5AAEF2" />
+                      <CreditCard size={16} color="#374151" />
                       <Text style={styles.membersInviteButtonText}>Generate ID</Text>
                     </TouchableOpacity>
                   )}
@@ -3717,7 +3722,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     }} 
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Plus size={16} color="#5AAEF2" />
+                    <Plus size={16} color="#374151" />
                     <Text style={styles.membersInviteButtonText}>Invite Tutor</Text>
                   </TouchableOpacity>
                 </View>
@@ -3961,7 +3966,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     }}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Plus size={16} color="#5AAEF2" />
+                    <Plus size={16} color="#374151" />
                     <Text style={styles.coursesEmptyButtonText}>Add</Text>
                   </TouchableOpacity>
                 )}
@@ -4153,6 +4158,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     setFeedbackSubject('');
                     setFeedbackDescription('');
                     setFeedbackType('');
+                    setFeedbackFieldErrors({ subject: '', description: '', type: '' });
                   }}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
@@ -4186,26 +4192,49 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 <View style={styles.feedbackField}>
                   <Text style={styles.feedbackLabel}>Subject <Text style={styles.feedbackRequired}>*</Text></Text>
                   <TextInput
-                    style={styles.feedbackInput}
+                    style={[
+                      styles.feedbackInput,
+                      feedbackFieldErrors.subject && styles.feedbackInputError,
+                    ]}
                     value={feedbackSubject}
-                    onChangeText={setFeedbackSubject}
+                    onChangeText={(text) => {
+                      setFeedbackSubject(text);
+                      if (feedbackFieldErrors.subject) {
+                        setFeedbackFieldErrors((prev) => ({ ...prev, subject: '' }));
+                      }
+                    }}
                     placeholder="Brief description of your issue"
                     placeholderTextColor="#9ca3af"
                   />
+                  {feedbackFieldErrors.subject ? (
+                    <Text style={styles.feedbackFieldError}>{feedbackFieldErrors.subject}</Text>
+                  ) : null}
                 </View>
                 
                 <View style={styles.feedbackField}>
                   <Text style={styles.feedbackLabel}>Description <Text style={styles.feedbackRequired}>*</Text></Text>
                   <TextInput
-                    style={[styles.feedbackInput, styles.feedbackTextArea]}
+                    style={[
+                      styles.feedbackInput,
+                      styles.feedbackTextArea,
+                      feedbackFieldErrors.description && styles.feedbackInputError,
+                    ]}
                     value={feedbackDescription}
-                    onChangeText={setFeedbackDescription}
+                    onChangeText={(text) => {
+                      setFeedbackDescription(text);
+                      if (feedbackFieldErrors.description) {
+                        setFeedbackFieldErrors((prev) => ({ ...prev, description: '' }));
+                      }
+                    }}
                     placeholder="Please provide as much detail as possible..."
                     placeholderTextColor="#9ca3af"
                     multiline
                     numberOfLines={5}
                     textAlignVertical="top"
                   />
+                  {feedbackFieldErrors.description ? (
+                    <Text style={styles.feedbackFieldError}>{feedbackFieldErrors.description}</Text>
+                  ) : null}
                 </View>
                 
                 <View style={styles.feedbackField}>
@@ -4223,7 +4252,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           styles.feedbackTypeOption,
                           feedbackType === option.value && styles.feedbackTypeOptionSelected
                         ]}
-                        onPress={() => setFeedbackType(option.value)}
+                        onPress={() => {
+                          setFeedbackType(option.value);
+                          if (feedbackFieldErrors.type) {
+                            setFeedbackFieldErrors((prev) => ({ ...prev, type: '' }));
+                          }
+                        }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
                         <Text style={[
@@ -4235,16 +4269,24 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       </TouchableOpacity>
                     ))}
                   </View>
+                  {feedbackFieldErrors.type ? (
+                    <Text style={styles.feedbackFieldError}>{feedbackFieldErrors.type}</Text>
+                  ) : null}
                 </View>
                 
                 <TouchableOpacity
                   style={[
                     styles.feedbackSubmitButton,
-                    (!feedbackSubject || !feedbackDescription || !feedbackType || submittingFeedback) && styles.feedbackSubmitButtonDisabled
+                    submittingFeedback && styles.feedbackSubmitButtonDisabled,
                   ]}
                   onPress={async () => {
-                    if (!feedbackSubject || !feedbackDescription || !feedbackType) {
-                      toast.push('Please fill in all required fields', 'error');
+                    const errors = {
+                      subject: !feedbackSubject.trim() ? 'Required' : '',
+                      description: !feedbackDescription.trim() ? 'Required' : '',
+                      type: !feedbackType ? 'Required' : '',
+                    };
+                    setFeedbackFieldErrors(errors);
+                    if (errors.subject || errors.description || errors.type) {
                       return;
                     }
                     
@@ -4278,8 +4320,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       setSubmittingFeedback(false);
                     }
                   }}
-                  disabled={!feedbackSubject || !feedbackDescription || !feedbackType || submittingFeedback}
-                  {...(Platform.OS === 'web' && { cursor: (!feedbackSubject || !feedbackDescription || !feedbackType || submittingFeedback) ? 'not-allowed' : 'pointer' })}
+                  disabled={submittingFeedback}
+                  {...(Platform.OS === 'web' && { cursor: submittingFeedback ? 'not-allowed' : 'pointer' })}
                 >
                   {submittingFeedback ? (
                     <ActivityIndicator size="small" color="#ffffff" />
@@ -6424,25 +6466,27 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 5,
-      paddingVertical: 8,
+      paddingVertical: 6,
       paddingHorizontal: 12,
-      borderRadius: 999,
+      borderRadius: 20,
       borderWidth: 1,
-      borderStyle: 'dashed',
-      borderColor: '#9ED3FF',
-      backgroundColor: 'rgba(129, 193, 225, 0.18)',
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+      }),
     },
     viewAsChildButtonHovered: {
-      backgroundColor: 'rgba(129, 193, 225, 0.28)',
+      backgroundColor: '#f9fafb',
     },
     viewAsChildButtonActive: {
-      backgroundColor: 'rgba(129, 193, 225, 0.32)',
-      borderColor: '#81C1E1',
+      backgroundColor: '#f3f4f6',
+      borderColor: '#d1d5db',
     },
     viewAsChildButtonText: {
       fontSize: 13,
-      fontWeight: '600',
-      color: '#5AAEF2',
+      fontWeight: '500',
+      color: '#374151',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -6451,21 +6495,20 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      paddingVertical: 8,
-      paddingHorizontal: 14,
-      borderRadius: 999,
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 20,
       borderWidth: 1,
-      borderStyle: 'dashed',
-      borderColor: '#9ED3FF',
-      backgroundColor: 'rgba(129, 193, 225, 0.18)',
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
       ...(Platform.OS === 'web' && {
         cursor: 'pointer',
       }),
     },
     membersInviteButtonText: {
       fontSize: 14,
-      fontWeight: '600',
-      color: '#5AAEF2',
+      fontWeight: '500',
+      color: '#374151',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -6530,7 +6573,7 @@ function createStyles(tokens) {
     childStatusPill: {
       paddingHorizontal: 10,
       paddingVertical: 4,
-      borderRadius: 0,
+      borderRadius: 999,
       flexShrink: 0,
     },
     childStatusPillGreen: {
@@ -6611,7 +6654,7 @@ function createStyles(tokens) {
     memberRowResendText: {
       fontSize: 12,
       fontWeight: '600',
-      color: '#5AAEF2',
+      color: '#6366F1',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -6638,19 +6681,17 @@ function createStyles(tokens) {
       gap: 12,
     },
     memberRowActionButton: {
-      width: 36,
-      height: 36,
-      borderRadius: 0,
-      backgroundColor: '#f9fafb',
+      padding: 6,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: 'transparent',
       ...(Platform.OS === 'web' && {
-        transition: 'all 0.2s ease',
         cursor: 'pointer',
+        transition: 'opacity 0.2s ease',
       }),
     },
     memberRowActionButtonHovered: {
-      backgroundColor: '#f3f4f6',
+      opacity: 0.65,
     },
     memberRowActionButtonOld: {
       padding: 6,
@@ -6772,12 +6813,12 @@ function createStyles(tokens) {
       gap: 10,
       paddingVertical: 10,
       paddingHorizontal: 12,
-      borderRadius: 999,
+      borderRadius: 8,
       marginBottom: 6,
       position: 'relative',
     },
     sidebarButtonActive: {
-      backgroundColor: 'rgba(129, 193, 225, 0.18)',
+      backgroundColor: '#f3f4f6',
     },
     sidebarButtonText: {
       fontSize: 15,
@@ -6788,7 +6829,7 @@ function createStyles(tokens) {
       }),
     },
     sidebarButtonTextActive: {
-      color: '#5AAEF2',
+      color: '#111827',
       fontWeight: '600',
     },
     sidebarSubscriptionContent: {
@@ -7504,13 +7545,12 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 8,
-      paddingHorizontal: 14,
-      borderRadius: 999,
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 20,
       borderWidth: 1,
-      borderStyle: 'dashed',
-      borderColor: '#9ED3FF',
-      backgroundColor: 'rgba(129, 193, 225, 0.18)',
+      borderColor: '#e5e7eb',
+      backgroundColor: '#ffffff',
       alignSelf: 'flex-start',
       marginTop: 0,
       ...(Platform.OS === 'web' && {
@@ -7520,8 +7560,8 @@ function createStyles(tokens) {
     },
     profileResetPasswordButtonText: {
       fontSize: 14,
-      fontWeight: '600',
-      color: '#5AAEF2',
+      fontWeight: '500',
+      color: '#374151',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -9505,6 +9545,17 @@ function createStyles(tokens) {
     },
     feedbackRequired: {
       color: '#ef4444',
+    },
+    feedbackFieldError: {
+      fontSize: 12,
+      color: '#ef4444',
+      marginTop: 6,
+      ...(Platform.OS === 'web' && {
+        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }),
+    },
+    feedbackInputError: {
+      borderColor: '#ef4444',
     },
     feedbackInput: {
       fontSize: 14,

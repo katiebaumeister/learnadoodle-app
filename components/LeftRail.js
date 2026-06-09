@@ -636,8 +636,7 @@ const styles = StyleSheet.create({
   navLabel: {
     fontSize: 16,
     color: '#6B7280',
-    fontWeight: '800',
-    textTransform: 'uppercase',
+    fontWeight: '500',
     lineHeight: 22,
     includeFontPadding: false,
     ...(Platform.OS === 'web' && {
@@ -649,8 +648,7 @@ const styles = StyleSheet.create({
   },
   navLabelActive: {
     color: SIDEBAR_COLORS.activeText,
-    fontWeight: '800',
-    textTransform: 'uppercase',
+    fontWeight: '600',
     lineHeight: 22,
     includeFontPadding: false,
     ...(Platform.OS === 'web' && {
