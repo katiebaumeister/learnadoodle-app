@@ -29,6 +29,7 @@ export default function LearningSubjectsListView({
   onAddSyllabus,
   onAddMaterial,
   onAddEvent,
+  onEditSubject,
   searchPreviewSectionId = null,
   subjectDetailCache = {},
   searchPreviewTokens = [],
@@ -127,6 +128,7 @@ export default function LearningSubjectsListView({
               onNavigateToPlanner={onNavigateToPlanner}
               onAddSyllabus={onAddSyllabus}
               onAddEvent={onAddEvent}
+              onEditSubject={onEditSubject}
               onAddMaterial={onAddMaterial}
               searchPreviewSectionId={searchPreviewSectionId}
               searchPreviewData={subjectDetailCache[subject.id] || null}

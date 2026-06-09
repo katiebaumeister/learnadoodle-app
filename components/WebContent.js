@@ -1585,6 +1585,12 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
         return `${y}-${m}-${day}`;
       };
 
+      const localTimeFromTs = (ts) => {
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) return null;
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      };
+
       // API success: patch state with saved event and skip full refetch
       if (fromApi) {
         lastMergeFromApiRef.current = { eventId, at: Date.now() };
@@ -1668,9 +1674,18 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               const index = dayEvents.findIndex(e => e && e.id === eventId);
               if (index >= 0) {
                 const updatedDayEvents = [...dayEvents];
-                const preservedStartLocal = updatedEvent.start_local || updatedDayEvents[index].start_local;
-                const preservedEndLocal = updatedEvent.end_local || updatedDayEvents[index].end_local;
-                const preservedTime = updatedEvent.time || updatedEvent.start_local || updatedDayEvents[index].time;
+                const derivedStartLocal = localTimeFromTs(
+                  updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local
+                );
+                const derivedEndLocal = localTimeFromTs(
+                  updatedEvent.end_ts || updatedEvent.end || updatedEvent.end_local
+                );
+                const preservedStartLocal =
+                  updatedEvent.start_local || derivedStartLocal || updatedDayEvents[index].start_local;
+                const preservedEndLocal =
+                  updatedEvent.end_local || derivedEndLocal || updatedDayEvents[index].end_local;
+                const preservedTime =
+                  updatedEvent.time || preservedStartLocal || updatedDayEvents[index].time;
                 updatedDayEvents[index] = {
                   ...updatedDayEvents[index],
                   ...updatedEvent,
@@ -1711,7 +1726,19 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           });
           // Event may come from cache only (not in calendarEvents); still add to new date so it shows in correct cell
           if (!found && newDateKey) {
-            const withDateLocal = { ...updatedEvent, date_local: newDateKey };
+            const derivedStartLocal = localTimeFromTs(
+              updatedEvent.start_ts || updatedEvent.start || updatedEvent.start_local
+            );
+            const derivedEndLocal = localTimeFromTs(
+              updatedEvent.end_ts || updatedEvent.end || updatedEvent.end_local
+            );
+            const withDateLocal = {
+              ...updatedEvent,
+              date_local: newDateKey,
+              start_local: updatedEvent.start_local || derivedStartLocal,
+              end_local: updatedEvent.end_local || derivedEndLocal,
+              time: updatedEvent.time || updatedEvent.start_local || derivedStartLocal,
+            };
             newEvents[newDateKey] = [...(newEvents[newDateKey] || []), withDateLocal];
             // Authoritatively clear the source day so plannerEventsForMonth overlays [] over stale cache (first-drag fix)
             const oldKey =
@@ -9780,7 +9807,10 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
           window.history.replaceState({}, '', '/subjects');
         }
       } else if (response.fetch === 'navigate_materials' && onTabChange) {
-        onTabChange('materials');
+        onTabChange('subjects', 'materials');
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.history.replaceState({}, '', '/subjects');
+        }
       }
 
       if (response.openTaskModal && Platform.OS === 'web' && typeof window !== 'undefined') {

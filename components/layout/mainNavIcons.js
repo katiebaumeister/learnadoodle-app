@@ -8,6 +8,7 @@ import {
   MessageCircle,
   Library,
   UserCircle,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 /** Match left-rail nav icons in section page titles. */
@@ -19,6 +20,7 @@ export const MAIN_NAV_ICONS = {
   subjects: GraduationCap,
   learning: GraduationCap,
   planner: CalendarDays,
+  planningPreferences: SlidersHorizontal,
   records: FileText,
   family: Users,
   messages: MessageCircle,

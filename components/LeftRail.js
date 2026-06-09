@@ -12,7 +12,7 @@ import {
 import { MAIN_NAV_ICONS } from './layout/mainNavIcons';
 
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
-const SHOW_MATERIALS_IN_SIDEBAR = false;
+const SHOW_MATERIALS_IN_SIDEBAR = true;
 const SHOW_SUBJECTS_CATALOG_IN_SIDEBAR = false;
 const SHOW_RECORDS_IN_SIDEBAR = false;
 const SHOW_CREATE_IN_SIDEBAR = false;
@@ -42,6 +42,37 @@ const SIDEBAR_COLORS = {
   activeText: '#0F172A',
   avatar: 'rgba(148, 163, 184, 0.28)',
 };
+
+const NAV_ITEM_DEFS = {
+  home: { key: 'home', label: 'Home', icon: MAIN_NAV_ICONS.home },
+  messages: { key: 'messages', label: 'Messages', icon: MAIN_NAV_ICONS.messages },
+  subjects: { key: 'subjects', label: 'Learning', icon: MAIN_NAV_ICONS.subjects },
+  materials: { key: 'materials', label: 'Materials', icon: MAIN_NAV_ICONS.materials },
+  family: { key: 'family', label: 'Family', icon: MAIN_NAV_ICONS.family },
+  planner: { key: 'planner', label: 'Planner', icon: MAIN_NAV_ICONS.planner },
+  planningPreferences: {
+    key: 'planning-preferences',
+    label: 'Planning preferences',
+    icon: MAIN_NAV_ICONS.planningPreferences,
+  },
+  records: { key: 'records', label: 'Records', icon: MAIN_NAV_ICONS.records },
+  profile: { key: 'profile', label: 'Settings', icon: MAIN_NAV_ICONS.profile },
+  create: { key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create },
+  learning: { key: 'learning', label: 'Subjects', icon: MAIN_NAV_ICONS.subjects },
+  tutorStudents: { key: 'tutor-students', label: 'My students', icon: MAIN_NAV_ICONS.family },
+};
+
+const PARENT_NAV_BUCKET_KEYS = [
+  ['home', 'messages'],
+  ['subjects', 'materials', 'family'],
+  ['planner', 'planningPreferences'],
+  ['profile'],
+];
+
+const TUTOR_NAV_BUCKET_KEYS = [
+  ['home', 'messages'],
+  ['tutorStudents', 'planner'],
+];
 
 const CHILD_SECTIONS = [
   { key: 'affirmation', label: 'Affirmation' },
@@ -144,68 +175,52 @@ export default function LeftRail({
     [onOpenNew]
   );
 
-  const topNavItems = useMemo(
-    () => {
-      const allItems = [
-        { key: 'home', label: 'Home', icon: MAIN_NAV_ICONS.home },
-        { key: 'subjects', label: 'Learning', icon: MAIN_NAV_ICONS.subjects },
-        { key: 'planner', label: 'Planner', icon: MAIN_NAV_ICONS.planner },
-        { key: 'records', label: 'Records', icon: MAIN_NAV_ICONS.records },
-        { key: 'family', label: 'Family', icon: MAIN_NAV_ICONS.family },
-        { key: 'profile', label: 'Settings', icon: MAIN_NAV_ICONS.profile },
-        { key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create },
-        { key: 'messages', label: 'Messages', icon: MAIN_NAV_ICONS.messages },
-        { key: 'learning', label: 'Subjects', icon: MAIN_NAV_ICONS.subjects },
-        { key: 'materials', label: 'Materials', icon: MAIN_NAV_ICONS.materials },
-      ].filter((item) => {
-        if (hideProfileNav && item.key === 'profile') return false;
-        if (!SHOW_MATERIALS_IN_SIDEBAR && item.key === 'materials') return false;
-        if (!SHOW_SUBJECTS_CATALOG_IN_SIDEBAR && item.key === 'learning') return false;
-        if (!SHOW_RECORDS_IN_SIDEBAR && item.key === 'records') return false;
-        if (!SHOW_CREATE_IN_SIDEBAR && item.key === 'create') return false;
-        if ((userRole === 'child' || userRole === 'student') && item.key === 'create') return false;
-        return true;
-      });
+  const shouldIncludeNavItem = useCallback((item) => {
+    if (!item) return false;
+    if (hideProfileNav && item.key === 'profile') return false;
+    if (!SHOW_MATERIALS_IN_SIDEBAR && item.key === 'materials') return false;
+    if (!SHOW_SUBJECTS_CATALOG_IN_SIDEBAR && item.key === 'learning') return false;
+    if (!SHOW_RECORDS_IN_SIDEBAR && item.key === 'records') return false;
+    if (!SHOW_CREATE_IN_SIDEBAR && item.key === 'create') return false;
+    if ((userRole === 'child' || userRole === 'student') && item.key === 'planning-preferences') return false;
+    if (item.key === 'planning-preferences' && effectivePermissions.canViewPlanner === false) return false;
+    if ((userRole === 'child' || userRole === 'student') && item.key === 'create') return false;
+    if ((userRole === 'child' || userRole === 'student') && item.key === 'family') return false;
+    if (item.key === 'planner' && effectivePermissions.canViewPlanner === false) return false;
+    if ((item.key === 'subjects' || item.key === 'learning') && effectivePermissions.canViewSubjects === false) return false;
+    if (item.key === 'materials' && effectivePermissions.canViewLibrary === false) return false;
+    if ((userRole === 'child' || userRole === 'student') && (item.key === 'records' || item.key === 'explore')) return false;
+    return true;
+  }, [
+    effectivePermissions.canViewLibrary,
+    effectivePermissions.canViewPlanner,
+    effectivePermissions.canViewSubjects,
+    hideProfileNav,
+    userRole,
+  ]);
 
-      // Same sidebar structure for learner roles; content is child-scoped in WebContent
-      if (userRole === 'child' || userRole === 'student') {
-        return allItems.filter((item) => {
-          if (item.key === 'records' || item.key === 'explore') return false;
-          if (item.key === 'planner' && effectivePermissions.canViewPlanner === false) return false;
-          if ((item.key === 'subjects' || item.key === 'learning') && effectivePermissions.canViewSubjects === false) return false;
-          if (item.key === 'materials' && effectivePermissions.canViewLibrary === false) return false;
-          return true;
-        });
-      } else if (userRole === 'tutor') {
-        return [
-          { key: 'home', label: 'Home', icon: MAIN_NAV_ICONS.home },
-          { key: 'tutor-students', label: 'My students', icon: MAIN_NAV_ICONS.family },
-          { key: 'planner', label: 'Planner', icon: MAIN_NAV_ICONS.planner },
-          ...(SHOW_MATERIALS_IN_SIDEBAR ? [{ key: 'materials', label: 'Materials', icon: MAIN_NAV_ICONS.materials }] : []),
-          ...(SHOW_CREATE_IN_SIDEBAR ? [{ key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create }] : []),
-          { key: 'messages', label: 'Messages', icon: MAIN_NAV_ICONS.messages },
-        ];
-      } else {
-        return allItems.filter((item) => item.key !== 'explore');
-      }
-    },
-    [effectivePermissions.canViewLibrary, effectivePermissions.canViewPlanner, effectivePermissions.canViewSubjects, userRole, hideProfileNav]
-  );
+  const navBuckets = useMemo(() => {
+    const resolveBucket = (keys) => ({
+      items: keys
+        .map((key) => NAV_ITEM_DEFS[key])
+        .filter((item) => shouldIncludeNavItem(item)),
+    });
 
-  const primaryNavItems = useMemo(
-    () => topNavItems.filter((item) => item.key !== 'messages' && item.key !== 'create'),
-    [topNavItems],
-  );
+    let bucketKeys = PARENT_NAV_BUCKET_KEYS;
+    if (userRole === 'tutor') {
+      bucketKeys = SHOW_MATERIALS_IN_SIDEBAR
+        ? [
+            ['home', 'messages'],
+            ['tutorStudents', 'planner', 'materials'],
+          ]
+        : TUTOR_NAV_BUCKET_KEYS;
+    }
+    if (SHOW_CREATE_IN_SIDEBAR) {
+      bucketKeys = [...bucketKeys, ['create']];
+    }
 
-  const createNavItem = useMemo(
-    () => topNavItems.find((item) => item.key === 'create') || null,
-    [topNavItems],
-  );
-
-  const messagesNavItem = useMemo(
-    () => topNavItems.find((item) => item.key === 'messages') || null,
-    [topNavItems],
-  );
+    return bucketKeys.map(resolveBucket).filter((bucket) => bucket.items.length > 0);
+  }, [shouldIncludeNavItem, userRole]);
 
   const showLabels = permanentSidebar || !isCollapsed;
 
@@ -415,20 +430,12 @@ export default function LeftRail({
         })()}
 
         <View style={[styles.sectionGroup, permanentSidebar && styles.sectionGroupPermanent]}>
-          {permanentSidebar ? (
-            <>
-              {primaryNavItems.map((item) => renderNavItem(item))}
-              {(createNavItem || messagesNavItem) ? (
-                <>
-                  <View style={styles.sidebarDivider} />
-                  {createNavItem ? renderNavItem(createNavItem) : null}
-                  {messagesNavItem ? renderNavItem(messagesNavItem) : null}
-                </>
-              ) : null}
-            </>
-          ) : (
-            topNavItems.map((item) => renderNavItem(item))
-          )}
+          {navBuckets.map((bucket, bucketIndex) => (
+            <View key={`nav-bucket-${bucketIndex}`}>
+              {bucketIndex > 0 ? <View style={styles.navBucketSpacer} /> : null}
+              {bucket.items.map((item) => renderNavItem(item))}
+            </View>
+          ))}
         </View>
 
       </View>
@@ -675,12 +682,10 @@ const styles = StyleSheet.create({
       boxSizing: 'border-box',
     }),
   },
-  sidebarDivider: {
-    height: 1,
-    backgroundColor: 'rgba(148, 163, 184, 0.24)',
-    marginVertical: 8,
-    marginHorizontal: 0,
-    alignSelf: 'stretch',
+  navBucketSpacer: {
+    height: 10,
+    marginTop: 6,
+    marginBottom: 6,
   },
   iconWrapperPermanent: {
     width: 28,

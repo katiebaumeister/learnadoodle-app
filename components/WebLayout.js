@@ -2301,6 +2301,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }
         setActiveTab('subjects');
         setActiveTopNav('subjects');
+      } else if (pathname === '/planner/preferences') {
+        if (isFamilyShellTab(activeTabRef.current)) {
+          return;
+        }
+        setActiveTab('settings');
+        setActiveSubtab('planner-settings');
+        setActiveTopNav('planning-preferences');
       } else if (pathname === '/planner') {
         // Family panel uses pushState for About/Terms/Privacy; URL may still be /planner after switching to Family without a replace.
         if (isFamilyShellTab(activeTabRef.current)) {
@@ -2404,6 +2411,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setActiveTopNav('records');
     } else if (activeTab === 'family') {
       setActiveTopNav('family');
+    } else if (
+      (activeTab === 'subjects' || activeTab === 'learning')
+      && activeSubtab === 'materials'
+    ) {
+      setActiveTopNav('materials');
     } else if (activeTab === 'materials') {
       setActiveTopNav('materials');
     } else if (activeTab === 'learning') {
@@ -2413,13 +2425,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } else if (activeTab === 'intelligence') {
       setActiveTopNav('intelligence');
     } else if (activeTab === 'profile' || activeTab === 'settings') {
-      setActiveTopNav('profile');
+      setActiveTopNav(activeSubtab === 'planner-settings' ? 'planning-preferences' : 'profile');
     } else if (activeTab === 'tutor-students') {
       setActiveTopNav('tutor-students');
     } else if ((activeTab === 'children-list' || (activeTab && activeTab.startsWith('child-'))) && activeChildId) {
       setActiveTopNav('family');
     }
-  }, [activeTab, activeChildId]);
+  }, [activeTab, activeSubtab, activeChildId]);
 
   useEffect(() => {
     if (isMessagesPaneOpen || isCreatePaneOpen) return;
@@ -3295,6 +3307,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
           handleTabChange('planner', 'calendar');
           break;
+        case 'planning-preferences':
+          handleTabChange('settings', 'planner-settings');
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.history.pushState({}, '', '/planner/preferences');
+          }
+          break;
         case 'new':
           handleTabChange('settings', 'profile');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -3302,9 +3320,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
           break;
         case 'materials':
-          handleTabChange('materials');
+          handleTabChange('subjects', 'materials');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/library');
+            window.history.pushState({}, '', '/subjects');
           }
           break;
         case 'subjects':

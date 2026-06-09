@@ -3108,6 +3108,11 @@ export default function SubjectsPage({
           onNavigateToPlanner={handleNavigateToPlanner}
           onAddSyllabus={handleAddSyllabus}
           onAddEvent={onAddEvent}
+          onEditSubject={
+            canShowEditSubjectButton && canManageSubjectsActions
+              ? handleEditSubjectForSubject
+              : undefined
+          }
           onAddMaterial={onAddMaterial}
           searchPreviewSectionId={activeSearchPreviewSectionId}
           subjectDetailCache={subjectDetailCache}

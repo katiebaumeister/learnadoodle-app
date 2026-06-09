@@ -117,7 +117,11 @@ function hasMidnightToEndOfDayBounds(event) {
 export function isTimelessUntimedEvent(event) {
   if (!event || isPlannerHolidayOrBreakType(event)) return false;
   if (event.all_day === true || event.allDay === true) return false;
-  return event.is_flexible === true;
+  if (event.is_flexible !== true) return false;
+  // Overlap-resolved drags keep is_flexible=true in DB but retain wall-clock times.
+  if (hasExplicitWallClockStart(event)) return false;
+  if (hasMidnightToEndOfDayBounds(event)) return true;
+  return true;
 }
 
 /** Explicit all-day (toggle, holiday/break types, or non-flexible full-day bounds). */

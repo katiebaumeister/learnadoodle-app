@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import FamilySectionView from '../family/FamilySectionView';
 import RecordsSectionView from '../records/RecordsSectionView';
-import SubjectsPage from '../subjects/SubjectsPage';
+import LearningSectionView from '../learning/LearningSectionView';
 
 function PlaceholderPanel({ title, description }) {
   return (
@@ -42,33 +42,36 @@ export default function SectionContentPanel({
   onExitChildView = null,
   onEditChild = null,
 }) {
-  const subjectsScreenMode =
-    section === 'subjects' && (tab === 'learning' || tab === 'subjects')
-      ? 'catalog'
-      : 'records';
-
   if (tab === 'planner') {
     return null;
   }
 
   if (tab === 'subjects' || tab === 'learning') {
     return (
-      <SubjectsPage
+      <LearningSectionView
+        tab={tab}
+        section={section}
         familyId={familyId}
-        planningMode={family?.default_planning_mode || null}
         children={children || []}
-        preloadedSubjects={subjectsOverviewCache}
-        preloadedSubjectDetailCache={subjectDetailCache}
-        onSubjectsUpdate={onSubjectsOverviewUpdate}
-        onSubjectDetailUpdate={onSubjectDetailUpdate}
+        family={family}
+        user={user}
+        profile={profile}
+        session={session}
         userRole={userRole}
         accessibleChildren={accessibleChildren}
-        screenMode={subjectsScreenMode}
-        hideModeSegments
-        forcedModeFilter="view"
-        learningSection="subjects"
+        subjectsOverviewCache={subjectsOverviewCache}
+        subjectDetailCache={subjectDetailCache}
+        onSubjectsOverviewUpdate={onSubjectsOverviewUpdate}
+        onSubjectDetailUpdate={onSubjectDetailUpdate}
         onTabChange={onTabChange}
-        {...subjectsCallbacks}
+        fullSubjects={fullSubjects || []}
+        materialsCache={materialsCache}
+        onMaterialsUpdate={onMaterialsUpdate}
+        subjectsCallbacks={subjectsCallbacks}
+        viewingAsChildId={viewingAsChildId}
+        onViewAsChild={onViewAsChild}
+        onExitChildView={onExitChildView}
+        onEditChild={onEditChild}
       />
     );
   }

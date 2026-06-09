@@ -409,6 +409,8 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
       const [year, month, day] = targetDateIso.split('-').map(Number);
       const newStart = new Date(year, month - 1, day, sourceStart.getHours(), sourceStart.getMinutes(), sourceStart.getSeconds(), 0);
       const newEnd = new Date(newStart.getTime() + durationMs);
+      const startLocal = `${String(newStart.getHours()).padStart(2, '0')}:${String(newStart.getMinutes()).padStart(2, '0')}`;
+      const endLocal = `${String(newEnd.getHours()).padStart(2, '0')}:${String(newEnd.getMinutes()).padStart(2, '0')}`;
 
       setLocalOverrides((prev) => ({
         ...prev,
@@ -419,8 +421,8 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
           start: newStart.toISOString(),
           end: newEnd.toISOString(),
           date_local: targetDateIso,
-          start_local: `${String(newStart.getHours()).padStart(2, '0')}:${String(newStart.getMinutes()).padStart(2, '0')}`,
-          end_local: `${String(newEnd.getHours()).padStart(2, '0')}:${String(newEnd.getMinutes()).padStart(2, '0')}`,
+          start_local: startLocal,
+          end_local: endLocal,
         },
       }));
       debugDrag('optimistic_applied', {
@@ -461,6 +463,9 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
           start: newStart.toISOString(),
           end: newEnd.toISOString(),
           date_local: targetDateIso,
+          start_local: startLocal,
+          end_local: endLocal,
+          time: startLocal,
           family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
           child_id: primaryChildId,
           child_ids: sourceChildIds,
@@ -470,6 +475,9 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
             start_ts: newStart.toISOString(),
             end_ts: newEnd.toISOString(),
             date_local: targetDateIso,
+            start_local: startLocal,
+            end_local: endLocal,
+            time: startLocal,
             family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
             child_id: primaryChildId,
             child_ids: sourceChildIds,
@@ -549,13 +557,17 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
           child_id: primaryChildId,
           child_ids: sourceChildIds,
           assignees: sourceChildIds,
-          start_local: `${String(newStart.getHours()).padStart(2, '0')}:${String(newStart.getMinutes()).padStart(2, '0')}`,
-          end_local: `${String(newEnd.getHours()).padStart(2, '0')}:${String(newEnd.getMinutes()).padStart(2, '0')}`,
+          start_local: startLocal,
+          end_local: endLocal,
+          time: startLocal,
           data: {
             ...((source && typeof source.data === 'object') ? source.data : {}),
             start_ts: newStart.toISOString(),
             end_ts: newEnd.toISOString(),
             date_local: targetDateIso,
+            start_local: startLocal,
+            end_local: endLocal,
+            time: startLocal,
             family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
             child_id: primaryChildId,
             child_ids: sourceChildIds,
@@ -623,6 +635,9 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
               start: newStart.toISOString(),
               end: newEnd.toISOString(),
               date_local: targetDateIso,
+              start_local: startLocal,
+              end_local: endLocal,
+              time: startLocal,
               family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
               child_id: primaryChildId,
               child_ids: sourceChildIds,
@@ -632,6 +647,9 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
                 start_ts: newStart.toISOString(),
                 end_ts: newEnd.toISOString(),
                 date_local: targetDateIso,
+                start_local: startLocal,
+                end_local: endLocal,
+                time: startLocal,
                 family_id: source?.family_id || source?.familyId || source?.data?.family_id || source?.data?.familyId || familyId || null,
                 child_id: primaryChildId,
                 child_ids: sourceChildIds,

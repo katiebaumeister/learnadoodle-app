@@ -1,8 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Clock, AlertTriangle, ChevronRight, Plus, Package, ClipboardList, GraduationCap } from 'lucide-react';
+import { Clock, AlertTriangle, ChevronRight, Plus, Eye, Edit2 } from 'lucide-react';
 import { colors } from '../../theme/colors';
-import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { useSession } from '../../contexts/SessionContext';
 import { getMaterialFileTypeLabel } from '../materials/MaterialDocViewerModal';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
@@ -46,6 +45,7 @@ export default function SubjectOverviewCard({
   onAddLesson,
   onAddSyllabus,
   onAddEvent,
+  onEditSubject,
   recentlyViewedMaterials = [],
   searchPreviewSectionId = null,
   searchPreviewData = null,
@@ -54,7 +54,6 @@ export default function SubjectOverviewCard({
   isSearchResultCompact = false,
 }) {
   const session = useSession();
-  const [showStatusTooltip, setShowStatusTooltip] = useState(false);
   const [needsHelpHovered, setNeedsHelpHovered] = useState(false);
   const [hoveredButton, setHoveredButton] = useState(null);
 
@@ -159,79 +158,44 @@ export default function SubjectOverviewCard({
   };
 
   // Handler functions
-  const handleAddMaterial = (e) => {
-    if (e && e.stopPropagation) e.stopPropagation();
-    if (e && e.preventDefault) e.preventDefault();
-    if (onAddMaterial) {
-      onAddMaterial(subject);
-    } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openAddMaterialModal', {
-        detail: { 
+  const handleViewDetails = (e) => {
+    e?.stopPropagation?.();
+    onCardClick?.(subject);
+  };
+
+  const handleEditSubject = (e) => {
+    e?.stopPropagation?.();
+    if (onEditSubject) {
+      onEditSubject(subject);
+      return;
+    }
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
+        detail: { subject },
+      }));
+    }
+  };
+
+  const handleAddEventForCard = (e) => {
+    e?.stopPropagation?.();
+    if (onAddEvent) {
+      onAddEvent(subject);
+      return;
+    }
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('openTaskModal', {
+        detail: {
           subjectId: subject.id,
-          subjectName: subject.name,
-          childIds: assignedChildIdsForModals,
-          // Keep single childId for backwards compatibility in any older handlers
-          childId: firstAssignedChildId,
-        }
-      }));
-    }
-  };
-
-  const handleAddAssignment = (e) => {
-    e.stopPropagation();
-    if (onAddAssignment) {
-      onAddAssignment(subject);
-    } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      // Dispatch openTaskModal event (handled by both WebContent and WebLayout)
-      window.dispatchEvent(new CustomEvent('openTaskModal', {
-        detail: { 
-          subjectId: subject.id, 
-          eventType: 'Assignment', 
           date: new Date(),
           childIds: assignedChildIdsForModals,
-          // Keep single childId for backwards compatibility
           childId: firstAssignedChildId,
-        }
+        },
       }));
-    } else if (onAddEvent) {
-      // Native/mobile fallback
-      onAddEvent(subject);
-    }
-  };
-
-  const handleAddLesson = (e) => {
-    e.stopPropagation();
-    if (onAddLesson) {
-      onAddLesson(subject);
-    } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      // Dispatch openTaskModal event (handled by both WebContent and WebLayout)
-      window.dispatchEvent(new CustomEvent('openTaskModal', {
-        detail: { 
-          subjectId: subject.id, 
-          eventType: 'Lesson', 
-          date: new Date(),
-          childIds: assignedChildIdsForModals,
-          // Keep single childId for backwards compatibility
-          childId: firstAssignedChildId,
-        }
-      }));
-    } else if (onAddEvent) {
-      // Native/mobile fallback
-      onAddEvent(subject);
     }
   };
 
   // Subject blurb: prefer notes, then legacy summary
   const subjectIntent = subject.notes?.trim() || subject.summary?.trim() || null;
-
-  // Get status info
-  const status = subject.status || 'not_started';
-  const statusConfig = {
-    not_started: { color: '#9CA3AF', label: 'Not started', emoji: '⚪' },
-    needs_attention: { color: '#F59E0B', label: 'Needs attention', emoji: '🟡' },
-    on_track: { color: '#10B981', label: 'On track', emoji: '🟢' },
-  };
-  const statusInfo = statusConfig[status] || statusConfig.not_started;
 
   // Get next item or overdue count
   const nextItem = subject.nextItem;
@@ -252,20 +216,6 @@ export default function SubjectOverviewCard({
           return {
             id: String(child?.id || childId),
             name,
-          };
-        })
-        .filter(Boolean),
-    [assignedChildren, children],
-  );
-  const assignedChildrenColorDots = useMemo(
-    () =>
-      assignedChildren
-        .map((childId) => {
-          const child = getChildById(childId);
-          if (!child) return null;
-          return {
-            id: String(child.id || childId),
-            color: getChildColorFromAvatar(child.avatar || child.avatar_url),
           };
         })
         .filter(Boolean),
@@ -523,40 +473,6 @@ export default function SubjectOverviewCard({
                 </View>
               ) : null}
             </View>
-            {assignedChildrenColorDots.length > 0 ? (
-              <View style={styles.childrenDotsContainer}>
-                {assignedChildrenColorDots.slice(0, 3).map((chip, index) => (
-                  <View
-                    key={chip.id}
-                    style={[
-                      styles.childDot,
-                      {
-                        backgroundColor: chip.color,
-                        marginLeft: index > 0 ? -4 : 0,
-                        zIndex: assignedChildrenColorDots.length - index,
-                      },
-                    ]}
-                  />
-                ))}
-              </View>
-            ) : (
-              <View
-                style={[styles.statusDot, { backgroundColor: statusInfo.color }]}
-                onMouseEnter={() => setShowStatusTooltip(true)}
-                onMouseLeave={() => setShowStatusTooltip(false)}
-              >
-                {showStatusTooltip && Platform.OS === 'web' && (
-                  <View style={styles.statusTooltip}>
-                    <Text style={styles.statusTooltipText}>
-                      {statusInfo.label}
-                    </Text>
-                    <Text style={styles.statusTooltipSubtext}>
-                      Based on recent activity, pacing, and scheduled work.
-                    </Text>
-                  </View>
-                )}
-              </View>
-            )}
           </View>
           {(yearTermLine || assignedChildrenMeta.length > 0 || studentsMetaLine) ? (
             <View style={styles.subjectMetaRow}>
@@ -660,47 +576,52 @@ export default function SubjectOverviewCard({
         <TouchableOpacity
           style={[
             styles.actionButtonPill,
-            hoveredButton === 'lesson' && styles.actionButtonPillHovered
+            hoveredButton === 'details' && styles.actionButtonPillHovered
           ]}
-          onPress={handleAddLesson}
-          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('lesson')}
+          onPress={handleViewDetails}
+          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('details')}
           onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
-          <GraduationCap size={16} color="#6B7280" />
+          <Eye size={16} color="#6B7280" />
           <Text style={[
             styles.actionButtonPillText,
-            hoveredButton === 'lesson' && styles.actionButtonPillTextHovered
-          ]}>Add Lesson</Text>
+            hoveredButton === 'details' && styles.actionButtonPillTextHovered
+          ]}>View details</Text>
         </TouchableOpacity>
+        {onEditSubject ? (
+          <TouchableOpacity
+            style={[
+              styles.actionButtonPill,
+              hoveredButton === 'edit' && styles.actionButtonPillHovered
+            ]}
+            onPress={handleEditSubject}
+            onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('edit')}
+            onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Edit2 size={16} color="#6B7280" />
+            <Text style={[
+              styles.actionButtonPillText,
+              hoveredButton === 'edit' && styles.actionButtonPillTextHovered
+            ]}>Edit subject</Text>
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity
           style={[
             styles.actionButtonPill,
-            hoveredButton === 'assignment' && styles.actionButtonPillHovered
+            hoveredButton === 'event' && styles.actionButtonPillHovered
           ]}
-          onPress={handleAddAssignment}
-          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('assignment')}
+          onPress={handleAddEventForCard}
+          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('event')}
           onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
-          <ClipboardList size={16} color="#6B7280" />
+          <Plus size={16} color="#6B7280" />
           <Text style={[
             styles.actionButtonPillText,
-            hoveredButton === 'assignment' && styles.actionButtonPillTextHovered
-          ]}>Add Assignment</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.actionButtonPill,
-            hoveredButton === 'material' && styles.actionButtonPillHovered
-          ]}
-          onPress={handleAddMaterial}
-          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('material')}
-          onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
-        >
-          <Package size={16} color="#6B7280" />
-          <Text style={[
-            styles.actionButtonPillText,
-            hoveredButton === 'material' && styles.actionButtonPillTextHovered
-          ]}>Add Material</Text>
+            hoveredButton === 'event' && styles.actionButtonPillTextHovered
+          ]}>Add event</Text>
         </TouchableOpacity>
       </View>
       {searchPreviewContent}
@@ -812,41 +733,6 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  statusDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    position: 'relative',
-  },
-  statusTooltip: {
-    position: 'absolute',
-    top: 18,
-    right: 0,
-    backgroundColor: '#1F2937',
-    padding: 8,
-    borderRadius: 6,
-    minWidth: 200,
-    zIndex: 1000,
-    ...(Platform.OS === 'web' && {
-      boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-    }),
-  },
-  statusTooltipText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  statusTooltipSubtext: {
-    color: '#D1D5DB',
-    fontSize: 12,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   subjectIntent: {
     fontSize: 14,
     color: '#6B7280',
@@ -899,18 +785,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  childrenDotsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  childDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
   },
   studentsRow: {
     flexDirection: 'row',
