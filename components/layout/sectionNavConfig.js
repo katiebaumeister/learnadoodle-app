@@ -18,8 +18,7 @@ export const RECORDS_SECTIONS = [
 
 /** In-content Family nav uses FamilySectionView; kept for resolveSection routing. */
 export const FAMILY_SECTIONS = [
-  { key: 'overview', label: 'Family' },
-  { key: 'members', label: 'Members' },
+  { key: 'members', label: 'Family' },
   { key: 'academic-years', label: 'Academic years' },
   { key: 'learning-preferences', label: 'Learning preferences' },
 ];
@@ -50,7 +49,7 @@ export function getDefaultSection(tab) {
     case 'records':
       return 'attendance';
     case 'family':
-      return 'overview';
+      return 'members';
     default:
       return null;
   }
@@ -68,6 +67,7 @@ export function resolveSection(tab, activeSubtab) {
     if (keys.includes(activeSubtab)) return activeSubtab;
     if (tab === 'family') {
       const lower = String(activeSubtab).toLowerCase();
+      if (lower === 'overview') return 'members';
       if (lower.startsWith('child/') || lower.startsWith('academic-year-')) {
         return activeSubtab;
       }

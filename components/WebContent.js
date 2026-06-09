@@ -743,7 +743,7 @@ import { getTodaySummary, getTodayInsights, getMultiDaySummary, getHomeTilesSumm
 import { generateInsights, buildInsightContext } from '../lib/services/insightEngine'
 import AIActions from './planner/AIActions'
 import CenterPane from './planner/CenterPane'
-import PlannerSectionView from './planner/PlannerSectionView'
+import { buildMonthsInRange, resolvePlannerYearRange } from './planner/plannerYearRange'
 import SchedulingAssistant from './planner/SchedulingAssistant'
 import ChildProfile from './ChildProfile'
 import ChildHomeScreen from './child/ChildHomeScreen'
@@ -6548,7 +6548,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     const nextView = normalizeView(propPlannerView);
     prevPlannerViewRef.current = propPlannerView;
     if (!['tasks', 'list'].includes(prevView)) return;
-    if (!['month', 'week', 'board', 'day'].includes(nextView)) return;
+    if (!['month', 'week', 'board', 'day', 'year'].includes(nextView)) return;
 
     const refreshDate = new Date(plannerDate.getFullYear(), plannerDate.getMonth(), 1);
     const prevMonth = new Date(refreshDate.getFullYear(), refreshDate.getMonth() - 1, 1);
@@ -6561,6 +6561,20 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       console.error('[WebContent] Planner view switch refresh failed:', err);
     });
   }, [activeTab, familyId, plannerDate, propPlannerView, refreshCalendarData]);
+
+  useEffect(() => {
+    if (activeTab !== 'planner' && activeTab !== 'ai-planner') return;
+    if (!familyId) return;
+    if (String(propPlannerView || '').toLowerCase() !== 'year') return;
+
+    const { yearStart, yearEnd } = resolvePlannerYearRange(plannerDate, propPreloadedAcademicYears);
+    const months = buildMonthsInRange(yearStart, yearEnd);
+    Promise.allSettled(
+      months.map((month) => refreshCalendarData(new Date(month.year, month.monthIndex, 1), { background: true })),
+    ).catch((err) => {
+      console.error('[WebContent] Planner year view prefetch failed:', err);
+    });
+  }, [activeTab, familyId, plannerDate, propPlannerView, propPreloadedAcademicYears, refreshCalendarData]);
 
   // Optimistically add newly created calendar events so they appear on the planner immediately
   useEffect(() => {
@@ -9903,21 +9917,34 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
   // Build events array for planner month grid using the full rendered range (6x7 cells),
   // not just the header month, so spillover week columns show/edit correctly.
   const plannerEventsForMonth = useMemo(() => {
-    const year = plannerDate.getFullYear();
-    const month = plannerDate.getMonth();
-    const firstOfMonth = new Date(year, month, 1);
-    const rangeStart = new Date(firstOfMonth);
-    rangeStart.setDate(rangeStart.getDate() - rangeStart.getDay()); // Sunday
-    const rangeEnd = new Date(rangeStart);
-    rangeEnd.setDate(rangeStart.getDate() + 41); // 6 weeks x 7 days
-    const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const rangeStartKey = toYmd(rangeStart);
-    const rangeEndKey = toYmd(rangeEnd);
+    const normalizedView = String(propPlannerView || 'month').toLowerCase();
+    let rangeStartKey;
+    let rangeEndKey;
+
+    if (normalizedView === 'year') {
+      const range = resolvePlannerYearRange(plannerDate, propPreloadedAcademicYears);
+      rangeStartKey = range.yearStart;
+      rangeEndKey = range.yearEnd;
+    } else {
+      const year = plannerDate.getFullYear();
+      const month = plannerDate.getMonth();
+      const firstOfMonth = new Date(year, month, 1);
+      const rangeStart = new Date(firstOfMonth);
+      rangeStart.setDate(rangeStart.getDate() - rangeStart.getDay()); // Sunday
+      const rangeEnd = new Date(rangeStart);
+      rangeEnd.setDate(rangeStart.getDate() + 41); // 6 weeks x 7 days
+      const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      rangeStartKey = toYmd(rangeStart);
+      rangeEndKey = toYmd(rangeEnd);
+    }
+
     const isInVisibleRange = (dateKey) => dateKey >= rangeStartKey && dateKey <= rangeEndKey;
 
     const monthsInRange = new Set();
-    const cursor = new Date(rangeStart);
-    while (cursor <= rangeEnd) {
+    const rangeStartDate = new Date(`${rangeStartKey}T00:00:00`);
+    const rangeEndDate = new Date(`${rangeEndKey}T00:00:00`);
+    const cursor = new Date(rangeStartDate);
+    while (cursor <= rangeEndDate) {
       monthsInRange.add(`${cursor.getFullYear()}-${cursor.getMonth()}`);
       cursor.setDate(cursor.getDate() + 1);
     }
@@ -10070,30 +10097,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       byKey.set(dedupeKey, ev);
     });
     return Array.from(byKey.values());
-  }, [plannerDate, calendarDataCache, calendarEvents, plannerHolidaysCache, plannerSpilloverEventsByDate, plannerExclusionsCache]);
-
-  const plannerWeekStats = useMemo(() => {
-    const anchor = plannerDate instanceof Date && !Number.isNaN(plannerDate.getTime())
-      ? plannerDate
-      : new Date();
-    const start = new Date(anchor);
-    start.setDate(anchor.getDate() - anchor.getDay());
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(start.getDate() + 7);
-    let events = 0;
-    let assignments = 0;
-    (plannerEventsForMonth || []).forEach((ev) => {
-      const ts = ev.start_ts || ev.start || ev.start_local;
-      if (!ts) return;
-      const d = new Date(ts);
-      if (Number.isNaN(d.getTime()) || d < start || d >= end) return;
-      events += 1;
-      const type = String(ev.event_type || ev.type || '').toLowerCase();
-      if (type.includes('assignment')) assignments += 1;
-    });
-    return { events, assignments };
-  }, [plannerDate, plannerEventsForMonth]);
+  }, [plannerDate, propPlannerView, propPreloadedAcademicYears, calendarDataCache, calendarEvents, plannerHolidaysCache, plannerSpilloverEventsByDate, plannerExclusionsCache]);
 
   const renderPlannerCalendarCore = () => {
     const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
@@ -10289,41 +10293,13 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         preloadedTrashEvents={plannerPreloadedTrash}
         plannerAttendanceSnapshot={plannerAttendanceSnapshot}
         plannerShellVisible={isPlannerShellTab}
+        academicYears={propPreloadedAcademicYears}
       />
       </View>
     );
   };
 
-  const renderPlannerShell = () => {
-    const section = resolveSection('planner', activeSubtab);
-    const date = plannerDate && !isNaN(plannerDate.getTime()) ? plannerDate : new Date();
-    return (
-      <PlannerSectionView
-        section={section}
-        familyId={familyId}
-        children={children || []}
-        family={propFamily}
-        fullSubjects={propFullSubjects && propFullSubjects.length > 0 ? propFullSubjects : (propSubjects || [])}
-        preloadedPlanHealth={propPreloadedPlanHealth}
-        plannerDate={date}
-        plannerView={propPlannerView}
-        onPlannerDateChange={(d) => {
-          setPlannerDate(d);
-          if (onCurrentMonthChange) onCurrentMonthChange(d);
-        }}
-        weekEventCount={plannerWeekStats.events}
-        weekAssignmentCount={plannerWeekStats.assignments}
-        selectedCalendarChildren={propSelectedCalendarChildren}
-        onSelectedCalendarChildrenChange={onSelectedCalendarChildrenChange}
-        selectedEventTypes={propSelectedEventTypes}
-        onSelectedEventTypesChange={onSelectedEventTypesChange}
-        onTabChange={onTabChange}
-        calendarContent={renderPlannerCalendarCore()}
-      />
-    );
-  };
-
-  const renderPlannerContent = () => renderPlannerShell();
+  const renderPlannerContent = () => renderPlannerCalendarCore();
 
   const renderCalendarContent = () => {
     return renderPlannerContent();
@@ -10647,7 +10623,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     if (activeTab === 'calendar' || activeTab === 'planner' || activeTab === 'ai-planner') {
       if (activeTab === 'planner') {
         if (plannerTabsReturnNull) return null;
-        return renderPlannerShell();
+        return renderPlannerContent();
       }
       if (plannerTabsReturnNull) return null;
       return renderCalendarContent();
@@ -10915,9 +10891,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               }}
               pointerEvents={isPlannerShellTab ? 'auto' : 'none'}
             >
-              {activeTab === 'planner'
-                ? renderPlannerShell()
-                : renderPlannerCalendarCore()}
+              {renderPlannerContent()}
             </View>
             {!isPlannerShellTab && innerContent != null ? (
               <View

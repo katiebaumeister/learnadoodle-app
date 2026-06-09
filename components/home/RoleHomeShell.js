@@ -34,7 +34,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     width: '100%',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
     ...(Platform.OS === 'web' && {
       maxWidth: '100%',
       alignSelf: 'stretch',
@@ -89,6 +89,7 @@ const styles = StyleSheet.create({
       alignSelf: 'stretch',
       display: 'flex',
       flexDirection: 'column',
+      overflow: 'hidden',
     }),
   },
 });

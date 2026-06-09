@@ -8,10 +8,9 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import { Search, Sparkles, Wrench, CalendarDays, Plus, X } from 'lucide-react';
-import { MAIN_NAV_ICONS, MAIN_NAV_PAGE_ICON_COLOR, MAIN_NAV_PAGE_ICON_SIZE } from '../layout/mainNavIcons';
+import { Search, Sparkles, Wrench, CalendarDays, Plus, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { colors } from '../../theme/colors';
-import LearningSubjectRow from './LearningSubjectRow';
+import SubjectOverviewCard from '../subjects/SubjectOverviewCard';
 
 const BRAND_SKY_BLUE = '#81C1E1';
 const BRAND_SKY_BLUE_FAINT = 'rgba(129, 193, 225, 0.18)';
@@ -23,30 +22,71 @@ export default function LearningSubjectsListView({
   onSearchChange,
   onSearchSubmit,
   onSubjectPress,
-  onViewSubject,
-  onCreateEvent,
-  onSendMessage,
-  onEditSubject,
-  onArchiveSubject,
   onAddSubject,
   canManageSubjects = false,
   filterContent = null,
+  selectedChildFilter = null,
+  onNeedsHelpPress,
+  onNavigateToPlanner,
+  onAddSyllabus,
+  onAddMaterial,
+  onAddEvent,
+  searchPreviewSectionId = null,
+  subjectDetailCache = {},
+  searchPreviewTokens = [],
+  onSearchPreviewMaterialPress,
+  isSearchResultCompact = false,
+  selectedSchoolYear = null,
+  onShiftSchoolYear,
+  onJumpToCurrentSchoolYear,
+  isAtCurrentSchoolYear = false,
   onFixGap,
   onPlanWeek,
   emptyTitle = 'No subjects yet',
   emptyText = 'Create subjects to organize learning.',
 }) {
-  const PageIcon = MAIN_NAV_ICONS.subjects;
-
   return (
     <View style={styles.container}>
       <View style={styles.pageHeader}>
-        <View style={styles.pageHeaderLeft}>
-          <View style={styles.titleLine}>
-            <PageIcon size={MAIN_NAV_PAGE_ICON_SIZE} color={MAIN_NAV_PAGE_ICON_COLOR} strokeWidth={2} />
-            <Text style={styles.pageTitle}>Learning</Text>
+        {selectedSchoolYear ? (
+          <View style={styles.yearNavRow}>
+            <View style={styles.yearNavChevrons}>
+              <TouchableOpacity
+                style={styles.yearNavBtn}
+                onPress={() => onShiftSchoolYear?.(-1)}
+                accessibilityRole="button"
+                accessibilityLabel="Previous school year"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <ChevronLeft size={16} color="rgba(15,23,42,0.4)" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.yearNavBtn}
+                onPress={() => onShiftSchoolYear?.(1)}
+                accessibilityRole="button"
+                accessibilityLabel="Next school year"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.yearNavTitleButton,
+                isAtCurrentSchoolYear && styles.yearNavTitleButtonDisabled,
+              ]}
+              onPress={onJumpToCurrentSchoolYear}
+              disabled={isAtCurrentSchoolYear}
+              accessibilityRole="button"
+              accessibilityLabel="Return to current school year"
+              {...(Platform.OS === 'web' && { cursor: isAtCurrentSchoolYear ? 'default' : 'pointer' })}
+            >
+              <Text style={styles.yearNavTitle}>{selectedSchoolYear} School Year</Text>
+            </TouchableOpacity>
           </View>
-        </View>
+        ) : (
+          <View style={styles.pageHeaderSpacer} />
+        )}
         <View style={styles.pageHeaderActions}>
           <View style={styles.searchWrap}>
             <Search size={16} color="#94A3B8" />
@@ -77,45 +117,46 @@ export default function LearningSubjectsListView({
         </View>
       </View>
 
-      <View style={styles.tableCard}>
-        <View style={styles.tableHeader}>
-          <Text style={[styles.tableHeaderCell, styles.subjectHeaderCell]}>Subject</Text>
-          <Text style={[styles.tableHeaderCell, styles.progressHeaderCell]}>Progress</Text>
-          <Text style={[styles.tableHeaderCell, styles.upcomingHeaderCell]}>Upcoming</Text>
-          <Text style={[styles.tableHeaderCell, styles.attentionHeaderCell]}>Needs Attention</Text>
-          <View style={styles.actionsHeaderCell} />
-        </View>
+      {filterContent ? <View style={styles.filtersPanel}>{filterContent}</View> : null}
 
-        {subjects.length === 0 ? (
-          <View style={styles.emptyWrap}>
-            <Text style={styles.emptyTitle}>{emptyTitle}</Text>
-            <Text style={styles.emptyText}>{emptyText}</Text>
-            {canManageSubjects ? (
-              <TouchableOpacity style={styles.emptyBtn} onPress={onAddSubject}>
-                <Plus size={16} color="#2563EB" />
-                <Text style={styles.emptyBtnText}>Add subject</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        ) : (
-          <ScrollView style={styles.tableBody} showsVerticalScrollIndicator={false}>
-            {subjects.map((subject) => (
-              <LearningSubjectRow
-                key={subject.id}
-                subject={subject}
-                children={children}
-                onPress={onSubjectPress}
-                onViewSubject={onViewSubject}
-                onCreateEvent={onCreateEvent}
-                onSendMessage={onSendMessage}
-                onEditSubject={onEditSubject}
-                onArchiveSubject={onArchiveSubject}
-                canManageSubjects={canManageSubjects}
-              />
-            ))}
-          </ScrollView>
-        )}
-      </View>
+      {subjects.length === 0 ? (
+        <View style={styles.emptyWrap}>
+          <Text style={styles.emptyTitle}>{emptyTitle}</Text>
+          <Text style={styles.emptyText}>{emptyText}</Text>
+          {canManageSubjects ? (
+            <TouchableOpacity style={styles.emptyBtn} onPress={onAddSubject}>
+              <Plus size={16} color="#2563EB" />
+              <Text style={styles.emptyBtnText}>Add subject</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.subjectsScroll}
+          contentContainerStyle={styles.subjectsScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {subjects.filter((subject) => subject?.id).map((subject) => (
+            <SubjectOverviewCard
+              key={subject.id}
+              subject={subject}
+              children={children}
+              selectedChildFilter={selectedChildFilter}
+              onCardClick={onSubjectPress}
+              onNeedsHelpPress={onNeedsHelpPress}
+              onNavigateToPlanner={onNavigateToPlanner}
+              onAddSyllabus={onAddSyllabus}
+              onAddEvent={onAddEvent}
+              onAddMaterial={onAddMaterial}
+              searchPreviewSectionId={searchPreviewSectionId}
+              searchPreviewData={subjectDetailCache[subject.id] || null}
+              searchPreviewTokens={searchPreviewTokens}
+              onSearchPreviewMaterialPress={onSearchPreviewMaterialPress}
+              isSearchResultCompact={isSearchResultCompact}
+            />
+          ))}
+        </ScrollView>
+      )}
 
       <View style={styles.planningBanner}>
         <View style={styles.planningBannerLeft}>
@@ -152,27 +193,14 @@ const styles = StyleSheet.create({
   },
   pageHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 20,
+    gap: 16,
     flexWrap: 'wrap',
   },
-  pageHeaderLeft: {
+  pageHeaderSpacer: {
     flex: 1,
-    minWidth: 260,
-  },
-  titleLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  pageTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#0F172A',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", sans-serif',
-    }),
+    minWidth: 0,
   },
   pageHeaderActions: {
     flexDirection: 'row',
@@ -180,6 +208,7 @@ const styles = StyleSheet.create({
     gap: 10,
     flexWrap: 'wrap',
     justifyContent: 'flex-end',
+    marginLeft: 'auto',
   },
   searchWrap: {
     flexDirection: 'row',
@@ -219,41 +248,53 @@ const styles = StyleSheet.create({
       letterSpacing: '0.04em',
     }),
   },
-  tableCard: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#E8EDF3',
-    borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
-    minHeight: 280,
+  filtersPanel: {
+    paddingBottom: 4,
   },
-  tableHeader: {
+  yearNavRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#F8FAFC',
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEF2F7',
+    gap: 8,
+    flexShrink: 0,
   },
-  tableHeaderCell: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
+  yearNavChevrons: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  subjectHeaderCell: { flex: 1.4 },
-  progressHeaderCell: { flex: 1.1 },
-  upcomingHeaderCell: { flex: 1.1 },
-  attentionHeaderCell: { flex: 1 },
-  actionsHeaderCell: { width: 36 },
-  tableBody: {
+  yearNavBtn: {
+    padding: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearNavTitle: {
+    fontSize: 26,
+    fontWeight: '600',
+    color: '#1E293B',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  yearNavTitleButton: {
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearNavTitleButtonDisabled: {
+    ...(Platform.OS === 'web' && { cursor: 'default' }),
+  },
+  subjectsScroll: {
     flex: 1,
+    minHeight: 0,
+  },
+  subjectsScrollContent: {
+    paddingBottom: 8,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'stretch',
+    }),
   },
   emptyWrap: {
+    flex: 1,
     padding: 48,
     alignItems: 'center',
     gap: 8,

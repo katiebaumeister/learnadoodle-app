@@ -877,8 +877,8 @@ export default function SubjectsPage({
       });
     }
 
-    // Filter by school year + term (catalog shows all years; use search to narrow)
-    if (!isCatalogScreen && selectedYearFilter !== ALL_YEARS_FILTER) {
+    // Filter by school year + term
+    if (selectedYearFilter !== ALL_YEARS_FILTER) {
       filteredEntries = filteredEntries.filter(
         ({ subject }) => (subject.school_year || '2025/26') === selectedYearFilter
       );
@@ -923,26 +923,29 @@ export default function SubjectsPage({
   ]);
 
   const subjectsForSubjectFilterChips = useMemo(() => {
-    const list = subjects || [];
+    let list = subjects || [];
     if (selectedModeFilter === 'view' && !isChildView) {
       if (
         effectiveCoursesChildIds.length > 0
         && effectiveCoursesChildIds.length < allCourseChildIds.length
       ) {
-        return list.filter((subject) => {
+        list = list.filter((subject) => {
           if (!subject.assignedChildren || subject.assignedChildren.length === 0) return true;
           return subject.assignedChildren.some((id) =>
             effectiveCoursesChildIds.includes(String(id))
           );
         });
       }
-      return list;
-    }
-    if (selectedChildFilter !== 'all') {
-      return list.filter((subject) => {
+    } else if (selectedChildFilter !== 'all') {
+      list = list.filter((subject) => {
         if (!subject.assignedChildren || subject.assignedChildren.length === 0) return true;
         return subject.assignedChildren.includes(selectedChildFilter);
       });
+    }
+    if (selectedYearFilter !== ALL_YEARS_FILTER) {
+      list = list.filter(
+        (subject) => (subject.school_year || '2025/26') === selectedYearFilter
+      );
     }
     return list;
   }, [
@@ -952,6 +955,7 @@ export default function SubjectsPage({
     effectiveCoursesChildIds,
     allCourseChildIds,
     selectedChildFilter,
+    selectedYearFilter,
   ]);
 
   const toggleCourseChildFilter = useCallback((nextChildId) => {
@@ -3064,14 +3068,26 @@ export default function SubjectsPage({
           onSearchChange={setSearchQuery}
           onSearchSubmit={handleSearchSubmit}
           onSubjectPress={handleSubjectClick}
-          onViewSubject={handleSubjectClick}
-          onCreateEvent={handleAddEvent}
-          onSendMessage={handleSendMessageForSubject}
-          onEditSubject={handleEditSubjectForSubject}
-          onArchiveSubject={handleArchiveSubjectRequest}
           onAddSubject={openAddSubjectWithCurrentHeaders}
           canManageSubjects={canManageSubjectsActions}
           filterContent={renderCoursesHeaderFilters({ showTermRow: false })}
+          selectedChildFilter={selectedChildFilterForCards}
+          onNeedsHelpPress={(entry) => openSubjectToSection(entry.id, 'needs-help-section')}
+          onNavigateToPlanner={handleNavigateToPlanner}
+          onAddSyllabus={handleAddSyllabus}
+          onAddEvent={onAddEvent}
+          onAddMaterial={onAddMaterial}
+          searchPreviewSectionId={activeSearchPreviewSectionId}
+          subjectDetailCache={subjectDetailCache}
+          searchPreviewTokens={searchTokens}
+          onSearchPreviewMaterialPress={(entry, materialId) =>
+            handleSubjectClick(entry, 'materials-section', materialId)
+          }
+          isSearchResultCompact={Boolean(searchQuery.trim())}
+          selectedSchoolYear={selectedCoursesYear}
+          onShiftSchoolYear={shiftCoursesYear}
+          onJumpToCurrentSchoolYear={jumpToCurrentCoursesYear}
+          isAtCurrentSchoolYear={isAtCurrentCoursesYear}
           onFixGap={() => {
             onTabChange?.('planner', 'calendar');
             if (Platform.OS === 'web' && typeof window !== 'undefined') {

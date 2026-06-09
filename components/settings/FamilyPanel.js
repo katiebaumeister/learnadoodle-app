@@ -126,11 +126,13 @@ const ONBOARDING_GOAL_OPTIONS = [
   { id: 'NONE', label: 'Just scheduling' },
 ];
 
+const SETTINGS_SIDEBAR_ACCOUNT_KEYS = ['profile', 'appearance', 'notifications'];
+const SETTINGS_SIDEBAR_SUPPORT_KEYS = ['feedback', 'about', 'terms', 'privacy'];
+
 const SETTINGS_SIDEBAR_ITEMS = [
   { key: 'profile', label: 'Profile' },
   { key: 'appearance', label: 'Appearance' },
   { key: 'notifications', label: 'Notifications' },
-  { key: 'datavault', label: 'Backup data' },
   { key: 'subscription', label: 'Billing', requiresSubscription: true },
   { key: 'feedback', label: 'Feedback' },
   { key: 'about', label: 'About' },
@@ -141,8 +143,7 @@ const SETTINGS_SIDEBAR_ITEMS = [
 /** Re-enable when billing checkout is live. */
 const SHOW_BILLING_TAB = false;
 
-/** Re-enable when account deletion is ready for general use. */
-const SHOW_DANGER_ZONE = false;
+const SHOW_DANGER_ZONE = true;
 
 const TUTOR_PERMISSION_OPTIONS = [
   { id: 'viewer', label: 'Viewer Tutor' },
@@ -251,6 +252,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     return items;
   }, [showFamilySubscriptionCard, isChildRestrictedView]);
 
+  const settingsItemByKey = useMemo(() => {
+    const map = {};
+    SETTINGS_SIDEBAR_ITEMS.forEach((item) => {
+      map[item.key] = item;
+    });
+    return map;
+  }, []);
+
+  const visibleSettingsKeys = useMemo(
+    () => new Set(visibleSidebarItems.map((item) => item.key)),
+    [visibleSidebarItems],
+  );
+
   const handleSettingsNavPress = useCallback((sectionKey) => {
     if (['about', 'terms', 'privacy'].includes(sectionKey)) {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -337,6 +351,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     if (normalized === 'billing') return SHOW_BILLING_TAB ? 'subscription' : 'profile';
     if (normalized === 'subscription' && !SHOW_BILLING_TAB) return 'profile';
     if (normalized === 'preferences') return 'appearance';
+    if (normalized === 'datavault') return 'profile';
     return normalized || 'profile';
   }, [isChildRestrictedView]);
   const [activeSection, setActiveSection] = useState(normalizeSettingsSection(propInitialSection));
@@ -436,6 +451,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Account deletion (Profile Danger Zone)
   const [confirmDeleteAccountPhrase, setConfirmDeleteAccountPhrase] = useState('');
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [dangerZoneExpanded, setDangerZoneExpanded] = useState(false);
+  const [appearanceGoalMenuOpen, setAppearanceGoalMenuOpen] = useState(false);
   
   // Feedback form state
   const [feedbackSubject, setFeedbackSubject] = useState('');
@@ -3042,42 +3059,41 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   )}
                 </View>
                 
-                {/* Reset Password Button */}
-                <View style={styles.profileFieldGroup}>
+                {/* Password actions */}
+                <View style={[styles.profileFieldGroup, !isChildRestrictedView ? styles.profileFieldGroupLast : null]}>
                   <Text style={styles.profileFieldLabel}>Password</Text>
-                  <TouchableOpacity
-                    style={styles.profileResetPasswordButton}
-                    onPress={handleResetPassword}
-                    disabled={resettingPassword}
-                    {...(Platform.OS === 'web' && { cursor: resettingPassword ? 'not-allowed' : 'pointer' })}
-                  >
-                    {resettingPassword ? (
-                      <ActivityIndicator size="small" color="#374151" />
-                    ) : (
-                      <Text style={styles.profileResetPasswordButtonText}>Reset password</Text>
-                    )}
-                  </TouchableOpacity>
+                  <View style={styles.profilePasswordActions}>
+                    {!isChildRestrictedView ? (
+                      <TouchableOpacity
+                        style={styles.profileResetPasswordButton}
+                        onPress={handleSignOut}
+                        disabled={loggingOut}
+                        {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
+                      >
+                        {loggingOut ? (
+                          <ActivityIndicator size="small" color="#374151" />
+                        ) : (
+                          <Text style={styles.profileResetPasswordButtonText}>Log out</Text>
+                        )}
+                      </TouchableOpacity>
+                    ) : null}
+                    <TouchableOpacity
+                      style={styles.profileResetPasswordButton}
+                      onPress={handleResetPassword}
+                      disabled={resettingPassword}
+                      {...(Platform.OS === 'web' && { cursor: resettingPassword ? 'not-allowed' : 'pointer' })}
+                    >
+                      {resettingPassword ? (
+                        <ActivityIndicator size="small" color="#374151" />
+                      ) : (
+                        <Text style={styles.profileResetPasswordButtonText}>Reset password</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                   <Text style={styles.profileResetPasswordHint}>
                     We'll send you an email with a link to reset your password.
                   </Text>
                 </View>
-
-                {!isChildRestrictedView ? (
-                  <View style={[styles.profileFieldGroup, styles.profileFieldGroupLast, styles.profileLogoutFieldGroup]}>
-                    <TouchableOpacity
-                      style={styles.profileLogoutButton}
-                      onPress={handleSignOut}
-                      disabled={loggingOut}
-                      {...(Platform.OS === 'web' && { cursor: loggingOut ? 'not-allowed' : 'pointer' })}
-                    >
-                      {loggingOut ? (
-                        <ActivityIndicator size="small" color="#dc2626" />
-                      ) : (
-                        <Text style={styles.profileLogoutButtonText}>Log out</Text>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
               </View>
             </View>
 
@@ -3098,10 +3114,36 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
               </View>
             ) : SHOW_DANGER_ZONE ? (
               <View style={styles.dangerZoneAccount}>
-                <View style={styles.dangerZoneAccountHeader}>
-                  <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
-                  <Text style={styles.dangerZoneTitle}>Danger Zone</Text>
-                </View>
+                <TouchableOpacity
+                  style={[styles.dangerZoneAccountHeader, styles.dangerZoneToggle]}
+                  onPress={() => setDangerZoneExpanded((prev) => !prev)}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: dangerZoneExpanded }}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <View style={styles.dangerZoneAccountHeaderLabel}>
+                    <AlertTriangle size={16} color={colors.redBold || '#dc2626'} />
+                    <Text style={styles.dangerZoneTitle}>Danger Zone</Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.dangerZoneChevron,
+                      dangerZoneExpanded && styles.dangerZoneChevronExpanded,
+                    ]}
+                  >
+                    <ChevronDown size={16} color={colors.redBold || '#dc2626'} />
+                  </View>
+                </TouchableOpacity>
+                <View
+                  style={[
+                    styles.dangerZoneAccountContentWrap,
+                    dangerZoneExpanded && styles.dangerZoneAccountContentWrapExpanded,
+                  ]}
+                  pointerEvents={dangerZoneExpanded ? 'auto' : 'none'}
+                  accessibilityElementsHidden={!dangerZoneExpanded}
+                  importantForAccessibility={dangerZoneExpanded ? 'auto' : 'no-hide-descendants'}
+                >
                 <View style={styles.dangerZoneAccountContent}>
                   <Text style={styles.dangerZoneAccountHeading}>Delete your account & all linked accounts</Text>
                   <Text style={styles.dangerZoneAccountMessage}>
@@ -3165,6 +3207,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     )}
                   </TouchableOpacity>
                 </View>
+                </View>
               </View>
             ) : null}
           </View>
@@ -3174,16 +3217,30 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         return (
           <View style={styles.mainContentInner}>
             <Text style={styles.mainContentTitle}>Appearance</Text>
-            <FamilyApproachSelector
-              familyId={familyId || family?.id}
-              family={family}
-              onFamilyUpdate={(updatedFamily) => {
-                setFamily(updatedFamily);
-                onFamilyUpdate?.(updatedFamily);
-              }}
-              readOnly={familyUserControls.isRestrictedViewer && !familyUserControls.allowed('planning_preferences')}
-              description="Days vs hours, learning days, and breaks are saved per school year in Family → Learning preferences."
-            />
+            <View
+              style={[
+                styles.profileSection,
+                styles.profileSectionFirst,
+                appearanceGoalMenuOpen && styles.profileSectionDropdownOpen,
+              ]}
+            >
+              <View style={styles.profileSectionHeader}>
+                <Text style={[styles.subsectionTitle, styles.profileSectionTitle]}>Account appearance</Text>
+              </View>
+              <View style={styles.profileSectionBody}>
+                <FamilyApproachSelector
+                  familyId={familyId || family?.id}
+                  family={family}
+                  onFamilyUpdate={(updatedFamily) => {
+                    setFamily(updatedFamily);
+                    onFamilyUpdate?.(updatedFamily);
+                  }}
+                  readOnly={familyUserControls.isRestrictedViewer && !familyUserControls.allowed('planning_preferences')}
+                  description="Days vs hours, learning days, and breaks are saved per school year in Family → Learning preferences."
+                  onMenuOpenChange={setAppearanceGoalMenuOpen}
+                />
+              </View>
+            </View>
           </View>
         );
       
@@ -3285,9 +3342,9 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       case 'members':
         return (
           <View style={[styles.mainContentInner, embeddedInFamily && styles.mainContentInnerFamilyEmbedded]}>
-            <Text style={[styles.mainContentTitle, embeddedInFamily && styles.mainContentTitleFamilyEmbedded]}>
-              Family Members
-            </Text>
+            {!(hideInternalSidebar || embeddedInFamily) ? (
+              <Text style={styles.mainContentTitle}>Family Members</Text>
+            ) : null}
 
             {propUserRole === 'parent' && !isChildRestrictedView && viewingAsChildId ? (() => {
               const previewChild = children.find((c) => String(c.id) === String(viewingAsChildId));
@@ -5002,34 +5059,34 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     isChildRestrictedView && styles.mainContentFullWidth,
   ];
 
+  const showSettingsSidebar = !hideInternalSidebar;
+
+  const renderSettingsSidebarButton = (key) => {
+    const item = settingsItemByKey[key];
+    if (!item || !visibleSettingsKeys.has(key)) return null;
+    const active = activeSection === key;
+    return (
+      <TouchableOpacity
+        key={key}
+        style={[styles.sidebarButton, active && styles.sidebarButtonActive]}
+        onPress={() => handleSettingsNavPress(key)}
+        accessibilityRole="button"
+        accessibilityState={{ selected: active }}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <Text style={[styles.sidebarButtonText, active && styles.sidebarButtonTextActive]}>
+          {item.label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
+  const hasAccountSidebarItems = SETTINGS_SIDEBAR_ACCOUNT_KEYS.some((key) => visibleSettingsKeys.has(key));
+  const hasSupportSidebarItems = SETTINGS_SIDEBAR_SUPPORT_KEYS.some((key) => visibleSettingsKeys.has(key));
+
   return (
     <View style={styles.container}>
       <View style={styles.twoColumnLayout}>
-        {/* Left: Settings secondary nav */}
-        {!hideInternalSidebar && (
-          <View style={styles.sidebar}>
-            <View style={styles.sidebarNavList}>
-              {visibleSidebarItems.map((item) => {
-                const active = activeSection === item.key;
-                return (
-                  <TouchableOpacity
-                    key={item.key}
-                    style={[styles.sidebarNavItem, active && styles.sidebarNavItemActive]}
-                    onPress={() => handleSettingsNavPress(item.key)}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={[styles.sidebarNavItemText, active && styles.sidebarNavItemTextActive]}>
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        )}
-
         {/* Main settings content */}
         {Platform.OS === 'web' ? (
           <View style={mainContentPanelStyle}>
@@ -5046,6 +5103,54 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           >
             {renderMainContent()}
           </ScrollView>
+        )}
+
+        {/* Right: Settings secondary nav */}
+        {showSettingsSidebar && (
+          <View style={styles.sidebar}>
+            <View style={styles.sidebarContent}>
+              {hasAccountSidebarItems ? (
+                <View style={styles.sidebarCard}>
+                  <Text style={styles.sidebarCardTitle}>Account</Text>
+                  {SETTINGS_SIDEBAR_ACCOUNT_KEYS.map((key) => renderSettingsSidebarButton(key))}
+                </View>
+              ) : null}
+
+              {SHOW_BILLING_TAB && visibleSettingsKeys.has('subscription') && showFamilySubscriptionCard ? (
+                <TouchableOpacity
+                  style={[
+                    styles.sidebarCard,
+                    activeSection === 'subscription' && styles.sidebarSubscriptionCardActive,
+                  ]}
+                  onPress={() => handleSettingsNavPress('subscription')}
+                  activeOpacity={0.9}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.sidebarCardTitle}>Subscription</Text>
+                  <View style={styles.sidebarSubscriptionContent}>
+                    <View style={styles.sidebarSubscriptionInfo}>
+                      <Text style={styles.sidebarSubscriptionPlan}>
+                        {subscriptionSidebarProductLabel(subscriptionPlanKey)}
+                      </Text>
+                      <View style={styles.sidebarSubscriptionStatusRow}>
+                        <View style={styles.sidebarSubscriptionStatusChip}>
+                          <Text style={styles.sidebarSubscriptionStatusChipText}>Active</Text>
+                        </View>
+                        <Text style={styles.sidebarSubscriptionRenewal}>Renews Jan 2026</Text>
+                      </View>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              ) : null}
+
+              {hasSupportSidebarItems ? (
+                <View style={styles.sidebarCard}>
+                  <Text style={styles.sidebarCardTitle}>Support</Text>
+                  {SETTINGS_SIDEBAR_SUPPORT_KEYS.map((key) => renderSettingsSidebarButton(key))}
+                </View>
+              ) : null}
+            </View>
+          </View>
         )}
       </View>
 
@@ -6089,8 +6194,6 @@ function createStyles(tokens) {
     },
     mainContentContainerAbout: {
       padding: SettingsLayout.pageHorizontalPadding,
-      paddingRight: SettingsLayout.pageHorizontalPadding,
-      alignItems: 'center',
     },
     mainContentContainerSubscriptionFill: {
       ...(Platform.OS === 'web'
@@ -6598,14 +6701,10 @@ function createStyles(tokens) {
       backgroundColor: '#6BB3E8',
     },
     sidebar: {
-      width: 240,
+      width: 280,
       flexShrink: 0,
-      paddingTop: 16,
-      paddingBottom: 16,
-      paddingHorizontal: 8,
+      padding: 16,
       backgroundColor: '#ffffff',
-      borderRightWidth: 1,
-      borderRightColor: 'rgba(148, 163, 184, 0.24)',
       display: 'flex',
       flexDirection: 'column',
       ...(Platform.OS === 'web' && {
@@ -7442,33 +7541,11 @@ function createStyles(tokens) {
       marginTop: 10,
       lineHeight: 18,
     },
-    profileLogoutFieldGroup: {
-      marginTop: 8,
-      paddingTop: 8,
-    },
-    profileLogoutButton: {
+    profilePasswordActions: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
-      paddingVertical: 10,
-      paddingHorizontal: 16,
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: '#fecaca',
-      backgroundColor: '#ffffff',
-      alignSelf: 'flex-start',
-      minWidth: 120,
-      ...(Platform.OS === 'web' && {
-        transition: 'all 0.2s ease',
-      }),
-    },
-    profileLogoutButtonText: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: '#dc2626',
-      ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }),
+      gap: 8,
+      flexWrap: 'wrap',
     },
     profileReadOnlyValue: {
       minHeight: SettingsLayout.rowHeight,
@@ -8972,10 +9049,40 @@ function createStyles(tokens) {
     dangerZoneAccountHeader: {
       flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'space-between',
       gap: 8,
     },
-    dangerZoneAccountContent: {
+    dangerZoneAccountHeaderLabel: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flex: 1,
+    },
+    dangerZoneChevron: {
+      ...(Platform.OS === 'web' && {
+        transition: 'transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)',
+      }),
+    },
+    dangerZoneChevronExpanded: {
+      transform: [{ rotate: '180deg' }],
+    },
+    dangerZoneAccountContentWrap: {
+      overflow: 'hidden',
+      maxHeight: 0,
+      opacity: 0,
+      marginTop: 0,
+      ...(Platform.OS === 'web' && {
+        transitionProperty: 'max-height, opacity, margin-top',
+        transitionDuration: '320ms',
+        transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
+      }),
+    },
+    dangerZoneAccountContentWrapExpanded: {
+      maxHeight: 720,
+      opacity: 1,
       marginTop: 12,
+    },
+    dangerZoneAccountContent: {
       backgroundColor: 'rgba(254, 242, 242, 0.35)',
       borderRadius: 8,
       borderWidth: 1,

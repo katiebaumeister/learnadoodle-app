@@ -76,8 +76,10 @@ export default function PlannerSummaryCards({
   planHealth,
   conflictLabel = null,
   onViewDetails,
-  onFixGap,
+  onTogglePlanningEngine,
   onResolveConflict,
+  showPlanningEngine = false,
+  planningEnginePanel = null,
 }) {
   const progress = useMemo(() => {
     if (!planHealth?.plan_exists) return null;
@@ -99,46 +101,54 @@ export default function PlannerSummaryCards({
   }, [planHealth]);
 
   return (
-    <View style={styles.row}>
-      <SummaryCard
-        icon={TrendingUp}
-        iconColor="#059669"
-        iconBg="rgba(5, 150, 105, 0.12)"
-        title="School Year Progress"
-        value={progress ? `${progress.pct}%` : '—'}
-        meta={
-          progress
-            ? `${progress.actual} of ${progress.planned} days`
-            : 'Set up your school year plan'
-        }
-        actionLabel="View Details"
-        onAction={onViewDetails}
-      />
-      <SummaryCard
-        icon={AlertTriangle}
-        iconColor="#EA580C"
-        iconBg="rgba(234, 88, 12, 0.12)"
-        title="Behind"
-        value={behindSubjects || 'On track'}
-        meta={behindSubjects ? 'Needs attention' : 'All subjects current'}
-        actionLabel="View Details"
-        onAction={onFixGap}
-      />
-      <SummaryCard
-        icon={Zap}
-        iconColor="#7C3AED"
-        iconBg="rgba(124, 58, 237, 0.12)"
-        title="Conflicts"
-        value={conflictLabel || 'None'}
-        meta={conflictLabel ? 'Needs resolution' : 'Schedule looks clear'}
-        actionLabel={conflictLabel ? 'Resolve' : undefined}
-        onAction={conflictLabel ? onResolveConflict : undefined}
-      />
+    <View style={styles.wrap}>
+      <View style={styles.row}>
+        <SummaryCard
+          icon={TrendingUp}
+          iconColor="#059669"
+          iconBg="rgba(5, 150, 105, 0.12)"
+          title="School Year Progress"
+          value={progress ? `${progress.pct}%` : '—'}
+          meta={
+            progress
+              ? `${progress.actual} of ${progress.planned} days`
+              : 'Set up your school year plan'
+          }
+          actionLabel="View Details"
+          onAction={onViewDetails}
+        />
+        <SummaryCard
+          icon={AlertTriangle}
+          iconColor="#EA580C"
+          iconBg="rgba(234, 88, 12, 0.12)"
+          title="Behind"
+          value={behindSubjects || 'On track'}
+          meta={behindSubjects ? 'Needs attention' : 'All subjects current'}
+          actionLabel={showPlanningEngine ? 'Hide Details' : 'View Details'}
+          onAction={onTogglePlanningEngine}
+        />
+        <SummaryCard
+          icon={Zap}
+          iconColor="#7C3AED"
+          iconBg="rgba(124, 58, 237, 0.12)"
+          title="Conflicts"
+          value={conflictLabel || 'None'}
+          meta={conflictLabel ? 'Needs resolution' : 'Schedule looks clear'}
+          actionLabel={conflictLabel ? 'Resolve' : undefined}
+          onAction={conflictLabel ? onResolveConflict : undefined}
+        />
+      </View>
+      {showPlanningEngine && planningEnginePanel ? (
+        <View style={styles.planningEnginePanel}>{planningEnginePanel}</View>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  wrap: {
+    gap: 12,
+  },
   row: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -197,5 +207,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#2563EB',
+  },
+  planningEnginePanel: {
+    width: '100%',
+    marginTop: 4,
   },
 });

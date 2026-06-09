@@ -42,31 +42,28 @@ export default function Sidebar({
   return (
     <View style={styles.container}>
       <View style={styles.rail}>
-        <View style={styles.railBody}>
-          <LeftRail
-            topActive={topActive}
-            messagesPaneOpen={messagesPaneOpen}
-            createPaneOpen={createPaneOpen}
-            onSelectTop={onSelectTop}
-            onExitChildView={onExitChildView}
-            childrenList={childrenList}
-            activeChildId={activeChildId}
-            activeChildSection={activeChildSection}
-            onSelectChild={onSelectChild}
-            onSelectChildSection={onSelectChildSection}
-            onOpenNew={onOpenNew}
-            onOpenSearch={onOpenSearch}
-            onAvatarPress={onAvatarPress}
-            user={user}
-            userRole={userRole}
-            onOpenSettings={onOpenSettings}
-            onOpenFeedback={onOpenFeedback}
-            isCollapsed={false}
-            hideBrandLogo={false}
-            hideProfileNav
-            permanentSidebar
-          />
-        </View>
+        <LeftRail
+          topActive={topActive}
+          messagesPaneOpen={messagesPaneOpen}
+          createPaneOpen={createPaneOpen}
+          onSelectTop={onSelectTop}
+          onExitChildView={onExitChildView}
+          childrenList={childrenList}
+          activeChildId={activeChildId}
+          activeChildSection={activeChildSection}
+          onSelectChild={onSelectChild}
+          onSelectChildSection={onSelectChildSection}
+          onOpenNew={onOpenNew}
+          onOpenSearch={onOpenSearch}
+          onAvatarPress={onAvatarPress}
+          user={user}
+          userRole={userRole}
+          onOpenSettings={onOpenSettings}
+          onOpenFeedback={onOpenFeedback}
+          isCollapsed={false}
+          hideBrandLogo={false}
+          permanentSidebar
+        />
       </View>
     </View>
   );
@@ -86,17 +83,9 @@ const styles = StyleSheet.create({
     height: '100%',
     width: '100%',
     flexDirection: 'column',
-    backgroundColor: '#FFFFFF',
-    borderRightWidth: 1,
-    borderRightColor: 'rgba(148, 163, 184, 0.24)',
+    backgroundColor: 'transparent',
     ...(Platform.OS === 'web' && {
       minHeight: '100vh',
     }),
-  },
-  railBody: {
-    flex: 1,
-    minHeight: 0,
-    width: '100%',
-    ...(Platform.OS === 'web' ? { overflow: 'visible' } : { overflow: 'hidden' }),
   },
 });

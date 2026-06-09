@@ -20,7 +20,6 @@ import {
   Award,
   Files,
 } from 'lucide-react';
-import { MAIN_NAV_ICONS, MAIN_NAV_PAGE_ICON_COLOR, MAIN_NAV_PAGE_ICON_SIZE } from '../layout/mainNavIcons';
 import { supabase } from '../../lib/supabase';
 import RecordsOverviewView from './RecordsOverviewView';
 import RecordsPlaceholderView from './RecordsPlaceholderView';
@@ -201,8 +200,6 @@ export default function RecordsSectionView({
     }
   };
 
-  const PageIcon = MAIN_NAV_ICONS.records;
-
   return (
     <View style={styles.shell}>
       <ScrollView
@@ -212,12 +209,6 @@ export default function RecordsSectionView({
       >
         <View style={styles.pageHeader}>
           <View style={styles.titleRow}>
-            <View style={styles.titleBlock}>
-              <View style={styles.titleLine}>
-                <PageIcon size={MAIN_NAV_PAGE_ICON_SIZE} color={MAIN_NAV_PAGE_ICON_COLOR} strokeWidth={2} />
-                <Text style={styles.pageTitle}>Records</Text>
-              </View>
-            </View>
             <View style={styles.headerActions}>
               <TouchableOpacity
                 style={styles.filterButton}
@@ -267,29 +258,11 @@ const styles = StyleSheet.create({
   },
   titleRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 16,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
     marginBottom: 16,
     flexWrap: 'wrap',
-  },
-  titleBlock: {
-    flex: 1,
-    minWidth: 260,
-    gap: 6,
-  },
-  titleLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  pageTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#0F172A',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   headerActions: {
     flexDirection: 'row',

@@ -161,7 +161,7 @@ export default function AttendanceView({
   const [rangeReady, setRangeReady] = useState(false);
   const [markingRangeAttended, setMarkingRangeAttended] = useState(false);
   const [confirmRangeVisible, setConfirmRangeVisible] = useState(false);
-  const [heatmapChildIds, setHeatmapChildIds] = useState(() => new Set());
+  const [selectedHeatmapChildId, setSelectedHeatmapChildId] = useState(null);
 
   const toast = useToast();
   const familyIdResolved = familyId || eventsProp[0]?.family_id || eventsProp[0]?.familyId;
@@ -386,36 +386,14 @@ export default function AttendanceView({
 
   useEffect(() => {
     if (children.length === 0) {
-      setHeatmapChildIds(new Set());
+      setSelectedHeatmapChildId(null);
       return;
     }
-    setHeatmapChildIds((prev) => {
-      const next = new Set();
-      children.forEach((c) => {
-        if (prev.size === 0 || prev.has(c.id)) next.add(c.id);
-      });
-      if (next.size === 0) children.forEach((c) => next.add(c.id));
-      return next;
+    setSelectedHeatmapChildId((prev) => {
+      if (prev && children.some((c) => c.id === prev)) return prev;
+      return children[0]?.id ?? null;
     });
   }, [children]);
-
-  const toggleHeatmapChild = useCallback((childId) => {
-    setHeatmapChildIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(childId)) {
-        if (next.size <= 1) return prev;
-        next.delete(childId);
-      } else {
-        next.add(childId);
-      }
-      return next;
-    });
-  }, []);
-
-  const heatmapChildren = useMemo(
-    () => children.filter((c) => heatmapChildIds.has(c.id)),
-    [children, heatmapChildIds]
-  );
 
   const exceptions = useMemo(() => {
     const list = [];
@@ -900,7 +878,9 @@ export default function AttendanceView({
       const dateKeys = getDateKeysInRange(yearRange.start, yearRange.end);
       if (dateKeys.length === 0) return;
 
-      const childIds = children.map((c) => String(c.id));
+      const childIds = selectedHeatmapChildId
+        ? [String(selectedHeatmapChildId)]
+        : children.map((c) => String(c.id));
       const existingStandaloneByChildDay = new Map();
       const existingByEventChildDay = new Map();
       attendanceRecords.forEach((r) => {
@@ -1001,6 +981,7 @@ export default function AttendanceView({
     familyIdResolved,
     markingRangeAttended,
     children,
+    selectedHeatmapChildId,
     yearRange.start,
     yearRange.end,
     attendanceRecords,
@@ -1022,6 +1003,8 @@ export default function AttendanceView({
 
   const rangeStartStr = yearRange.start ? toLocalYYYYMMDD(yearRange.start) : '';
   const rangeEndStr = yearRange.end ? toLocalYYYYMMDD(yearRange.end) : '';
+  const selectedBulkChild = children.find((c) => c.id === selectedHeatmapChildId);
+  const selectedBulkChildName = selectedBulkChild?.first_name || selectedBulkChild?.name || 'the selected child';
 
   const setRangeStart = useCallback((ymd) => {
     const clamped = ymd < minStartKey ? minStartKey : ymd > maxEndKey ? maxEndKey : ymd;
@@ -1101,7 +1084,7 @@ export default function AttendanceView({
       </View>
       <View style={styles.childFilterChips}>
         {children.map((child) => {
-          const selected = heatmapChildIds.has(child.id);
+          const selected = selectedHeatmapChildId === child.id;
           const summary = summaryPerChild.find((s) => s.childId === child.id);
           const totalDays = summary?.daysAttended ?? 0;
           const childName = child.first_name || child.name || 'Child';
@@ -1109,7 +1092,7 @@ export default function AttendanceView({
             <TouchableOpacity
               key={child.id}
               style={[styles.childFilterChip, selected && styles.childFilterChipSelected]}
-              onPress={() => toggleHeatmapChild(child.id)}
+              onPress={() => setSelectedHeatmapChildId(child.id)}
               activeOpacity={0.8}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
@@ -1147,15 +1130,11 @@ export default function AttendanceView({
               <YearHeatmapGrid
                 yearStart={yearRange.start.toISOString().slice(0, 10)}
                 yearEnd={yearRange.end.toISOString().slice(0, 10)}
-                children={heatmapChildren}
+                selectedChildId={selectedHeatmapChildId}
                 dayStatusByChild={dayStatusByChild}
                 onMarkDayAttended={handleMarkDayAttended}
                 onExport={() => {
-                  setExportModalChildId(null);
-                  setExportModalVisible(true);
-                }}
-                onChildNamePress={(child) => {
-                  setExportModalChildId(child.id);
+                  setExportModalChildId(selectedHeatmapChildId);
                   setExportModalVisible(true);
                 }}
               />
@@ -1363,7 +1342,7 @@ export default function AttendanceView({
           <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.confirmModal}>
             <Text style={styles.confirmTitle}>Mark full range attended?</Text>
             <Text style={styles.confirmBody}>
-              This will mark all days from {rangeStartStr ? formatDateDisplay(rangeStartStr) : 'the start date'} to {rangeEndStr ? formatDateDisplay(rangeEndStr) : 'the end date'} as attended for all children.
+              This will mark all days from {rangeStartStr ? formatDateDisplay(rangeStartStr) : 'the start date'} to {rangeEndStr ? formatDateDisplay(rangeEndStr) : 'the end date'} as attended for {selectedHeatmapChildId ? selectedBulkChildName : 'all children'}.
             </Text>
             <View style={styles.confirmActions}>
               <TouchableOpacity
@@ -1620,8 +1599,10 @@ const styles = StyleSheet.create({
   confirmPrimaryBtn: {
     borderRadius: 999,
     paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: TOKENS.accent,
+    paddingHorizontal: 14,
+    minWidth: 88,
+    alignItems: 'center',
+    backgroundColor: TOKENS.accent ?? '#887DEE',
   },
   confirmPrimaryBtnDisabled: {
     opacity: 0.6,

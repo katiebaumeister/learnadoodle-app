@@ -12,9 +12,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { MAIN_NAV_ICONS, MAIN_NAV_PAGE_ICON_COLOR, MAIN_NAV_PAGE_ICON_SIZE } from '../layout/mainNavIcons';
-import PlannerSummaryCards from './PlannerSummaryCards';
 import PlannerCalendarToolbar from './PlannerCalendarToolbar';
-import PlannerRightRail from './PlannerRightRail';
 import PlanHealthConflicts from './PlanHealthConflicts';
 import PlannerSmartActionsMenu from './PlannerSmartActionsMenu';
 import SubjectsPlanBuilder from '../subjects/SubjectsPlanBuilder';
@@ -33,8 +31,6 @@ export default function PlannerSectionView({
   plannerDate,
   plannerView = 'board',
   onPlannerDateChange,
-  weekEventCount = null,
-  weekAssignmentCount = null,
   calendarContent = null,
   selectedCalendarChildren = null,
   onSelectedCalendarChildrenChange,
@@ -44,12 +40,12 @@ export default function PlannerSectionView({
   onOpenAskAI,
 }) {
   const parsed = useMemo(() => parsePlannerSection(section), [section]);
-  const [conflictLabel, setConflictLabel] = useState(null);
   const [showSmartActionsMenu, setShowSmartActionsMenu] = useState(false);
-  const fixGapContainerRef = useRef(null);
+  const [showPlanningEngine, setShowPlanningEngine] = useState(false);
+  const planningEngineRef = useRef(null);
   const smartActionsButtonRef = useRef(null);
 
-  const scrollToFixGap = useCallback(() => {
+  const scrollToPlanningEngine = useCallback(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       const byId = document.getElementById(FIX_GAP_CONTAINER_ID);
       if (byId) {
@@ -57,52 +53,41 @@ export default function PlannerSectionView({
         return;
       }
     }
-    fixGapContainerRef.current?.measure?.((x, y, width, height, pageX, pageY) => {
+    planningEngineRef.current?.measure?.((x, y, width, height, pageX, pageY) => {
       if (Platform.OS === 'web' && typeof window !== 'undefined' && Number.isFinite(pageY)) {
         window.scrollTo({ top: Math.max(0, pageY - 24), behavior: 'smooth' });
       }
     });
   }, []);
 
+  const openPlanningEngine = useCallback(() => {
+    setShowPlanningEngine(true);
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => scrollToPlanningEngine());
+      });
+    }
+  }, [scrollToPlanningEngine]);
+
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
-    const handler = () => scrollToFixGap();
+    const handler = () => openPlanningEngine();
     window.addEventListener('plannerScrollToFixGap', handler);
     return () => window.removeEventListener('plannerScrollToFixGap', handler);
-  }, [scrollToFixGap]);
+  }, [openPlanningEngine]);
 
   useEffect(() => {
     if (String(section || '').trim().toLowerCase() !== 'plan-health') return;
-    const timer = setTimeout(() => scrollToFixGap(), 120);
+    setShowPlanningEngine(true);
+    const timer = setTimeout(() => scrollToPlanningEngine(), 120);
     return () => clearTimeout(timer);
-  }, [section, scrollToFixGap]);
+  }, [section, scrollToPlanningEngine]);
 
   useEffect(() => {
     if (parsed.view === 'planning-preferences') {
       onTabChange?.('settings', 'planner-settings');
     }
   }, [parsed.view, onTabChange]);
-
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
-    const refresh = () => {
-      const active = window.__ldActiveConflictBanner;
-      if (active?.visible) {
-        setConflictLabel(active.eventTitle || '1 conflict');
-      } else {
-        setConflictLabel(null);
-      }
-    };
-    refresh();
-    window.addEventListener('plannerDragConflictActive', refresh);
-    window.addEventListener('plannerDragConflictResolved', refresh);
-    window.addEventListener('clearConflictBanner', refresh);
-    return () => {
-      window.removeEventListener('plannerDragConflictActive', refresh);
-      window.removeEventListener('plannerDragConflictResolved', refresh);
-      window.removeEventListener('clearConflictBanner', refresh);
-    };
-  }, []);
 
   const navigateSection = useCallback((nextSection) => {
     onTabChange?.('planner', nextSection);
@@ -118,124 +103,108 @@ export default function PlannerSectionView({
     setShowSmartActionsMenu((open) => !open);
   }, []);
 
-  const handleOpenAskAI = useCallback(() => {
-    if (onOpenAskAI) {
-      onOpenAskAI();
-      return;
-    }
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openDoodleSearchModal'));
-    }
-  }, [onOpenAskAI]);
+  const planningEnginePanel = (
+    <View
+      ref={planningEngineRef}
+      style={styles.planningEngineContainer}
+      {...(Platform.OS === 'web' && { nativeID: FIX_GAP_CONTAINER_ID })}
+    >
+      <SubjectsPlanBuilder
+        familyId={familyId}
+        planningMode={family?.default_planning_mode ?? null}
+        children={children}
+        visibleSubjects={fullSubjects || []}
+        allSubjects={fullSubjects || []}
+        onOpenPlannerSettings={() => onTabChange?.('settings', 'planner-settings')}
+        homeSections="subjectDays"
+        gapSectionFooter={(
+          <PlanHealthConflicts onOpenCalendar={() => navigateSection('calendar')} />
+        )}
+      />
+    </View>
+  );
+
+  const calendarBlock = (
+    <View style={styles.pageContent}>
+      <View style={styles.calendarLayout}>
+        <View style={styles.calendarCard}>
+          <PlannerCalendarToolbar
+            anchorDate={plannerDate}
+            viewMode={plannerView}
+            onDateChange={onPlannerDateChange}
+            children={children}
+            selectedChildIds={selectedCalendarChildren}
+            onSelectedChildIdsChange={onSelectedCalendarChildrenChange}
+            selectedEventTypes={selectedEventTypes}
+            onSelectedEventTypesChange={onSelectedEventTypesChange}
+          />
+          <View style={styles.calendarBody}>{calendarContent}</View>
+        </View>
+      </View>
+    </View>
+  );
 
   const renderContent = () => {
     if (parsed.view === 'planning-preferences') {
       return null;
     }
 
-    return (
-      <View style={styles.pageContent}>
-        <PlannerSummaryCards
-          planHealth={preloadedPlanHealth}
-          conflictLabel={conflictLabel}
-          onViewDetails={scrollToFixGap}
-          onFixGap={scrollToFixGap}
-          onResolveConflict={() => navigateSection('calendar')}
-        />
-        <View style={styles.calendarLayout}>
-          <View style={styles.calendarMain}>
-            <View style={styles.calendarCard}>
-              <PlannerCalendarToolbar
-                anchorDate={plannerDate}
-                viewMode={plannerView}
-                onDateChange={onPlannerDateChange}
-                children={children}
-                selectedChildIds={selectedCalendarChildren}
-                onSelectedChildIdsChange={onSelectedCalendarChildrenChange}
-                selectedEventTypes={selectedEventTypes}
-                onSelectedEventTypesChange={onSelectedEventTypesChange}
-              />
-              <View style={styles.calendarBody}>{calendarContent}</View>
-            </View>
-          </View>
-          <PlannerRightRail
-            weekEventCount={weekEventCount}
-            weekAssignmentCount={weekAssignmentCount}
-            onViewWeek={() => {
-              if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'board' }));
-              }
-            }}
-            onOpenAskAI={handleOpenAskAI}
-          />
-        </View>
-        <View
-          ref={fixGapContainerRef}
-          style={styles.fixGapSection}
-          {...(Platform.OS === 'web' && { nativeID: FIX_GAP_CONTAINER_ID })}
+    if (showPlanningEngine) {
+      return (
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          nestedScrollEnabled
         >
-          <SubjectsPlanBuilder
-            familyId={familyId}
-            planningMode={family?.default_planning_mode ?? null}
-            children={children}
-            visibleSubjects={fullSubjects || []}
-            allSubjects={fullSubjects || []}
-            onOpenPlannerSettings={() => onTabChange?.('settings', 'planner-settings')}
-            homeSections="subjectDays"
-            gapSectionFooter={(
-              <PlanHealthConflicts onOpenCalendar={() => navigateSection('calendar')} />
-            )}
-          />
-        </View>
-      </View>
-    );
+          <View style={styles.planningEngineWrap}>{planningEnginePanel}</View>
+          {calendarBlock}
+        </ScrollView>
+      );
+    }
+
+    return calendarBlock;
   };
 
   const PageIcon = MAIN_NAV_ICONS.planner;
 
   return (
     <View style={styles.shell}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.pageHeader}>
-          <View style={styles.titleRow}>
-            <View style={styles.titleBlock}>
-              <View style={styles.titleLine}>
-                <PageIcon size={MAIN_NAV_PAGE_ICON_SIZE} color={MAIN_NAV_PAGE_ICON_COLOR} strokeWidth={2} />
-                <Text style={styles.pageTitle}>Planner</Text>
-              </View>
-            </View>
-            <View style={styles.headerActions}>
-              <TouchableOpacity
-                style={styles.planWeekBtn}
-                onPress={openPlanWeek}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Sparkles size={14} color="#2563EB" />
-                <Text style={styles.planWeekText}>Plan Week</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                ref={smartActionsButtonRef}
-                style={styles.smartActionsBtn}
-                onPress={openSmartActions}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.smartActionsText}>Smart Actions</Text>
-                <ChevronDown size={14} color="#6B7280" />
-              </TouchableOpacity>
-              <PlannerSmartActionsMenu
-                visible={showSmartActionsMenu}
-                triggerRef={smartActionsButtonRef}
-                onClose={() => setShowSmartActionsMenu(false)}
-              />
+      <View style={styles.pageHeader}>
+        <View style={styles.titleRow}>
+          <View style={styles.titleBlock}>
+            <View style={styles.titleLine}>
+              <PageIcon size={MAIN_NAV_PAGE_ICON_SIZE} color={MAIN_NAV_PAGE_ICON_COLOR} strokeWidth={2} />
+              <Text style={styles.pageTitle}>Planner</Text>
             </View>
           </View>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.planWeekBtn}
+              onPress={openPlanWeek}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Sparkles size={14} color="#2563EB" />
+              <Text style={styles.planWeekText}>Plan Week</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              ref={smartActionsButtonRef}
+              style={styles.smartActionsBtn}
+              onPress={openSmartActions}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Text style={styles.smartActionsText}>Smart Actions</Text>
+              <ChevronDown size={14} color="#6B7280" />
+            </TouchableOpacity>
+            <PlannerSmartActionsMenu
+              visible={showSmartActionsMenu}
+              triggerRef={smartActionsButtonRef}
+              onClose={() => setShowSmartActionsMenu(false)}
+            />
+          </View>
         </View>
-        {renderContent()}
-      </ScrollView>
+      </View>
+      <View style={styles.pageBody}>{renderContent()}</View>
     </View>
   );
 }
@@ -248,16 +217,26 @@ const styles = StyleSheet.create({
   },
   scroll: {
     flex: 1,
+    minHeight: 0,
   },
   scrollContent: {
     flexGrow: 1,
     paddingBottom: 32,
+  },
+  pageBody: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   pageHeader: {
     paddingHorizontal: 24,
     paddingTop: 24,
     paddingBottom: 0,
     backgroundColor: '#FFFFFF',
+    flexShrink: 0,
   },
   titleRow: {
     flexDirection: 'row',
@@ -323,23 +302,27 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#374151',
   },
-  fixGapSection: {
+  planningEngineContainer: {
     width: '100%',
-    marginTop: 16,
+  },
+  planningEngineWrap: {
+    width: '100%',
+    marginBottom: 16,
   },
   pageContent: {
     ...familyStyles.pageContent,
     paddingTop: 0,
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   calendarLayout: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 16,
-    flexWrap: 'wrap',
-  },
-  calendarMain: {
+    width: '100%',
     flex: 1,
-    minWidth: 0,
+    minHeight: 0,
   },
   calendarCard: {
     borderRadius: 14,
@@ -347,12 +330,17 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(148, 163, 184, 0.24)',
     backgroundColor: '#FFFFFF',
     overflow: 'hidden',
-    minHeight: 420,
+    flex: 1,
+    minHeight: 480,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   calendarBody: {
     flex: 1,
-    minHeight: 360,
+    minHeight: 0,
     overflow: 'hidden',
-    ...(Platform.OS === 'web' && { minWidth: 0 }),
+    ...(Platform.OS === 'web' && { minWidth: 0, display: 'flex', flexDirection: 'column' }),
   },
 });

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,10 +8,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { Settings, ChevronLeft } from 'lucide-react';
-import { MAIN_NAV_ICONS, MAIN_NAV_PAGE_ICON_COLOR, MAIN_NAV_PAGE_ICON_SIZE } from '../layout/mainNavIcons';
-import { supabase } from '../../lib/supabase';
 import FamilyPanel from '../settings/FamilyPanel';
-import FamilyOverviewView from './FamilyOverviewView';
 import FamilyChildView from './FamilyChildView';
 import FamilyAcademicYearsView from './FamilyAcademicYearsView';
 import FamilyLearningPreferencesView from './FamilyLearningPreferencesView';
@@ -24,7 +21,6 @@ import {
 import { useOptionalFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
 
 const SUB_VIEW_TITLES = {
-  members: 'Members',
   'learning-preferences': 'Learning Preferences',
   'academic-years': 'Academic Years',
   'academic-year': 'Academic Year',
@@ -50,8 +46,38 @@ function FamilyTabBar({ tabs, activeKey, onChange }) {
   );
 }
 
+function FamilyMembersPanel({
+  user,
+  family,
+  familyId,
+  onFamilyUpdate,
+  profile,
+  fullSubjects,
+  userRole,
+  viewingAsChildId,
+  onViewAsChild,
+  onExitChildView,
+}) {
+  return (
+    <FamilyPanel
+      user={user}
+      family={family}
+      familyId={familyId}
+      onFamilyUpdate={onFamilyUpdate}
+      profile={profile}
+      preloadedSubjects={fullSubjects}
+      userRole={userRole}
+      initialSection="members"
+      hideInternalSidebar
+      viewingAsChildId={viewingAsChildId}
+      onViewAsChild={onViewAsChild}
+      onExitChildView={onExitChildView}
+    />
+  );
+}
+
 export default function FamilySectionView({
-  section = 'overview',
+  section = 'members',
   familyId,
   children = [],
   family,
@@ -70,47 +96,6 @@ export default function FamilySectionView({
 }) {
   const familyUserControls = useOptionalFamilyUserControls();
   const parsed = useMemo(() => parseFamilySection(section), [section]);
-  const [academicYears, setAcademicYears] = useState([]);
-
-  useEffect(() => {
-    if (Array.isArray(preloadedAcademicYears) && preloadedAcademicYears.length > 0) {
-      setAcademicYears(preloadedAcademicYears);
-      return undefined;
-    }
-    let cancelled = false;
-    const loadYears = async () => {
-      if (!familyId) {
-        setAcademicYears([]);
-        return;
-      }
-      try {
-        let result = await supabase
-          .from('academic_years')
-          .select('id, start_date, end_date, year_name')
-          .eq('family_id', familyId)
-          .order('start_date', { ascending: false })
-          .limit(8);
-        if (
-          result?.error
-          && String(result.error?.message || '').toLowerCase().includes('year_name')
-        ) {
-          result = await supabase
-            .from('academic_years')
-            .select('id, start_date, end_date')
-            .eq('family_id', familyId)
-            .order('start_date', { ascending: false })
-            .limit(8);
-        }
-        if (!cancelled) setAcademicYears(result.data || []);
-      } catch (_) {
-        if (!cancelled) setAcademicYears([]);
-      }
-    };
-    loadYears();
-    return () => {
-      cancelled = true;
-    };
-  }, [familyId, preloadedAcademicYears]);
 
   const selectedChild = useMemo(() => {
     if (parsed.view !== 'child' || !parsed.childId) return null;
@@ -121,20 +106,10 @@ export default function FamilySectionView({
     onTabChange?.('family', nextSection);
   }, [onTabChange]);
 
-  const handleSelectChild = useCallback((childId) => {
-    navigateSection(buildChildSectionKey(childId, 'overview'));
-  }, [navigateSection]);
-
   const handleChildTabChange = useCallback((tabKey) => {
     if (!parsed.childId) return;
     navigateSection(buildChildSectionKey(parsed.childId, tabKey));
   }, [navigateSection, parsed.childId]);
-
-  const handleAddChild = useCallback(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openAddChildModal'));
-    }
-  }, []);
 
   const handleOpenSettings = useCallback(() => {
     onTabChange?.('settings', 'profile');
@@ -151,7 +126,7 @@ export default function FamilySectionView({
     familyUserControls.isRestrictedViewer && !familyUserControls.allowed('planning_preferences');
 
   const isChildView = parsed.view === 'child' && selectedChild;
-  const isSubView = !isChildView && parsed.view !== 'overview';
+  const isSubView = !isChildView && parsed.view !== 'members';
   const subViewTitle = SUB_VIEW_TITLES[parsed.view] || 'Family';
 
   const renderContent = () => {
@@ -171,24 +146,6 @@ export default function FamilySectionView({
     }
 
     switch (parsed.view) {
-      case 'members':
-        return (
-          <FamilyPanel
-            user={user}
-            family={family}
-            familyId={familyId}
-            onFamilyUpdate={onFamilyUpdate}
-            profile={profile}
-            preloadedSubjects={fullSubjects}
-            userRole={userRole}
-            initialSection="members"
-            hideInternalSidebar
-            embeddedInFamily
-            viewingAsChildId={viewingAsChildId}
-            onViewAsChild={onViewAsChild}
-            onExitChildView={onExitChildView}
-          />
-        );
       case 'learning-preferences':
         return (
           <FamilyLearningPreferencesView
@@ -209,26 +166,24 @@ export default function FamilySectionView({
             preloadedPlannerSettings={preloadedPlannerSettings}
           />
         );
-      case 'overview':
+      case 'members':
       default:
         return (
-          <FamilyOverviewView
-            familyId={familyId}
+          <FamilyMembersPanel
+            user={user}
             family={family}
-            children={children}
-            subjects={fullSubjects}
-            academicYears={academicYears}
-            preloadedPlannerSettings={preloadedPlannerSettings}
-            onSelectChild={handleSelectChild}
-            onAddChild={handleAddChild}
-            onNavigateSection={navigateSection}
-            onTabChange={onTabChange}
+            familyId={familyId}
+            onFamilyUpdate={onFamilyUpdate}
+            profile={profile}
+            fullSubjects={fullSubjects}
+            userRole={userRole}
+            viewingAsChildId={viewingAsChildId}
+            onViewAsChild={onViewAsChild}
+            onExitChildView={onExitChildView}
           />
         );
     }
   };
-
-  const PageIcon = MAIN_NAV_ICONS.family;
 
   return (
     <View style={styles.shell}>
@@ -241,7 +196,7 @@ export default function FamilySectionView({
           <View style={styles.pageHeader}>
             <TouchableOpacity
               style={styles.backRow}
-              onPress={() => navigateSection('overview')}
+              onPress={() => navigateSection('members')}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <ChevronLeft size={18} color="#2563EB" />
@@ -258,7 +213,7 @@ export default function FamilySectionView({
           <View style={styles.pageHeader}>
             <TouchableOpacity
               style={styles.backRow}
-              onPress={() => navigateSection('overview')}
+              onPress={() => navigateSection('members')}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <ChevronLeft size={18} color="#2563EB" />
@@ -269,12 +224,6 @@ export default function FamilySectionView({
         ) : (
           <View style={styles.pageHeader}>
             <View style={styles.titleRow}>
-              <View style={styles.titleBlock}>
-                <View style={styles.titleLine}>
-                  <PageIcon size={MAIN_NAV_PAGE_ICON_SIZE} color={MAIN_NAV_PAGE_ICON_COLOR} strokeWidth={2} />
-                  <Text style={styles.pageTitle}>Family</Text>
-                </View>
-              </View>
               <TouchableOpacity
                 style={styles.settingsButton}
                 onPress={handleOpenSettings}
@@ -314,27 +263,10 @@ const styles = StyleSheet.create({
   },
   titleRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
     gap: 16,
     marginBottom: 0,
-  },
-  titleBlock: {
-    flex: 1,
-    gap: 6,
-  },
-  titleLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  pageTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#0F172A',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
   },
   settingsButton: {
     flexDirection: 'row',

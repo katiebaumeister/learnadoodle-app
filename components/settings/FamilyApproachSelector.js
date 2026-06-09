@@ -16,6 +16,8 @@ export default function FamilyApproachSelector({
   onFamilyUpdate,
   readOnly = false,
   description = 'Days vs hours, learning days, and breaks are saved per school year.',
+  fieldLabel = 'Family approach',
+  onMenuOpenChange = null,
 }) {
   const toast = useToast();
   const [savingGoal, setSavingGoal] = useState(false);
@@ -24,9 +26,14 @@ export default function FamilyApproachSelector({
   const currentGoalLabel =
     FAMILY_APPROACH_OPTIONS.find((option) => option.id === currentGoalId)?.label || 'Not set';
 
+  const setMenuOpen = useCallback((nextOpen) => {
+    setShowGoalMenu(nextOpen);
+    onMenuOpenChange?.(nextOpen);
+  }, [onMenuOpenChange]);
+
   const handleGoalChange = useCallback(async (nextGoalId) => {
     if (!familyId || readOnly || nextGoalId === currentGoalId) {
-      setShowGoalMenu(false);
+      setMenuOpen(false);
       return;
     }
     setSavingGoal(true);
@@ -45,18 +52,17 @@ export default function FamilyApproachSelector({
       toast.push(err?.message || 'Could not update learning approach', 'error');
     } finally {
       setSavingGoal(false);
-      setShowGoalMenu(false);
+      setMenuOpen(false);
     }
-  }, [currentGoalId, family, familyId, onFamilyUpdate, readOnly, toast]);
+  }, [currentGoalId, family, familyId, onFamilyUpdate, readOnly, setMenuOpen, toast]);
 
   return (
-    <View style={[styles.card, showGoalMenu && styles.cardMenuOpen]}>
-      <Text style={styles.labelCaps}>Family approach</Text>
-      <Text style={styles.bodyText}>{description}</Text>
+    <View style={[styles.fieldGroup, showGoalMenu && styles.fieldGroupMenuOpen]}>
+      <Text style={styles.fieldLabel}>{fieldLabel}</Text>
       <View style={styles.goalPickerWrap}>
         <TouchableOpacity
           style={styles.goalPicker}
-          onPress={() => !readOnly && !savingGoal && setShowGoalMenu((prev) => !prev)}
+          onPress={() => !readOnly && !savingGoal && setMenuOpen(!showGoalMenu)}
           disabled={readOnly || savingGoal}
           {...(Platform.OS === 'web' && { cursor: readOnly ? 'default' : 'pointer' })}
         >
@@ -90,67 +96,73 @@ export default function FamilyApproachSelector({
           </View>
         ) : null}
       </View>
+      {description ? <Text style={styles.fieldHint}>{description}</Text> : null}
     </View>
   );
 }
 
 const styles = {
-  card: {
-    marginTop: 24,
-    padding: 20,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    backgroundColor: '#FFFFFF',
+  fieldGroup: {
+    position: 'relative',
+    marginBottom: 0,
     ...(Platform.OS === 'web' && { overflow: 'visible' }),
   },
-  cardMenuOpen: {
-    zIndex: 20,
-    ...(Platform.OS === 'web' && { position: 'relative' }),
+  fieldGroupMenuOpen: {
+    zIndex: 80,
+    ...(Platform.OS === 'web' && {
+      isolation: 'isolate',
+    }),
   },
-  labelCaps: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
-    color: '#6b7280',
-    marginBottom: 8,
+  fieldLabel: {
+    ...SettingsTypography.label,
+    color: '#111827',
+    marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
-  bodyText: {
+  fieldHint: {
     ...SettingsTypography.secondary,
     color: '#6b7280',
-    marginBottom: 16,
+    marginTop: 12,
     lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   goalPickerWrap: {
     position: 'relative',
-    alignSelf: 'flex-start',
+    alignSelf: 'stretch',
     zIndex: 30,
   },
   goalPicker: {
-    minWidth: 240,
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    minHeight: 46,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.35)',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#f9fafb',
   },
   goalPickerText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: '#0F172A',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   goalMenu: {
     position: 'absolute',
     top: '100%',
     left: 0,
+    right: 0,
     marginTop: 6,
-    minWidth: 240,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.35)',

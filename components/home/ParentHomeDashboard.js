@@ -1,25 +1,14 @@
 /**
- * Parent home dashboard — two-column layout with Today timeline, AI Insights, Alerts, Family, Quick Actions.
+ * Parent home dashboard — two-column layout with Today, Family Snapshot, and Subject Snapshot.
  */
 
-import React, { useMemo } from 'react';
+import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
 import {
-  AlertTriangle,
+  BookOpen,
   Clock,
-  HelpCircle,
-  Wrench,
+  FileText,
   Plus,
-  MessageCircle,
-  ClipboardList,
-  FlaskConical,
-  MessageSquare,
-  Sparkles,
-  ChevronRight,
-  CalendarDays,
-  TrendingUp,
-  Star,
-  Circle,
 } from 'lucide-react';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 
@@ -94,43 +83,66 @@ function statusLabel(tone, deltaDays, targetDays, plannedDays) {
   return 'On Track';
 }
 
-function getEventTheme(event, subjects) {
-  const subject = getSubjectLabel(event, subjects).toLowerCase();
-  const eventType = String(event?.event_type || event?.type || '').toLowerCase();
-  if (subject.includes('science') || eventType.includes('science')) {
-    return { dot: '#9333EA', iconBg: '#F3E8FF', iconColor: '#9333EA', Icon: FlaskConical };
-  }
-  if (subject.includes('writ') || eventType.includes('writ')) {
-    return { dot: '#059669', iconBg: '#ECFDF5', iconColor: '#059669', Icon: MessageSquare };
-  }
-  if (
-    subject.includes('soccer') ||
-    subject.includes('sport') ||
-    eventType.includes('activity') ||
-    eventType.includes('sport')
-  ) {
-    return { dot: '#EA580C', iconBg: '#FFF7ED', iconColor: '#EA580C', Icon: Circle };
-  }
-  return { dot: '#2563EB', iconBg: '#EFF6FF', iconColor: '#2563EB', Icon: ClipboardList };
-}
-
-function DashboardCard({ title, titleIcon: TitleIcon, titleAccent, headerRight, children, style }) {
+function DashboardCard({ title, headerRight, children, style, fillRail = false }) {
   return (
-    <View style={[styles.card, style]}>
+    <View style={[styles.card, fillRail && styles.railCard, style]}>
       {(title || headerRight) && (
-        <View style={styles.cardHeader}>
-          {title ? (
-            <View style={styles.cardTitleRow}>
-              {TitleIcon ? <TitleIcon size={16} color={titleAccent || '#6366F1'} /> : null}
-              <Text style={[styles.cardTitle, titleAccent && { color: titleAccent }]}>{title}</Text>
-            </View>
-          ) : (
-            <View />
-          )}
+        <View style={[styles.cardHeader, fillRail && styles.railCardHeader]}>
+          {title ? <Text style={styles.cardTitle}>{title}</Text> : <View />}
           {headerRight || null}
         </View>
       )}
-      {children}
+      {fillRail ? (
+        <ScrollView
+          style={styles.railCardScroll}
+          contentContainerStyle={styles.railCardScrollContent}
+          showsVerticalScrollIndicator={Platform.OS === 'web'}
+          nestedScrollEnabled
+        >
+          {children}
+        </ScrollView>
+      ) : (
+        children
+      )}
+    </View>
+  );
+}
+
+function EmptyLine({ text }) {
+  return <Text style={styles.emptyLine}>{text}</Text>;
+}
+
+function EventRow({ event, subjects, children, showDueTag }) {
+  const time = formatTime(event.start_ts || event.start);
+  const subject = getSubjectLabel(event, subjects);
+  const title = event.title && event.title !== subject ? event.title : null;
+  const childIds = getEventChildIdsForDisplay(event, children);
+  const childLine =
+    childIds.length > 0
+      ? childIds.map((id) => {
+          const c = children.find((ch) => String(ch.id) === String(id));
+          return getChildLabel(c);
+        }).join(', ')
+      : null;
+
+  return (
+    <View style={styles.eventRow}>
+      <Text style={styles.eventTime}>{time || '—'}</Text>
+      <View style={styles.eventBody}>
+        <View style={styles.eventTitleRow}>
+          <BookOpen size={14} color="#6366f1" style={styles.eventIcon} />
+          <Text style={styles.eventTitle} numberOfLines={1}>
+            {subject}
+            {title ? ` — ${title}` : ''}
+          </Text>
+          {showDueTag ? (
+            <View style={styles.dueTodayTag}>
+              <Text style={styles.dueTodayTagText}>Due Today</Text>
+            </View>
+          ) : null}
+        </View>
+        {childLine ? <Text style={styles.eventMeta}>{childLine}</Text> : null}
+      </View>
     </View>
   );
 }
@@ -144,73 +156,135 @@ function HeaderLink({ label, onPress }) {
   );
 }
 
-function TodayTimelineItem({
-  item,
-  isLast,
-  onPress,
-  onSubmit,
+export function ParentHomeRightRail({
+  familySnapshot = [],
+  subjectSnapshot = [],
+  onNavigate,
 }) {
-  const theme = item.theme || {
-    dot: '#2563EB',
-    iconBg: '#EFF6FF',
-    iconColor: '#2563EB',
-    Icon: ClipboardList,
-  };
-  const Icon = theme.Icon;
-
-  const content = (
-    <View style={styles.timelineRow}>
-      <View style={styles.timelineRail}>
-        <View style={[styles.timelineDot, { backgroundColor: theme.dot }]} />
-        {!isLast ? <View style={styles.timelineLine} /> : null}
-      </View>
-      <View style={styles.timelineBody}>
-        <Text style={styles.timelineTime}>{item.time || '—'}</Text>
-        <View style={styles.timelineEvent}>
-          <View style={[styles.timelineIconWrap, { backgroundColor: theme.iconBg }]}>
-            <Icon size={16} color={theme.iconColor} />
-          </View>
-          <View style={styles.timelineTextBlock}>
-            <Text style={styles.timelineTitle} numberOfLines={1}>
-              {item.title}
-            </Text>
-            {item.subtitle ? (
-              <Text style={styles.timelineSubtitle} numberOfLines={2}>
-                {item.subtitle}
-              </Text>
-            ) : null}
-          </View>
-          {item.showDueTag ? (
-            <View style={styles.dueTodayTag}>
-              <Text style={styles.dueTodayTagText}>Due today</Text>
+  return (
+    <View style={styles.railStack}>
+      <DashboardCard
+        title="Family Snapshot"
+        fillRail
+        headerRight={<HeaderLink label="View all" onPress={() => onNavigate?.('family', 'members')} />}
+      >
+        {familySnapshot.length === 0 ? (
+          <Text style={styles.emptyLine}>Add children to see progress at a glance.</Text>
+        ) : (
+          familySnapshot.map((row) => (
+            <View key={row.childId} style={styles.snapshotRow}>
+              <View style={styles.snapshotTop}>
+                <View style={styles.snapshotIdentity}>
+                  <View
+                    style={[
+                      styles.snapshotAvatar,
+                      { backgroundColor: row.avatarColor || '#94A3B8' },
+                    ]}
+                  >
+                    <Text style={styles.snapshotAvatarText}>
+                      {(row.name || '?').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View>
+                    <Text style={styles.snapshotName}>{row.name}</Text>
+                    {row.gradeLabel ? (
+                      <Text style={styles.snapshotGrade}>{row.gradeLabel}</Text>
+                    ) : null}
+                  </View>
+                </View>
+                <Text
+                  style={[
+                    styles.snapshotStatus,
+                    row.tone === 'behind' && styles.snapshotStatusBehind,
+                    row.tone === 'ahead' && styles.snapshotStatusAhead,
+                    row.tone === 'on_track' && styles.snapshotStatusOnTrack,
+                  ]}
+                >
+                  {row.statusLabel}
+                </Text>
+              </View>
+              {row.targetDays ? (
+                <>
+                  <View style={styles.progressTrack}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        row.tone === 'behind' && styles.progressFillBehind,
+                        row.tone === 'ahead' && styles.progressFillAhead,
+                        { width: `${Math.min(100, row.progressPct || 0)}%` },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.progressCaption}>
+                    {row.plannedDays}/{row.targetDays} days
+                  </Text>
+                </>
+              ) : null}
             </View>
-          ) : null}
-          {item.showSubmit ? (
-            <TouchableOpacity
-              style={styles.submitBtn}
-              onPress={onSubmit}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.submitBtnText}>Submit</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </View>
+          ))
+        )}
+      </DashboardCard>
+
+      <DashboardCard
+        title="Subject Snapshot"
+        fillRail
+        headerRight={<HeaderLink label="View all" onPress={() => onNavigate?.('subjects')} />}
+      >
+        {subjectSnapshot.length === 0 ? (
+          <Text style={styles.emptyLine}>Add subjects to see progress at a glance.</Text>
+        ) : (
+          subjectSnapshot.map((row) => (
+            <View key={row.subjectId} style={styles.snapshotRow}>
+              <View style={styles.snapshotTop}>
+                <View style={styles.snapshotIdentity}>
+                  <View style={[styles.snapshotAvatar, styles.subjectAvatar]}>
+                    <BookOpen size={16} color="#6366F1" />
+                  </View>
+                  <View style={styles.snapshotTextBlock}>
+                    <Text style={styles.snapshotName} numberOfLines={1}>
+                      {row.name}
+                    </Text>
+                    {row.childLabel ? (
+                      <Text style={styles.snapshotGrade} numberOfLines={1}>
+                        {row.childLabel}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+                <Text
+                  style={[
+                    styles.snapshotStatus,
+                    row.tone === 'behind' && styles.snapshotStatusBehind,
+                    row.tone === 'ahead' && styles.snapshotStatusAhead,
+                    row.tone === 'on_track' && styles.snapshotStatusOnTrack,
+                  ]}
+                >
+                  {row.statusLabel}
+                </Text>
+              </View>
+              {row.targetDays ? (
+                <>
+                  <View style={styles.progressTrack}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        row.tone === 'behind' && styles.progressFillBehind,
+                        row.tone === 'ahead' && styles.progressFillAhead,
+                        { width: `${Math.min(100, row.progressPct || 0)}%` },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.progressCaption}>
+                    {row.plannedDays}/{row.targetDays} days
+                  </Text>
+                </>
+              ) : null}
+            </View>
+          ))
+        )}
+      </DashboardCard>
     </View>
   );
-
-  if (onPress) {
-    return (
-      <TouchableOpacity
-        activeOpacity={0.7}
-        onPress={onPress}
-        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-      >
-        {content}
-      </TouchableOpacity>
-    );
-  }
-  return content;
 }
 
 export default function ParentHomeDashboard({
@@ -219,93 +293,13 @@ export default function ParentHomeDashboard({
   todayEvents = [],
   dueAssignments = [],
   pendingSubmissions = [],
-  alerts = [],
-  aiInsights = [],
   familySnapshot = [],
   onNavigate,
   onAddEvent,
   onOpenEvent,
 }) {
-  const handleFixGap = () => {
-    onNavigate?.('planner', 'calendar');
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent('plannerScrollToFixGap'));
-      });
-    }
-  };
-  const handlePlanWeek = () => onNavigate?.('planner', 'calendar');
-  const handleSendMessage = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('openMessagesPane'));
-    }
-  };
   const handleViewPlanner = () => onNavigate?.('planner', 'calendar');
   const handleViewSubmissions = () => onNavigate?.('learning', 'submissions');
-
-  const todayTimelineItems = useMemo(() => {
-    const items = [];
-
-    todayEvents.forEach((event) => {
-      const subject = getSubjectLabel(event, subjects);
-      const title = event.title && event.title !== subject ? event.title : subject;
-      const subtitle =
-        event.title && event.title !== subject
-          ? event.title
-          : event.description || event.notes || null;
-      const eventType = String(event?.event_type || event?.type || '').toLowerCase();
-      items.push({
-        id: `event-${event.id}`,
-        sortKey: getEventTimestamp(event)?.getTime() || 0,
-        time: formatTime(event.start_ts || event.start),
-        title: subject,
-        subtitle: subtitle && subtitle !== subject ? subtitle : null,
-        theme: getEventTheme(event, subjects),
-        showDueTag: eventType === 'assignment' || eventType === 'project',
-        showSubmit: false,
-        event,
-      });
-    });
-
-    dueAssignments.slice(0, 4).forEach((assignment) => {
-      items.push({
-        id: `due-${assignment.id}`,
-        sortKey: 12 * 60,
-        time: 'Due today',
-        title: assignment.title || 'Assignment',
-        subtitle: assignment.child?.first_name
-          ? `${assignment.child.first_name}${assignment.subject?.name ? ` · ${assignment.subject.name}` : ''}`
-          : assignment.subject?.name || null,
-        theme: { dot: '#9333EA', iconBg: '#F3E8FF', iconColor: '#9333EA', Icon: FlaskConical },
-        showDueTag: true,
-        showSubmit: false,
-        assignment,
-      });
-    });
-
-    pendingSubmissions.slice(0, 2).forEach((assignment) => {
-      items.push({
-        id: `submit-${assignment.id}`,
-        sortKey: 13 * 60,
-        time: formatTime(assignment.due_date ? `${assignment.due_date}T12:00:00` : null) || 'Review',
-        title: assignment.title || 'Submission',
-        subtitle: assignment.child?.first_name ? `${assignment.child.first_name} · awaiting review` : 'Awaiting review',
-        theme: { dot: '#059669', iconBg: '#ECFDF5', iconColor: '#059669', Icon: MessageSquare },
-        showDueTag: false,
-        showSubmit: true,
-        assignment,
-      });
-    });
-
-    return items.sort((a, b) => a.sortKey - b.sortKey);
-  }, [todayEvents, dueAssignments, pendingSubmissions, subjects]);
-
-  const quickActions = [
-    { id: 'fix_gap', label: 'Fix Gap', icon: Wrench, bg: '#ECFDF5', color: '#059669', onPress: handleFixGap },
-    { id: 'plan_week', label: 'Plan Week', icon: CalendarDays, bg: '#EFF6FF', color: '#2563EB', onPress: handlePlanWeek },
-    { id: 'create_event', label: 'Create Event', icon: Plus, bg: '#F3E8FF', color: '#9333EA', onPress: onAddEvent },
-    { id: 'send_message', label: 'Send Message', icon: MessageCircle, bg: '#FFF7ED', color: '#EA580C', onPress: handleSendMessage },
-  ];
 
   return (
     <ScrollView
@@ -323,175 +317,85 @@ export default function ParentHomeDashboard({
             title="Today"
             headerRight={<HeaderLink label="View full day" onPress={handleViewPlanner} />}
           >
-            {todayTimelineItems.length === 0 ? (
-              <Text style={styles.emptyLine}>No events scheduled for today.</Text>
+            {todayEvents.length === 0 ? (
+              <EmptyLine text="No events scheduled for today." />
             ) : (
-              todayTimelineItems.map((item, index) => (
-                <TodayTimelineItem
-                  key={item.id}
-                  item={item}
-                  isLast={index === todayTimelineItems.length - 1}
-                  onPress={
-                    item.event
-                      ? () => onOpenEvent?.(item.event)
-                      : item.assignment
-                        ? handleViewSubmissions
-                        : undefined
-                  }
-                  onSubmit={handleViewSubmissions}
-                />
-              ))
-            )}
-          </DashboardCard>
-
-          <DashboardCard
-            title="AI Insights"
-            titleIcon={Sparkles}
-            titleAccent="#6366F1"
-            headerRight={<HeaderLink label="View all" onPress={handleViewPlanner} />}
-          >
-            {aiInsights.length === 0 ? (
-              <Text style={styles.emptyLine}>Insights will appear as you plan and track learning.</Text>
-            ) : (
-              aiInsights.map((insight) => {
-                const Icon = insight.icon || Sparkles;
-                return (
-                  <View key={insight.id} style={styles.insightRow}>
-                    <View style={[styles.insightIconWrap, { backgroundColor: insight.iconBg || '#EEF2FF' }]}>
-                      <Icon size={16} color={insight.iconColor || '#6366F1'} />
-                    </View>
-                    <Text style={styles.insightText}>{insight.text}</Text>
-                  </View>
-                );
-              })
-            )}
-          </DashboardCard>
-        </View>
-
-        <View style={styles.column}>
-          <DashboardCard
-            title="Alerts"
-            headerRight={
-              <View style={styles.badgeRow}>
-                {alerts.length > 0 ? (
-                  <View style={styles.alertBadge}>
-                    <Text style={styles.alertBadgeText}>{alerts.length}</Text>
-                  </View>
-                ) : null}
-                <HeaderLink label="View all" onPress={handleViewSubmissions} />
-              </View>
-            }
-          >
-            {alerts.length === 0 ? (
-              <Text style={styles.emptyLine}>Nothing urgent — you&apos;re caught up.</Text>
-            ) : (
-              alerts.map((alert) => {
-                const Icon = alert.icon || AlertTriangle;
-                return (
+              <View style={styles.listGap}>
+                {todayEvents.map((event) => (
                   <TouchableOpacity
-                    key={alert.id}
-                    style={styles.alertRow}
-                    onPress={alert.onPress}
+                    key={String(event.id)}
+                    onPress={() => onOpenEvent?.(event)}
                     activeOpacity={0.7}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <View style={[styles.alertIconWrap, { backgroundColor: alert.iconBg || '#FEF2F2' }]}>
-                      <Icon size={16} color={alert.iconColor || '#DC2626'} />
-                    </View>
-                    <View style={styles.alertCopy}>
-                      <Text style={styles.alertTitle}>{alert.title || alert.message}</Text>
-                      {alert.subtitle ? (
-                        <Text style={styles.alertSubtitle}>{alert.subtitle}</Text>
-                      ) : null}
-                    </View>
-                    <ChevronRight size={16} color="#94A3B8" />
+                    <EventRow
+                      event={event}
+                      subjects={subjects}
+                      children={children}
+                      showDueTag={['assignment', 'project'].includes(
+                        String(event.event_type || event.type || '').toLowerCase()
+                      )}
+                    />
                   </TouchableOpacity>
-                );
-              })
+                ))}
+              </View>
             )}
-          </DashboardCard>
 
-          <DashboardCard
-            title="Family Snapshot"
-            headerRight={<HeaderLink label="View all" onPress={() => onNavigate?.('family', 'overview')} />}
-          >
-            {familySnapshot.length === 0 ? (
-              <Text style={styles.emptyLine}>Add children to see progress at a glance.</Text>
-            ) : (
-              familySnapshot.map((row) => (
-                <View key={row.childId} style={styles.snapshotRow}>
-                  <View style={styles.snapshotTop}>
-                    <View style={styles.snapshotIdentity}>
-                      <View
-                        style={[
-                          styles.snapshotAvatar,
-                          { backgroundColor: row.avatarColor || '#94A3B8' },
-                        ]}
-                      >
-                        <Text style={styles.snapshotAvatarText}>
-                          {(row.name || '?').charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
-                      <View>
-                        <Text style={styles.snapshotName}>{row.name}</Text>
-                        {row.gradeLabel ? (
-                          <Text style={styles.snapshotGrade}>{row.gradeLabel}</Text>
-                        ) : null}
-                      </View>
-                    </View>
-                    <Text
-                      style={[
-                        styles.snapshotStatus,
-                        row.tone === 'behind' && styles.snapshotStatusBehind,
-                        row.tone === 'ahead' && styles.snapshotStatusAhead,
-                        row.tone === 'on_track' && styles.snapshotStatusOnTrack,
-                      ]}
-                    >
-                      {row.statusLabel}
-                    </Text>
-                  </View>
-                  {row.targetDays ? (
-                    <>
-                      <View style={styles.progressTrack}>
-                        <View
-                          style={[
-                            styles.progressFill,
-                            row.tone === 'behind' && styles.progressFillBehind,
-                            row.tone === 'ahead' && styles.progressFillAhead,
-                            { width: `${Math.min(100, row.progressPct || 0)}%` },
-                          ]}
-                        />
-                      </View>
-                      <Text style={styles.progressCaption}>
-                        {row.plannedDays}/{row.targetDays} days
-                      </Text>
-                    </>
-                  ) : null}
-                </View>
-              ))
-            )}
-          </DashboardCard>
-
-          <DashboardCard title="Quick Actions">
-            <View style={styles.quickActionsGrid}>
-              {quickActions.map((action) => {
-                const Icon = action.icon;
-                return (
+            {dueAssignments.length > 0 && (
+              <View style={styles.subSection}>
+                <Text style={styles.subSectionTitle}>Due assignments</Text>
+                {dueAssignments.slice(0, 4).map((a) => (
                   <TouchableOpacity
-                    key={action.id}
-                    style={[styles.quickActionBtn, { backgroundColor: action.bg }]}
-                    onPress={action.onPress}
-                    activeOpacity={0.8}
+                    key={a.id}
+                    style={styles.compactRow}
+                    onPress={handleViewSubmissions}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Icon size={20} color={action.color} />
-                    <Text style={[styles.quickActionLabel, { color: action.color }]}>{action.label}</Text>
+                    <FileText size={14} color="#6366f1" />
+                    <Text style={styles.compactRowText} numberOfLines={1}>
+                      {a.title || 'Assignment'}
+                      {a.child?.first_name ? ` · ${a.child.first_name}` : ''}
+                    </Text>
                   </TouchableOpacity>
-                );
-              })}
-            </View>
+                ))}
+              </View>
+            )}
+
+            {pendingSubmissions.length > 0 && (
+              <View style={styles.subSection}>
+                <Text style={styles.subSectionTitle}>Due submissions</Text>
+                {pendingSubmissions.slice(0, 4).map((a) => (
+                  <TouchableOpacity
+                    key={a.id}
+                    style={styles.compactRow}
+                    onPress={handleViewSubmissions}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Clock size={14} color="#ea580c" />
+                    <Text style={styles.compactRowText} numberOfLines={1}>
+                      {a.child?.first_name ? `${a.child.first_name}: ` : ''}
+                      {a.title || 'Submission'} — review
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={styles.addEventLink}
+              onPress={onAddEvent}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Plus size={14} color="#6366f1" />
+              <Text style={styles.addEventLinkText}>Add Event</Text>
+            </TouchableOpacity>
           </DashboardCard>
         </View>
+
+        <ParentHomeRightRail
+          familySnapshot={familySnapshot}
+          onNavigate={onNavigate}
+        />
       </View>
     </ScrollView>
   );
@@ -542,6 +446,51 @@ const styles = StyleSheet.create({
       minWidth: 0,
     }),
   },
+  railStack: {
+    gap: 16,
+    width: '100%',
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      alignSelf: 'stretch',
+      overflow: 'hidden',
+    }),
+  },
+  railCard: {
+    flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
+    gap: 0,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      flexGrow: 0,
+      flexShrink: 0,
+      height: 'calc((100% - 16px) / 2)',
+      maxHeight: 'calc((100% - 16px) / 2)',
+      minHeight: 'calc((100% - 16px) / 2)',
+    }),
+  },
+  railCardHeader: {
+    flexShrink: 0,
+    marginBottom: 14,
+  },
+  railCardScroll: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      WebkitOverflowScrolling: 'touch',
+    }),
+  },
+  railCardScrollContent: {
+    flexGrow: 1,
+  },
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -557,11 +506,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
-  },
-  cardTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 8,
   },
   cardTitle: {
@@ -580,161 +524,98 @@ const styles = StyleSheet.create({
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  badgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  alertBadge: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#EF4444',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 6,
-  },
-  alertBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
   emptyLine: {
     fontSize: 13,
     color: '#94A3B8',
     lineHeight: 20,
   },
-  timelineRow: {
+  listGap: {
+    gap: 10,
+  },
+  eventRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 4,
+    gap: 10,
+    alignItems: 'flex-start',
   },
-  timelineRail: {
-    width: 12,
-    alignItems: 'center',
-  },
-  timelineDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginTop: 6,
-  },
-  timelineLine: {
-    flex: 1,
-    width: 2,
-    backgroundColor: 'rgba(148, 163, 184, 0.35)',
-    marginTop: 4,
-    minHeight: 48,
-  },
-  timelineBody: {
-    flex: 1,
-    minWidth: 0,
-    gap: 6,
-  },
-  timelineTime: {
+  eventTime: {
+    width: 72,
     fontSize: 12,
     fontWeight: '600',
     color: '#64748B',
+    paddingTop: 2,
   },
-  timelineEvent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  timelineIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  timelineTextBlock: {
+  eventBody: {
     flex: 1,
     minWidth: 0,
     gap: 2,
   },
-  timelineTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1E293B',
+  eventTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
   },
-  timelineSubtitle: {
+  eventIcon: {
+    flexShrink: 0,
+  },
+  eventTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E293B',
+    minWidth: 0,
+  },
+  eventMeta: {
     fontSize: 12,
-    color: '#64748B',
-    lineHeight: 17,
+    color: '#94A3B8',
   },
   dueTodayTag: {
-    backgroundColor: '#FEE2E2',
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    flexShrink: 0,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
   dueTodayTagText: {
     fontSize: 10,
     fontWeight: '700',
     color: '#DC2626',
+    textTransform: 'uppercase',
   },
-  submitBtn: {
-    backgroundColor: '#EFF6FF',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    flexShrink: 0,
+  subSection: {
+    marginTop: 4,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(148, 163, 184, 0.15)',
+    gap: 8,
   },
-  submitBtnText: {
+  subSectionTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#2563EB',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
-  insightRow: {
+  compactRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 4,
-  },
-  insightIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
     alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
+    gap: 8,
   },
-  insightText: {
+  compactRowText: {
     flex: 1,
     fontSize: 13,
     color: '#334155',
-    lineHeight: 19,
   },
-  alertRow: {
+  addEventLink: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 4,
+    gap: 6,
+    marginTop: 4,
+    paddingTop: 8,
   },
-  alertIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  alertCopy: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  alertTitle: {
+  addEventLinkText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#1E293B',
-  },
-  alertSubtitle: {
-    fontSize: 12,
-    color: '#64748B',
+    color: '#6366F1',
   },
   snapshotRow: {
     gap: 8,
@@ -759,6 +640,13 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  subjectAvatar: {
+    backgroundColor: '#EEF2FF',
+  },
+  snapshotTextBlock: {
+    flex: 1,
+    minWidth: 0,
   },
   snapshotAvatarText: {
     fontSize: 14,
@@ -808,26 +696,5 @@ const styles = StyleSheet.create({
   progressCaption: {
     fontSize: 11,
     color: '#94A3B8',
-  },
-  quickActionsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  quickActionBtn: {
-    flexGrow: 1,
-    flexBasis: '45%',
-    minWidth: 120,
-    borderRadius: 14,
-    paddingVertical: 18,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  quickActionLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    textAlign: 'center',
   },
 });

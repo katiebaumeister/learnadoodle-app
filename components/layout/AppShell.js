@@ -22,7 +22,10 @@ export default function AppShell({
 
   return (
     <View style={styles.appContainer}>
-      <View style={styles.outerFrame}>
+      <View
+        style={styles.outerFrame}
+        {...(Platform.OS === 'web' ? { className: 'glass-frame' } : {})}
+      >
         <View style={styles.contentRow}>
           {sidebar ? (
             <View style={[styles.sidebarContainer, { width: RAIL_EXPANDED_WIDTH }]}>
@@ -83,6 +86,7 @@ export default function AppShell({
                     : styles.mainSurfaceLeftPaneClosed),
                   flushToEdge && styles.mainSurfaceFlush,
                 ]}
+                {...(Platform.OS === 'web' ? { className: 'glass-surface' } : {})}
               >
                 {disabled && (
                   <View style={[styles.setupBanner, { pointerEvents: 'box-none' }]}>
@@ -128,13 +132,13 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     minHeight: Platform.OS === 'web' ? '100vh' : '100%',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F6F7FB',
   },
   outerFrame: {
     flex: 1,
     width: '100%',
     height: '100%',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F6F7FB',
     overflow: 'hidden',
     flexDirection: 'column',
   },
@@ -143,7 +147,7 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     minHeight: 0,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F6F7FB',
     ...(Platform.OS === 'web' && {
       minHeight: '100vh',
     }),
@@ -151,6 +155,7 @@ const styles = StyleSheet.create({
   sidebarContainer: {
     flexShrink: 0,
     alignSelf: 'stretch',
+    backgroundColor: 'transparent',
     ...(Platform.OS === 'web' && {
       position: 'relative',
       zIndex: 100,
@@ -163,6 +168,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
     minHeight: 0,
     flexDirection: 'column',
+    backgroundColor: '#F6F7FB',
   },
   topBarSlot: {
     width: '100%',
@@ -176,10 +182,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     minHeight: 0,
     minWidth: 0,
+    backgroundColor: '#F6F7FB',
   },
   leftPaneContainer: {
     alignSelf: 'stretch',
     flexShrink: 0,
+    marginTop: 16,
+    marginBottom: 16,
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       transitionProperty: 'width, max-width, opacity, margin-right',
@@ -220,8 +229,9 @@ const styles = StyleSheet.create({
   leftPaneInner: {
     flex: 1,
     height: '100%',
-    borderRightWidth: 1,
-    borderRightColor: 'rgba(148, 163, 184, 0.24)',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
     backgroundColor: '#FFFFFF',
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
@@ -251,25 +261,26 @@ const styles = StyleSheet.create({
     }),
   },
   mainSurfaceLeftPaneOpen: {
-    marginLeft: 0,
+    marginLeft: 8,
   },
   mainSurfaceLeftPaneClosed: {
-    marginLeft: 0,
+    marginLeft: 16,
   },
   mainSurface: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    borderRadius: 0,
-    borderWidth: 0,
-    marginTop: 0,
-    marginRight: 0,
-    marginBottom: 0,
-    marginLeft: 0,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+    marginTop: 16,
+    marginRight: 16,
+    marginBottom: 16,
+    marginLeft: 16,
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       overflowY: 'auto',
       overflowX: 'hidden',
-      minHeight: 0,
+      minHeight: 'calc(100vh - 32px)',
       display: 'flex',
       flexDirection: 'column',
       position: 'relative',

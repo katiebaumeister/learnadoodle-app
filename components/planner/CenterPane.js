@@ -8,6 +8,7 @@ import BoardView from './BoardView';
 import TasksView from './TasksView';
 import AttendanceView from './attendance/AttendanceView';
 import MobileCardView from './MobileCardView';
+import PlannerYearGrid from './PlannerYearGrid';
 import { startOfToday, startOfWeek } from './utils/date';
 
 const DEFAULT_VIEW = 'Month';
@@ -19,6 +20,7 @@ const KNOWN_MODES = {
   day: 'Day',
   board: 'Board',
   tasks: 'Tasks',
+  year: 'Year',
   attendance: 'Attendance',
   'attendance-drilldown': 'AttendanceDrilldown',
 };
@@ -51,6 +53,7 @@ export default function CenterPane({
   plannerAttendanceSnapshot = null,
   plannerHolidaysCache = {},
   plannerExclusions = [],
+  academicYears = null,
   /** Tutor / observer: view events, no drag-create-complete ownership */
   readOnly = false,
   plannerShellVisible = true,
@@ -98,6 +101,19 @@ export default function CenterPane({
       window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'board' }));
     }
   }, []);
+
+  const switchToMonthForDay = useCallback((dayKey, dayDate) => {
+    const nextDate = dayDate instanceof Date && !Number.isNaN(dayDate.getTime())
+      ? dayDate
+      : (dayKey ? new Date(`${dayKey}T12:00:00`) : null);
+    if (!nextDate || Number.isNaN(nextDate.getTime())) return;
+    setViewDate(nextDate);
+    onSelectDate?.(nextDate);
+    setMode('Month');
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
+    }
+  }, [onSelectDate]);
 
   const filtered = useMemo(() => {
     let out = events;
@@ -309,15 +325,27 @@ export default function CenterPane({
             />
           )}
           {mode === 'Board' && (
-            <BoardView
-              weekAnchor={viewDate}
-              events={filtered}
-              onEventPress={onEventSelect}
-              onEventRightClick={onEventRightClick}
-              onEventComplete={readOnly ? undefined : onEventComplete}
-              children={children}
-              familyId={familyId}
-            />
+            <View
+              style={{
+                flex: 1,
+                minHeight: 0,
+                ...(Platform.OS === 'web' && {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  height: '100%',
+                }),
+              }}
+            >
+              <BoardView
+                weekAnchor={viewDate}
+                events={filtered}
+                onEventPress={onEventSelect}
+                onEventRightClick={onEventRightClick}
+                onEventComplete={readOnly ? undefined : onEventComplete}
+                children={children}
+                familyId={familyId}
+              />
+            </View>
           )}
           {mode === 'Tasks' && (
             <TasksView
@@ -334,6 +362,14 @@ export default function CenterPane({
               plannerHolidaysCache={plannerHolidaysCache}
               plannerExclusions={plannerExclusions}
               plannerShellVisible={plannerShellVisible}
+            />
+          )}
+          {mode === 'Year' && (
+            <PlannerYearGrid
+              anchorDate={viewDate}
+              events={filtered}
+              academicYears={academicYears}
+              onSelectDay={switchToMonthForDay}
             />
           )}
           {/* Web: keep mounted while on other planner modes so prefetch hydrates before first open (no blank flash). */}

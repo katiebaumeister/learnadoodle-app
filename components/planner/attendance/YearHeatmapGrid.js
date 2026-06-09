@@ -4,6 +4,7 @@ import { Download } from 'lucide-react';
 import { ATTENDANCE_COLORS, TOKENS } from './constants';
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const DAY_HEADERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 function getDaysInMonth(year, month) {
   return new Date(year, month + 1, 0).getDate();
@@ -15,7 +16,6 @@ function getDayKey(year, month, day) {
   return `${year}-${m}-${d}`;
 }
 
-/** Parse YYYY-MM-DD to { year, month, day }. */
 function parseDateKey(key) {
   if (!key || key.length < 10) return null;
   const y = parseInt(key.slice(0, 4), 10);
@@ -25,17 +25,16 @@ function parseDateKey(key) {
   return { year: y, month: m, day: d };
 }
 
-/** Build list of months from range start to end (inclusive). */
 function buildMonthsInRange(yearStart, yearEnd) {
   const start = parseDateKey(yearStart);
   const end = parseDateKey(yearEnd);
   if (!start || !end) return [];
   const months = [];
   let idx = 0;
-  for (let y = start.year; y <= end.year; y++) {
+  for (let y = start.year; y <= end.year; y += 1) {
     const monthStart = y === start.year ? start.month : 0;
     const monthEnd = y === end.year ? end.month : 11;
-    for (let m = monthStart; m <= monthEnd; m++) {
+    for (let m = monthStart; m <= monthEnd; m += 1) {
       const totalDays = getDaysInMonth(y, m);
       const firstDay = (y === start.year && m === start.month) ? start.day : 1;
       const lastDay = (y === end.year && m === end.month) ? end.day : totalDays;
@@ -54,99 +53,165 @@ function buildMonthsInRange(yearStart, yearEnd) {
   return months;
 }
 
-export default function YearHeatmapGrid({
-  yearStart,
-  yearEnd,
-  children = [],
-  childSummaries = [],
-  dayStatusByChild = {},
+function buildMonthCells(year, month) {
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+  const startPad = first.getDay();
+  const daysInMonth = last.getDate();
+  const cells = [];
+  for (let i = 0; i < startPad; i += 1) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day += 1) cells.push(day);
+  const fullRows = Math.ceil(cells.length / 7);
+  while (cells.length < fullRows * 7) cells.push(null);
+  return { cells, fullRows };
+}
+
+function MonthMiniCalendar({
+  month,
+  selectedChildId,
+  dayStatusByChild,
   onMarkDayAttended,
-  onExport = null,
-  onChildNamePress = null,
+  cellSize,
+  gap,
+  isWeb,
+  hoveredCellKey,
+  setHoveredCellKey,
 }) {
-  const [hoveredCellKey, setHoveredCellKey] = useState(null);
-  const cellSize = TOKENS.hmCell;
-  const gap = TOKENS.hmGap;
-  const rowSpacing = gap + 2;
-  const isWeb = Platform.OS === 'web';
+  const { year, monthIndex, firstDay, lastDay } = month;
+  const { cells, fullRows } = buildMonthCells(year, monthIndex);
+  const statusMap = selectedChildId ? (dayStatusByChild[selectedChildId] || {}) : {};
 
-  const months = useMemo(() => buildMonthsInRange(yearStart, yearEnd), [yearStart, yearEnd]);
+  return (
+    <View style={styles.monthPanel}>
+      <Text style={styles.monthPanelTitle}>{month.label}</Text>
+      <View style={styles.dayHeaders}>
+        {DAY_HEADERS.map((h, i) => (
+          <Text key={`${h}-${i}`} style={[styles.dayHeaderText, { width: cellSize, marginHorizontal: gap / 2 }]}>
+            {h}
+          </Text>
+        ))}
+      </View>
+      <View style={styles.grid}>
+        {Array.from({ length: fullRows }, (_, r) => (
+          <View key={r} style={styles.weekRow}>
+            {cells.slice(r * 7, r * 7 + 7).map((day, c) => {
+              const i = r * 7 + c;
+              if (!day) {
+                return (
+                  <View
+                    key={`empty-${year}-${monthIndex}-${i}`}
+                    style={[styles.cell, styles.cellEmpty, { width: cellSize, height: cellSize, marginHorizontal: gap / 2 }]}
+                  />
+                );
+              }
 
-  const heatmapBlock = (
-    <>
-      <View style={styles.monthStack}>
-        {months.map((m) => (
-          <View key={m.index} style={styles.monthSection}>
-            <Text style={styles.monthSectionTitle}>{m.label}</Text>
-            {children.map((child) => {
-              const statusMap = dayStatusByChild[child.id] || {};
-              const childName = child.first_name || child.name || 'Child';
+              const inRange = day >= firstDay && day <= lastDay;
+              const key = getDayKey(year, monthIndex, day);
+              const cellKey = `${selectedChildId}-${key}`;
+              const status = inRange ? (statusMap[key] || 'noEvents') : null;
+              const color = status
+                ? (ATTENDANCE_COLORS[status] || (status === 'partial' ? ATTENDANCE_COLORS.present : ATTENDANCE_COLORS.noEvents))
+                : ATTENDANCE_COLORS.noEvents;
+              const isNone = status === 'noEvents';
+              const isDisabled = !inRange || !selectedChildId;
+
               return (
-                <View key={child.id} style={styles.childMonthRow}>
-                  <View style={styles.childMonthLabel}>
-                    {onChildNamePress ? (
-                      <TouchableOpacity
-                        onPress={() => onChildNamePress(child)}
-                        activeOpacity={0.7}
-                        style={styles.nameLabelTouchable}
-                        {...(Platform.OS === 'web' && {
-                          accessibilityRole: 'button',
-                          accessibilityLabel: `View attendance for ${childName}`,
-                        })}
-                      >
-                        <Text style={styles.childMonthName} numberOfLines={1}>
-                          {childName}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : (
-                      <Text style={styles.childMonthName} numberOfLines={1}>
-                        {childName}
-                      </Text>
-                    )}
-                  </View>
-                  <View style={styles.daysRow}>
-                    {Array.from({ length: m.lastDay - m.firstDay + 1 }, (_, i) => m.firstDay + i).map((day) => {
-                      const key = getDayKey(m.year, m.monthIndex, day);
-                      const cellKey = `${child.id}-${key}`;
-                      const status = statusMap[key] || 'noEvents';
-                      const color = ATTENDANCE_COLORS[status] || (status === 'partial' ? ATTENDANCE_COLORS.present : ATTENDANCE_COLORS.noEvents);
-                      const isNone = status === 'noEvents';
-                      return (
-                        <TouchableOpacity
-                          key={cellKey}
-                          style={[
-                            styles.cell,
-                            {
-                              width: cellSize,
-                              height: cellSize,
-                              marginRight: gap,
-                              marginBottom: rowSpacing,
-                              backgroundColor: color,
-                            },
-                            isNone && styles.cellNone,
-                            isWeb && styles.cellWeb,
-                            isWeb && hoveredCellKey === cellKey && styles.cellHover,
-                          ]}
-                          activeOpacity={0.8}
-                          onPress={() => onMarkDayAttended && onMarkDayAttended(key, child.id)}
-                          {...(isWeb && {
-                            onMouseEnter: () => setHoveredCellKey(cellKey),
-                            onMouseLeave: () => setHoveredCellKey(null),
-                          })}
-                        >
-                          <Text style={styles.cellDayText} numberOfLines={1}>
-                            {day}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
+                <TouchableOpacity
+                  key={cellKey}
+                  style={[
+                    styles.cell,
+                    {
+                      width: cellSize,
+                      height: cellSize,
+                      marginHorizontal: gap / 2,
+                      marginBottom: 2,
+                      backgroundColor: inRange ? color : 'transparent',
+                    },
+                    inRange && isNone && styles.cellNone,
+                    !inRange && styles.cellOutOfRange,
+                    isWeb && !isDisabled && styles.cellWeb,
+                    isWeb && hoveredCellKey === cellKey && styles.cellHover,
+                  ]}
+                  activeOpacity={0.8}
+                  disabled={isDisabled}
+                  onPress={() => onMarkDayAttended && onMarkDayAttended(key, selectedChildId)}
+                  {...(isWeb && !isDisabled && {
+                    onMouseEnter: () => setHoveredCellKey(cellKey),
+                    onMouseLeave: () => setHoveredCellKey(null),
+                  })}
+                >
+                  <Text
+                    style={[
+                      styles.cellDayText,
+                      !inRange && styles.cellDayTextMuted,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {day}
+                  </Text>
+                </TouchableOpacity>
               );
             })}
           </View>
         ))}
       </View>
+    </View>
+  );
+}
+
+export default function YearHeatmapGrid({
+  yearStart,
+  yearEnd,
+  selectedChildId = null,
+  dayStatusByChild = {},
+  onMarkDayAttended,
+  onExport = null,
+}) {
+  const [hoveredCellKey, setHoveredCellKey] = useState(null);
+  const cellSize = TOKENS.hmCell;
+  const gap = TOKENS.hmGap;
+  const isWeb = Platform.OS === 'web';
+
+  const months = useMemo(() => buildMonthsInRange(yearStart, yearEnd), [yearStart, yearEnd]);
+
+  return (
+    <>
+      <View style={styles.titleRow}>
+        <Text style={styles.sectionTitle}>Year at a glance</Text>
+        {onExport && (
+          <TouchableOpacity
+            style={styles.exportIconBtn}
+            onPress={onExport}
+            activeOpacity={0.8}
+            {...(Platform.OS === 'web' && { accessibilityRole: 'button', accessibilityLabel: 'Export attendance' })}
+          >
+            <Download size={18} color="#374151" />
+          </TouchableOpacity>
+        )}
+      </View>
+      <Text style={styles.sectionHelp}>
+        Each month is a calendar grid. Use the child filter above to switch learners; use the date range to change the school year. Click a day to mark it attended or unattended. You can mark days with no scheduled lessons. Shared lessons mark all children attended; unmarking affects only the selected child.
+      </Text>
+      {!selectedChildId ? (
+        <Text style={styles.emptyHint}>Select a child above to view their calendar.</Text>
+      ) : (
+        <View style={styles.monthGrid}>
+          {months.map((m) => (
+            <MonthMiniCalendar
+              key={m.index}
+              month={m}
+              selectedChildId={selectedChildId}
+              dayStatusByChild={dayStatusByChild}
+              onMarkDayAttended={onMarkDayAttended}
+              cellSize={cellSize}
+              gap={gap}
+              isWeb={isWeb}
+              hoveredCellKey={hoveredCellKey}
+              setHoveredCellKey={setHoveredCellKey}
+            />
+          ))}
+        </View>
+      )}
       <View style={styles.legend}>
         <View style={styles.legendPill}>
           <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.present }]} />
@@ -167,29 +232,9 @@ export default function YearHeatmapGrid({
       </View>
     </>
   );
-
-  return (
-    <>
-      <View style={styles.titleRow}>
-        <Text style={styles.sectionTitle}>Year at a glance</Text>
-        {onExport && (
-          <TouchableOpacity
-            style={styles.exportIconBtn}
-            onPress={onExport}
-            activeOpacity={0.8}
-            {...(Platform.OS === 'web' && { accessibilityRole: 'button', accessibilityLabel: 'Export attendance' })}
-          >
-            <Download size={18} color="#374151" />
-          </TouchableOpacity>
-        )}
-      </View>
-      <Text style={styles.sectionHelp}>
-        Each month is a row; each child has a line of day cells. Click a cell to mark that day as attended or unattended for that child. You can mark a day even when no lessons are scheduled (attendance-only). For lessons shared with multiple children, marking attended marks all of them; unmarking affects only that child. Click a child&apos;s name to export their report.
-      </Text>
-      {heatmapBlock}
-    </>
-  );
 }
+
+const MONTH_PANEL_WIDTH = 7 * (TOKENS.hmCell + TOKENS.hmGap);
 
 const styles = StyleSheet.create({
   titleRow: {
@@ -217,46 +262,44 @@ const styles = StyleSheet.create({
     color: TOKENS.textMuted,
     marginBottom: TOKENS.s4,
   },
-  monthStack: {
+  emptyHint: {
+    fontSize: TOKENS.fontSizeCaption,
+    color: TOKENS.textMuted,
+    marginBottom: TOKENS.s4,
+    fontStyle: 'italic',
+  },
+  monthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: TOKENS.s5,
     paddingVertical: TOKENS.s2,
   },
-  monthSection: {
-    borderBottomWidth: 1,
-    borderBottomColor: TOKENS.border,
-    paddingBottom: TOKENS.s4,
+  monthPanel: {
+    width: MONTH_PANEL_WIDTH,
+    minWidth: MONTH_PANEL_WIDTH,
   },
-  monthSectionTitle: {
-    fontSize: 14,
+  monthPanelTitle: {
+    fontSize: 13,
     fontWeight: '700',
     color: TOKENS.text,
-    marginBottom: TOKENS.s3,
+    marginBottom: 6,
+    textAlign: 'center',
   },
-  childMonthRow: {
+  dayHeaders: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: TOKENS.s2,
+    marginBottom: 4,
+    justifyContent: 'center',
   },
-  childMonthLabel: {
-    width: 72,
-    paddingRight: 8,
-    paddingTop: 4,
-    flexShrink: 0,
-  },
-  childMonthName: {
-    fontSize: TOKENS.fontSizeCaption,
+  dayHeaderText: {
+    textAlign: 'center',
+    fontSize: 10,
     color: TOKENS.textMuted,
+    fontWeight: '600',
   },
-  nameLabelTouchable: {
-    alignSelf: 'flex-start',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  daysRow: {
-    flex: 1,
+  grid: {},
+  weekRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignContent: 'flex-start',
-    minWidth: 0,
+    justifyContent: 'center',
   },
   cell: {
     borderRadius: TOKENS.hmRadius,
@@ -265,14 +308,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  cellEmpty: {
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+  },
   cellNone: {
     backgroundColor: 'rgba(15,23,42,0.02)',
     borderColor: 'rgba(15,23,42,0.04)',
   },
+  cellOutOfRange: {
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    opacity: 0.35,
+  },
   cellDayText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
     color: 'rgba(15, 23, 42, 0.75)',
+  },
+  cellDayTextMuted: {
+    color: TOKENS.textFaint,
   },
   cellWeb: {
     cursor: 'pointer',

@@ -6,7 +6,7 @@ import { safeImageUri } from '../lib/safeImageUri';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
 import {
   AVATAR_KEYS,
-  FAVICON_ASSET,
+  LEARNADOODLE_LOGO_ASSET,
   resolveBundledAvatarSource,
 } from '../assets/imageAssetMap';
 import { MAIN_NAV_ICONS } from './layout/mainNavIcons';
@@ -14,9 +14,10 @@ import { MAIN_NAV_ICONS } from './layout/mainNavIcons';
 const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
 const SHOW_MATERIALS_IN_SIDEBAR = false;
 const SHOW_SUBJECTS_CATALOG_IN_SIDEBAR = false;
-const SHOW_CREATE_IN_SIDEBAR = false;
+const SHOW_RECORDS_IN_SIDEBAR = false;
+const SHOW_CREATE_IN_SIDEBAR = true;
 
-const SIDEBAR_BRAND_LOGO = FAVICON_ASSET;
+const SIDEBAR_BRAND_LOGO = LEARNADOODLE_LOGO_ASSET;
 const NAV_ICON_SIZE = 22;
 const ICON_RAIL_EXPANDED_WIDTH = 220;
 /** Horizontal inset for permanent sidebar nav pills (matches footer padding). */
@@ -33,9 +34,8 @@ const SIDEBAR_COLORS = {
   accentSoft: 'rgba(79, 70, 229, 0.18)',
   accentSofter: 'rgba(79, 70, 229, 0.12)',
   /** Brand sky blue (#81C1E1) — matches Learning planning banner tint */
-  activeTint: 'rgba(129, 193, 225, 0.18)',
-  activeAccent: '#000000',
-  activeText: '#000000',
+  activeTint: 'rgba(129, 193, 225, 0.12)',
+  activeText: '#0F172A',
   avatar: 'rgba(148, 163, 184, 0.28)',
 };
 
@@ -112,10 +112,12 @@ export default function LeftRail({
     imageStyle,
     resizeMode = 'contain',
     placeholderStyle,
+    shellStyle,
   }) => (
     <StableImage
       source={source}
       resizeMode={resizeMode}
+      shellStyle={shellStyle}
       imageStyle={imageStyle}
       placeholderStyle={[styles.sidebarImagePlaceholder, placeholderStyle]}
       fadeDuration={0}
@@ -146,17 +148,18 @@ export default function LeftRail({
         { key: 'planner', label: 'Planner', icon: MAIN_NAV_ICONS.planner },
         { key: 'records', label: 'Records', icon: MAIN_NAV_ICONS.records },
         { key: 'family', label: 'Family', icon: MAIN_NAV_ICONS.family },
+        { key: 'profile', label: 'Settings', icon: MAIN_NAV_ICONS.profile },
+        { key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create },
         { key: 'messages', label: 'Messages', icon: MAIN_NAV_ICONS.messages },
         { key: 'learning', label: 'Subjects', icon: MAIN_NAV_ICONS.subjects },
-        { key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create },
         { key: 'materials', label: 'Materials', icon: MAIN_NAV_ICONS.materials },
-        { key: 'profile', label: 'Settings', icon: MAIN_NAV_ICONS.profile },
       ].filter((item) => {
         if (hideProfileNav && item.key === 'profile') return false;
         if (!SHOW_MATERIALS_IN_SIDEBAR && item.key === 'materials') return false;
         if (!SHOW_SUBJECTS_CATALOG_IN_SIDEBAR && item.key === 'learning') return false;
+        if (!SHOW_RECORDS_IN_SIDEBAR && item.key === 'records') return false;
         if (!SHOW_CREATE_IN_SIDEBAR && item.key === 'create') return false;
-        if (permanentSidebar && item.key === 'create') return false;
+        if ((userRole === 'child' || userRole === 'student') && item.key === 'create') return false;
         return true;
       });
 
@@ -182,7 +185,7 @@ export default function LeftRail({
         return allItems.filter((item) => item.key !== 'explore');
       }
     },
-    [effectivePermissions.canViewLibrary, effectivePermissions.canViewPlanner, effectivePermissions.canViewSubjects, userRole, hideProfileNav, permanentSidebar]
+    [effectivePermissions.canViewLibrary, effectivePermissions.canViewPlanner, effectivePermissions.canViewSubjects, userRole, hideProfileNav]
   );
 
   const primaryNavItems = useMemo(
@@ -190,14 +193,14 @@ export default function LeftRail({
     [topNavItems],
   );
 
-  const messagesNavItem = useMemo(
-    () => topNavItems.find((item) => item.key === 'messages') || null,
+  const createNavItem = useMemo(
+    () => topNavItems.find((item) => item.key === 'create') || null,
     [topNavItems],
   );
 
-  const createNavItem = useMemo(
-    () => ({ key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create }),
-    [],
+  const messagesNavItem = useMemo(
+    () => topNavItems.find((item) => item.key === 'messages') || null,
+    [topNavItems],
   );
 
   const showLabels = permanentSidebar || !isCollapsed;
@@ -253,7 +256,7 @@ export default function LeftRail({
       ? SIDEBAR_COLORS.activeText
       : isHovered
         ? '#374151'
-        : 'rgba(15, 23, 42, 0.55)';
+        : 'rgba(15, 23, 42, 0.6)';
     const navContent = (
       <>
         <View
@@ -283,9 +286,7 @@ export default function LeftRail({
           ]}>
             <Text style={[
               styles.navLabel,
-              permanentSidebar && styles.navLabelPermanent,
               active && styles.navLabelActive,
-              permanentSidebar && active && styles.navLabelPermanentActive,
               isHovered && styles.navLabelHover,
             ]}>{item.label}</Text>
           </View>
@@ -304,8 +305,9 @@ export default function LeftRail({
           iconRailMode && !permanentSidebar && styles.navItemIconRail,
           iconRailMode && !permanentSidebar && isCollapsed && styles.navItemIconRailCollapsed,
           !iconRailMode && !permanentSidebar && isCollapsed && styles.navItemCollapsed,
-          active && !permanentSidebar && styles.navItemActive,
-          isHovered && !permanentSidebar && styles.navItemHover,
+          active && styles.navItemActive,
+          permanentSidebar && active && styles.navItemPermanentActive,
+          isHovered && !active && styles.navItemHover,
           iconRailMode && !permanentSidebar && isCollapsed && active && styles.navItemIconRailCollapsedActive,
           iconRailMode && !permanentSidebar && isCollapsed && isHovered && styles.navItemIconRailCollapsedHover,
         ]}
@@ -339,19 +341,7 @@ export default function LeftRail({
           },
         })}
       >
-        {permanentSidebar ? (
-          <View
-            style={[
-              styles.navItemPermanentPill,
-              active && styles.navItemPermanentActive,
-              isHovered && !active && styles.navItemPermanentHover,
-            ]}
-          >
-            {navContent}
-          </View>
-        ) : (
-          navContent
-        )}
+        {navContent}
       </TouchableOpacity>
     );
   };
@@ -383,17 +373,16 @@ export default function LeftRail({
             accessibilityLabel="Learnadoodle home"
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <View style={styles.topIconWrapper}>
+            <View style={[styles.topIconWrapper, permanentSidebar && styles.topIconWrapperPermanent]}>
               {renderStableSidebarImage({
                 imageKey: 'brandLogo',
                 source: SIDEBAR_BRAND_LOGO,
-                imageStyle: styles.topIcon,
+                shellStyle: permanentSidebar ? styles.topIconShellPermanent : styles.topIconShell,
+                imageStyle: [styles.topIcon, permanentSidebar && styles.topIconPermanent],
+                resizeMode: 'cover',
                 placeholderStyle: styles.topIconPlaceholder,
               })}
             </View>
-            {permanentSidebar ? (
-              <Text style={styles.brandHeading} numberOfLines={1}>Learnadoodle</Text>
-            ) : null}
           </TouchableOpacity>
         )}
 
@@ -425,9 +414,13 @@ export default function LeftRail({
           {permanentSidebar ? (
             <>
               {primaryNavItems.map((item) => renderNavItem(item))}
-              <View style={styles.sidebarDivider} />
-              {renderNavItem(createNavItem)}
-              {messagesNavItem ? renderNavItem(messagesNavItem) : null}
+              {(createNavItem || messagesNavItem) ? (
+                <>
+                  <View style={styles.sidebarDivider} />
+                  {createNavItem ? renderNavItem(createNavItem) : null}
+                  {messagesNavItem ? renderNavItem(messagesNavItem) : null}
+                </>
+              ) : null}
             </>
           ) : (
             topNavItems.map((item) => renderNavItem(item))
@@ -555,39 +548,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderWidth: 0,
     ...(Platform.OS === 'web' && {
-      transition: 'background-color 0.15s ease',
+      transition: 'all 0.15s ease',
       cursor: 'pointer',
     }),
   },
   navItemPermanent: {
-    paddingVertical: 0,
-    paddingHorizontal: 0,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 12,
     marginBottom: 2,
     marginHorizontal: 0,
     backgroundColor: 'transparent',
-    borderRadius: 0,
     alignSelf: 'stretch',
     ...(Platform.OS === 'web' && {
       boxSizing: 'border-box',
-    }),
-  },
-  navItemPermanentPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'stretch',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    width: '100%',
-    ...(Platform.OS === 'web' && {
-      boxSizing: 'border-box',
+      transition: 'all 0.15s ease',
     }),
   },
   navItemPermanentActive: {
     backgroundColor: SIDEBAR_COLORS.activeTint,
-  },
-  navItemPermanentHover: {
-    backgroundColor: 'rgba(15, 23, 42, 0.04)',
+    ...(Platform.OS === 'web' && {
+      backgroundColor: '#FFFFFF',
+    }),
   },
   navItemIconRail: {
     flexDirection: 'row',
@@ -613,11 +595,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   navItemActive: {
-    backgroundColor: '#FAFAFA',
-    borderRadius: 8,
+    backgroundColor: SIDEBAR_COLORS.activeTint,
+    borderRadius: 12,
+    borderWidth: 0,
+    ...(Platform.OS === 'web' && {
+      backgroundColor: '#FFFFFF',
+    }),
   },
   navItemHover: {
-    backgroundColor: 'rgba(15, 23, 42, 0.04)',
+    backgroundColor: 'transparent',
   },
   navItemCollapsed: {
     justifyContent: 'center',
@@ -634,7 +620,7 @@ const styles = StyleSheet.create({
     }),
   },
   navLabelContainerPermanent: {
-    marginLeft: 10,
+    marginLeft: 12,
     paddingRight: 4,
   },
   navLabelContainerIconRail: {
@@ -643,44 +629,29 @@ const styles = StyleSheet.create({
     paddingRight: 12,
   },
   navLabel: {
-    fontSize: 13,
+    fontSize: 16,
     color: '#6B7280',
-    fontWeight: '600',
+    fontWeight: '800',
     textTransform: 'uppercase',
-    lineHeight: 18,
+    lineHeight: 22,
     includeFontPadding: false,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      letterSpacing: '0.02em',
-      lineHeight: '18px',
+      letterSpacing: '-0.011em',
+      lineHeight: '22px',
       whiteSpace: 'nowrap',
     }),
   },
-  navLabelPermanent: {
-    fontSize: 16,
-    fontWeight: '500',
-    textTransform: 'none',
-    color: 'rgba(15, 23, 42, 0.78)',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      letterSpacing: '0',
-    }),
-  },
-  navLabelPermanentActive: {
-    color: SIDEBAR_COLORS.activeText,
-    fontWeight: '600',
-    textTransform: 'none',
-  },
   navLabelActive: {
     color: SIDEBAR_COLORS.activeText,
-    fontWeight: '700',
+    fontWeight: '800',
     textTransform: 'uppercase',
-    lineHeight: 18,
+    lineHeight: 22,
     includeFontPadding: false,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      letterSpacing: '0.02em',
-      lineHeight: '18px',
+      letterSpacing: '-0.011em',
+      lineHeight: '22px',
       whiteSpace: 'nowrap',
     }),
   },
@@ -744,21 +715,42 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   topIconContainerPermanent: {
-    marginHorizontal: 0,
     paddingHorizontal: 0,
     paddingTop: 0,
     paddingBottom: 16,
-    gap: 10,
+    marginHorizontal: 0,
+    alignSelf: 'stretch',
   },
   topIconWrapper: {
-    width: 36,
-    height: 36,
+    width: 220,
+    height: 48,
     overflow: 'hidden',
-    borderRadius: 6,
+    borderRadius: 4,
+  },
+  topIconWrapperPermanent: {
+    width: '100%',
+    height: 48,
+    alignSelf: 'stretch',
+  },
+  topIconShell: {
+    width: 220,
+    height: 48,
+  },
+  topIconShellPermanent: {
+    width: '100%',
+    height: 48,
   },
   topIcon: {
-    width: 36,
-    height: 36,
+    width: 220,
+    height: 96,
+    marginTop: -24,
+    marginBottom: -24,
+  },
+  topIconPermanent: {
+    width: '100%',
+    height: 96,
+    marginTop: -24,
+    marginBottom: -24,
   },
   topIconPlaceholder: {
     width: '100%',
@@ -868,10 +860,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   iconRailIconColumnActive: {
-    backgroundColor: '#FAFAFA',
+    backgroundColor: SIDEBAR_COLORS.activeTint,
+    ...(Platform.OS === 'web' && {
+      backgroundColor: '#FFFFFF',
+    }),
   },
   iconRailIconColumnHover: {
-    backgroundColor: 'rgba(15, 23, 42, 0.04)',
+    backgroundColor: 'transparent',
   },
   sidebarImagePlaceholder: {
     top: '13%',

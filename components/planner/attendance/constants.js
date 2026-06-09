@@ -26,6 +26,8 @@ export const TOKENS = {
   border: 'rgba(15, 23, 42, 0.08)',
   bgSubtle: 'rgba(15, 23, 42, 0.03)',
   bgSurface: '#ffffff',
+  bg: '#ffffff',
+  accent: '#887DEE',
   shadow1: { shadowColor: '#0f172a', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 0, elevation: 1 },
   shadow2: { shadowColor: '#0f172a', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.06, shadowRadius: 28, elevation: 4 },
   fontSizeH2: 16,

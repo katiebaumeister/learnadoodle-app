@@ -4,21 +4,11 @@ import { startOfWeek, addDays, format } from './utils/date';
 import EventChip from '../calendar/EventChip';
 import { rescheduleEvent } from '../../lib/services/plannerClientWithOffline';
 
-// Time-of-day periods — split each day into morning and afternoon only.
-const TIME_PERIODS = [
-  { key: 'morning', label: 'Morning', start: 0, end: 12 },
-  { key: 'afternoon', label: 'Afternoon', start: 12, end: 24 },
-];
-
-const getTimePeriod = (event) => {
+const getEventStartMs = (event) => {
   const startTime = event.start || event.start_ts || event.start_local;
-  if (!startTime) return 'morning';
-
-  const eventDate = new Date(startTime);
-  if (Number.isNaN(eventDate.getTime())) return 'morning';
-
-  const hour = eventDate.getHours();
-  return hour < 12 ? 'morning' : 'afternoon';
+  if (!startTime) return Number.MAX_SAFE_INTEGER;
+  const ms = new Date(startTime).getTime();
+  return Number.isNaN(ms) ? Number.MAX_SAFE_INTEGER : ms;
 };
 
 const localYmd = (d) => {
@@ -94,61 +84,38 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
     return expanded;
   }, [effectiveEvents, days]);
 
-  // Bucket events by day and time period
-  const byDayAndPeriod = useMemo(() => {
+  // Bucket events by day, sorted chronologically within each day.
+  const byDay = useMemo(() => {
     const map = new Map();
-    
-    // Initialize all days with time periods
+
     for (const d of days) {
-      const dayKey = d.toDateString();
-      const dayMap = new Map();
-      for (const period of TIME_PERIODS) {
-        dayMap.set(period.key, []);
-      }
-      map.set(dayKey, dayMap);
+      map.set(d.toDateString(), []);
     }
-    
-    // Add events to their respective days and time periods
+
     for (const e of expandedEvents) {
-      // For expanded Project events, use the day from the expansion
       let eventDate;
       if (e._dayIndex !== undefined && e._originalId) {
-        // This is an expanded Project event - calculate the date for this day
         const originalStart = new Date(e.start_ts);
         eventDate = new Date(originalStart);
         eventDate.setDate(originalStart.getDate() + e._dayIndex);
       } else {
-        // Regular event - use its start time
         const startTime = e.start || e.start_ts || e.start_local;
         if (!startTime) continue;
         eventDate = new Date(startTime);
       }
-      
+
       if (Number.isNaN(eventDate.getTime())) continue;
-      
+
       const dayKey = eventDate.toDateString();
-      const periodKey = getTimePeriod(e);
-      
       if (map.has(dayKey)) {
-        const dayMap = map.get(dayKey);
-        if (dayMap.has(periodKey)) {
-          dayMap.get(periodKey).push(e);
-        }
+        map.get(dayKey).push(e);
       }
     }
-    
-    // Sort events by start time within each period
-    for (const dayMap of map.values()) {
-      for (const periodEvents of dayMap.values()) {
-        periodEvents.sort((a, b) => {
-          const aTime = a.start || a.start_ts || a.start_local;
-          const bTime = b.start || b.start_ts || b.start_local;
-          if (!aTime || !bTime) return 0;
-          return new Date(aTime).getTime() - new Date(bTime).getTime();
-        });
-      }
+
+    for (const dayEvents of map.values()) {
+      dayEvents.sort((a, b) => getEventStartMs(a) - getEventStartMs(b));
     }
-    
+
     return map;
   }, [expandedEvents, days]);
 
@@ -684,16 +651,22 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
   }, [events, familyId, debugDrag, resolveTargetDateFromPoint, dayIsoList, getApproxColumnWidth]);
 
   return (
-    <View style={{ 
-      flex: 1, 
+    <View style={{
+      flex: 1,
       margin: 8,
+      minHeight: 0,
+      alignSelf: 'stretch',
       ...(Platform.OS === 'web' && {
         width: 'calc(100% - 16px)',
         maxWidth: 'calc(100% - 16px)',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
       }),
     }}>
       <View style={{
         flex: 1,
+        minHeight: 0,
         backgroundColor: 'transparent',
         overflow: 'visible',
         borderRadius: 0,
@@ -702,6 +675,9 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
         ...(Platform.OS === 'web' && {
           width: '100%',
           maxWidth: '100%',
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
         }),
       }}>
     <View
@@ -713,16 +689,19 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
         width: '100%',
         maxWidth: '100%',
         minWidth: 0,
+        minHeight: 0,
+        alignSelf: 'stretch',
         backgroundColor: 'transparent',
         ...(Platform.OS === 'web' && {
           overflowX: 'hidden',
+          height: '100%',
         }),
       }}
     >
       {days.map(d => {
         const key = d.toDateString();
         const dayIso = localYmd(d);
-        const dayPeriods = byDayAndPeriod.get(key) ?? new Map();
+        const dayEvents = byDay.get(key) ?? [];
         
         return (
           <View
@@ -739,15 +718,17 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
             style={{
               flex: 1,
               minWidth: 0,
+              alignSelf: 'stretch',
               backgroundColor: 'transparent',
               borderRadius: 16,
               borderWidth: 1,
               borderColor: '#e5e7eb',
               padding: 10,
-              minHeight: 400,
               ...(Platform.OS === 'web' && {
                 overflow: 'hidden',
-                maxHeight: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: '100%',
               }),
             }}
           >
@@ -761,74 +742,47 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
               </Text>
             </View>
 
-            {/* Events grouped by morning / afternoon */}
-            <View style={styles.dayPeriodStack}>
-              {TIME_PERIODS.map((period, periodIndex) => {
-                const periodEvents = dayPeriods.get(period.key) ?? [];
-
+            <View style={styles.dayEventsList}>
+              {dayEvents.map(ev => {
+                const canonicalId = ev._originalId || ev.id;
+                const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
+                const canDrag = !isHoliday && ev.status !== 'done' && !ev._originalId;
+                const isDragging = draggedEventId && String(draggedEventId) === String(canonicalId);
                 return (
                   <View
-                    key={period.key}
-                    style={[
-                      styles.dayPeriodSection,
-                      periodIndex === 0 && styles.dayPeriodSectionFirst,
-                    ]}
+                    key={ev.id}
+                    {...(Platform.OS === 'web' && {
+                      onMouseDown: (mouseEvent) => {
+                        if (!canDrag) return;
+                        handleMouseDragStart(mouseEvent, ev);
+                      },
+                    })}
+                    style={{
+                      ...(Platform.OS === 'web' && {
+                        cursor: canDrag ? 'grab' : (isPublicHolidayEvent(ev) ? 'default' : 'pointer'),
+                        opacity: isDragging ? 0.65 : 1,
+                        userSelect: 'none',
+                        WebkitUserSelect: 'none',
+                      }),
+                    }}
                   >
-                    {periodIndex > 0 ? <View style={styles.dayPeriodDivider} /> : null}
-
-                    <Text style={styles.dayPeriodLabel}>{period.label}</Text>
-
-                    {periodEvents.length === 0 ? (
-                      <View style={styles.dayPeriodEmpty}>
-                        <Text style={styles.dayPeriodEmptyText}>No tasks</Text>
-                      </View>
-                    ) : (
-                      <View style={styles.dayPeriodEvents}>
-                        {periodEvents.map(ev => {
-                          const canonicalId = ev._originalId || ev.id;
-                          const isHoliday = (ev.event_type || ev.type || '').toLowerCase() === 'holiday';
-                          const canDrag = !isHoliday && ev.status !== 'done' && !ev._originalId;
-                          const isDragging = draggedEventId && String(draggedEventId) === String(canonicalId);
-                          return (
-                            <View
-                              key={ev.id}
-                              {...(Platform.OS === 'web' && {
-                                onMouseDown: (mouseEvent) => {
-                                  if (!canDrag) return;
-                                  handleMouseDragStart(mouseEvent, ev);
-                                },
-                              })}
-                              style={{
-                                ...(Platform.OS === 'web' && {
-                                  cursor: canDrag ? 'grab' : (isPublicHolidayEvent(ev) ? 'default' : 'pointer'),
-                                  opacity: isDragging ? 0.65 : 1,
-                                  userSelect: 'none',
-                                  WebkitUserSelect: 'none',
-                                }),
-                              }}
-                            >
-                              <EventChip
-                                ev={ev}
-                                compact={true}
-                                fullWidth={true}
-                                hideTime={false}
-                                onPress={onEventPress ? () => {
-                                  if (Date.now() < suppressClickUntilRef.current) return;
-                                  if (isPublicHolidayEvent(ev)) return;
-                                  onEventPress(ev);
-                                } : undefined}
-                                onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
-                                onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
-                                showCheckmark={true}
-                                children={children}
-                                titleFontSize={13}
-                                timeFontSize={11}
-                              />
-                            </View>
-                          );
-                        })}
-                      </View>
-                    )}
+                    <EventChip
+                      ev={ev}
+                      compact={true}
+                      fullWidth={true}
+                      hideTime={false}
+                      onPress={onEventPress ? () => {
+                        if (Date.now() < suppressClickUntilRef.current) return;
+                        if (isPublicHolidayEvent(ev)) return;
+                        onEventPress(ev);
+                      } : undefined}
+                      onRightClick={onEventRightClick ? (event, nativeEvent) => onEventRightClick(ev, nativeEvent) : undefined}
+                      onComplete={onEventComplete ? () => onEventComplete(ev) : undefined}
+                      showCheckmark={true}
+                      children={children}
+                      titleFontSize={13}
+                      timeFontSize={11}
+                    />
                   </View>
                 );
               })}
@@ -843,46 +797,9 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
 }
 
 const styles = StyleSheet.create({
-  dayPeriodStack: {
+  dayEventsList: {
     flex: 1,
-    gap: 0,
-    minHeight: 320,
-  },
-  dayPeriodSection: {
-    flex: 1,
-    gap: 8,
-    paddingTop: 4,
-  },
-  dayPeriodSectionFirst: {
-    paddingTop: 0,
-  },
-  dayPeriodDivider: {
-    height: 1,
-    backgroundColor: '#e5e7eb',
-    marginBottom: 12,
-  },
-  dayPeriodLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#64748b',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  dayPeriodEmpty: {
-    minHeight: 56,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
-    backgroundColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayPeriodEmptyText: {
-    color: '#9aa3af',
-    fontSize: 12,
-  },
-  dayPeriodEvents: {
     gap: 4,
+    minHeight: 0,
   },
 });

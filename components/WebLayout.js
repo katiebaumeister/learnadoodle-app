@@ -11,6 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
+import { formatPlannerYearHeaderLabel, shiftPlannerYearAnchor } from './planner/plannerYearRange';
 import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, Download } from 'lucide-react';
 import { sourceForChild } from './ui/ChildAvatarCluster';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,7 +22,6 @@ import WebContent from './WebContent';
 import SearchModal from './SearchModal';
 import GlobalNewMenu from './GlobalNewMenu';
 import AppShell from './layout/AppShell.js';
-import AppTopBar from './layout/AppTopBar.js';
 import { resolveSection, getSectionNavTab, getSectionsForTab, SECTION_TITLE_BY_TAB } from './layout/sectionNavConfig';
 import SecondaryNavShell from './layout/SecondaryNavShell';
 import RightToolbar from './RightToolbar';
@@ -1040,9 +1040,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     }
   }, [showViewDropdown]);
 
-  // Update view chip slider position when currentView changes (Month / Week only)
+  // Update view chip slider position when currentView changes (Month / Week / Year)
   useEffect(() => {
-    const chipKeys = ['month', 'board'];
+    const chipKeys = ['board', 'month', 'tasks', 'year'];
     if (!chipKeys.includes(currentView)) {
       setViewChipSlider({ left: 0, width: 0 });
       return;
@@ -1707,7 +1707,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const newView = event.detail;
         setCurrentView(newView);
         // Clear right-toolbar focus when returning to main planner segments
-        if (['month', 'board', 'tasks'].includes(newView)) {
+        if (['month', 'board', 'tasks', 'year'].includes(newView)) {
           setActiveRightTool(null);
         }
         const url = new URL(window.location.href);
@@ -2418,12 +2418,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setActiveTopNav('subjects');
     } else if (activeTab === 'intelligence') {
       setActiveTopNav('intelligence');
-    } else if (activeTab === 'profile') {
+    } else if (activeTab === 'profile' || activeTab === 'settings') {
       setActiveTopNav('profile');
     } else if (activeTab === 'tutor-students') {
       setActiveTopNav('tutor-students');
-    } else if (activeTab === 'settings') {
-      setActiveTopNav('new');
     } else if ((activeTab === 'children-list' || (activeTab && activeTab.startsWith('child-'))) && activeChildId) {
       setActiveTopNav('family');
     }
@@ -3346,13 +3344,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           handleTabChange('coach');
           break;
         case 'profile':
-          handleTabChange('profile');
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.history.pushState({}, '', '/family');
-          }
+          handleTabChange('settings', 'profile');
           break;
         case 'family':
-          handleTabChange('family', 'overview');
+          handleTabChange('family', 'members');
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.history.pushState({}, '', '/family');
           }
@@ -3579,7 +3574,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   }, [activeTab, currentView, planYearFromSubjectDetail, resetInlinePlanYearOpenState]);
 
   const isCalendarScreen =
-    activeTab === 'calendar';
+    activeTab === 'calendar' || activeTab === 'planner';
 
   /** Schedule setup / preferences replace the main pane in URL state but must not unmount WebContent (month grid stays warm). */
   const isPlanYearInline =
@@ -3607,7 +3602,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     ['plan-year', 'edit-year', 'attendance'].includes(currentView);
   /** Purple segmented chip only when that row is the active context. */
   const showTopPlannerSegmentHighlight =
-    ['month', 'board', 'tasks', 'attendance-drilldown'].includes(currentView) && !rightToolbarClaimsPlannerSegmentFocus;
+    ['month', 'board', 'tasks', 'year', 'attendance-drilldown'].includes(currentView) && !rightToolbarClaimsPlannerSegmentFocus;
 
   // Generate breadcrumbs with account name first
   const generateBreadcrumbs = useMemo(() => {
@@ -3745,19 +3740,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         <PlannerDiffProvider>
         <AppShell
           disabled={onboardingBlocked}
-          flushToEdge
+          flushToEdge={activeTab === 'planner' || activeTab === 'calendar'}
           sectionNav={shellSectionNav}
-          topBar={(
-            <AppTopBar
-              userName={profile?.name || profile?.first_name || ''}
-              userEmail={user?.email || profile?.email || ''}
-              userRole={resolvedShellUserRole}
-              doodleDisabled={childDoodleBotDisabled}
-              onOpenAskAI={openDoodleSearch}
-              onOpenSettings={handleShellOpenSettings}
-              onLogOut={handleShellLogOut}
-            />
-          )}
           leftPane={{
             visible: isMessagesPaneOpen || isCreatePaneOpen,
             width: 340,
@@ -3848,38 +3832,67 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 <View style={{ 
                   flexDirection: 'row', 
                   alignItems: 'center',
-                  width: 236,
+                  gap: 8,
                   maxWidth: '100%',
                   flexShrink: 0,
                 }}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      let newDate;
-                      if (currentView === 'board' || currentView === 'Board') {
-                        newDate = addWeeks(currentMonth, -1);
-                      } else if (currentView === 'week' || currentView === 'Week') {
-                        newDate = addWeeks(currentMonth, -1);
-                      } else {
-                        const newMonth = addMonths(currentMonth, -1);
-                        newDate = new Date(newMonth.getFullYear(), newMonth.getMonth(), 1);
-                      }
-                      setCurrentMonth(newDate);
-                      if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('plannerMonthChange', { detail: newDate }));
-                      }
-                    }}
-                    style={{
-                      padding: 4,
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <ChevronLeft size={16} color="rgba(15,23,42,0.4)" />
-                  </TouchableOpacity>
-                  
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        let newDate;
+                        if (currentView === 'board' || currentView === 'Board') {
+                          newDate = addWeeks(currentMonth, -1);
+                        } else if (currentView === 'week' || currentView === 'Week') {
+                          newDate = addWeeks(currentMonth, -1);
+                        } else if (currentView === 'year') {
+                          newDate = shiftPlannerYearAnchor(currentMonth, -1, preloadedAcademicYears);
+                        } else {
+                          const newMonth = addMonths(currentMonth, -1);
+                          newDate = new Date(newMonth.getFullYear(), newMonth.getMonth(), 1);
+                        }
+                        setCurrentMonth(newDate);
+                        if (typeof window !== 'undefined') {
+                          window.dispatchEvent(new CustomEvent('plannerMonthChange', { detail: newDate }));
+                        }
+                      }}
+                      style={{
+                        padding: 4,
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <ChevronLeft size={16} color="rgba(15,23,42,0.4)" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        let newDate;
+                        if (currentView === 'board' || currentView === 'Board') {
+                          newDate = addWeeks(currentMonth, 1);
+                        } else if (currentView === 'week' || currentView === 'Week') {
+                          newDate = addWeeks(currentMonth, 1);
+                        } else if (currentView === 'year') {
+                          newDate = shiftPlannerYearAnchor(currentMonth, 1, preloadedAcademicYears);
+                        } else {
+                          const newMonth = addMonths(currentMonth, 1);
+                          newDate = new Date(newMonth.getFullYear(), newMonth.getMonth(), 1);
+                        }
+                        setCurrentMonth(newDate);
+                        if (typeof window !== 'undefined') {
+                          window.dispatchEvent(new CustomEvent('plannerMonthChange', { detail: newDate }));
+                        }
+                      }}
+                      style={{
+                        padding: 4,
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
+                    </TouchableOpacity>
+                  </View>
+
                   <TouchableOpacity
                     activeOpacity={0.8}
                     onPress={() => {
-                      if (currentView === 'month' || currentView === 'week' || currentView === 'board') {
+                      if (currentView === 'month' || currentView === 'week' || currentView === 'board' || currentView === 'year') {
                         const today = new Date();
                         setCurrentMonth(today);
                         if (typeof window !== 'undefined') {
@@ -3887,47 +3900,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         }
                       }
                     }}
-                    style={{
-                      flex: 1,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
                   >
-                    <View style={{ width: '100%', alignItems: 'center' }}>
-                      <Text style={{
-                        fontSize: 26,
-                        color: '#1E293B',
-                        fontWeight: '600',
-                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                        textAlign: 'center',
-                      }}>
-                        {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity
-                    onPress={() => {
-                      let newDate;
-                      if (currentView === 'board' || currentView === 'Board') {
-                        newDate = addWeeks(currentMonth, 1);
-                      } else if (currentView === 'week' || currentView === 'Week') {
-                        newDate = addWeeks(currentMonth, 1);
-                      } else {
-                        const newMonth = addMonths(currentMonth, 1);
-                        newDate = new Date(newMonth.getFullYear(), newMonth.getMonth(), 1);
-                      }
-                      setCurrentMonth(newDate);
-                      if (typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('plannerMonthChange', { detail: newDate }));
-                      }
-                    }}
-                    style={{
-                      padding: 4,
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
+                    <Text style={{
+                      fontSize: 26,
+                      color: '#1E293B',
+                      fontWeight: '600',
+                      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }}>
+                      {currentView === 'year'
+                        ? formatPlannerYearHeaderLabel(currentMonth, preloadedAcademicYears)
+                        : currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    </Text>
                   </TouchableOpacity>
                 </View>
                 
@@ -4399,15 +4382,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           bottom: 6,
                           width: viewChipSlider.width,
                           borderRadius: 9999,
-                          backgroundColor: 'rgba(107,179,232,0.12)',
+                          backgroundColor: 'rgba(139, 92, 246, 0.15)',
                           borderWidth: 1,
-                          borderColor: '#6BB3E8',
+                          borderColor: 'rgba(139, 92, 246, 0.5)',
                         }}
                       />
                     )}
                     {[
-                      { key: 'month', label: 'Month' },
                       { key: 'board', label: 'Week' },
+                      { key: 'month', label: 'Month' },
+                      { key: 'tasks', label: 'List' },
+                      { key: 'year', label: 'Year' },
                     ].map((view) => {
                       const isActive = showTopPlannerSegmentHighlight && currentView === view.key;
                       return (
@@ -4448,7 +4433,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         >
                           <Text style={{
                             fontSize: 15,
-                            color: isActive ? '#6BB3E8' : 'rgba(15,23,42,0.85)',
+                            color: isActive ? 'rgba(99, 102, 241, 1)' : 'rgba(15,23,42,0.85)',
                             fontWeight: isActive ? '600' : '500',
                             fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                           }}>
@@ -4919,7 +4904,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 </View>
               ) : null}
             </View>
-            {activeTab === 'calendar' && (
+            {isCalendarScreen && (
               <View
                 {...(Platform.OS === 'web' ? { nativeID: 'explorer-tour-right-toolbar' } : {})}
                 style={{
