@@ -34,8 +34,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
   
   // Get color based on event type, fallback to ev.color, then default to gray
   const getEventTypeColor = () => {
-    if (holidayType === 'CUSTOM_HOLIDAY' || normalizedEventType === 'day off') return 'day_off';
-    if (holidayType === 'CUSTOM_BREAK' || normalizedEventType === 'break') return 'break';
+    if (holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'CUSTOM_BREAK' || normalizedEventType === 'day off' || normalizedEventType === 'break') return 'day_off';
     // Legacy rows persisted as Holiday without holiday_type should still look like planner day-off chips.
     if (isLegacyHolidayWithoutSubtype) return 'day_off';
     if (holidayType === 'GLOBAL_HOLIDAY') return 'holiday';

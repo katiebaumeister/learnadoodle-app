@@ -5,10 +5,13 @@
 export const PLANNING_PREFERENCES_UI = {
   /** Accordion row in AddSubjectModal (add + edit subject) */
   subjectModalAccordionTitle: 'Planning Preferences',
-  customDaysSectionTitle: 'Custom days off',
-  addDay: 'Add day',
-  rangesSectionTitle: 'Custom date range off',
-  addRange: 'Add range',
+  customDaysSectionTitle: 'Days off',
+  customDaysOffListTitle: 'Custom Days Off',
+  addDayOff: 'Add day off',
+  addDay: 'Add day off',
+  rangesSectionTitle: 'Days off',
+  addRange: 'Add day off',
   dayNamePlaceholder: 'Day name',
-  rangeNamePlaceholder: 'Range name',
+  endDatePlaceholder: 'End (optional)',
+  rangeNamePlaceholder: 'Day name',
 };

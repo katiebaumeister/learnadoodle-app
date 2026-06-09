@@ -18,7 +18,7 @@ import {
   resolveLearnerChild,
   sharedConflictBannerStyles as cb,
 } from './planner/conflictBannerShared';
-import { getEventTypeChipTextColor } from './planner/plannerListTableUtils';
+import { getEventTypeChipTextColor, resolvePlannerExclusionKind } from './planner/plannerListTableUtils';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
@@ -184,7 +184,6 @@ const EVENT_TYPES = [
   'Activity',
   'Appointment',
   'Day Off',
-  'Break',
 ];
 const EVENT_TYPE_FILTER_COLORS = {
   lesson: '#E3F0FF',
@@ -194,7 +193,6 @@ const EVENT_TYPE_FILTER_COLORS = {
   project: '#D6F0ED',
   exam: '#FCE7F3',
   'day off': '#FFEDE2',
-  break: '#FFF7D6',
 };
 const EVENT_TYPE_FILTER_OUTLINE_COLORS = {
   lesson: '#BFDFFF',
@@ -204,7 +202,6 @@ const EVENT_TYPE_FILTER_OUTLINE_COLORS = {
   project: '#AEE2DB',
   exam: '#F6C8DE',
   'day off': '#F7D1BD',
-  break: '#F2E39A',
 };
 const getEventTypeActiveChipStyle = (type) => {
   const key = String(type || '').trim().toLowerCase();
@@ -216,10 +213,11 @@ const getEventTypeActiveChipStyle = (type) => {
     borderWidth: 1.5,
   };
 };
-const MULTI_DAY_EVENT_TYPES = ['Project', 'Trip', 'Holiday', 'Other', 'Break'];
-const EXCLUSION_EVENT_TYPE_TO_KIND = {
-  'Day Off': 'holiday',
-  Break: 'break',
+const MULTI_DAY_EVENT_TYPES = ['Project', 'Trip', 'Holiday', 'Other'];
+
+const normalizeExclusionTypeForEvent = (type, startYmd, endYmd) => {
+  if (String(type || '').trim() !== 'Day Off') return null;
+  return resolvePlannerExclusionKind(startYmd, endYmd);
 };
 const WEEKDAY_OPTIONS = [
   { value: 0, label: 'Sun', rrule: 'SU' },
@@ -247,11 +245,6 @@ const normalizeEventTypeForPersistence = (type) => {
   if (type === 'Scheduled Class Day') return 'Schedule Block';
   if (type === 'Class Day') return 'ClassDay';
   return type || 'Lesson';
-};
-
-const normalizeExclusionTypeForEvent = (type) => {
-  const raw = String(type || '').trim();
-  return EXCLUSION_EVENT_TYPE_TO_KIND[raw] || null;
 };
 
 const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
@@ -789,7 +782,7 @@ export default function TaskCreateModal({
       setConflictWarningSafely(null);
       return;
     }
-    const isExclusionEventType = eventType === 'Day Off' || eventType === 'Break';
+    const isExclusionEventType = eventType === 'Day Off';
     if (isExclusionEventType) {
       lastConflictCheckKeyRef.current = '';
       setConflictWarningSafely(null);
@@ -1596,7 +1589,9 @@ export default function TaskCreateModal({
         normalizedDefaultType === 'Class Day' ||
         normalizedDefaultType === 'ClassDay'
           ? 'Lesson'
-          : (defaultEventType || 'Lesson');
+          : normalizedDefaultType === 'Break'
+            ? 'Day Off'
+            : (defaultEventType || 'Lesson');
       setIsClassDayTitleAutofilled(false);
       applyEventTypeSelection(initialEventType);
       const initialMaterialId = defaultMaterialId ? String(defaultMaterialId) : null;
@@ -1762,8 +1757,8 @@ export default function TaskCreateModal({
   }, [visible, eventType, subjectId, subjects, resolveSubjectTermEndDate]);
 
   useEffect(() => {
-    const isDaysOffOrBreakSelection = eventType === 'Day Off' || eventType === 'Break';
-    if (!isDaysOffOrBreakSelection) return;
+    const isDaysOffSelection = eventType === 'Day Off';
+    if (!isDaysOffSelection) return;
     if (!isRecurring && !showRecurringSection) return;
     setIsRecurring(false);
     setShowRecurringSection(false);
@@ -2558,14 +2553,14 @@ export default function TaskCreateModal({
   const showLocationFields = () => {
     return eventType && ['Appointment', 'Travel', 'Activity', 'Sport'].includes(eventType);
   };
-  const isDaysOffOrBreakEvent = eventType === 'Day Off' || eventType === 'Break';
-  const hideScheduleTimeControls = placement === 'calendar' && isDaysOffOrBreakEvent;
+  const isDaysOffEvent = eventType === 'Day Off';
+  const hideScheduleTimeControls = placement === 'calendar' && isDaysOffEvent;
   const hideLearningDetailsSection = !showsLearningDetailsSection(eventType);
   const showLearningGradeFields = useMemo(() => {
     if (!showsLearningGradingSwitches(eventType)) return false;
     return parseWorkSpec(workSpec, eventType).graded !== false;
   }, [workSpec, eventType]);
-  const showBreakEndDateField = placement === 'calendar' && eventType === 'Break';
+  const showDayOffEndDateField = placement === 'calendar' && eventType === 'Day Off';
 
   /** Single source of truth for required-field validation (inline errors + Add button state). */
   const buildValidationBannerMessage = useCallback((errors) => {
@@ -2736,15 +2731,17 @@ export default function TaskCreateModal({
 
     // Store allowOverlaps in a variable that will be used in the RPC call
     const shouldAllowOverlaps = allowOverlaps || (skipConflictValidation && conflictWarning !== null);
-    const plannerExclusionType = normalizeExclusionTypeForEvent(eventType);
+    const plannerExclusionType = normalizeExclusionTypeForEvent(
+      eventType,
+      toYmd(dueDate) || toYmd(new Date()),
+      toYmd(eventEndDate)
+    );
     const exclusionStartDate = plannerExclusionType ? (toYmd(dueDate) || toYmd(new Date())) : null;
     const exclusionEndDate = plannerExclusionType
-      ? (plannerExclusionType === 'break'
-        ? (toYmd(eventEndDate) || exclusionStartDate)
-        : exclusionStartDate)
+      ? (toYmd(eventEndDate) || exclusionStartDate)
       : null;
     const exclusionLabel = plannerExclusionType
-      ? (title.trim() || (plannerExclusionType === 'break' ? 'Break' : 'Day off'))
+      ? (title.trim() || 'Day off')
       : '';
     const normalizedStart = plannerExclusionType ? parseYmdDate(exclusionStartDate) : null;
     const normalizedEnd = plannerExclusionType ? parseYmdDate(exclusionEndDate) : null;
@@ -2770,7 +2767,7 @@ export default function TaskCreateModal({
             title: exclusionLabel,
             status: 'scheduled',
             source: 'planner_exclusion',
-            event_type: plannerExclusionType === 'break' ? 'Break' : 'Day Off',
+            event_type: 'Day Off',
             holiday_type: plannerExclusionType === 'break' ? 'CUSTOM_BREAK' : 'CUSTOM_HOLIDAY',
             start_ts: optimisticStartTs,
             end_ts: optimisticEndTs,
@@ -2818,7 +2815,7 @@ export default function TaskCreateModal({
 
       const userFamilyId = profile.family_id;
       if (plannerExclusionType) {
-        // Day Off / Break are planning exclusions and should never be blocked by event overlap checks.
+        // Day off entries are planning exclusions and should never be blocked by event overlap checks.
         setConflictWarningSafely(null);
         const schoolYearLabel = resolveSchoolYearLabelForDate(dueDate instanceof Date ? dueDate : new Date());
         const { data: currentExclusions, error: exclusionsError } = await getFamilyExclusions(
@@ -2905,12 +2902,7 @@ export default function TaskCreateModal({
           window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
         }
-        toast.push(
-          plannerExclusionType === 'break'
-            ? 'Break saved to planning preferences'
-            : 'Day off saved to planning preferences',
-          'success'
-        );
+        toast.push('Day off saved to planning preferences', 'success');
         handleDismiss();
         setSubmitting(false);
         return;
@@ -3991,7 +3983,7 @@ export default function TaskCreateModal({
                     </View>
                     {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
                   </View>
-                  {showBreakEndDateField ? (
+                  {showDayOffEndDateField ? (
                     <View style={[styles.timeField, styles.dateFieldInline]}>
                       <Text style={styles.timeLabel}>End date</Text>
                       <View style={[styles.chip, validationErrors.endDate && styles.chipError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>

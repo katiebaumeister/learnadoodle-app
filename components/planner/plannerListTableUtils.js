@@ -37,13 +37,14 @@ export function mergeAssignmentsByEventId(rows) {
 export function formatEventTypeLabel(event) {
   if (!event) return 'Lesson';
   const holidayType = String(event?.holiday_type || event?.holidayType || '').trim().toUpperCase();
-  if (holidayType === 'CUSTOM_BREAK') return 'Break';
-  if (holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'GLOBAL_HOLIDAY') return 'Day Off';
+  if (holidayType === 'CUSTOM_BREAK' || holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'GLOBAL_HOLIDAY') {
+    return 'Day Off';
+  }
   const raw = String(event?.event_type || event?.type || '').trim();
   if (!raw) return 'Lesson';
   const lower = raw.toLowerCase();
   if (lower === 'schedule block' || lower === 'scheduled class day' || lower === 'classday') return 'Class Day';
-  if (lower === 'custom_break' || lower === 'break') return 'Break';
+  if (lower === 'custom_break' || lower === 'break') return 'Day Off';
   if (lower === 'custom_holiday' || lower === 'global_holiday' || lower === 'holiday' || lower === 'day off' || lower === 'dayoff') return 'Day Off';
   const knownLabels = {
     lesson: 'Lesson',
@@ -55,6 +56,31 @@ export function formatEventTypeLabel(event) {
     appointment: 'Appointment',
   };
   return knownLabels[lower] || raw;
+}
+
+export function resolvePlannerExclusionKind(startYmd, endYmd) {
+  const start = String(startYmd || '').trim().slice(0, 10);
+  const end = String(endYmd || '').trim().slice(0, 10);
+  if (!start) return 'holiday';
+  if (!end || end === start) return 'holiday';
+  return 'break';
+}
+
+export function isPlannerDaysOffEvent(event) {
+  if (!event) return false;
+  const holidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
+  if (holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'CUSTOM_BREAK') return true;
+  const typeLower = String(event?.event_type || event?.type || '').trim().toLowerCase();
+  return (
+    typeLower === 'holiday'
+    || typeLower === 'day off'
+    || typeLower === 'dayoff'
+    || typeLower === 'break'
+  );
+}
+
+export function eventMatchesDaysOffFilter(selectedLower = []) {
+  return selectedLower.includes('day off') || selectedLower.includes('break');
 }
 
 const ALL_DAY_TIME_LABEL = 'All Day';
@@ -340,7 +366,7 @@ export function getPlannerEventTypeColors(event) {
   const holidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
   const eventType = String(event?.event_type || event?.type || '').trim().toLowerCase();
   if (holidayType === 'CUSTOM_BREAK' || eventType === 'break') {
-    return { chipBg: '#FFF7D6', chipText: '#A16207' };
+    return { chipBg: '#FFEDE2', chipText: '#9A3412' };
   }
   if (holidayType === 'CUSTOM_HOLIDAY' || holidayType === 'GLOBAL_HOLIDAY' || eventType === 'day off' || eventType === 'holiday') {
     return { chipBg: '#FFEDE2', chipText: '#9A3412' };
@@ -371,10 +397,6 @@ export function getPlannerCalendarLegendItems() {
     {
       label: 'Days off',
       color: getPlannerEventTypeColors({ event_type: 'day off', holiday_type: 'CUSTOM_HOLIDAY' }).chipBg,
-    },
-    {
-      label: 'Breaks',
-      color: getPlannerEventTypeColors({ event_type: 'break', holiday_type: 'CUSTOM_BREAK' }).chipBg,
     },
     { label: 'Public holidays', color: '#6BB3E8' },
     { label: 'Other', color: getPlannerEventTypeColors({ event_type: 'Appointment' }).chipBg },

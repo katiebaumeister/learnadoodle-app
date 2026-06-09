@@ -117,7 +117,7 @@ export default function TasksView({
       const clampedStart = rowStart > rangeStart ? rowStart : rangeStart;
       const clampedEnd = rowEnd < rangeEnd ? rowEnd : rangeEnd;
       if (clampedEnd < clampedStart) return;
-      const fallbackLabel = rowType === 'break' ? 'Break' : 'Day off';
+      const fallbackLabel = 'Day off';
       const label = String(row?.label || '').trim() || fallbackLabel;
       for (let cursorDate = new Date(clampedStart); cursorDate <= clampedEnd; cursorDate.setDate(cursorDate.getDate() + 1)) {
         const dateKey = toYmdString(cursorDate);
@@ -163,7 +163,7 @@ export default function TasksView({
         if (Number.isNaN(d.getTime()) || d < rangeStart || d > rangeEnd) return;
         const safeName = String(holiday?.name || '').trim();
         const holidayType = normalizeHolidayType(holiday?.type || holiday?.holiday_type || holiday?.holidayType);
-        const label = safeName || (holidayType === 'CUSTOM_BREAK' ? 'Break' : 'Day off');
+        const label = safeName || 'Day off';
         out.push({
           id: buildSyntheticHolidayId(dateYmd, label, holidayType),
           date_local: dateYmd,
@@ -197,7 +197,7 @@ export default function TasksView({
     if (!dateYmd) return null;
     const holidayType = normalizeHolidayType(holiday?.type || holiday?.holiday_type || holiday?.holidayType);
     const safeName = String(holiday?.name || '').trim();
-    const label = safeName || (holidayType === 'CUSTOM_BREAK' ? 'Break' : 'Day off');
+    const label = safeName || 'Day off';
     return {
       id: buildSyntheticHolidayId(dateYmd, label, holidayType),
       date_local: dateYmd,

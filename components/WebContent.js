@@ -3369,7 +3369,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
               const clampedStart = rangeStart > monthStartDate ? rangeStart : monthStartDate;
               const clampedEnd = rangeEnd < monthEndDate ? rangeEnd : monthEndDate;
               if (clampedEnd < clampedStart) return;
-              const fallbackLabel = type === 'break' ? 'Break' : 'Day off';
+              const fallbackLabel = 'Day off';
               const label = String(row?.label || '').trim() || fallbackLabel;
               const labelSlug = label.replace(/\s+/g, '-').slice(0, 30) || fallbackLabel.toLowerCase().replace(/\s+/g, '-');
               for (let cursor = new Date(clampedStart); cursor <= clampedEnd; cursor.setDate(cursor.getDate() + 1)) {
@@ -4749,9 +4749,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Cache for subject detail data (for SubjectDetailPage) - keyed by subjectId
   const [subjectDetailCache, setSubjectDetailCache] = useState(() => _subjectDetailSessionInitial.data || {})
   const preloadingDetailsRef = useRef(new Set())
-  const [subjectsPrefetchReady, setSubjectsPrefetchReady] = useState(() => (
-    activeTab === 'subjects' || activeTab === 'learning'
-  ));
+  const [subjectsPrefetchReady, setSubjectsPrefetchReady] = useState(true);
   const [activities, setActivities] = useState([])
   const [dailyTasks, setDailyTasks] = useState([])
   const [today] = useState(new Date().toISOString().split('T')[0])
@@ -4763,24 +4761,11 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     }
   }, [propSubjects]);
 
-  // Defer heavy subjects prefetch on initial Home load so critical app shell and
-  // right-rail requests get network priority. Open Subjects tab enables immediately.
+  // Preload subjects overview on initial app load (per family).
   useEffect(() => {
     if (!familyId) return;
-    if (activeTab === 'subjects' || activeTab === 'learning') {
-      setSubjectsPrefetchReady(true);
-      return;
-    }
-    if (subjectsPrefetchReady) return;
-    let cancelled = false;
-    const timerId = setTimeout(() => {
-      if (!cancelled) setSubjectsPrefetchReady(true);
-    }, 2500);
-    return () => {
-      cancelled = true;
-      clearTimeout(timerId);
-    };
-  }, [familyId, activeTab, subjectsPrefetchReady]);
+    setSubjectsPrefetchReady(true);
+  }, [familyId]);
 
   // Preload subjects overview once when the app initializes (per family)
   // so that Subjects screens don't need to block on their own fetches. Report to parent for initial load overlay.
@@ -4970,21 +4955,25 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     };
   }, [familyId]);
 
-  // Clear cache when subjects are added/updated
+  // Refresh subjects overview in background when subjects change (keep cache stable).
   useEffect(() => {
     if (Platform.OS !== 'web') return;
-    const handleRefresh = () => {
-      setSubjectsOverviewCache(null); // Clear overview cache to force reload
-      // Keep subjectDetailCache: clearing it caused a full loading flash on Subject Detail when modals/planner sync.
-      // SubjectDetailPage refetches on refreshSubjects / refreshSubjectDetail with silent background updates.
+    const handleRefresh = async () => {
+      if (!familyId) return;
+      try {
+        const data = await getSubjectsWithOverview(familyId, null, propSession);
+        setSubjectsOverviewCache(data);
+      } catch (err) {
+        if (!isAbortLikeError(err)) {
+          console.error('[WebContent] Error refreshing subjects overview:', err);
+        }
+      }
     };
-    // refreshSubjectDetail: SubjectDetailPage refetches and calls onSubjectDataUpdate — do not clear cache here.
-    // Clearing cache made preloadedSubjectData undefined and forced a full-page loading flash when closing modals.
     window.addEventListener('refreshSubjects', handleRefresh);
     return () => {
       window.removeEventListener('refreshSubjects', handleRefresh);
     };
-  }, []);
+  }, [familyId, propSession]);
 
   // Sync familyId from props and session (session can arrive before propFamilyId propagates)
   useEffect(() => {
@@ -10092,7 +10081,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         const clampedStart = startDate > visibleStart ? startDate : visibleStart;
         const clampedEnd = endDate < visibleEnd ? endDate : visibleEnd;
         if (clampedEnd < clampedStart) return;
-        const fallbackLabel = rowType === 'break' ? 'Break' : 'Day off';
+        const fallbackLabel = 'Day off';
         const label = String(row?.label || '').trim() || fallbackLabel;
         for (let cursorDate = new Date(clampedStart); cursorDate <= clampedEnd; cursorDate.setDate(cursorDate.getDate() + 1)) {
           const dateKey = toYmd(cursorDate);
@@ -10552,6 +10541,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             window.dispatchEvent(new CustomEvent('openAddChildModal'));
           }
         }}
+        preloadedSubjectsOverview={subjectsOverviewCache}
+        preloadedSubjects={propSubjects}
+        preloadedPlanHealth={propPreloadedPlanHealth}
       />
     );
 
@@ -10568,7 +10560,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             subjectId={subjectId}
             familyId={subjectFamilyId}
             children={children || []}
-            layoutVariant="learning"
+            layoutVariant="default"
             onOpenPlannerSettings={() => {
               if (typeof onTabChange === 'function') {
                 onTabChange('settings', 'planner-settings');

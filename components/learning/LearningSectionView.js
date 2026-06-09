@@ -1,13 +1,6 @@
-import React, { useCallback, useMemo } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Platform,
-  TouchableOpacity,
-  ScrollView,
-} from 'react-native';
-import { LEARNING_SECTIONS, resolveSection } from '../layout/sectionNavConfig';
+import React, { useMemo } from 'react';
+import { View, StyleSheet, Platform } from 'react-native';
+import { resolveSection } from '../layout/sectionNavConfig';
 import MaterialsLibrary from '../materials/MaterialsLibrary';
 import SubjectsPage from '../subjects/SubjectsPage';
 import AssignmentsListScreen from './AssignmentsListScreen';
@@ -15,39 +8,12 @@ import SubmissionsListScreen from './SubmissionsListScreen';
 import GradesListScreen from './GradesListScreen';
 import { useOptionalFamilyUserControls } from '../../contexts/FamilyUserControlsContext';
 
-function LearningTabBar({ tabs, activeKey, onChange }) {
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.tabScroll}
-      contentContainerStyle={styles.tabBar}
-    >
-      {tabs.map((tab) => {
-        const active = activeKey === tab.key;
-        return (
-          <TouchableOpacity
-            key={tab.key}
-            style={[styles.tabBtn, active && styles.tabBtnActive]}
-            onPress={() => onChange?.(tab.key)}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Text style={[styles.tabBtnText, active && styles.tabBtnTextActive]}>{tab.label}</Text>
-          </TouchableOpacity>
-        );
-      })}
-    </ScrollView>
-  );
-}
-
 export default function LearningSectionView({
   tab = 'subjects',
   section = 'subjects',
   familyId,
   children = [],
   family,
-  user,
-  profile,
   session,
   userRole,
   accessibleChildren,
@@ -61,29 +27,17 @@ export default function LearningSectionView({
   onMaterialsUpdate,
   subjectsCallbacks = {},
   viewingAsChildId = null,
-  onViewAsChild = null,
-  onExitChildView = null,
-  onEditChild = null,
 }) {
   const familyUserControls = useOptionalFamilyUserControls();
   const effectivePermissions = familyUserControls?.effectivePermissions;
 
-  const visibleTabs = useMemo(() => {
-    if (effectivePermissions?.canViewLibrary === false) {
-      return LEARNING_SECTIONS.filter((item) => item.key !== 'materials');
-    }
-    return LEARNING_SECTIONS;
-  }, [effectivePermissions?.canViewLibrary]);
-
   const activeSection = useMemo(() => {
     const resolved = resolveSection(tab, section) || 'subjects';
-    if (visibleTabs.some((item) => item.key === resolved)) return resolved;
-    return 'subjects';
-  }, [tab, section, visibleTabs]);
-
-  const navigateSection = useCallback((nextSection) => {
-    onTabChange?.(tab, nextSection);
-  }, [onTabChange, tab]);
+    if (resolved === 'materials' && effectivePermissions?.canViewLibrary === false) {
+      return 'subjects';
+    }
+    return resolved;
+  }, [tab, section, effectivePermissions?.canViewLibrary]);
 
   const subjectsList =
     (subjectsOverviewCache && subjectsOverviewCache.length > 0)
@@ -172,13 +126,6 @@ export default function LearningSectionView({
 
   return (
     <View style={styles.shell}>
-      <View style={styles.pageHeader}>
-        <LearningTabBar
-          tabs={visibleTabs}
-          activeKey={activeSection}
-          onChange={navigateSection}
-        />
-      </View>
       <View style={styles.content}>{renderContent()}</View>
     </View>
   );
@@ -194,39 +141,6 @@ const styles = StyleSheet.create({
       flexDirection: 'column',
       height: '100%',
     }),
-  },
-  pageHeader: {
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 0,
-    backgroundColor: '#FFFFFF',
-  },
-  tabScroll: {
-    flexGrow: 0,
-  },
-  tabBar: {
-    flexDirection: 'row',
-    gap: 24,
-    paddingRight: 24,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(148, 163, 184, 0.2)',
-  },
-  tabBtn: {
-    paddingBottom: 12,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-    marginBottom: -1,
-  },
-  tabBtnActive: {
-    borderBottomColor: '#2563EB',
-  },
-  tabBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  tabBtnTextActive: {
-    color: '#2563EB',
   },
   content: {
     flex: 1,

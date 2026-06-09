@@ -43,7 +43,7 @@ import {
 import ConfirmDialog from '../ConfirmDialog';
 import { destructiveButtonStyles, destructiveIconColor } from '../ui/destructiveButtonStyles';
 import { findFirstConflictEvent } from '../../lib/utils/conflictDetection';
-import { getEventTypeChipTextColor } from '../planner/plannerListTableUtils';
+import { getEventTypeChipTextColor, resolvePlannerExclusionKind } from '../planner/plannerListTableUtils';
 import { useAnchoredDropdownPosition } from '../../hooks/useAnchoredDropdownPosition';
 import {
   isPartOfRecurringSeries,
@@ -674,9 +674,8 @@ const EVENT_TYPES = [
   'Activity',
   'Appointment',
   'Day Off',
-  'Break',
 ];
-const MULTI_DAY_EVENT_TYPES = ['Project', 'Trip', 'Holiday', 'Other', 'Break'];
+const MULTI_DAY_EVENT_TYPES = ['Project', 'Trip', 'Holiday', 'Other'];
 const EVENT_TYPE_FILTER_COLORS = {
   lesson: '#E3F0FF',
   assignment: '#DFF7E3',
@@ -685,7 +684,6 @@ const EVENT_TYPE_FILTER_COLORS = {
   project: '#D6F0ED',
   exam: '#FCE7F3',
   'day off': '#FFEDE2',
-  break: '#FFF7D6',
 };
 const EVENT_TYPE_FILTER_OUTLINE_COLORS = {
   lesson: '#BFDFFF',
@@ -695,7 +693,6 @@ const EVENT_TYPE_FILTER_OUTLINE_COLORS = {
   project: '#AEE2DB',
   exam: '#F6C8DE',
   'day off': '#F7D1BD',
-  break: '#F2E39A',
 };
 const getEventTypeActiveChipStyle = (type) => {
   const key = String(type || '').trim().toLowerCase();
@@ -710,17 +707,16 @@ const getEventTypeActiveChipStyle = (type) => {
 
 const normalizeEventTypeForDisplay = (type, holidayType = null) => {
   const holidayRaw = String(holidayType || '').trim().toUpperCase();
-  if (holidayRaw === 'CUSTOM_BREAK') return 'Break';
-  if (holidayRaw === 'CUSTOM_HOLIDAY' || holidayRaw === 'GLOBAL_HOLIDAY') return 'Day Off';
+  if (holidayRaw === 'CUSTOM_BREAK' || holidayRaw === 'CUSTOM_HOLIDAY' || holidayRaw === 'GLOBAL_HOLIDAY') return 'Day Off';
   const raw = String(type || '').trim();
   if (!raw) return 'Lesson';
   const lower = raw.toLowerCase();
   if (raw === 'Schedule Block' || raw === 'Scheduled Class Day' || raw === 'ClassDay') {
     return 'Lesson';
   }
-  if (lower === 'custom_break') return 'Break';
+  if (lower === 'custom_break') return 'Day Off';
   if (lower === 'custom_holiday' || lower === 'global_holiday') return 'Day Off';
-  if (lower === 'break') return 'Break';
+  if (lower === 'break') return 'Day Off';
   if (lower === 'holiday' || lower === 'day off' || lower === 'dayoff') return 'Day Off';
   const canonical = EVENT_TYPES.find((option) => option.toLowerCase() === lower);
   if (canonical) return canonical;
@@ -730,7 +726,7 @@ const normalizeEventTypeForDisplay = (type, holidayType = null) => {
 const normalizeEventTypeForPersistence = (type) => {
   if (type === 'Scheduled Class Day') return 'Schedule Block';
   if (type === 'Class Day') return 'ClassDay';
-  if (type === 'Day Off' || type === 'Break') return 'Holiday';
+  if (type === 'Day Off') return 'Holiday';
   const lower = String(type || '').trim().toLowerCase();
   if (lower === 'day off' || lower === 'dayoff' || lower === 'break') return 'Holiday';
   return type || 'Lesson';
@@ -1568,7 +1564,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return yearEnd;
   }, [academicYears, academicYearId, plannerDefaults, dueDate]);
 
-  const showBreakEndDateField = placement === 'calendar' && normalizeEventTypeForDisplay(eventType) === 'Break';
+  const showDayOffEndDateField = placement === 'calendar' && normalizeEventTypeForDisplay(eventType, currentHolidayType) === 'Day Off';
 
   const buildValidationBannerMessage = useCallback((errors) => {
     const messagesByKey = {
@@ -1618,7 +1614,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       errors.eventType = 'Event type is required';
     }
 
-    if (showBreakEndDateField && eventEndDate && dueDate && eventEndDate < dueDate) {
+    if (showDayOffEndDateField && eventEndDate && dueDate && eventEndDate < dueDate) {
       errors.endDate = 'End date cannot be before the start date';
     }
     
@@ -1650,7 +1646,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     draftTitle,
     dueDate,
     eventType,
-    showBreakEndDateField,
+    showDayOffEndDateField,
     eventEndDate,
     assigneeIds,
     isRecurring,
@@ -1982,13 +1978,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setDueDate(dateObj);
     setCalendarViewMonth(dateObj);
     
-    // End date for multi-day events (Project, Trip, Holiday, Other, Break)
+    // End date for multi-day events and day-off ranges
     const normalizedLoadedType = normalizeEventTypeForDisplay(
       event?.event_type || eventType || 'Lesson',
       event?.holiday_type || event?.holidayType
     );
+    const loadedHolidayType = String(event?.holiday_type || event?.holidayType || '').toUpperCase();
+    const isCustomDaysOff = loadedHolidayType === 'CUSTOM_HOLIDAY' || loadedHolidayType === 'CUSTOM_BREAK';
     const isMultiDayEventType = MULTI_DAY_EVENT_TYPES.includes(normalizedLoadedType);
-    if (endTs && isMultiDayEventType) {
+    if (endTs && (isMultiDayEventType || isCustomDaysOff)) {
       const endDateObj = new Date(endTs);
       const startDateObj = startTs ? new Date(startTs) : null;
       
@@ -2010,7 +2008,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           areSameDay: startDateOnly.getTime() === endDateOnly.getTime()
         });
         
-        setEventEndDate(endDateOnly);
+        setEventEndDate(endDateOnly.getTime() === startDateOnly.getTime() ? null : endDateOnly);
         setEventEndDateCalendarViewMonth(endDateOnly);
       } else {
         setEventEndDate(null);
@@ -3994,15 +3992,14 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           throw new Error('Missing break date context');
         }
         const existingType = currentHolidayType === 'CUSTOM_BREAK' ? 'break' : 'holiday';
-        const displayEventType = normalizeEventTypeForDisplay(eventType);
-        const nextType = displayEventType === 'Break' ? 'break' : 'holiday';
         const nextStartDate = String(dateToUse || anchorDate).slice(0, 10);
-        const nextEndDate = (isMultiDayEventType && eventEndDate instanceof Date && !Number.isNaN(eventEndDate.getTime()))
+        const nextEndDate = (eventEndDate instanceof Date && !Number.isNaN(eventEndDate.getTime()))
           ? String(toDateInput(eventEndDate.toISOString()) || nextStartDate).slice(0, 10)
           : nextStartDate;
         if (nextEndDate < nextStartDate) {
           throw new Error('End date cannot be before start date');
         }
+        const nextType = resolvePlannerExclusionKind(nextStartDate, nextEndDate);
 
         const { data: exclusions, error: exclusionError } = await supabase
           .from('planner_exclusions')
@@ -4040,7 +4037,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           .from('planner_exclusions')
           .update({
             exclusion_type: nextType,
-            label: draftTitle.trim() || (nextType === 'break' ? 'Break' : 'Day off'),
+            label: draftTitle.trim() || 'Day off',
             start_date: nextStartDate,
             end_date: nextEndDate,
           })
@@ -5527,7 +5524,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 </View>
                 {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
               </View>
-              {showBreakEndDateField ? (
+              {showDayOffEndDateField ? (
                 <View style={[styles.timeField, styles.dateFieldInline]}>
                   <Text style={styles.timeLabel}>End date</Text>
                   <View style={[styles.chip, validationErrors.endDate && styles.chipFieldError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>

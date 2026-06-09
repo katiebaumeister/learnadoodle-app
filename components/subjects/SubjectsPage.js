@@ -1639,7 +1639,7 @@ export default function SubjectsPage({
     }) => {
       if (!showAdd && !showEdit) return null;
       return (
-        <View style={styles.filterLabelActions}>
+        <View style={styles.filterRowEditActions}>
           {showAdd ? (
             <TouchableOpacity
               style={styles.filterLabelIconBtn}
@@ -1691,18 +1691,10 @@ export default function SubjectsPage({
     return (
     <>
       {showChildrenRow && showInlineChildrenFilters ? (
-        <View style={[styles.filterRow, styles.coursesFilterRowTop]}>
+        <View style={[styles.filterRow, styles.coursesFilterRowTop, styles.filterRowWithTrailingActions]}>
           <View style={styles.filterRowMain}>
             <View style={styles.filterLabelGroup}>
               <Text style={styles.filterLabel}>Children</Text>
-              {renderFilterLabelIcons({
-                showAdd: canCreateChildFromHeader,
-                showEdit: canEditChildFromFilters,
-                onAdd: openAddChildFromFilter,
-                onEdit: openChildEditFromFilter,
-                addLabel: 'Add child',
-                editLabel: 'Edit children',
-              })}
             </View>
             <View style={styles.filterChipsWrap}>
               <View style={styles.filterChecklist}>
@@ -1748,6 +1740,14 @@ export default function SubjectsPage({
               </View>
             </View>
           </View>
+          {renderFilterLabelIcons({
+            showAdd: canCreateChildFromHeader,
+            showEdit: canEditChildFromFilters,
+            onAdd: openAddChildFromFilter,
+            onEdit: openChildEditFromFilter,
+            addLabel: 'Add child',
+            editLabel: 'Edit children',
+          })}
         </View>
       ) : null}
 
@@ -1811,18 +1811,10 @@ export default function SubjectsPage({
       ) : null}
 
       {showSubjectRow && (isCatalogScreen || allCourseSubjectIds.length > 0) ? (
-        <View style={[styles.filterRow, styles.filterRowBelowTerm]}>
+        <View style={[styles.filterRow, styles.filterRowBelowTerm, styles.filterRowWithTrailingActions]}>
           <View style={styles.filterRowMain}>
             <View style={styles.filterLabelGroup}>
               <Text style={styles.filterLabel}>Subjects</Text>
-              {renderFilterLabelIcons({
-                showAdd: canCreateSubjectFromHeader,
-                showEdit: canEditSubjectFromFilters,
-                onAdd: openAddSubjectWithCurrentHeaders,
-                onEdit: openSubjectEditFromFilter,
-                addLabel: 'Add subject',
-                editLabel: 'Edit subjects',
-              })}
             </View>
             <View style={styles.filterChipsWrap}>
             <View style={styles.filterChecklist}>
@@ -1872,6 +1864,14 @@ export default function SubjectsPage({
             </View>
             </View>
           </View>
+          {renderFilterLabelIcons({
+            showAdd: canCreateSubjectFromHeader,
+            showEdit: canEditSubjectFromFilters,
+            onAdd: openAddSubjectWithCurrentHeaders,
+            onEdit: openSubjectEditFromFilter,
+            addLabel: 'Add subject',
+            editLabel: 'Edit subjects',
+          })}
         </View>
       ) : null}
     </>
@@ -2819,7 +2819,7 @@ export default function SubjectsPage({
           subjectId={selectedSubjectId}
           familyId={familyId}
           children={safeChildren}
-          layoutVariant={isCatalogScreen ? 'learning' : 'default'}
+          layoutVariant="default"
           onOpenPlannerSettings={openPlanningPreferencesModal}
           preloadedSubjectData={subjectDetailCache[selectedSubjectId]}
           initialScrollToSectionId={pendingScrollToSectionId}
@@ -4287,9 +4287,9 @@ const styles = StyleSheet.create({
   filterRowEditActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 2,
     flexShrink: 0,
-    marginLeft: 12,
+    marginLeft: 16,
   },
   filterRowBelowMode: {
     marginTop: 0,

@@ -10,6 +10,7 @@ import AttendanceView from './attendance/AttendanceView';
 import MobileCardView from './MobileCardView';
 import PlannerYearGrid from './PlannerYearGrid';
 import { startOfToday, startOfWeek } from './utils/date';
+import { eventMatchesDaysOffFilter, isPlannerDaysOffEvent } from './plannerListTableUtils';
 
 const DEFAULT_VIEW = 'Month';
 
@@ -191,11 +192,8 @@ export default function CenterPane({
           return true;
         }
 
-        // Holiday-family filters: distinguish planner exclusions from public holidays.
-        if (selectedLower.includes('day off') && typeLower === 'holiday' && holidayType === 'CUSTOM_HOLIDAY') {
-          return true;
-        }
-        if (selectedLower.includes('break') && typeLower === 'holiday' && holidayType === 'CUSTOM_BREAK') {
+        // Days off filter includes single days and optional date ranges.
+        if (eventMatchesDaysOffFilter(selectedLower) && isPlannerDaysOffEvent(e)) {
           return true;
         }
 

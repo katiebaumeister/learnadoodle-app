@@ -5095,7 +5095,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     isChildRestrictedView && styles.mainContentFullWidth,
   ];
 
-  const showSettingsSidebar = !hideInternalSidebar;
+  const showSettingsSidebar = !hideInternalSidebar && activeSection !== 'planner-settings';
 
   const renderSettingsSidebarButton = (key) => {
     const item = settingsItemByKey[key];

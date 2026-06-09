@@ -46,6 +46,19 @@ function applyAttendanceSnapshotToLearning(learning = [], attendanceRows = []) {
   });
 }
 
+function normalizeSubjectList(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((s) => s?.id != null)
+    .map((s) => ({ id: s.id, name: s.name || 'Subject' }));
+}
+
+function pickSubjectListSource(overview, subjects) {
+  if (Array.isArray(overview) && overview.length > 0) return overview;
+  if (Array.isArray(subjects) && subjects.length > 0) return subjects;
+  return [];
+}
+
 async function hydrateLearningAssignees(learning = [], familyId) {
   const items = Array.isArray(learning) ? learning : [];
   const eventIds = items
@@ -109,6 +122,9 @@ export default function ParentHomeScreen({
   onAddChild,
   onInitialDataReady = null,
   hideRailOnboardingCards = false,
+  preloadedSubjectsOverview = null,
+  preloadedSubjects = null,
+  preloadedPlanHealth = null,
 }) {
   const session = useSession();
   const [homeData, setHomeData] = useState(null);
@@ -117,9 +133,12 @@ export default function ParentHomeScreen({
     pendingSubmissions: [],
     missingSubmissions: [],
     helpRequests: [],
-    planHealth: null,
-    subjects: [],
   });
+  const [stableSubjects, setStableSubjects] = useState(() =>
+    normalizeSubjectList(pickSubjectListSource(preloadedSubjectsOverview, preloadedSubjects))
+  );
+  const [planHealth, setPlanHealth] = useState(preloadedPlanHealth || null);
+  const planHealthFetchStartedRef = useRef(!!preloadedPlanHealth);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [notificationCount, setNotificationCount] = useState(0);
   const [error, setError] = useState(null);
@@ -136,6 +155,37 @@ export default function ParentHomeScreen({
 
   // Get familyId from session if not provided as prop
   const familyId = propFamilyId || session?.family_id;
+
+  useEffect(() => {
+    const incoming = pickSubjectListSource(preloadedSubjectsOverview, preloadedSubjects);
+    if (incoming.length === 0) return;
+    setStableSubjects((prev) => {
+      const prevIds = prev.map((s) => String(s.id)).sort().join(',');
+      const nextIds = incoming.map((s) => String(s.id)).sort().join(',');
+      if (prev.length > 0 && prevIds === nextIds) return prev;
+      return normalizeSubjectList(incoming);
+    });
+  }, [preloadedSubjectsOverview, preloadedSubjects]);
+
+  useEffect(() => {
+    if (!preloadedPlanHealth) return;
+    setPlanHealth((prev) => prev || preloadedPlanHealth);
+    planHealthFetchStartedRef.current = true;
+  }, [preloadedPlanHealth]);
+
+  useEffect(() => {
+    if (!familyId || planHealthFetchStartedRef.current) return;
+    planHealthFetchStartedRef.current = true;
+    let cancelled = false;
+    getPlanHealth(familyId)
+      .then(({ data }) => {
+        if (!cancelled && data) setPlanHealth(data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId]);
 
   // Cache helpers (matching WebContent pattern)
   const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -200,8 +250,6 @@ export default function ParentHomeScreen({
         submittedRes,
         missingRes,
         helpRes,
-        planHealthRes,
-        subjectsRes,
       ] = await Promise.all([
         supabase
           .from('assignments')
@@ -242,12 +290,6 @@ export default function ParentHomeScreen({
           .eq('need_help', true)
           .order('updated_at', { ascending: false })
           .limit(8),
-        getPlanHealth(fid),
-        supabase
-          .from('subject')
-          .select('id, name')
-          .eq('family_id', fid)
-          .order('name'),
       ]);
 
       const isMissingTable = (err) =>
@@ -258,14 +300,13 @@ export default function ParentHomeScreen({
         ...(dueTomorrowRes.data || []),
       ].filter(Boolean);
 
-      setDashboardExtras({
+      setDashboardExtras((prev) => ({
+        ...prev,
         dueAssignments,
         pendingSubmissions: isMissingTable(submittedRes.error) ? [] : submittedRes.data || [],
         missingSubmissions: isMissingTable(missingRes.error) ? [] : missingRes.data || [],
         helpRequests: isMissingTable(helpRes.error) ? [] : helpRes.data || [],
-        planHealth: planHealthRes?.data || null,
-        subjects: subjectsRes.error ? [] : subjectsRes.data || [],
-      });
+      }));
     } catch (err) {
       if (!isAbortLikeError(err)) {
         console.error('[ParentHomeScreen] Error loading dashboard extras:', err);
@@ -578,12 +619,8 @@ export default function ParentHomeScreen({
   const children = effectiveHomeData.children || [];
 
   const subjectSnapshot = useMemo(() => {
-    const planHealth = dashboardExtras.planHealth;
     const perChildSubject = planHealth?.per_child_subject || {};
-    const subjectsList =
-      (effectiveHomeData.subjects?.length ? effectiveHomeData.subjects : null) ||
-      dashboardExtras.subjects ||
-      [];
+    const subjectsList = stableSubjects;
 
     const subjectIds = new Set(subjectsList.map((s) => String(s.id)));
     Object.values(perChildSubject).forEach((subjectMap) => {
@@ -657,9 +694,8 @@ export default function ParentHomeScreen({
       .slice(0, 6);
   }, [
     children,
-    dashboardExtras.planHealth,
-    dashboardExtras.subjects,
-    effectiveHomeData.subjects,
+    planHealth,
+    stableSubjects,
   ]);
 
   if (error && !homeData) {

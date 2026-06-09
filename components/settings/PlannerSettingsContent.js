@@ -16,7 +16,7 @@ import {
   Modal,
   Switch,
 } from 'react-native';
-import { Plus, Trash2, Pencil, Check, X, ChevronDown, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import {
   getFamilyPlannerSettings,
   saveFamilyPlannerSettings,
@@ -134,6 +134,66 @@ const parsePositiveFloatOrNull = (value) => {
   return Number.isFinite(n) && n >= 0 ? n : null;
 };
 
+const classifyDaysOffEntry = (start, end, name) => {
+  const normalizedStart = String(start || '').trim();
+  const normalizedEnd = String(end || '').trim();
+  const normalizedName = String(name || '').trim();
+  if (!normalizedEnd || normalizedEnd === normalizedStart) {
+    return { kind: 'holiday', date: normalizedStart, name: normalizedName };
+  }
+  return { kind: 'break', start: normalizedStart, end: normalizedEnd, name: normalizedName };
+};
+
+const formatYmdForDisplay = (ymd) => {
+  const raw = String(ymd || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const [y, m, d] = raw.split('-').map((x) => parseInt(x, 10));
+  const dt = new Date(y, m - 1, d);
+  if (Number.isNaN(dt.getTime())) return raw;
+  return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatDaysOffDateRange = (start, end) => {
+  const startRaw = String(start || '').trim().slice(0, 10);
+  const endRaw = String(end || '').trim().slice(0, 10);
+  if (!endRaw || endRaw === startRaw) {
+    return formatYmdForDisplay(startRaw);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startRaw) || !/^\d{4}-\d{2}-\d{2}$/.test(endRaw)) {
+    return `${startRaw} – ${endRaw}`;
+  }
+  const [sy, sm, sd] = startRaw.split('-').map((x) => parseInt(x, 10));
+  const [ey, em, ed] = endRaw.split('-').map((x) => parseInt(x, 10));
+  const startDate = new Date(sy, sm - 1, sd);
+  const endDate = new Date(ey, em - 1, ed);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return `${startRaw} – ${endRaw}`;
+  }
+  if (sy === ey && sm === em) {
+    const month = startDate.toLocaleDateString(undefined, { month: 'short' });
+    return `${month} ${sd} – ${ed}, ${sy}`;
+  }
+  if (sy === ey) {
+    const startPart = startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const endPart = endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return `${startPart} – ${endPart}, ${sy}`;
+  }
+  return `${formatYmdForDisplay(startRaw)} – ${formatYmdForDisplay(endRaw)}`;
+};
+
+const formatDaysOffEntryLabel = (entry) => {
+  const name = String(entry?.name || '').trim();
+  const dateLabel =
+    entry?.kind === 'break' && entry?.end && entry.end !== entry.start
+      ? formatDaysOffDateRange(entry.start, entry.end)
+      : formatYmdForDisplay(entry?.start);
+  return name ? `${dateLabel} — ${name}` : dateLabel;
+};
+
+const isEditingSameDayOff = (a, b) => (
+  Boolean(a && b) && a.kind === b.kind && a.index === b.index
+);
+
 const DEFAULT_LEARNING_START_TIME = '08:00:00';
 const DEFAULT_LEARNING_END_TIME = '15:00:00';
 const DEFAULT_ALLOWED_WEEKDAYS = [1, 2, 3, 4, 5];
@@ -244,6 +304,17 @@ const parseSchoolYearLabel = (label) => {
   const end = 2000 + Number(m[2]);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
   return { start, end };
+};
+
+const shiftSchoolYearLabel = (schoolYearLabel, direction) => {
+  const parsed = parseSchoolYearLabel(schoolYearLabel);
+  const safeDirection = direction < 0 ? -1 : 1;
+  if (!parsed) {
+    const now = new Date();
+    const start = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+    return formatSchoolYearLabel(start + safeDirection);
+  }
+  return formatSchoolYearLabel(parsed.start + safeDirection);
 };
 
 const withinYmdRange = (ymd, minYmd, maxYmd) => {
@@ -436,17 +507,12 @@ export default function PlannerSettingsContent({
   const [customBreaks, setCustomBreaks] = useState(
     Array.isArray(initialSnapshot?.customBreaks) ? initialSnapshot.customBreaks : []
   );
-  const [addingHoliday, setAddingHoliday] = useState(false);
-  const [addingBreak, setAddingBreak] = useState(false);
-  const [newHolidayDate, setNewHolidayDate] = useState('');
-  const [newHolidayName, setNewHolidayName] = useState('');
-  const [newBreakStart, setNewBreakStart] = useState('');
-  const [newBreakEnd, setNewBreakEnd] = useState('');
-  const [newBreakName, setNewBreakName] = useState('');
-  const [editingHolidayIndex, setEditingHolidayIndex] = useState(null);
-  const [editingHolidayDraft, setEditingHolidayDraft] = useState({ date: '', name: '' });
-  const [editingBreakIndex, setEditingBreakIndex] = useState(null);
-  const [editingBreakDraft, setEditingBreakDraft] = useState({ start: '', end: '', name: '' });
+  const [addingDayOff, setAddingDayOff] = useState(false);
+  const [newDayOffStart, setNewDayOffStart] = useState('');
+  const [newDayOffEnd, setNewDayOffEnd] = useState('');
+  const [newDayOffName, setNewDayOffName] = useState('');
+  const [editingDayOff, setEditingDayOff] = useState(null);
+  const [editingDayOffDraft, setEditingDayOffDraft] = useState({ start: '', end: '', name: '' });
   const [defaultYearStartDate, setDefaultYearStartDate] = useState(initialSnapshot?.defaultYearStartDate || '');
   const [defaultYearEndDate, setDefaultYearEndDate] = useState(initialSnapshot?.defaultYearEndDate || '');
   const [defaultFallStartDate, setDefaultFallStartDate] = useState(initialSnapshot?.defaultFallStartDate || '');
@@ -461,10 +527,7 @@ export default function PlannerSettingsContent({
       ? initialSnapshot.subjectTargets
       : {}
   ); // { subjectId: { mode, days, hours } }
-  const [schoolYearOptions, setSchoolYearOptions] = useState([]);
   const [selectedSchoolYearLabel, setSelectedSchoolYearLabel] = useState(initialSelectedSchoolYearLabel);
-  const [showSchoolYearDropdown, setShowSchoolYearDropdown] = useState(false);
-  const [schoolYearMenuAnchor, setSchoolYearMenuAnchor] = useState(null);
   const [showAttendanceModeDropdown, setShowAttendanceModeDropdown] = useState(false);
   const [attendanceModeMenuAnchor, setAttendanceModeMenuAnchor] = useState(null);
   const [attendanceModeConfirmDialog, setAttendanceModeConfirmDialog] = useState({
@@ -473,7 +536,6 @@ export default function PlannerSettingsContent({
     message: '',
   });
   const attendanceModeConfirmResolverRef = useRef(null);
-  const schoolYearTriggerRef = useRef(null);
   const attendanceModeTriggerRef = useRef(null);
   const hasHydratedSnapshotRef = useRef(Boolean(initialSnapshot));
   const appliedInitialDataKeyRef = useRef('');
@@ -502,8 +564,7 @@ export default function PlannerSettingsContent({
     if (selectedSchoolYearLabel !== normalizedLockedSchoolYearLabel) {
       setSelectedSchoolYearLabel(normalizedLockedSchoolYearLabel);
     }
-    if (showSchoolYearDropdown) setShowSchoolYearDropdown(false);
-  }, [isSchoolYearLocked, normalizedLockedSchoolYearLabel, selectedSchoolYearLabel, showSchoolYearDropdown]);
+  }, [isSchoolYearLocked, normalizedLockedSchoolYearLabel, selectedSchoolYearLabel]);
 
   const applySnapshot = useCallback((cached) => {
     if (!cached || typeof cached !== 'object') return false;
@@ -719,6 +780,27 @@ export default function PlannerSettingsContent({
         }),
     [customBreaks, yearRangeMinYmd, yearRangeMaxYmd]
   );
+  const visibleDaysOffEntries = useMemo(() => {
+    const holidays = visibleCustomHolidays.map((h) => ({
+      kind: 'holiday',
+      index: h._idx,
+      id: h.id,
+      start: h.date,
+      end: null,
+      name: h.name,
+      sortKey: h.date,
+    }));
+    const breaks = visibleCustomBreaks.map((b) => ({
+      kind: 'break',
+      index: b._idx,
+      id: b.id,
+      start: b.start,
+      end: b.end,
+      name: b.name,
+      sortKey: b.start,
+    }));
+    return [...holidays, ...breaks].sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
+  }, [visibleCustomHolidays, visibleCustomBreaks]);
 
   useEffect(() => {
     if (!familyId || !selectedSchoolYearLabel || readOnly || isSchoolYearLocked) return;
@@ -861,39 +943,20 @@ export default function PlannerSettingsContent({
   useEffect(() => {
     let cancelled = false;
     const loadSchoolYears = async () => {
-      const { data } = await supabase
-        .from('school_year_templates')
-        .select('label, start_year')
-        .order('start_year', { ascending: true });
       if (cancelled) return;
-      const dbLabels = Array.from(
-        new Set((data || []).map((row) => normalizeSchoolYearLabel(row?.label)).filter(Boolean))
-      );
-      const now = new Date();
-      const currentStart = now.getMonth() + 1 >= 8 ? now.getFullYear() : now.getFullYear() - 1;
-      const futureLabels = Array.from({ length: 12 }, (_, idx) => formatSchoolYearLabel(currentStart + idx));
-      const labels = Array.from(new Set([...dbLabels, ...futureLabels]))
-        .filter(Boolean)
-        .sort((a, b) => {
-          const ay = parseSchoolYearLabel(a)?.start ?? 0;
-          const by = parseSchoolYearLabel(b)?.start ?? 0;
-          return ay - by;
-        });
-      setSchoolYearOptions(labels);
       if (isSchoolYearLocked) {
         setSelectedSchoolYearLabel(normalizedLockedSchoolYearLabel);
         return;
       }
       if (!selectedSchoolYearLabel) {
-        const fallback = `${currentStart}/${String(currentStart + 1).slice(-2)}`;
-        setSelectedSchoolYearLabel(labels.includes(fallback) ? fallback : (labels[0] || fallback));
+        setSelectedSchoolYearLabel(currentSchoolYearLabel);
       }
     };
     loadSchoolYears();
     return () => {
       cancelled = true;
     };
-  }, [selectedSchoolYearLabel, isSchoolYearLocked, normalizedLockedSchoolYearLabel]);
+  }, [selectedSchoolYearLabel, isSchoolYearLocked, normalizedLockedSchoolYearLabel, currentSchoolYearLabel]);
 
   const showSaved = () => {
     setSavedIndicator(true);
@@ -1601,108 +1664,113 @@ export default function PlannerSettingsContent({
     }
     toast.push('Open Subjects to add a new subject.', 'info');
   }, [selectedSchoolYearLabel, toast]);
-  const addHoliday = () => {
-    if (!newHolidayDate || !newHolidayName.trim()) {
-      toast.push('Enter date and name.', 'error');
+  const resetDayOffForm = () => {
+    setAddingDayOff(false);
+    setNewDayOffStart('');
+    setNewDayOffEnd('');
+    setNewDayOffName('');
+  };
+  const resetDayOffEdit = () => {
+    setEditingDayOff(null);
+    setEditingDayOffDraft({ start: '', end: '', name: '' });
+  };
+  const validateDayOffDates = (start, end, isRange) => {
+    if (!withinYmdRange(start, yearRangeMinYmd, yearRangeMaxYmd)) {
+      toast.push(`Start date must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
+      return false;
+    }
+    if (isRange) {
+      if (!withinYmdRange(end, yearRangeMinYmd, yearRangeMaxYmd)) {
+        toast.push(`End date must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
+        return false;
+      }
+      if (start > end) {
+        toast.push('End date must be on or after start.', 'error');
+        return false;
+      }
+    }
+    return true;
+  };
+  const addDayOff = () => {
+    if (!newDayOffStart || !newDayOffName.trim()) {
+      toast.push('Enter start date and name.', 'error');
       return;
     }
-    if (!withinYmdRange(newHolidayDate, yearRangeMinYmd, yearRangeMaxYmd)) {
-      toast.push(`Date must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
-      return;
+    const classified = classifyDaysOffEntry(newDayOffStart, newDayOffEnd, newDayOffName);
+    const isRange = classified.kind === 'break';
+    if (!validateDayOffDates(classified.start || classified.date, classified.end, isRange)) return;
+    if (classified.kind === 'holiday') {
+      setCustomHolidays([
+        ...customHolidays,
+        { date: classified.date, name: classified.name, type: 'CUSTOM_HOLIDAY' },
+      ]);
+    } else {
+      setCustomBreaks([
+        ...customBreaks,
+        { start: classified.start, end: classified.end, name: classified.name },
+      ]);
     }
-    setCustomHolidays([
-      ...customHolidays,
-      { date: newHolidayDate, name: newHolidayName.trim(), type: 'CUSTOM_HOLIDAY' },
-    ]);
-    setNewHolidayDate('');
-    setNewHolidayName('');
-    setAddingHoliday(false);
+    resetDayOffForm();
     queuePersist(300);
   };
-
-  const removeHoliday = (index) => {
-    const h = customHolidays[index];
-    setCustomHolidays(customHolidays.filter((_, i) => i !== index));
-    if (h?.id) {
-      deleteExclusion(h.id).catch(() => {});
+  const removeDayOff = (kind, index) => {
+    if (kind === 'holiday') {
+      const item = customHolidays[index];
+      setCustomHolidays(customHolidays.filter((_, i) => i !== index));
+      if (item?.id) deleteExclusion(item.id).catch(() => {});
+    } else {
+      const item = customBreaks[index];
+      setCustomBreaks(customBreaks.filter((_, i) => i !== index));
+      if (item?.id) deleteExclusion(item.id).catch(() => {});
     }
+    if (isEditingSameDayOff(editingDayOff, { kind, index })) resetDayOffEdit();
     queuePersist(300);
   };
-
-  const startEditHoliday = (index) => {
-    setEditingHolidayIndex(index);
-    setEditingHolidayDraft({ date: customHolidays[index].date, name: customHolidays[index].name });
+  const startEditDayOff = (entry) => {
+    setEditingDayOff({ kind: entry.kind, index: entry.index });
+    setEditingDayOffDraft({
+      start: entry.start,
+      end: entry.kind === 'break' && entry.end && entry.end !== entry.start ? entry.end : '',
+      name: entry.name,
+    });
   };
-  const cancelEditHoliday = () => {
-    setEditingHolidayIndex(null);
-    setEditingHolidayDraft({ date: '', name: '' });
-  };
-  const saveEditHoliday = (index) => {
-    const { date, name } = editingHolidayDraft;
-    if (!withinYmdRange(date, yearRangeMinYmd, yearRangeMaxYmd)) {
-      toast.push(`Date must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
+  const saveEditDayOff = (kind, index) => {
+    const { start, end, name } = editingDayOffDraft;
+    if (!start || !name.trim()) {
+      toast.push('Enter start date and name.', 'error');
       return;
     }
-    const next = [...customHolidays];
-    next[index] = { ...next[index], date, name };
-    setCustomHolidays(next);
-    setEditingHolidayIndex(null);
-    setEditingHolidayDraft({ date: '', name: '' });
-    queuePersist(300);
-  };
-
-  const addBreak = () => {
-    if (!newBreakStart || !newBreakEnd || !newBreakName.trim()) {
-      toast.push('Enter start, end, and name.', 'error');
-      return;
+    const classified = classifyDaysOffEntry(start, end, name);
+    const isRange = classified.kind === 'break';
+    if (!validateDayOffDates(classified.start || classified.date, classified.end, isRange)) return;
+    const oldItem = kind === 'holiday' ? customHolidays[index] : customBreaks[index];
+    if (classified.kind === kind) {
+      if (kind === 'holiday') {
+        const next = [...customHolidays];
+        next[index] = { ...next[index], date: classified.date, name: classified.name };
+        setCustomHolidays(next);
+      } else {
+        const next = [...customBreaks];
+        next[index] = { ...next[index], start: classified.start, end: classified.end, name: classified.name };
+        setCustomBreaks(next);
+      }
+    } else {
+      if (oldItem?.id) deleteExclusion(oldItem.id).catch(() => {});
+      if (kind === 'holiday') {
+        setCustomHolidays(customHolidays.filter((_, i) => i !== index));
+        setCustomBreaks([
+          ...customBreaks,
+          { start: classified.start, end: classified.end, name: classified.name },
+        ]);
+      } else {
+        setCustomBreaks(customBreaks.filter((_, i) => i !== index));
+        setCustomHolidays([
+          ...customHolidays,
+          { date: classified.date, name: classified.name, type: 'CUSTOM_HOLIDAY' },
+        ]);
+      }
     }
-    if (newBreakStart > newBreakEnd) {
-      toast.push('End date must be on or after start.', 'error');
-      return;
-    }
-    if (!withinYmdRange(newBreakStart, yearRangeMinYmd, yearRangeMaxYmd) || !withinYmdRange(newBreakEnd, yearRangeMinYmd, yearRangeMaxYmd)) {
-      toast.push(`Dates must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
-      return;
-    }
-    setCustomBreaks([
-      ...customBreaks,
-      { start: newBreakStart, end: newBreakEnd, name: newBreakName.trim() },
-    ]);
-    setNewBreakStart('');
-    setNewBreakEnd('');
-    setNewBreakName('');
-    setAddingBreak(false);
-    queuePersist(300);
-  };
-
-  const removeBreak = (index) => {
-    const b = customBreaks[index];
-    setCustomBreaks(customBreaks.filter((_, i) => i !== index));
-    if (b?.id) {
-      deleteExclusion(b.id).catch(() => {});
-    }
-    queuePersist(300);
-  };
-
-  const startEditBreak = (index) => {
-    setEditingBreakIndex(index);
-    setEditingBreakDraft({ start: customBreaks[index].start, end: customBreaks[index].end, name: customBreaks[index].name });
-  };
-  const cancelEditBreak = () => {
-    setEditingBreakIndex(null);
-    setEditingBreakDraft({ start: '', end: '', name: '' });
-  };
-  const saveEditBreak = (index) => {
-    const { start, end, name } = editingBreakDraft;
-    if (!withinYmdRange(start, yearRangeMinYmd, yearRangeMaxYmd) || !withinYmdRange(end, yearRangeMinYmd, yearRangeMaxYmd)) {
-      toast.push(`Dates must be between ${yearRangeMinYmd} and ${yearRangeMaxYmd}.`, 'error');
-      return;
-    }
-    const next = [...customBreaks];
-    next[index] = { ...next[index], start, end, name };
-    setCustomBreaks(next);
-    setEditingBreakIndex(null);
-    setEditingBreakDraft({ start: '', end: '', name: '' });
+    resetDayOffEdit();
     queuePersist(300);
   };
 
@@ -1947,13 +2015,27 @@ export default function PlannerSettingsContent({
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   };
-  const pageTitleStyle = {
-    ...(embeddedInFamily
-      ? { fontSize: 16, fontWeight: '700' }
-      : SettingsTypography.pageTitle),
-    color: embeddedInFamily ? '#0F172A' : '#111827',
-    marginBottom: embeddedInFamily ? 14 : SettingsLayout.dividerSpacing,
-    fontFamily: Platform.OS === 'web' ? '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' : undefined,
+  const pageYearNavRowStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  };
+  const pageYearNavBtnStyle = {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  };
+  const pageYearNavTitleStyle = {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#111827',
+    letterSpacing: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   };
   const chip = (active) => ({
     paddingVertical: embeddedInModal ? 4 : 5,
@@ -2058,22 +2140,26 @@ export default function PlannerSettingsContent({
     }),
   };
   const addOutlineButtonStyle = {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    height: 30,
-    paddingHorizontal: 0,
+    minHeight: 30,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     borderRadius: 999,
-    borderWidth: 0,
-    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
     alignSelf: 'flex-start',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
+      transition: 'all 0.2s ease',
     }),
   };
   const addOutlineButtonTextStyle = {
     fontSize: 13,
-    fontWeight: '600',
-    color: ACCENT,
+    fontWeight: '500',
+    color: '#374151',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -2111,6 +2197,25 @@ export default function PlannerSettingsContent({
     attendanceTrackingMode === ATTENDANCE_MODES.SUBJECT || targetScope === 'per_subject';
   const isClassDayAttendanceActive = !isPerSubjectAttendanceActive;
   const attendanceModeLabel = isPerSubjectAttendanceActive ? 'Per subject' : 'Total class days';
+  const schoolYearHeaderLabel = selectedSchoolYearLabel
+    ? `${selectedSchoolYearLabel} School Year`
+    : 'School Year';
+  const isAtCurrentSchoolYear =
+    normalizeSchoolYearLabel(selectedSchoolYearLabel) === currentSchoolYearLabel;
+  const canShiftSchoolYear = !isSchoolYearLocked && !readOnly;
+
+  const shiftSelectedSchoolYear = useCallback((direction) => {
+    if (!canShiftSchoolYear) return;
+    setSelectedSchoolYearLabel((prev) =>
+      shiftSchoolYearLabel(prev || currentSchoolYearLabel, direction)
+    );
+  }, [canShiftSchoolYear, currentSchoolYearLabel]);
+
+  const jumpToCurrentSchoolYear = useCallback(() => {
+    if (!canShiftSchoolYear || isAtCurrentSchoolYear) return;
+    setSelectedSchoolYearLabel(currentSchoolYearLabel);
+  }, [canShiftSchoolYear, isAtCurrentSchoolYear, currentSchoolYearLabel]);
+
   if (loading && embeddedInModal) {
     return (
       <View style={{ padding: 20, alignItems: 'center' }}>
@@ -2160,66 +2265,62 @@ export default function PlannerSettingsContent({
           </View>
         ) : null}
         {!embeddedInModal && !hidePageTitle ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={pageTitleStyle}>{pageTitle || 'Planning Preferences'}</Text>
-            {savedIndicator && (
-              <Text style={{ fontSize: 13, color: '#10b981', fontWeight: '500' }}>Saved</Text>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: SettingsLayout.dividerSpacing,
+            }}
+          >
+            {isSchoolYearLocked ? (
+              <Text style={pageYearNavTitleStyle}>{schoolYearHeaderLabel}</Text>
+            ) : (
+              <View style={pageYearNavRowStyle}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <TouchableOpacity
+                    style={[pageYearNavBtnStyle, !canShiftSchoolYear && { opacity: 0.35 }]}
+                    onPress={() => shiftSelectedSchoolYear(-1)}
+                    disabled={!canShiftSchoolYear}
+                    accessibilityRole="button"
+                    accessibilityLabel="Previous school year"
+                    {...(Platform.OS === 'web' && { cursor: canShiftSchoolYear ? 'pointer' : 'default' })}
+                  >
+                    <ChevronLeft size={22} color="#A6AFBF" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[pageYearNavBtnStyle, !canShiftSchoolYear && { opacity: 0.35 }]}
+                    onPress={() => shiftSelectedSchoolYear(1)}
+                    disabled={!canShiftSchoolYear}
+                    accessibilityRole="button"
+                    accessibilityLabel="Next school year"
+                    {...(Platform.OS === 'web' && { cursor: canShiftSchoolYear ? 'pointer' : 'default' })}
+                  >
+                    <ChevronRight size={22} color="#A6AFBF" />
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  onPress={jumpToCurrentSchoolYear}
+                  disabled={!canShiftSchoolYear || isAtCurrentSchoolYear}
+                  accessibilityRole="button"
+                  accessibilityLabel="Return to current school year"
+                  {...(Platform.OS === 'web' && {
+                    cursor: canShiftSchoolYear && !isAtCurrentSchoolYear ? 'pointer' : 'default',
+                  })}
+                >
+                  <Text style={pageYearNavTitleStyle}>{schoolYearHeaderLabel}</Text>
+                </TouchableOpacity>
+              </View>
             )}
+            {savedIndicator ? (
+              <Text style={{ fontSize: 13, color: '#10b981', fontWeight: '500' }}>Saved</Text>
+            ) : null}
           </View>
         ) : null}
         {/* Learning defaults */}
         <View style={[planningSectionStyle, planningSectionFirstStyle]}>
           <View style={planningSectionHeaderStyle}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>Learning defaults</Text>
-              <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>•</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                {isSchoolYearLocked ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>
-                      {selectedSchoolYearLabel ? `${selectedSchoolYearLabel} School Year` : 'School Year'}
-                    </Text>
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    ref={schoolYearTriggerRef}
-                    onPress={() => {
-                      if (showSchoolYearDropdown) {
-                        setShowSchoolYearDropdown(false);
-                        return;
-                      }
-                      const triggerNode = schoolYearTriggerRef.current;
-                      if (triggerNode && typeof triggerNode.measureInWindow === 'function') {
-                        triggerNode.measureInWindow((x, y, width, height) => {
-                          setSchoolYearMenuAnchor({ x, y, width, height });
-                          setShowSchoolYearDropdown(true);
-                        });
-                      } else {
-                        setSchoolYearMenuAnchor(null);
-                        setShowSchoolYearDropdown(true);
-                      }
-                    }}
-                    style={{ flexDirection: 'row', alignItems: 'center' }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>
-                      {selectedSchoolYearLabel ? `${selectedSchoolYearLabel} School Year` : 'School Year'}
-                    </Text>
-                    <View
-                      style={{
-                        marginLeft: 2,
-                        marginTop: -7,
-                        width: 16,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
-                    </View>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
+            <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 0 }]}>Learning defaults</Text>
           </View>
           <View style={planningSectionBodyStyle}>
           <View style={planningGridStyle}>
@@ -2612,6 +2713,127 @@ export default function PlannerSettingsContent({
                 />
               </View>
             </View>
+
+            <View style={[daysOffRowStyle, { marginTop: 12 }]}>
+              <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 8 }]}>
+                {PLANNING_PREFERENCES_UI.customDaysOffListTitle}
+              </Text>
+              {visibleDaysOffEntries.length === 0 && !addingDayOff ? (
+                <Text style={[mutedMetaTextStyle, { marginBottom: 8 }]}>No custom days off yet</Text>
+              ) : null}
+              {visibleDaysOffEntries.map((entry) => (
+                <View key={`${entry.kind}-${entry.id || entry.index}`} style={{ marginBottom: 8 }}>
+                  {isEditingSameDayOff(editingDayOff, entry) ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <PlannerPreferenceDateField
+                        value={editingDayOffDraft.start}
+                        onChange={(v) => setEditingDayOffDraft((d) => ({ ...d, start: v }))}
+                        placeholder="Start"
+                        borderColor={BORDER}
+                        textColor={TEXT_BLACK}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={inputStyle}
+                        width={100}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
+                      />
+                      <PlannerPreferenceDateField
+                        value={editingDayOffDraft.end}
+                        onChange={(v) => setEditingDayOffDraft((d) => ({ ...d, end: v }))}
+                        placeholder="End (optional)"
+                        borderColor={BORDER}
+                        textColor={TEXT_BLACK}
+                        mutedColor="rgba(15,23,42,0.4)"
+                        style={inputStyle}
+                        width={120}
+                        minDate={yearRangeMinYmd}
+                        maxDate={yearRangeMaxYmd}
+                      />
+                      <TextInput
+                        value={editingDayOffDraft.name}
+                        onChangeText={(v) => setEditingDayOffDraft((d) => ({ ...d, name: v }))}
+                        placeholder={PLANNING_PREFERENCES_UI.dayNamePlaceholder}
+                        style={[inputStyle, { flex: 1, minWidth: 100 }]}
+                        placeholderTextColor="rgba(15,23,42,0.4)"
+                      />
+                      <TouchableOpacity
+                        onPress={() => saveEditDayOff(entry.kind, entry.index)}
+                        style={{ padding: 8 }}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Check size={18} color="#10b981" />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={resetDayOffEdit} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                        <X size={18} color={MUTED} />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={settingRowStyle}>
+                      <Text style={[settingRowLabelStyle, { fontWeight: '400' }]}>
+                        {formatDaysOffEntryLabel(entry)}
+                      </Text>
+                      <View style={rowActionButtonsStyle}>
+                        <TouchableOpacity onPress={() => startEditDayOff(entry)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Pencil size={16} color="#475569" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => removeDayOff(entry.kind, entry.index)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                          <Trash2 size={16} color="#B42318" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ))}
+              {addingDayOff ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                  <PlannerPreferenceDateField
+                    value={newDayOffStart}
+                    onChange={setNewDayOffStart}
+                    placeholder="Start"
+                    borderColor={BORDER}
+                    textColor={TEXT_BLACK}
+                    mutedColor="rgba(15,23,42,0.4)"
+                    style={inputStyle}
+                    width={100}
+                    minDate={yearRangeMinYmd}
+                    maxDate={yearRangeMaxYmd}
+                  />
+                  <PlannerPreferenceDateField
+                    value={newDayOffEnd}
+                    onChange={setNewDayOffEnd}
+                    placeholder="End (optional)"
+                    borderColor={BORDER}
+                    textColor={TEXT_BLACK}
+                    mutedColor="rgba(15,23,42,0.4)"
+                    style={inputStyle}
+                    width={120}
+                    minDate={yearRangeMinYmd}
+                    maxDate={yearRangeMaxYmd}
+                  />
+                  <TextInput
+                    value={newDayOffName}
+                    onChangeText={setNewDayOffName}
+                    placeholder={PLANNING_PREFERENCES_UI.dayNamePlaceholder}
+                    style={[inputStyle, { flex: 1, minWidth: 120 }]}
+                    placeholderTextColor="rgba(15,23,42,0.4)"
+                  />
+                  <TouchableOpacity onPress={addDayOff} style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ACCENT, borderRadius: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                    <Check size={18} color="#FFFFFF" />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={resetDayOffForm} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
+                    <X size={18} color={MUTED} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => setAddingDayOff(true)}
+                  style={addOutlineButtonStyle}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={addOutlineButtonTextStyle}>+ {PLANNING_PREFERENCES_UI.addDayOff}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
         </View>
 
@@ -2922,311 +3144,6 @@ export default function PlannerSettingsContent({
             </View>
           </Modal>
         )}
-
-        {!isSchoolYearLocked && showSchoolYearDropdown && (
-          <Modal
-            animationType="none"
-            transparent
-            visible={showSchoolYearDropdown}
-            onRequestClose={() => setShowSchoolYearDropdown(false)}
-          >
-            <View style={{ flex: 1 }}>
-              <TouchableOpacity
-                activeOpacity={1}
-                onPress={() => setShowSchoolYearDropdown(false)}
-                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'transparent' }}
-              />
-              <View
-                style={{
-                  position: 'absolute',
-                  top: (schoolYearMenuAnchor?.y || 120) + (schoolYearMenuAnchor?.height || 32) + 4,
-                  left: schoolYearMenuAnchor?.x || 220,
-                  width: Math.max(176, Math.min(220, schoolYearMenuAnchor?.width || 0)),
-                  maxHeight: 260,
-                  borderWidth: 1,
-                  borderColor: BORDER,
-                  borderRadius: 10,
-                  backgroundColor: '#FFFFFF',
-                  shadowColor: '#000',
-                  shadowOpacity: 0.14,
-                  shadowRadius: 8,
-                  shadowOffset: { width: 0, height: 4 },
-                  elevation: 20,
-                }}
-              >
-                <ScrollView nestedScrollEnabled>
-                  {schoolYearOptions.map((label) => {
-                    const isActive = label === selectedSchoolYearLabel;
-                    return (
-                      <TouchableOpacity
-                        key={label}
-                        onPress={() => {
-                          setSelectedSchoolYearLabel(label);
-                          setShowSchoolYearDropdown(false);
-                        }}
-                        style={{
-                          minHeight: 40,
-                          paddingHorizontal: 12,
-                          paddingVertical: 10,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          backgroundColor: '#FFFFFF',
-                          borderBottomWidth: schoolYearOptions[schoolYearOptions.length - 1] === label ? 0 : 1,
-                          borderBottomColor: '#f3f4f6',
-                        }}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 14,
-                            color: isActive ? '#111827' : '#374151',
-                            fontWeight: isActive ? '700' : '400',
-                            ...(Platform.OS === 'web' && {
-                              fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                            }),
-                          }}
-                        >
-                          {label}
-                        </Text>
-                        {isActive ? <Check size={14} color="#111827" /> : null}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            </View>
-          </Modal>
-        )}
-
-        {/* Custom days (single-date exclusions) */}
-        <View style={[daysOffRowStyle, { marginTop: 0 }]}>
-          <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 2 }]}>Custom days off</Text>
-          <View>
-              {visibleCustomHolidays.length === 0 && !addingHoliday ? (
-                <Text style={{ fontSize: 13, color: TEXT_BLACK, marginBottom: 8 }}>No custom days yet</Text>
-              ) : null}
-              {visibleCustomHolidays.map((h, i) => (
-                <View key={h.id || i} style={{ marginBottom: 4 }}>
-                  {editingHolidayIndex === h._idx ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <PlannerPreferenceDateField
-                        value={editingHolidayDraft.date}
-                        onChange={(v) => setEditingHolidayDraft((d) => ({ ...d, date: v }))}
-                        placeholder="Select date"
-                        borderColor={BORDER}
-                        textColor={TEXT_BLACK}
-                        mutedColor="rgba(15,23,42,0.4)"
-                        style={inputStyle}
-                        width={120}
-                        minDate={yearRangeMinYmd}
-                        maxDate={yearRangeMaxYmd}
-                      />
-                      <TextInput
-                        value={editingHolidayDraft.name}
-                        onChangeText={(v) => setEditingHolidayDraft((d) => ({ ...d, name: v }))}
-                        placeholder="Name"
-                        style={[inputStyle, { flex: 1, minWidth: 100 }]}
-                        placeholderTextColor="rgba(15,23,42,0.4)"
-                      />
-                      <TouchableOpacity
-                        onPress={() => saveEditHoliday(h._idx)}
-                        style={{ padding: 8 }}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Check size={18} color="#10b981" />
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={cancelEditHoliday} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                        <X size={18} color={MUTED} />
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={[settingRowStyle, { marginBottom: 0 }]}>
-                      <Text style={[settingRowLabelStyle, { fontWeight: '400' }]}>
-                        {h.date} — {h.name}
-                      </Text>
-                      <View style={rowActionButtonsStyle}>
-                        <TouchableOpacity onPress={() => startEditHoliday(h._idx)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Pencil size={16} color="#475569" />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => removeHoliday(h._idx)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Trash2 size={16} color="#B42318" />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  )}
-                </View>
-              ))}
-              {addingHoliday ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                  <PlannerPreferenceDateField
-                    value={newHolidayDate}
-                    onChange={setNewHolidayDate}
-                    placeholder="Select date"
-                    borderColor={BORDER}
-                    textColor={TEXT_BLACK}
-                    mutedColor="rgba(15,23,42,0.4)"
-                    style={inputStyle}
-                    width={120}
-                    minDate={yearRangeMinYmd}
-                    maxDate={yearRangeMaxYmd}
-                  />
-                  <TextInput
-                    value={newHolidayName}
-                    onChangeText={setNewHolidayName}
-                    placeholder={PLANNING_PREFERENCES_UI.dayNamePlaceholder}
-                    style={[inputStyle, { flex: 1, minWidth: 120 }]}
-                    placeholderTextColor="rgba(15,23,42,0.4)"
-                  />
-                  <TouchableOpacity onPress={addHoliday} style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ACCENT, borderRadius: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                    <Check size={18} color="#FFFFFF" />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => { setAddingHoliday(false); setNewHolidayDate(''); setNewHolidayName(''); }} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                    <X size={18} color={MUTED} />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  onPress={() => setAddingHoliday(true)}
-                  style={addOutlineButtonStyle}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={[addOutlineButtonTextStyle, { color: LINK_PURPLE }]}>+ Add day</Text>
-                </TouchableOpacity>
-              )}
-          </View>
-        </View>
-
-        {/* Ranges (date-span exclusions) */}
-        <View style={[daysOffRowStyle, { marginTop: 0 }]}>
-          <Text style={[learningDefaultsFieldTitleStyle, { marginBottom: 2 }]}>Custom breaks</Text>
-          <View>
-              {visibleCustomBreaks.length === 0 && !addingBreak ? (
-                <Text style={[mutedMetaTextStyle, { marginBottom: 8 }]}>No custom ranges yet</Text>
-              ) : null}
-              {visibleCustomBreaks.map((b, i) => (
-                <View key={b.id || i} style={{ marginBottom: 8 }}>
-                  {editingBreakIndex === b._idx ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <PlannerPreferenceDateField
-                        value={editingBreakDraft.start}
-                        onChange={(v) => setEditingBreakDraft((d) => ({ ...d, start: v }))}
-                        placeholder="Start"
-                        borderColor={BORDER}
-                        textColor={TEXT_BLACK}
-                        mutedColor="rgba(15,23,42,0.4)"
-                        style={inputStyle}
-                        width={100}
-                        minDate={yearRangeMinYmd}
-                        maxDate={yearRangeMaxYmd}
-                      />
-                      <PlannerPreferenceDateField
-                        value={editingBreakDraft.end}
-                        onChange={(v) => setEditingBreakDraft((d) => ({ ...d, end: v }))}
-                        placeholder="End"
-                        borderColor={BORDER}
-                        textColor={TEXT_BLACK}
-                        mutedColor="rgba(15,23,42,0.4)"
-                        style={inputStyle}
-                        width={100}
-                        minDate={yearRangeMinYmd}
-                        maxDate={yearRangeMaxYmd}
-                      />
-                      <TextInput
-                        value={editingBreakDraft.name}
-                        onChangeText={(v) => setEditingBreakDraft((d) => ({ ...d, name: v }))}
-                        placeholder="Name"
-                        style={[inputStyle, { flex: 1, minWidth: 80 }]}
-                        placeholderTextColor="rgba(15,23,42,0.4)"
-                      />
-                      <TouchableOpacity
-                        onPress={() => saveEditBreak(b._idx)}
-                        style={{ padding: 8 }}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        <Check size={18} color="#10b981" />
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={cancelEditBreak} style={{ padding: 8 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                        <X size={18} color={MUTED} />
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={settingRowStyle}>
-                      <Text style={[settingRowLabelStyle, { fontWeight: '400' }]}>
-                        {b.start}–{b.end} {b.name}
-                      </Text>
-                      <View style={rowActionButtonsStyle}>
-                        <TouchableOpacity onPress={() => startEditBreak(b._idx)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Pencil size={16} color="#475569" />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => removeBreak(b._idx)} style={rowActionButtonStyle} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                          <Trash2 size={16} color="#B42318" />
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  )}
-                </View>
-              ))}
-              {addingBreak ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-                  <PlannerPreferenceDateField
-                    value={newBreakStart}
-                    onChange={setNewBreakStart}
-                    placeholder="Start"
-                    borderColor={BORDER}
-                    textColor={TEXT_BLACK}
-                    mutedColor="rgba(15,23,42,0.4)"
-                    style={inputStyle}
-                    width={100}
-                    minDate={yearRangeMinYmd}
-                    maxDate={yearRangeMaxYmd}
-                  />
-                  <PlannerPreferenceDateField
-                    value={newBreakEnd}
-                    onChange={setNewBreakEnd}
-                    placeholder="End"
-                    borderColor={BORDER}
-                    textColor={TEXT_BLACK}
-                    mutedColor="rgba(15,23,42,0.4)"
-                    style={inputStyle}
-                    width={100}
-                    minDate={yearRangeMinYmd}
-                    maxDate={yearRangeMaxYmd}
-                  />
-                  <TextInput
-                    value={newBreakName}
-                    onChangeText={setNewBreakName}
-                    placeholder={PLANNING_PREFERENCES_UI.rangeNamePlaceholder}
-                    style={[inputStyle, { flex: 1, minWidth: 80 }]}
-                    placeholderTextColor="rgba(15,23,42,0.4)"
-                  />
-                  <TouchableOpacity onPress={addBreak} style={{ paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ACCENT, borderRadius: 6 }} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-                    <Check size={18} color="#FFFFFF" />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setAddingBreak(false);
-                      setNewBreakStart('');
-                      setNewBreakEnd('');
-                      setNewBreakName('');
-                    }}
-                    style={{ padding: 8 }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <X size={18} color={MUTED} />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  onPress={() => setAddingBreak(true)}
-                  style={addOutlineButtonStyle}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Text style={[addOutlineButtonTextStyle, { color: LINK_PURPLE }]}>+ Add break</Text>
-                </TouchableOpacity>
-              )}
-          </View>
-        </View>
 
         {error && <Text style={{ color: '#DC2626', fontSize: 14, marginTop: 12 }}>{error}</Text>}
       </View>
