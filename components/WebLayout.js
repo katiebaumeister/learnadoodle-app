@@ -24,7 +24,6 @@ import GlobalNewMenu from './GlobalNewMenu';
 import AppShell from './layout/AppShell.js';
 import { resolveSection, getSectionNavTab, getSectionsForTab, SECTION_TITLE_BY_TAB } from './layout/sectionNavConfig';
 import SecondaryNavShell from './layout/SecondaryNavShell';
-import RightToolbar from './RightToolbar';
 import TaskCreateModal from './TaskCreateModal';
 import AssignmentSubmittalRequestModal from './subjects/AssignmentSubmittalRequestModal';
 import EventModal from './events/EventModal';
@@ -94,11 +93,6 @@ const EXPLORER_PARENT_STEPS = [
     targetId: 'explorer-tour-planner-new',
     title: 'Add events',
     body: 'Use + New to add activities and events to your calendar (and more).',
-  },
-  {
-    targetId: 'explorer-tour-right-toolbar',
-    title: 'Planning tools',
-    body: "Explore Learnadoodle's planning actions and analytics.",
   },
 ];
 
@@ -3448,14 +3442,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         return;
       }
       if (explorerParentStep === 1) {
-        const { error } = await persistExplorerTourMerge(authUserId, { parent: { step: 2 } });
-        if (!error) mergeExplorerTourInProfile({ parent: { step: 2 } });
-        setExplorerParentStep(2);
-        return;
-      }
-      if (explorerParentStep === 2) {
-        const { error } = await persistExplorerTourMerge(authUserId, { parent: { done: true, step: 3 } });
-        if (!error) mergeExplorerTourInProfile({ parent: { done: true, step: 3 } });
+        const { error } = await persistExplorerTourMerge(authUserId, { parent: { done: true, step: 2 } });
+        if (!error) mergeExplorerTourInProfile({ parent: { done: true, step: 2 } });
         setExplorerParentTourOpen(false);
       }
     } catch (e) {
@@ -3587,15 +3575,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       })()
     : currentView;
 
-  /** Icon keys on RightToolbar — highlight purple; tasks/backlog are legacy and have no icon. */
-  const rightToolbarActiveKeyForIcons =
-    activeRightTool === 'tasks' || activeRightTool === 'backlog'
-      ? null
-      : (currentView === 'plan-year' ? 'build-plan' :
-        currentView === 'edit-year' ? 'edit-plan' :
-          currentView === 'attendance' ? 'attendance' :
-            currentView === 'attendance-drilldown' ? 'attendance-drilldown' :
-            activeRightTool);
   /** When true, top segmented view chips should not use purple (full-screen plan/attendance view is primary). */
   const rightToolbarClaimsPlannerSegmentFocus =
     (activeRightTool != null && !['tasks', 'backlog'].includes(activeRightTool)) ||
@@ -4734,8 +4713,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
             </View>
           )}
           
-          {/* Main Content + Right Toolbar */}
-          <View style={{ flex: 1, flexDirection: isCalendarScreen ? 'row' : 'column', minWidth: 0 }}>
+          {/* Main Content */}
+          <View style={{ flex: 1, flexDirection: 'column', minWidth: 0 }}>
             <View style={{ flex: 1, minWidth: 0, position: 'relative' }}>
               <View
                 style={{
@@ -4904,87 +4883,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 </View>
               ) : null}
             </View>
-            {isCalendarScreen && (
-              <View
-                {...(Platform.OS === 'web' ? { nativeID: 'explorer-tour-right-toolbar' } : {})}
-                style={{
-                width: 64,
-                flexShrink: 0,
-                borderLeftWidth: 1,
-                borderLeftColor: 'rgba(15,23,42,0.08)',
-                backgroundColor: '#FFFFFF',
-                flexDirection: 'column',
-                ...(Platform.OS === 'web' && { minHeight: 360 }),
-              }}>
-                <RightToolbar
-                  activeTool={rightToolbarActiveKeyForIcons}
-                  onTasks={() => {
-                    if (currentView === 'plan-year' || currentView === 'edit-year') resetInlinePlanYearOpenState();
-                    setActiveRightTool('tasks');
-                    setCurrentView('tasks');
-                    if (typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
-                      window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'today' } }));
-                    }
-                  }}
-                  onBacklog={() => {
-                    if (currentView === 'plan-year' || currentView === 'edit-year') resetInlinePlanYearOpenState();
-                    setActiveRightTool('backlog');
-                    setCurrentView('tasks');
-                    if (typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
-                      window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'backlog' } }));
-                    }
-                  }}
-                  onRebalance={() => {
-                    setActiveRightTool('rebalance');
-                    setRebalanceEvent(null);
-                    setRebalanceYearPlanId(null);
-                    setShowRebalanceModal(true);
-                  }}
-                  onBuildPlan={() => {
-                    handleTabChange('settings', 'planner-settings');
-                  }}
-                  onEditPlan={() => {
-                    handleTabChange('settings', 'planner-settings');
-                  }}
-                  onAttendance={() => {
-                    if (currentView === 'plan-year' || currentView === 'edit-year') resetInlinePlanYearOpenState();
-                    setActiveRightTool('attendance');
-                    setCurrentView('attendance');
-                    setDefaultView('attendance');
-                    if (typeof window !== 'undefined') {
-                      const url = new URL(window.location);
-                      url.searchParams.set('view', 'attendance');
-                      window.history.pushState({}, '', url);
-                      window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'attendance' }));
-                    }
-                  }}
-                  onExport={() => {
-                    const m = currentMonth.getMonth();
-                    const y = currentMonth.getFullYear();
-                    const firstDay = `${y}-${String(m + 1).padStart(2, '0')}-01`;
-                    const lastDay = new Date(y, m + 1, 0);
-                    const lastDayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
-                    setExportStartDate(firstDay);
-                    setExportEndDate(lastDayStr);
-                    setExportModalSubjectId(null);
-                    setExportModalSubjectName(null);
-                    setShowExportModal(true);
-                  }}
-                  onSettings={() => handleTabChange('settings', 'profile')}
-                  onPackWeek={() => setShowPackWeekModal(true)}
-                  onCatchUp={() => setShowCatchUpModal(true)}
-                  onHealth={() => setShowAIToolsModal(true)}
-                  children={children}
-                  selectedChildren={selectedCalendarChildren}
-                  onChildFilterChange={setSelectedCalendarChildren}
-                  familyId={familyId}
-                  connectedProviderIds={plannerConnectedProviderIds}
-                  onConnectProvider={handlePlannerProviderConnect}
-                />
-              </View>
-            )}
           </View>
         </AppShell>
 
@@ -4998,7 +4896,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         targetId={EXPLORER_PARENT_STEPS[explorerParentStep]?.targetId}
         title={EXPLORER_PARENT_STEPS[explorerParentStep]?.title ?? ''}
         body={EXPLORER_PARENT_STEPS[explorerParentStep]?.body ?? ''}
-        primaryLabel={explorerParentStep >= 2 ? 'Done' : 'Next'}
+        primaryLabel={explorerParentStep >= 1 ? 'Done' : 'Next'}
         onNext={handleExplorerParentNext}
         onSkip={handleExplorerParentSkip}
       />

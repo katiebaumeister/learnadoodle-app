@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
-import { Settings, ChevronLeft } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import FamilyPanel from '../settings/FamilyPanel';
 import FamilyChildView from './FamilyChildView';
 import FamilyAcademicYearsView from './FamilyAcademicYearsView';
@@ -110,10 +110,6 @@ export default function FamilySectionView({
     if (!parsed.childId) return;
     navigateSection(buildChildSectionKey(parsed.childId, tabKey));
   }, [navigateSection, parsed.childId]);
-
-  const handleOpenSettings = useCallback(() => {
-    onTabChange?.('settings', 'profile');
-  }, [onTabChange]);
 
   const handleNavigateLearning = useCallback(() => {
     onTabChange?.('subjects', 'subjects');
@@ -221,20 +217,7 @@ export default function FamilySectionView({
             </TouchableOpacity>
             <Text style={styles.childTitle}>{subViewTitle}</Text>
           </View>
-        ) : (
-          <View style={styles.pageHeader}>
-            <View style={styles.titleRow}>
-              <TouchableOpacity
-                style={styles.settingsButton}
-                onPress={handleOpenSettings}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Settings size={15} color="#374151" />
-                <Text style={styles.settingsButtonText}>Family Settings</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+        ) : null}
 
         <View style={styles.content}>{renderContent()}</View>
       </ScrollView>
@@ -260,29 +243,6 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 0,
     backgroundColor: '#FFFFFF',
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 16,
-    marginBottom: 0,
-  },
-  settingsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    backgroundColor: '#FFFFFF',
-  },
-  settingsButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
   },
   backRow: {
     flexDirection: 'row',

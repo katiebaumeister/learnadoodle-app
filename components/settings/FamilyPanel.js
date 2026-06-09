@@ -3366,12 +3366,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                 </View>
               );
             })() : null}
-
-            {propUserRole === 'parent' && !isChildRestrictedView && children.length > 0 && !viewingAsChildId ? (
-              <Text style={styles.viewAsChildHint}>
-                Preview the app as your child to see their home, learning, and permissions.
-              </Text>
-            ) : null}
             
             {/* Parents Section */}
             <View style={styles.membersSectionRow}>
@@ -3384,7 +3378,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       onPress={() => openIdCardModal('parent', parents)} 
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <CreditCard size={16} color="#374151" />
+                      <CreditCard size={16} color="#5AAEF2" />
                       <Text style={styles.membersInviteButtonText}>Generate ID</Text>
                     </TouchableOpacity>
                   )}
@@ -3398,7 +3392,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       }} 
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Plus size={16} color="#374151" />
+                      <Plus size={16} color="#5AAEF2" />
                       <Text style={styles.membersInviteButtonText}>{isSelfManagedStudent ? 'Request Parent' : 'Invite Parent'}</Text>
                     </TouchableOpacity>
                   )}
@@ -3518,7 +3512,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       onPress={() => openIdCardModal('child', children)} 
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <CreditCard size={16} color="#374151" />
+                      <CreditCard size={16} color="#5AAEF2" />
                       <Text style={styles.membersInviteButtonText}>Generate ID</Text>
                     </TouchableOpacity>
                   )}
@@ -3529,7 +3523,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         onPress={() => setShowAddChildModal(true)} 
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Plus size={16} color="#374151" />
+                        <Plus size={16} color="#5AAEF2" />
                         <Text style={styles.membersInviteButtonText}>Add Child</Text>
                       </TouchableOpacity>
                       <TouchableOpacity 
@@ -3537,7 +3531,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                         onPress={() => handleOpenChildInviteModal(null)}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        <Plus size={16} color="#374151" />
+                        <Plus size={16} color="#5AAEF2" />
                         <Text style={styles.membersInviteButtonText}>Invite Child</Text>
                       </TouchableOpacity>
                     </>
@@ -3675,7 +3669,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           }
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
-                          <Eye size={14} color="#4F46E5" />
+                          <Eye size={14} color="#5AAEF2" />
                           <Text style={styles.viewAsChildButtonText}>
                             {viewingAsChildId != null && String(viewingAsChildId) === String(child.id)
                               ? 'Viewing'
@@ -3710,7 +3704,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       onPress={() => openIdCardModal('tutor', tutors)} 
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <CreditCard size={16} color="#374151" />
+                      <CreditCard size={16} color="#5AAEF2" />
                       <Text style={styles.membersInviteButtonText}>Generate ID</Text>
                     </TouchableOpacity>
                   )}
@@ -3723,7 +3717,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     }} 
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <Plus size={16} color="#374151" />
+                    <Plus size={16} color="#5AAEF2" />
                     <Text style={styles.membersInviteButtonText}>Invite Tutor</Text>
                   </TouchableOpacity>
                 </View>
@@ -6386,15 +6380,6 @@ function createStyles(tokens) {
       color: '#111827',
       fontWeight: '700',
     },
-    viewAsChildHint: {
-      fontSize: 14,
-      color: '#64748B',
-      marginBottom: 20,
-      lineHeight: 20,
-      ...(Platform.OS === 'web' && {
-        fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }),
-    },
     viewAsChildBanner: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -6439,24 +6424,25 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 5,
-      paddingVertical: 6,
-      paddingHorizontal: 10,
-      borderRadius: 0,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 999,
       borderWidth: 1,
-      borderColor: 'rgba(99, 102, 241, 0.22)',
-      backgroundColor: '#FFFFFF',
+      borderStyle: 'dashed',
+      borderColor: '#9ED3FF',
+      backgroundColor: 'rgba(129, 193, 225, 0.18)',
     },
     viewAsChildButtonHovered: {
-      backgroundColor: '#EEF2FF',
+      backgroundColor: 'rgba(129, 193, 225, 0.28)',
     },
     viewAsChildButtonActive: {
-      backgroundColor: '#EEF2FF',
-      borderColor: 'rgba(99, 102, 241, 0.35)',
+      backgroundColor: 'rgba(129, 193, 225, 0.32)',
+      borderColor: '#81C1E1',
     },
     viewAsChildButtonText: {
       fontSize: 13,
       fontWeight: '600',
-      color: '#4F46E5',
+      color: '#5AAEF2',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -6465,17 +6451,21 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 0,
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      borderRadius: 999,
       borderWidth: 1,
-      borderColor: '#e5e7eb',
-      backgroundColor: '#ffffff',
+      borderStyle: 'dashed',
+      borderColor: '#9ED3FF',
+      backgroundColor: 'rgba(129, 193, 225, 0.18)',
+      ...(Platform.OS === 'web' && {
+        cursor: 'pointer',
+      }),
     },
     membersInviteButtonText: {
       fontSize: 14,
-      fontWeight: '500',
-      color: '#374151',
+      fontWeight: '600',
+      color: '#5AAEF2',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -6621,7 +6611,7 @@ function createStyles(tokens) {
     memberRowResendText: {
       fontSize: 12,
       fontWeight: '600',
-      color: '#6366F1',
+      color: '#5AAEF2',
       ...(Platform.OS === 'web' && {
         fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
@@ -6782,12 +6772,12 @@ function createStyles(tokens) {
       gap: 10,
       paddingVertical: 10,
       paddingHorizontal: 12,
-      borderRadius: 8,
+      borderRadius: 999,
       marginBottom: 6,
       position: 'relative',
     },
     sidebarButtonActive: {
-      backgroundColor: '#f3f4f6',
+      backgroundColor: 'rgba(129, 193, 225, 0.18)',
     },
     sidebarButtonText: {
       fontSize: 15,
@@ -6798,7 +6788,7 @@ function createStyles(tokens) {
       }),
     },
     sidebarButtonTextActive: {
-      color: '#111827',
+      color: '#5AAEF2',
       fontWeight: '600',
     },
     sidebarSubscriptionContent: {
@@ -7514,12 +7504,13 @@ function createStyles(tokens) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 20,
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      borderRadius: 999,
       borderWidth: 1,
-      borderColor: '#e5e7eb',
-      backgroundColor: '#ffffff',
+      borderStyle: 'dashed',
+      borderColor: '#9ED3FF',
+      backgroundColor: 'rgba(129, 193, 225, 0.18)',
       alignSelf: 'flex-start',
       marginTop: 0,
       ...(Platform.OS === 'web' && {
@@ -7529,8 +7520,8 @@ function createStyles(tokens) {
     },
     profileResetPasswordButtonText: {
       fontSize: 14,
-      fontWeight: '500',
-      color: '#374151',
+      fontWeight: '600',
+      color: '#5AAEF2',
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),

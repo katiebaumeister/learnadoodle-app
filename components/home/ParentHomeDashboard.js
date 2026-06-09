@@ -1,15 +1,21 @@
 /**
- * Parent home dashboard — two-column layout with Today, Family Snapshot, and Subject Snapshot.
+ * Parent home dashboard — layout helpers and right-rail subject snapshot.
  */
 
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
 import {
   BookOpen,
   Clock,
   FileText,
   Plus,
+  MoreVertical,
+  Eye,
+  Edit2,
 } from 'lucide-react';
+import { useSession } from '../../contexts/SessionContext';
+import ChildAvatarCluster from '../ui/ChildAvatarCluster';
+import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 
 function formatTime(timeString) {
@@ -88,7 +94,7 @@ function DashboardCard({ title, headerRight, children, style, fillRail = false }
     <View style={[styles.card, fillRail && styles.railCard, style]}>
       {(title || headerRight) && (
         <View style={[styles.cardHeader, fillRail && styles.railCardHeader]}>
-          {title ? <Text style={styles.cardTitle}>{title}</Text> : <View />}
+          {title ? <Text style={[styles.cardTitle, fillRail && styles.railSectionTitle]}>{title}</Text> : <View />}
           {headerRight || null}
         </View>
       )}
@@ -156,130 +162,134 @@ function HeaderLink({ label, onPress }) {
   );
 }
 
+function SubjectSnapshotRow({ row, familyChildren = [], onNavigate, onEditSubject, onAddEventForSubject }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef(null);
+
+  const runMenuAction = (action) => {
+    setMenuOpen(false);
+    action?.();
+  };
+
+  return (
+    <View style={styles.snapshotRow}>
+      <View style={styles.snapshotTop}>
+        <View style={styles.snapshotTextBlock}>
+          <Text style={styles.snapshotName} numberOfLines={1}>
+            {row.name}
+          </Text>
+          {row.childIds?.length > 0 ? (
+            <View style={styles.snapshotChildRow}>
+              <ChildAvatarCluster
+                childIds={row.childIds}
+                familyChildren={familyChildren}
+                size={22}
+                overlap={-6}
+              />
+              {row.childLabel ? (
+                <Text style={styles.snapshotChildNames} numberOfLines={1}>
+                  {row.childLabel}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+        <View style={styles.snapshotMenuWrap}>
+          <TouchableOpacity
+            ref={menuBtnRef}
+            style={[styles.snapshotMenuBtn, menuOpen && styles.snapshotMenuBtnActive]}
+            onPress={(e) => {
+              e?.stopPropagation?.();
+              setMenuOpen((open) => !open);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`${row.name} actions`}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <MoreVertical size={16} color="#94A3B8" />
+          </TouchableOpacity>
+          <Dropdown
+            visible={menuOpen}
+            triggerRef={menuBtnRef}
+            onClose={() => setMenuOpen(false)}
+            placement="bottom-end"
+            width={220}
+            variant="context"
+          >
+            <DropdownItem
+              icon={Eye}
+              label="View details"
+              onPress={() => runMenuAction(() => onNavigate?.(`subject-${row.subjectId}`))}
+            />
+            <DropdownItem
+              icon={Edit2}
+              label="Edit subject"
+              onPress={() => runMenuAction(() => onEditSubject?.(row))}
+            />
+            <DropdownItem
+              icon={Plus}
+              label="Add event"
+              onPress={() => runMenuAction(() => onAddEventForSubject?.(row))}
+            />
+          </Dropdown>
+        </View>
+      </View>
+      {row.targetDays ? (
+        <>
+          <View style={styles.progressTrack}>
+            <View
+              style={[
+                styles.progressFill,
+                row.tone === 'behind' && styles.progressFillBehind,
+                row.tone === 'ahead' && styles.progressFillAhead,
+                { width: `${Math.min(100, row.progressPct || 0)}%` },
+              ]}
+            />
+          </View>
+          <Text style={styles.progressCaption}>
+            {row.plannedDays}/{row.targetDays} days
+          </Text>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
 export function ParentHomeRightRail({
-  familySnapshot = [],
   subjectSnapshot = [],
+  userRole = null,
+  familyChildren = [],
   onNavigate,
+  onEditSubject,
+  onAddEventForSubject,
 }) {
+  const session = useSession();
+  const resolvedRole = userRole ?? session?.effective_role ?? '';
+  const isChildRole =
+    resolvedRole === 'child' ||
+    resolvedRole === 'student' ||
+    session?.role_flags?.isChild === true;
+  const subjectsTitle = isChildRole ? 'Your Subjects' : "Your Family's Subjects";
+
   return (
     <View style={styles.railStack}>
       <DashboardCard
-        title="Family Snapshot"
+        title={subjectsTitle}
         fillRail
-        headerRight={<HeaderLink label="View all" onPress={() => onNavigate?.('family', 'members')} />}
-      >
-        {familySnapshot.length === 0 ? (
-          <Text style={styles.emptyLine}>Add children to see progress at a glance.</Text>
-        ) : (
-          familySnapshot.map((row) => (
-            <View key={row.childId} style={styles.snapshotRow}>
-              <View style={styles.snapshotTop}>
-                <View style={styles.snapshotIdentity}>
-                  <View
-                    style={[
-                      styles.snapshotAvatar,
-                      { backgroundColor: row.avatarColor || '#94A3B8' },
-                    ]}
-                  >
-                    <Text style={styles.snapshotAvatarText}>
-                      {(row.name || '?').charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                  <View>
-                    <Text style={styles.snapshotName}>{row.name}</Text>
-                    {row.gradeLabel ? (
-                      <Text style={styles.snapshotGrade}>{row.gradeLabel}</Text>
-                    ) : null}
-                  </View>
-                </View>
-                <Text
-                  style={[
-                    styles.snapshotStatus,
-                    row.tone === 'behind' && styles.snapshotStatusBehind,
-                    row.tone === 'ahead' && styles.snapshotStatusAhead,
-                    row.tone === 'on_track' && styles.snapshotStatusOnTrack,
-                  ]}
-                >
-                  {row.statusLabel}
-                </Text>
-              </View>
-              {row.targetDays ? (
-                <>
-                  <View style={styles.progressTrack}>
-                    <View
-                      style={[
-                        styles.progressFill,
-                        row.tone === 'behind' && styles.progressFillBehind,
-                        row.tone === 'ahead' && styles.progressFillAhead,
-                        { width: `${Math.min(100, row.progressPct || 0)}%` },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.progressCaption}>
-                    {row.plannedDays}/{row.targetDays} days
-                  </Text>
-                </>
-              ) : null}
-            </View>
-          ))
-        )}
-      </DashboardCard>
-
-      <DashboardCard
-        title="Subject Snapshot"
-        fillRail
-        headerRight={<HeaderLink label="View all" onPress={() => onNavigate?.('subjects')} />}
+        style={styles.railCardFull}
       >
         {subjectSnapshot.length === 0 ? (
           <Text style={styles.emptyLine}>Add subjects to see progress at a glance.</Text>
         ) : (
           subjectSnapshot.map((row) => (
-            <View key={row.subjectId} style={styles.snapshotRow}>
-              <View style={styles.snapshotTop}>
-                <View style={styles.snapshotIdentity}>
-                  <View style={[styles.snapshotAvatar, styles.subjectAvatar]}>
-                    <BookOpen size={16} color="#6366F1" />
-                  </View>
-                  <View style={styles.snapshotTextBlock}>
-                    <Text style={styles.snapshotName} numberOfLines={1}>
-                      {row.name}
-                    </Text>
-                    {row.childLabel ? (
-                      <Text style={styles.snapshotGrade} numberOfLines={1}>
-                        {row.childLabel}
-                      </Text>
-                    ) : null}
-                  </View>
-                </View>
-                <Text
-                  style={[
-                    styles.snapshotStatus,
-                    row.tone === 'behind' && styles.snapshotStatusBehind,
-                    row.tone === 'ahead' && styles.snapshotStatusAhead,
-                    row.tone === 'on_track' && styles.snapshotStatusOnTrack,
-                  ]}
-                >
-                  {row.statusLabel}
-                </Text>
-              </View>
-              {row.targetDays ? (
-                <>
-                  <View style={styles.progressTrack}>
-                    <View
-                      style={[
-                        styles.progressFill,
-                        row.tone === 'behind' && styles.progressFillBehind,
-                        row.tone === 'ahead' && styles.progressFillAhead,
-                        { width: `${Math.min(100, row.progressPct || 0)}%` },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.progressCaption}>
-                    {row.plannedDays}/{row.targetDays} days
-                  </Text>
-                </>
-              ) : null}
-            </View>
+            <SubjectSnapshotRow
+              key={row.subjectId}
+              row={row}
+              familyChildren={familyChildren}
+              onNavigate={onNavigate}
+              onEditSubject={onEditSubject}
+              onAddEventForSubject={onAddEventForSubject}
+            />
           ))
         )}
       </DashboardCard>
@@ -293,7 +303,6 @@ export default function ParentHomeDashboard({
   todayEvents = [],
   dueAssignments = [],
   pendingSubmissions = [],
-  familySnapshot = [],
   onNavigate,
   onAddEvent,
   onOpenEvent,
@@ -392,10 +401,7 @@ export default function ParentHomeDashboard({
           </DashboardCard>
         </View>
 
-        <ParentHomeRightRail
-          familySnapshot={familySnapshot}
-          onNavigate={onNavigate}
-        />
+        <ParentHomeRightRail />
       </View>
     </ScrollView>
   );
@@ -447,7 +453,7 @@ const styles = StyleSheet.create({
     }),
   },
   railStack: {
-    gap: 16,
+    gap: 0,
     width: '100%',
     flex: 1,
     minHeight: 0,
@@ -473,6 +479,17 @@ const styles = StyleSheet.create({
       height: 'calc((100% - 16px) / 2)',
       maxHeight: 'calc((100% - 16px) / 2)',
       minHeight: 'calc((100% - 16px) / 2)',
+    }),
+  },
+  railCardFull: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      height: '100%',
+      maxHeight: '100%',
+      minHeight: '100%',
+      flexGrow: 1,
+      flexShrink: 1,
     }),
   },
   railCardHeader: {
@@ -515,6 +532,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  railSectionTitle: {
+    color: '#1e293b',
+    letterSpacing: -0.2,
+    textTransform: 'none',
   },
   headerLink: {
     fontSize: 13,
@@ -623,58 +645,50 @@ const styles = StyleSheet.create({
   },
   snapshotTop: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 8,
   },
-  snapshotIdentity: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-    minWidth: 0,
+  snapshotMenuWrap: {
+    flexShrink: 0,
+    position: 'relative',
+    zIndex: 2,
   },
-  snapshotAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  snapshotMenuBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: -2,
   },
-  subjectAvatar: {
-    backgroundColor: '#EEF2FF',
+  snapshotMenuBtnActive: {
+    backgroundColor: '#F1F5F9',
   },
   snapshotTextBlock: {
     flex: 1,
     minWidth: 0,
+    gap: 4,
   },
-  snapshotAvatarText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  snapshotChildRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+  },
+  snapshotChildNames: {
+    fontSize: 12,
+    color: '#64748B',
+    flex: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   snapshotName: {
     fontSize: 14,
     fontWeight: '700',
     color: '#1E293B',
-  },
-  snapshotGrade: {
-    fontSize: 12,
-    color: '#64748B',
-  },
-  snapshotStatus: {
-    fontSize: 12,
-    fontWeight: '700',
-    flexShrink: 0,
-  },
-  snapshotStatusOnTrack: {
-    color: '#059669',
-  },
-  snapshotStatusBehind: {
-    color: '#EA580C',
-  },
-  snapshotStatusAhead: {
-    color: '#059669',
   },
   progressTrack: {
     height: 6,

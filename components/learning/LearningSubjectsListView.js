@@ -2,18 +2,16 @@ import React from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
   Platform,
 } from 'react-native';
-import { Search, Sparkles, Wrench, CalendarDays, Plus, X, ChevronLeft, ChevronRight } from 'lucide-react';
-import { colors } from '../../theme/colors';
+import { Plus, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import SubjectOverviewCard from '../subjects/SubjectOverviewCard';
 
 const BRAND_SKY_BLUE = '#81C1E1';
-const BRAND_SKY_BLUE_FAINT = 'rgba(129, 193, 225, 0.18)';
+const BRAND_SKY_BLUE_TEXT = '#5AAEF2';
 
 export default function LearningSubjectsListView({
   subjects = [],
@@ -39,9 +37,8 @@ export default function LearningSubjectsListView({
   selectedSchoolYear = null,
   onShiftSchoolYear,
   onJumpToCurrentSchoolYear,
+  onEditSchoolYear,
   isAtCurrentSchoolYear = false,
-  onFixGap,
-  onPlanWeek,
   emptyTitle = 'No subjects yet',
   emptyText = 'Create subjects to organize learning.',
 }) {
@@ -70,51 +67,34 @@ export default function LearningSubjectsListView({
                 <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
               </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              style={[
-                styles.yearNavTitleButton,
-                isAtCurrentSchoolYear && styles.yearNavTitleButtonDisabled,
-              ]}
-              onPress={onJumpToCurrentSchoolYear}
-              disabled={isAtCurrentSchoolYear}
-              accessibilityRole="button"
-              accessibilityLabel="Return to current school year"
-              {...(Platform.OS === 'web' && { cursor: isAtCurrentSchoolYear ? 'default' : 'pointer' })}
-            >
-              <Text style={styles.yearNavTitle}>{selectedSchoolYear} School Year</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.pageHeaderSpacer} />
-        )}
-        <View style={styles.pageHeaderActions}>
-          <View style={styles.searchWrap}>
-            <Search size={16} color="#94A3B8" />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search subjects..."
-              placeholderTextColor="#94A3B8"
-              value={searchQuery}
-              onChangeText={onSearchChange}
-              onSubmitEditing={onSearchSubmit}
-            />
-            {searchQuery.length > 0 ? (
-              <TouchableOpacity onPress={() => onSearchChange?.('')} hitSlop={8}>
-                <X size={16} color="#94A3B8" />
+            <View style={styles.yearNavTitleGroup}>
+              <TouchableOpacity
+                style={[
+                  styles.yearNavTitleButton,
+                  isAtCurrentSchoolYear && styles.yearNavTitleButtonDisabled,
+                ]}
+                onPress={onJumpToCurrentSchoolYear}
+                disabled={isAtCurrentSchoolYear}
+                accessibilityRole="button"
+                accessibilityLabel="Return to current school year"
+                {...(Platform.OS === 'web' && { cursor: isAtCurrentSchoolYear ? 'default' : 'pointer' })}
+              >
+                <Text style={styles.yearNavTitle}>{selectedSchoolYear} School Year</Text>
               </TouchableOpacity>
-            ) : null}
+              {onEditSchoolYear ? (
+                <TouchableOpacity
+                  style={styles.yearNavEditBtn}
+                  onPress={onEditSchoolYear}
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit school year"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Pencil size={14} color="#64748B" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
           </View>
-          {canManageSubjects ? (
-            <TouchableOpacity
-              style={styles.addBtn}
-              onPress={onAddSubject}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={16} color="#FFFFFF" />
-              <Text style={styles.addBtnText}>Add subject</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
+        ) : null}
       </View>
 
       {filterContent ? <View style={styles.filtersPanel}>{filterContent}</View> : null}
@@ -124,9 +104,9 @@ export default function LearningSubjectsListView({
           <Text style={styles.emptyTitle}>{emptyTitle}</Text>
           <Text style={styles.emptyText}>{emptyText}</Text>
           {canManageSubjects ? (
-            <TouchableOpacity style={styles.emptyBtn} onPress={onAddSubject}>
-              <Plus size={16} color="#2563EB" />
-              <Text style={styles.emptyBtnText}>Add subject</Text>
+            <TouchableOpacity style={[styles.addBtn, styles.emptyBtn]} onPress={onAddSubject}>
+              <Plus size={16} color={BRAND_SKY_BLUE_TEXT} />
+              <Text style={styles.addBtnText}>Add subject</Text>
             </TouchableOpacity>
           ) : null}
         </View>
@@ -158,26 +138,6 @@ export default function LearningSubjectsListView({
         </ScrollView>
       )}
 
-      <View style={styles.planningBanner}>
-        <View style={styles.planningBannerLeft}>
-          <View style={styles.planningIconWrap}>
-            <Sparkles size={18} color="#0F172A" />
-          </View>
-          <Text style={styles.planningText}>
-            Need help planning? Use Fix Gap to get back on track or Plan Week to organize upcoming lessons.
-          </Text>
-        </View>
-        <View style={styles.planningActions}>
-          <TouchableOpacity style={styles.planningBtn} onPress={onFixGap} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-            <Wrench size={15} color="#059669" />
-            <Text style={styles.planningBtnText}>Fix Gap</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.planningBtn} onPress={onPlanWeek} {...(Platform.OS === 'web' && { cursor: 'pointer' })}>
-            <CalendarDays size={15} color="#2563EB" />
-            <Text style={styles.planningBtnText}>Plan Week</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
     </View>
   );
 }
@@ -194,40 +154,8 @@ const styles = StyleSheet.create({
   pageHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 16,
     flexWrap: 'wrap',
-  },
-  pageHeaderSpacer: {
-    flex: 1,
-    minWidth: 0,
-  },
-  pageHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flexWrap: 'wrap',
-    justifyContent: 'flex-end',
-    marginLeft: 'auto',
-  },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    minWidth: 220,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: colors.text,
-    padding: 0,
-    ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
   },
   addBtn: {
     flexDirection: 'row',
@@ -236,16 +164,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12,
-    backgroundColor: BRAND_SKY_BLUE,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: BRAND_SKY_BLUE,
+    backgroundColor: 'rgba(255, 255, 255, 0.35)',
   },
   addBtnText: {
     fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    textTransform: 'uppercase',
+    fontWeight: '600',
+    color: BRAND_SKY_BLUE_TEXT,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      letterSpacing: '0.04em',
     }),
   },
   filtersPanel: {
@@ -263,6 +192,19 @@ const styles = StyleSheet.create({
   },
   yearNavBtn: {
     padding: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  yearNavTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  yearNavEditBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
@@ -311,71 +253,5 @@ const styles = StyleSheet.create({
   },
   emptyBtn: {
     marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    backgroundColor: '#EFF6FF',
-  },
-  emptyBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#2563EB',
-  },
-  planningBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 16,
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: BRAND_SKY_BLUE_FAINT,
-    flexWrap: 'wrap',
-  },
-  planningBannerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-    minWidth: 240,
-  },
-  planningIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  planningText: {
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
-    color: '#0F172A',
-  },
-  planningActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  planningBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  planningBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0F172A',
   },
 });

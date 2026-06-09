@@ -15,13 +15,17 @@ const COLLAPSE_STORAGE_KEY = 'ld.mainNavCollapsed';
 const SHOW_MATERIALS_IN_SIDEBAR = false;
 const SHOW_SUBJECTS_CATALOG_IN_SIDEBAR = false;
 const SHOW_RECORDS_IN_SIDEBAR = false;
-const SHOW_CREATE_IN_SIDEBAR = true;
+const SHOW_CREATE_IN_SIDEBAR = false;
 
 const SIDEBAR_BRAND_LOGO = LEARNADOODLE_LOGO_ASSET;
 const NAV_ICON_SIZE = 22;
 const ICON_RAIL_EXPANDED_WIDTH = 220;
 /** Horizontal inset for permanent sidebar nav pills (matches footer padding). */
 const PERMANENT_SIDEBAR_NAV_INSET = 28;
+/** Cropped logo asset is 1536×340; height follows width via aspectRatio (fixed height caused empty space below). */
+const SIDEBAR_BRAND_LOGO_ASPECT = 1392 / 400;
+/** Symmetric bleed cancels nav inset so the wordmark spans the full sidebar width, centered. */
+const SIDEBAR_BRAND_LOGO_BLEED = PERMANENT_SIDEBAR_NAV_INSET;
 
 const resolveAvatarSource = (avatarKey) => {
   return resolveBundledAvatarSource(avatarKey);
@@ -178,7 +182,7 @@ export default function LeftRail({
           { key: 'tutor-students', label: 'My students', icon: MAIN_NAV_ICONS.family },
           { key: 'planner', label: 'Planner', icon: MAIN_NAV_ICONS.planner },
           ...(SHOW_MATERIALS_IN_SIDEBAR ? [{ key: 'materials', label: 'Materials', icon: MAIN_NAV_ICONS.materials }] : []),
-          { key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create },
+          ...(SHOW_CREATE_IN_SIDEBAR ? [{ key: 'create', label: 'Create', icon: MAIN_NAV_ICONS.create }] : []),
           { key: 'messages', label: 'Messages', icon: MAIN_NAV_ICONS.messages },
         ];
       } else {
@@ -379,7 +383,7 @@ export default function LeftRail({
                 source: SIDEBAR_BRAND_LOGO,
                 shellStyle: permanentSidebar ? styles.topIconShellPermanent : styles.topIconShell,
                 imageStyle: [styles.topIcon, permanentSidebar && styles.topIconPermanent],
-                resizeMode: 'cover',
+                resizeMode: 'contain',
                 placeholderStyle: styles.topIconPlaceholder,
               })}
             </View>
@@ -481,6 +485,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: PERMANENT_SIDEBAR_NAV_INSET,
     paddingTop: 16,
     paddingBottom: 8,
+    gap: 0,
     flex: 1,
     minHeight: 0,
     overflow: 'visible',
@@ -710,47 +715,61 @@ const styles = StyleSheet.create({
   topIconContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingTop: 16,
     paddingBottom: 8,
     paddingHorizontal: 20,
+    alignSelf: 'stretch',
   },
   topIconContainerPermanent: {
     paddingHorizontal: 0,
-    paddingTop: 0,
-    paddingBottom: 16,
+    paddingTop: 4,
+    paddingBottom: 4,
     marginHorizontal: 0,
     alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
   },
   topIconWrapper: {
-    width: 220,
-    height: 48,
-    overflow: 'hidden',
+    width: '100%',
+    maxWidth: ICON_RAIL_EXPANDED_WIDTH,
+    marginHorizontal: -SIDEBAR_BRAND_LOGO_BLEED,
+    alignSelf: 'center',
+    overflow: 'visible',
     borderRadius: 4,
   },
   topIconWrapperPermanent: {
     width: '100%',
-    height: 48,
+    marginHorizontal: -SIDEBAR_BRAND_LOGO_BLEED,
     alignSelf: 'stretch',
+    overflow: 'visible',
   },
   topIconShell: {
-    width: 220,
-    height: 48,
+    width: '100%',
+    aspectRatio: SIDEBAR_BRAND_LOGO_ASPECT,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   topIconShellPermanent: {
     width: '100%',
-    height: 48,
+    aspectRatio: SIDEBAR_BRAND_LOGO_ASPECT,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   topIcon: {
-    width: 220,
-    height: 96,
-    marginTop: -24,
-    marginBottom: -24,
+    width: '100%',
+    height: '100%',
+    ...(Platform.OS === 'web' && {
+      objectPosition: 'center center',
+    }),
   },
   topIconPermanent: {
     width: '100%',
-    height: 96,
-    marginTop: -24,
-    marginBottom: -24,
+    height: '100%',
+    ...(Platform.OS === 'web' && {
+      objectPosition: 'center center',
+    }),
   },
   topIconPlaceholder: {
     width: '100%',

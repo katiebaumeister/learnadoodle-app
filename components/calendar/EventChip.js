@@ -7,7 +7,7 @@ import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import { formatEventScheduleTimeLabel, formatEventChipTimeLabel } from '../planner/plannerListTableUtils';
 
-export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [], plannerCalendarChip = false }) {
+export default function EventChip({ ev, compact = false, fullWidth = false, onPress, onRightClick, onComplete, showCheckmark = true, hideTime = false, children = [], alignDotsNearTime = false, titleFontSize = 12, timeFontSize = 10, showDate = false, hideDoneStyling = false, disableTouchable = false, allDayEvents = [], plannerCalendarChip = false, weekBoardChip = false }) {
   const isDoneStatus = (statusValue) => {
     const normalized = String(statusValue || '').trim().toLowerCase();
     return normalized === 'done' || normalized === 'completed';
@@ -191,7 +191,7 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
 
   // Format time so display always matches actual scheduled local time
   const formatTime = () => {
-    if (plannerCalendarChip) {
+    if (plannerCalendarChip || weekBoardChip) {
       const chipLabel = formatEventChipTimeLabel(ev);
       return chipLabel || null;
     }
@@ -693,7 +693,60 @@ export default function EventChip({ ev, compact = false, fullWidth = false, onPr
             </TouchableOpacity>
           </View>
         )}
-        {alignDotsNearTime ? (
+        {weekBoardChip ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
+            <Text
+              style={{
+                fontSize: titleFontSize,
+                lineHeight: titleFontSize + 4,
+                color: isPlaceholder ? '#6B7280' : '#111827',
+                fontWeight: '500',
+                textAlign: 'left',
+                textDecorationLine: shouldShowDoneStyling ? 'line-through' : 'none',
+                opacity: shouldShowLighterText ? 0.5 : 1,
+                flexShrink: 1,
+                minWidth: 0,
+                ...(Platform.OS === 'web' && {
+                  fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                  letterSpacing: '-0.006em',
+                  ...(shouldShowDoneStyling && {
+                    textDecorationThickness: '0.5px',
+                    textDecorationColor: 'rgba(17, 24, 39, 0.4)',
+                  }),
+                }),
+              }}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {ev.title || 'Untitled Event'}
+            </Text>
+            {displayTime && !hideTime && !isPublicHoliday && (
+              <Text style={{
+                opacity: 1,
+                fontWeight: '400',
+                fontSize: timeFontSize,
+                color: '#6B7280',
+                textDecorationLine: 'none',
+                flexShrink: 0,
+                ...(Platform.OS === 'web' && {
+                  fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                  fontVariantNumeric: 'tabular-nums',
+                  letterSpacing: '0',
+                }),
+              }}>{displayTime}</Text>
+            )}
+            {!hideChildDots && participatingChildIds.length > 0 && (
+              <ChildAvatarCluster
+                childIds={participatingChildIds}
+                familyChildren={children}
+                size={16}
+                overlap={-7}
+                hideBackground
+                style={{ marginLeft: 'auto', flexShrink: 0, alignSelf: 'center' }}
+              />
+            )}
+          </View>
+        ) : alignDotsNearTime ? (
           // Layout for day view: dots right after time
           <View style={{ flexDirection: 'column', gap: 2, flex: 1, minWidth: 0 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>

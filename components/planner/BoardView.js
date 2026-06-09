@@ -770,6 +770,7 @@ export default function BoardView({ weekAnchor, events = [], onEventPress, onEve
                       ev={ev}
                       compact={true}
                       fullWidth={true}
+                      weekBoardChip={true}
                       hideTime={false}
                       onPress={onEventPress ? () => {
                         if (Date.now() < suppressClickUntilRef.current) return;

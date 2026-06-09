@@ -577,38 +577,6 @@ export default function ParentHomeScreen({
   };
   const children = effectiveHomeData.children || [];
 
-  const familySnapshot = useMemo(() => {
-    const planHealth = dashboardExtras.planHealth;
-    const perChild = planHealth?.per_child || {};
-    const targetDays = planHealth?.target_days;
-
-    return children.map((child) => {
-      const childStats = perChild[String(child.id)] || {};
-      const plannedDays = childStats.planned_days;
-      const deltaDays = childStats.delta_days;
-      const tone = statusToneFromDelta(deltaDays);
-      const progressPct =
-        targetDays && plannedDays != null
-          ? Math.round((plannedDays / targetDays) * 100)
-          : null;
-
-      return {
-        childId: child.id,
-        name: child.first_name || child.name || 'Child',
-        gradeLabel:
-          child.grade != null && child.grade !== ''
-            ? `${child.grade}${String(child.grade).toLowerCase().includes('grade') ? '' : ' Grade'}`
-            : null,
-        avatarColor: child.avatar_color || child.avatarColor || null,
-        tone,
-        statusLabel: statusLabel(tone, deltaDays, targetDays, plannedDays),
-        plannedDays,
-        targetDays,
-        progressPct,
-      };
-    });
-  }, [children, dashboardExtras.planHealth]);
-
   const subjectSnapshot = useMemo(() => {
     const planHealth = dashboardExtras.planHealth;
     const perChildSubject = planHealth?.per_child_subject || {};
@@ -634,6 +602,7 @@ export default function ParentHomeScreen({
         if (!stats) return;
         const child = children.find((c) => String(c.id) === String(childId));
         childStats.push({
+          childId,
           childName: child?.first_name || child?.name || 'Child',
           plannedDays: stats.planned_days,
           targetDays: stats.subject_target_days,
@@ -645,6 +614,7 @@ export default function ParentHomeScreen({
         return {
           subjectId,
           name,
+          childIds: [],
           childLabel: null,
           tone: 'on_track',
           statusLabel: 'Not started',
@@ -667,6 +637,7 @@ export default function ParentHomeScreen({
       return {
         subjectId,
         name,
+        childIds: childStats.map((cs) => cs.childId),
         childLabel: childStats.map((cs) => cs.childName).join(', '),
         tone,
         statusLabel: statusLabel(
@@ -859,9 +830,39 @@ export default function ParentHomeScreen({
   const railContent = (
     <View style={styles.railContent}>
       <ParentHomeRightRail
-        familySnapshot={familySnapshot}
         subjectSnapshot={subjectSnapshot}
+        userRole={session?.effective_role}
+        familyChildren={children}
         onNavigate={onNavigate}
+        onEditSubject={(row) => {
+          const subjectsList =
+            (effectiveHomeData.subjects?.length ? effectiveHomeData.subjects : null) ||
+            dashboardExtras.subjects ||
+            [];
+          const subject = subjectsList.find((s) => String(s.id) === String(row?.subjectId));
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
+              detail: {
+                subject: subject || { id: row?.subjectId, name: row?.name },
+              },
+            }));
+          }
+        }}
+        onAddEventForSubject={(row) => {
+          const childIds = row?.childIds || [];
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('openTaskModal', {
+              detail: {
+                subjectId: row?.subjectId,
+                date: new Date(),
+                childIds,
+                childId: childIds[0] || null,
+              },
+            }));
+          } else {
+            onAddEvent?.();
+          }
+        }}
       />
     </View>
   );

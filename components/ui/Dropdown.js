@@ -26,6 +26,7 @@ export default function Dropdown({
   offset = 8, // Distance from trigger
   maxHeight = 400,
   width = 200,
+  variant = 'default', // 'default' | 'context'
 }) {
   const [position, setPosition] = useState(null);
   const dropdownRef = useRef(null);
@@ -158,6 +159,7 @@ export default function Dropdown({
         ref={dropdownRef}
         style={[
           styles.dropdown,
+          variant === 'context' && styles.dropdownContext,
           {
             position: 'fixed',
             top: position.top,
@@ -169,7 +171,13 @@ export default function Dropdown({
           },
         ]}
       >
-        {children}
+        {React.Children.map(children, (child, index) => {
+          if (!React.isValidElement(child)) return child;
+          return React.cloneElement(child, {
+            variant,
+            isLast: index === React.Children.count(children) - 1,
+          });
+        })}
       </View>
     );
     
@@ -194,8 +202,14 @@ export default function Dropdown({
         activeOpacity={1}
         onPress={onClose}
       >
-        <View style={[styles.dropdown, { width, maxHeight }]}>
-          {children}
+        <View style={[styles.dropdown, variant === 'context' && styles.dropdownContext, { width, maxHeight }]}>
+          {React.Children.map(children, (child, index) => {
+            if (!React.isValidElement(child)) return child;
+            return React.cloneElement(child, {
+              variant,
+              isLast: index === React.Children.count(children) - 1,
+            });
+          })}
         </View>
       </TouchableOpacity>
     </Modal>
@@ -203,20 +217,35 @@ export default function Dropdown({
 }
 
 // DropdownItem sub-component
-export function DropdownItem({ icon: Icon, label, onPress, danger = false }) {
+export function DropdownItem({
+  icon: Icon,
+  label,
+  onPress,
+  danger = false,
+  variant = 'default',
+  isLast = false,
+}) {
+  const isContext = variant === 'context';
   return (
     <TouchableOpacity
-      style={[styles.item, danger && styles.itemDanger]}
+      style={[
+        isContext ? styles.contextItem : styles.item,
+        danger && (isContext ? styles.contextItemDanger : styles.itemDanger),
+        isContext && isLast && styles.contextItemLast,
+      ]}
       onPress={onPress}
     >
       {Icon && (
-        <Icon 
-          size={16} 
-          color={danger ? colors.red : colors.text} 
+        <Icon
+          size={16}
+          color={danger ? colors.red : (isContext ? '#374151' : colors.text)}
           style={styles.itemIcon}
         />
       )}
-      <Text style={[styles.itemText, danger && styles.itemTextDanger]}>
+      <Text style={[
+        isContext ? styles.contextItemText : styles.itemText,
+        danger && styles.itemTextDanger,
+      ]}>
         {label}
       </Text>
     </TouchableOpacity>
@@ -233,6 +262,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       boxShadow: shadows.md.boxShadow,
+    }),
+  },
+  dropdownContext: {
+    borderRadius: 12,
+    borderColor: '#E5E7EB',
+    paddingVertical: 8,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05)',
     }),
   },
   modalOverlay: {
@@ -275,6 +312,41 @@ const styles = StyleSheet.create({
   },
   itemTextDanger: {
     color: colors.red,
+  },
+  contextItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'background-color 0.15s ease',
+      ':hover': {
+        backgroundColor: '#F8FAFC',
+      },
+    }),
+  },
+  contextItemLast: {
+    borderBottomWidth: 0,
+  },
+  contextItemDanger: {
+    ...(Platform.OS === 'web' && {
+      ':hover': {
+        backgroundColor: colors.redSoft,
+      },
+    }),
+  },
+  contextItemText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#374151',
+    flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });
 
