@@ -75,10 +75,10 @@ import LearningSubjectDetailView from '../learning/LearningSubjectDetailView';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_EVENTS_SECTION = true;
-const SHOW_SUBJECT_ASSIGNMENTS_SECTION = true;
+const SHOW_SUBJECT_ASSIGNMENTS_SECTION = false;
 const SHOW_SUBJECT_ATTENDANCE_SECTION = false;
 const SHOW_SUBJECT_GRADES_SECTION = false;
-const SHOW_SUBJECT_MATERIALS_SECTION = true;
+const SHOW_SUBJECT_MATERIALS_SECTION = false;
 const SHOW_SUBJECT_UNITS_LESSONS_SECTION = false;
 const WEEKDAY_PLURALS = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

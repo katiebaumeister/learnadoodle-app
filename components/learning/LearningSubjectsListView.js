@@ -7,7 +7,7 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import { Plus, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import SubjectOverviewCard from '../subjects/SubjectOverviewCard';
 
 const BRAND_SKY_BLUE = '#81C1E1';
@@ -82,19 +82,21 @@ export default function LearningSubjectsListView({
               >
                 <Text style={styles.yearNavTitle}>{selectedSchoolYear} School Year</Text>
               </TouchableOpacity>
-              {onEditSchoolYear ? (
-                <TouchableOpacity
-                  style={styles.yearNavEditBtn}
-                  onPress={onEditSchoolYear}
-                  accessibilityRole="button"
-                  accessibilityLabel="Edit school year"
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <Pencil size={14} color="#64748B" />
-                </TouchableOpacity>
-              ) : null}
             </View>
           </View>
+        ) : null}
+        {canManageSubjects && onAddSubject ? (
+          <TouchableOpacity
+            style={styles.addSubjectButton}
+            onPress={onAddSubject}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Add subject"
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Plus size={18} color="#334155" strokeWidth={2.25} />
+            <Text style={styles.addSubjectButtonText}>Add subject</Text>
+          </TouchableOpacity>
         ) : null}
       </View>
 
@@ -156,8 +158,36 @@ const styles = StyleSheet.create({
   pageHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
     gap: 16,
     flexWrap: 'wrap',
+  },
+  addSubjectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.22)',
+    flexShrink: 0,
+    marginLeft: 'auto',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  addSubjectButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#334155',
+    letterSpacing: -0.1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   addBtn: {
     flexDirection: 'row',

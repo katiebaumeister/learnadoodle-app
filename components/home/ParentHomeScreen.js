@@ -4,7 +4,7 @@
  * Full parent dashboard with:
  * - Today Forecast hero
  * - Main column: Bulletin Board
- * - Right rail: Today's schedule + Family subjects
+ * - Right rail: Today's schedule
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
@@ -13,11 +13,9 @@ import { Plus, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
-import { getPlanHealth } from '../../lib/services/academicYearClient';
 import RoleHomeShell from './RoleHomeShell';
 import TodayScheduleCard from './TodayScheduleCard';
 import ParentDigestModal from './ParentDigestModal';
-import { ParentHomeRightRail, statusToneFromDelta, statusLabel } from './ParentHomeDashboard';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
@@ -139,7 +137,6 @@ export default function ParentHomeScreen({
   hideRailOnboardingCards = false,
   preloadedSubjectsOverview = null,
   preloadedSubjects = null,
-  preloadedPlanHealth = null,
 }) {
   const session = useSession();
   const [homeData, setHomeData] = useState(null);
@@ -152,8 +149,6 @@ export default function ParentHomeScreen({
   const [stableSubjects, setStableSubjects] = useState(() =>
     normalizeSubjectList(pickSubjectListSource(preloadedSubjectsOverview, preloadedSubjects))
   );
-  const [planHealth, setPlanHealth] = useState(preloadedPlanHealth || null);
-  const planHealthFetchStartedRef = useRef(!!preloadedPlanHealth);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [notificationCount, setNotificationCount] = useState(0);
   const [error, setError] = useState(null);
@@ -189,26 +184,6 @@ export default function ParentHomeScreen({
       return normalizeSubjectList(incoming);
     });
   }, [preloadedSubjectsOverview, preloadedSubjects]);
-
-  useEffect(() => {
-    if (!preloadedPlanHealth) return;
-    setPlanHealth((prev) => prev || preloadedPlanHealth);
-    planHealthFetchStartedRef.current = true;
-  }, [preloadedPlanHealth]);
-
-  useEffect(() => {
-    if (!familyId || planHealthFetchStartedRef.current) return;
-    planHealthFetchStartedRef.current = true;
-    let cancelled = false;
-    getPlanHealth(familyId)
-      .then(({ data }) => {
-        if (!cancelled && data) setPlanHealth(data);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [familyId]);
 
   // Cache helpers (matching WebContent pattern)
   const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -641,86 +616,6 @@ export default function ParentHomeScreen({
   };
   const children = effectiveHomeData.children || [];
 
-  const subjectSnapshot = useMemo(() => {
-    const perChildSubject = planHealth?.per_child_subject || {};
-    const subjectsList = stableSubjects;
-
-    const subjectIds = new Set(subjectsList.map((s) => String(s.id)));
-    Object.values(perChildSubject).forEach((subjectMap) => {
-      Object.keys(subjectMap || {}).forEach((subjectId) => {
-        subjectIds.add(String(subjectId));
-      });
-    });
-
-    const rows = Array.from(subjectIds).map((subjectId) => {
-      const subject = subjectsList.find((s) => String(s.id) === String(subjectId));
-      const name = subject?.name || 'Subject';
-
-      const childStats = [];
-      Object.entries(perChildSubject).forEach(([childId, subjectMap]) => {
-        const stats = subjectMap?.[subjectId];
-        if (!stats) return;
-        const child = children.find((c) => String(c.id) === String(childId));
-        childStats.push({
-          childId,
-          childName: child?.first_name || child?.name || 'Child',
-          plannedDays: stats.planned_days,
-          targetDays: stats.subject_target_days,
-          deltaDays: stats.subject_delta_days,
-        });
-      });
-
-      if (childStats.length === 0) {
-        return {
-          subjectId,
-          name,
-          childIds: [],
-          childLabel: null,
-          tone: 'on_track',
-          statusLabel: 'Not started',
-          plannedDays: null,
-          targetDays: null,
-          progressPct: null,
-        };
-      }
-
-      const ranked = childStats
-        .filter((cs) => Number.isFinite(Number(cs.deltaDays)))
-        .sort((a, b) => Number(a.deltaDays) - Number(b.deltaDays));
-      const representative = ranked[0] || childStats[0];
-      const tone = statusToneFromDelta(representative.deltaDays);
-      const progressPct =
-        representative.targetDays && representative.plannedDays != null
-          ? Math.round((representative.plannedDays / representative.targetDays) * 100)
-          : null;
-
-      return {
-        subjectId,
-        name,
-        childIds: childStats.map((cs) => cs.childId),
-        childLabel: childStats.map((cs) => cs.childName).join(', '),
-        tone,
-        statusLabel: statusLabel(
-          tone,
-          representative.deltaDays,
-          representative.targetDays,
-          representative.plannedDays
-        ),
-        plannedDays: representative.plannedDays,
-        targetDays: representative.targetDays,
-        progressPct,
-      };
-    });
-
-    return rows
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 6);
-  }, [
-    children,
-    planHealth,
-    stableSubjects,
-  ]);
-
   if (error && !homeData) {
     return (
       <View style={styles.loadingContainer}>
@@ -906,47 +801,7 @@ export default function ParentHomeScreen({
     </View>
   );
 
-  const railContent = (
-    <View style={styles.railStack}>
-      {renderSchedulePanel(styles.railScheduleSection)}
-      <View style={styles.railSubjectsSection}>
-        <ParentHomeRightRail
-          subjectSnapshot={subjectSnapshot}
-          familyChildren={children}
-        onNavigate={onNavigate}
-        onEditSubject={(row) => {
-          const subjectsList =
-            (effectiveHomeData.subjects?.length ? effectiveHomeData.subjects : null) ||
-            dashboardExtras.subjects ||
-            [];
-          const subject = subjectsList.find((s) => String(s.id) === String(row?.subjectId));
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
-              detail: {
-                subject: subject || { id: row?.subjectId, name: row?.name },
-              },
-            }));
-          }
-        }}
-        onAddEventForSubject={(row) => {
-          const childIds = row?.childIds || [];
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('openTaskModal', {
-              detail: {
-                subjectId: row?.subjectId,
-                date: new Date(),
-                childIds,
-                childId: childIds[0] || null,
-              },
-            }));
-          } else {
-            onAddEvent?.();
-          }
-        }}
-      />
-      </View>
-    </View>
-  );
+  const railContent = renderSchedulePanel(styles.railScheduleSection);
   const subjectCounts = {};
   (effectiveHomeData.learning || []).forEach(event => {
     if (event.subject_id) {
@@ -1183,40 +1038,18 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  railStack: {
-    flex: 1,
-    gap: 14,
-    minHeight: 0,
-    width: '100%',
-    ...(Platform.OS === 'web' && {
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%',
-      alignSelf: 'stretch',
-      overflow: 'hidden',
-    }),
-  },
   railScheduleSection: {
     flex: 1,
     flexBasis: 0,
     minHeight: 0,
     marginTop: 0,
+    width: '100%',
     ...(Platform.OS === 'web' && {
-      height: 'calc((100% - 14px) / 2)',
-      maxHeight: 'calc((100% - 14px) / 2)',
+      height: '100%',
+      maxHeight: '100%',
       overflowY: 'auto',
       overflowX: 'hidden',
       WebkitOverflowScrolling: 'touch',
-    }),
-  },
-  railSubjectsSection: {
-    flex: 1,
-    flexBasis: 0,
-    minHeight: 0,
-    ...(Platform.OS === 'web' && {
-      height: 'calc((100% - 14px) / 2)',
-      maxHeight: 'calc((100% - 14px) / 2)',
-      overflow: 'hidden',
     }),
   },
   mainContent: {

@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Clock, AlertTriangle, ChevronRight, Plus, Eye, Edit2 } from 'lucide-react';
+import { Plus, Eye, Edit2, MoreVertical } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { useSession } from '../../contexts/SessionContext';
 import { getMaterialFileTypeLabel } from '../materials/MaterialDocViewerModal';
 import { deriveRoleFromTags, roleLabel } from '../../lib/docs/roles';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
+import Dropdown, { DropdownItem } from '../ui/Dropdown';
 
 function getSubjectTermLabel(term) {
   const raw = String(term || '').trim().toLowerCase();
@@ -55,7 +56,9 @@ export default function SubjectOverviewCard({
 }) {
   const session = useSession();
   const [needsHelpHovered, setNeedsHelpHovered] = useState(false);
-  const [hoveredButton, setHoveredButton] = useState(null);
+  const [addEventHovered, setAddEventHovered] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef(null);
 
   const getChildName = (childId) => {
     const child = children.find(c => String(c.id) === String(childId));
@@ -64,47 +67,6 @@ export default function SubjectOverviewCard({
   
   const getChildById = (childId) => {
     return children.find(c => String(c.id) === String(childId));
-  };
-
-  /** Weekday + optional time for "Up next" row, e.g. "Tue 9:00 AM–10:00 AM" */
-  const formatNextUpWhenLine = (item) => {
-    if (!item) return '';
-    const anchor = item.startTs || item.dueDate;
-    if (!anchor) return '';
-    const weekday = new Date(anchor).toLocaleDateString(undefined, { weekday: 'short' });
-    const tOpts = { hour: 'numeric', minute: '2-digit' };
-    const eventTypeRaw = String(item?.eventType || item?.event_type || '').trim();
-    const isIntrinsicAllDayType = ['Project', 'Trip', 'Holiday', 'Other'].includes(eventTypeRaw);
-    const s = item?.startTs ? new Date(item.startTs) : null;
-    const e = item?.endTs ? new Date(item.endTs) : null;
-    const hasValidStart = !!s && !Number.isNaN(s.getTime());
-    const hasValidEnd = !!e && !Number.isNaN(e.getTime());
-    const rawStart = String(item?.startTs || '').trim();
-    const rawEnd = String(item?.endTs || '').trim();
-    const isRawMidnight = (raw) => /T00:00(?::00(?:\.000)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i.test(raw);
-    const isRawEndOfDay = (raw) => /T23:59(?::59(?:\.999)?)?(?:Z|[+-]\d{2}:?\d{2})?$/i.test(raw);
-    const isRawMidnightBounded =
-      !!rawStart &&
-      isRawMidnight(rawStart) &&
-      (!!rawEnd ? (isRawMidnight(rawEnd) || isRawEndOfDay(rawEnd)) : true);
-    const isMidnightBounded =
-      hasValidStart &&
-      hasValidEnd &&
-      s.getHours() === 0 &&
-      s.getMinutes() === 0 &&
-      ((e.getHours() === 0 && e.getMinutes() === 0) ||
-        (e.getHours() === 23 && e.getMinutes() === 59));
-    const isTimeless =
-      item?.is_flexible === true ||
-      item?.isFlexible === true ||
-      (!isIntrinsicAllDayType && (isMidnightBounded || isRawMidnightBounded));
-    let timeStr = '';
-    if (!isTimeless && hasValidStart) {
-      timeStr = hasValidEnd && s.getTime() !== e.getTime()
-        ? `${s.toLocaleTimeString(undefined, tOpts)}–${e.toLocaleTimeString(undefined, tOpts)}`
-        : s.toLocaleTimeString(undefined, tOpts);
-    }
-    return timeStr ? `${weekday} ${timeStr}` : weekday;
   };
 
   // Get assigned children names (moved up for use in handlers)
@@ -120,44 +82,11 @@ export default function SubjectOverviewCard({
   const assignedChildIdsForModals = Array.isArray(assignedChildren) ? assignedChildren : [];
   const firstAssignedChildId = assignedChildIdsForModals.length > 0 ? assignedChildIdsForModals[0] : null;
 
-  const handleNavigateToPlanner = (item, e) => {
-    if (e) {
-      e.stopPropagation();
-      e.preventDefault?.();
-    }
-    const rawEventId = item?.eventId ?? item?.event_id ?? item?.id ?? null;
-    const eventId = rawEventId
-      ? String(rawEventId).trim().replace(/^event-/, '')
-      : null;
-    const shouldOpenEventModal = item?.type === 'event' || Boolean(eventId);
-    if (shouldOpenEventModal && eventId && Platform.OS === 'web' && typeof window !== 'undefined') {
-      const initialEvent = item?.event || item?.initialEvent || {
-        id: eventId,
-        title: item?.title || 'Lesson',
-        start_ts: item?.startTs || item?.dueDate || null,
-        end_ts: item?.endTs || null,
-        child_id: item?.childId || null,
-        subject_id: item?.subjectId || subject?.id || null,
-        event_type: item?.eventType || 'Lesson',
-      };
-      window.dispatchEvent(
-        new CustomEvent('openEventModal', {
-          detail: { eventId, initialEvent },
-        })
-      );
-      return;
-    }
-    if (onNavigateToPlanner) {
-      onNavigateToPlanner({
-        subjectId: subject.id,
-        childId: item.childId,
-        date: item.dueDate,
-        eventId: item.type === 'event' ? item.id.replace('event-', '') : null,
-      });
-    }
+  const runMenuAction = (action) => {
+    setMenuOpen(false);
+    action?.();
   };
 
-  // Handler functions
   const handleViewDetails = (e) => {
     e?.stopPropagation?.();
     onCardClick?.(subject);
@@ -196,10 +125,6 @@ export default function SubjectOverviewCard({
 
   // Subject blurb: prefer notes, then legacy summary
   const subjectIntent = subject.notes?.trim() || subject.summary?.trim() || null;
-
-  // Get next item or overdue count
-  const nextItem = subject.nextItem;
-  const overdueCount = subject.overdueCount || 0;
 
   const isParentViewer =
     session?.role_flags?.isParent === true && session?.role_flags?.isChild !== true;
@@ -473,6 +398,48 @@ export default function SubjectOverviewCard({
                 </View>
               ) : null}
             </View>
+            <View
+              style={styles.cardMenuWrap}
+              {...(Platform.OS === 'web' && {
+                onClick: (e) => e.stopPropagation(),
+                onMouseDown: (e) => e.stopPropagation(),
+              })}
+            >
+              <TouchableOpacity
+                ref={menuBtnRef}
+                style={[styles.cardMenuBtn, menuOpen && styles.cardMenuBtnActive]}
+                onPress={(e) => {
+                  e?.stopPropagation?.();
+                  setMenuOpen((open) => !open);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`${subject.name} actions`}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <MoreVertical size={16} color="#94A3B8" />
+              </TouchableOpacity>
+              <Dropdown
+                visible={menuOpen}
+                triggerRef={menuBtnRef}
+                onClose={() => setMenuOpen(false)}
+                placement="bottom-end"
+                width={220}
+                variant="context"
+              >
+                <DropdownItem
+                  icon={Eye}
+                  label="View details"
+                  onPress={() => runMenuAction(() => handleViewDetails())}
+                />
+                {onEditSubject ? (
+                  <DropdownItem
+                    icon={Edit2}
+                    label="Edit subject"
+                    onPress={() => runMenuAction(() => handleEditSubject())}
+                  />
+                ) : null}
+              </Dropdown>
+            </View>
           </View>
           {(yearTermLine || assignedChildrenMeta.length > 0 || studentsMetaLine) ? (
             <View style={styles.subjectMetaRow}>
@@ -529,42 +496,6 @@ export default function SubjectOverviewCard({
         </View>
       </View>
 
-      {/* What's next decision row */}
-      <View style={styles.whatsNextSection}>
-        {nextItem ? (
-          <TouchableOpacity
-            style={styles.decisionRow}
-            onPress={(e) => handleNavigateToPlanner(nextItem, e)}
-          >
-            <Clock size={16} color={colors.accent || '#4F46E5'} />
-            <Text style={styles.decisionRowText} numberOfLines={2}>
-              Next: {nextItem.title} - {formatNextUpWhenLine(nextItem)}
-            </Text>
-            <ChevronRight size={16} color={colors.muted || '#6B7280'} />
-          </TouchableOpacity>
-        ) : overdueCount > 0 ? (
-          <TouchableOpacity
-            style={styles.decisionRow}
-            onPress={(e) => {
-              if (subject.overdueItems && subject.overdueItems.length > 0) {
-                handleNavigateToPlanner(subject.overdueItems[0], e);
-              }
-            }}
-          >
-            <AlertTriangle size={16} color={colors.redBold || '#EF4444'} />
-            <Text style={styles.decisionRowText}>
-              {overdueCount} {overdueCount === 1 ? 'item' : 'items'} overdue
-            </Text>
-            <ChevronRight size={16} color={colors.muted || '#6B7280'} />
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.decisionRowEmpty}>
-            <Clock size={16} color={colors.muted || '#6B7280'} />
-            <Text style={styles.decisionRowEmptyTitle}>Nothing coming up</Text>
-          </View>
-        )}
-      </View>
-
       {/* Action bar - stop propagation on web so card's onPress doesn't swallow button clicks */}
       <View
         style={styles.actionBar}
@@ -575,52 +506,20 @@ export default function SubjectOverviewCard({
       >
         <TouchableOpacity
           style={[
-            styles.actionButtonPill,
-            hoveredButton === 'details' && styles.actionButtonPillHovered
-          ]}
-          onPress={handleViewDetails}
-          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('details')}
-          onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <Eye size={16} color="#6B7280" />
-          <Text style={[
-            styles.actionButtonPillText,
-            hoveredButton === 'details' && styles.actionButtonPillTextHovered
-          ]}>View details</Text>
-        </TouchableOpacity>
-        {onEditSubject ? (
-          <TouchableOpacity
-            style={[
-              styles.actionButtonPill,
-              hoveredButton === 'edit' && styles.actionButtonPillHovered
-            ]}
-            onPress={handleEditSubject}
-            onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('edit')}
-            onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Edit2 size={16} color="#6B7280" />
-            <Text style={[
-              styles.actionButtonPillText,
-              hoveredButton === 'edit' && styles.actionButtonPillTextHovered
-            ]}>Edit subject</Text>
-          </TouchableOpacity>
-        ) : null}
-        <TouchableOpacity
-          style={[
-            styles.actionButtonPill,
-            hoveredButton === 'event' && styles.actionButtonPillHovered
+            styles.addEventButton,
+            addEventHovered && styles.addEventButtonHovered,
           ]}
           onPress={handleAddEventForCard}
-          onMouseEnter={() => Platform.OS === 'web' && setHoveredButton('event')}
-          onMouseLeave={() => Platform.OS === 'web' && setHoveredButton(null)}
+          onMouseEnter={() => Platform.OS === 'web' && setAddEventHovered(true)}
+          onMouseLeave={() => Platform.OS === 'web' && setAddEventHovered(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Add event"
           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
         >
           <Plus size={16} color="#6B7280" />
           <Text style={[
-            styles.actionButtonPillText,
-            hoveredButton === 'event' && styles.actionButtonPillTextHovered
+            styles.addEventButtonText,
+            addEventHovered && styles.addEventButtonTextHovered,
           ]}>Add event</Text>
         </TouchableOpacity>
       </View>
@@ -657,7 +556,7 @@ const styles = StyleSheet.create({
     }),
   },
   header: {
-    marginBottom: 16,
+    marginBottom: 12,
   },
   headerLeft: {
     flex: 1,
@@ -668,6 +567,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 6,
     gap: 8,
+  },
+  cardMenuWrap: {
+    flexShrink: 0,
+    position: 'relative',
+    zIndex: 2,
+    marginTop: 2,
+  },
+  cardMenuBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
+  },
+  cardMenuBtnActive: {
+    backgroundColor: '#F1F5F9',
   },
   subjectTitleWithBadge: {
     flex: 1,
@@ -835,106 +753,31 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  whatsNextSection: {
-    marginBottom: 16,
-  },
-  decisionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      transition: 'background-color 0.2s ease',
-    }),
-  },
-  decisionRowText: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  decisionRowEmpty: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-  },
-  decisionRowEmptyTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  decisionRowEmptyBody: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginBottom: 12,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  addFirstButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: colors.border || '#E5E7EB',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-    }),
-  },
-  addFirstButtonText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.accent || '#4F46E5',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
   actionBar: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(148, 163, 184, 0.12)',
+    paddingTop: 4,
+    width: '100%',
   },
-  actionButtonPill: {
-    flex: 1,
+  addEventButton: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 20,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 22,
     backgroundColor: '#F9FAFB',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
       transition: 'background-color 0.2s ease',
+      boxSizing: 'border-box',
     }),
   },
-  actionButtonPillHovered: {
+  addEventButtonHovered: {
     backgroundColor: '#EFF6FF',
   },
-  actionButtonPillText: {
-    fontSize: 13,
+  addEventButtonText: {
+    fontSize: 14,
     fontWeight: '500',
     color: '#374151',
     ...(Platform.OS === 'web' && {
@@ -942,7 +785,7 @@ const styles = StyleSheet.create({
       transition: 'font-weight 0.2s ease',
     }),
   },
-  actionButtonPillTextHovered: {
+  addEventButtonTextHovered: {
     fontWeight: '600',
   },
   searchPreviewSection: {

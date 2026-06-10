@@ -20,14 +20,11 @@ import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { createMaterial, linkMaterialToChild, updateMaterial, updateMaterialChildStatus } from '../../lib/services/materialsClient';
 import { parseChildIds } from '../../lib/services/subjectsClient';
-import { DOCUMENT_ROLE_CHIPS } from '../../lib/docs/roles';
 import { useModalStackElevation, NESTED_MODAL_STACK_Z } from '../hooks/useModalStackElevation';
 import AppModalShell from '../ui/AppModalShell';
 import { ModalFooter } from '../ui/ModalFooter';
 import { ModalSectionCard } from '../ui/ModalSectionCard';
 import ConfirmDialog from '../ConfirmDialog';
-
-const ROLE_OPTIONS = DOCUMENT_ROLE_CHIPS.filter((c) => c.value !== 'all');
 
 const EMOTIONS = [
   { value: 'loved', label: 'Loved', emoji: '❤️' },
@@ -703,17 +700,14 @@ export default function AddMaterialModal({
     }
   };
 
-  // Check if form is valid (title and type are required, document required only for new materials)
+  // Check if form is valid (title required, document required only for new materials)
   const isFormValid =
-    title.trim() && role && (effectiveMaterial ? true : uploadedFile && uploadedFile.path);
+    title.trim() && (effectiveMaterial ? true : uploadedFile && uploadedFile.path);
 
   const getBlockedSaveMessage = useCallback(() => {
     const missing = [];
     if (!effectiveMaterial && !(uploadedFile && uploadedFile.path)) {
       missing.push('upload a document');
-    }
-    if (!role) {
-      missing.push('select a type');
     }
     const requiresTitle = Boolean(effectiveMaterial || uploadedFile);
     if (requiresTitle && !title.trim()) {
@@ -723,7 +717,7 @@ export default function AddMaterialModal({
     if (missing.length === 1) return `Please ${missing[0]} before saving.`;
     if (missing.length === 2) return `Please ${missing[0]} and ${missing[1]} before saving.`;
     return `Please ${missing.join(', ')} before saving.`;
-  }, [effectiveMaterial, uploadedFile, role, title]);
+  }, [effectiveMaterial, uploadedFile, title]);
 
   const showBlockedSaveFeedback = useCallback(() => {
     setValidationError(getBlockedSaveMessage());
@@ -741,28 +735,18 @@ export default function AddMaterialModal({
     if (!validationError) return;
     const requiredFieldsReady = (
       Boolean(title.trim())
-      && Boolean(role)
       && (effectiveMaterial ? true : Boolean(uploadedFile && uploadedFile.path))
       && Boolean(familyId)
     );
     if (requiredFieldsReady) {
       setValidationError('');
     }
-  }, [validationError, title, role, effectiveMaterial, uploadedFile, familyId]);
+  }, [validationError, title, effectiveMaterial, uploadedFile, familyId]);
 
   const handleSave = async () => {
     const m = material || postUploadMaterial;
     if (!m && (!uploadedFile || !uploadedFile.path)) {
-      const needsType = !role;
-      setValidationError(
-        needsType
-          ? 'Please upload a document and select a type.'
-          : 'Please upload a document.'
-      );
-      return;
-    }
-    if (!role) {
-      setValidationError('Please select a type.');
+      setValidationError('Please upload a document.');
       return;
     }
     if (!title.trim()) {
@@ -1141,36 +1125,6 @@ export default function AddMaterialModal({
                 </View>
               </View>
             ) : null}
-
-            {/* Type (Role) - Required */}
-            <View style={styles.fieldRow}>
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>
-                  Type <Text style={{ color: '#ef4444' }}>*</Text>
-                </Text>
-                <View style={styles.dropdownContainer}>
-                  <View style={styles.dropdownRow}>
-                    {ROLE_OPTIONS.map(opt => (
-                      <TouchableOpacity
-                        key={opt.value}
-                        style={[
-                          styles.dropdownOption,
-                          role === opt.value && styles.dropdownOptionActive
-                        ]}
-                        onPress={() => setRole(opt.value)}
-                      >
-                        <Text style={[
-                          styles.dropdownOptionText,
-                          role === opt.value && styles.dropdownOptionTextActive
-                        ]}>
-                          {opt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-              </View>
-            </View>
 
             {/* Children */}
             {children.length > 0 && (

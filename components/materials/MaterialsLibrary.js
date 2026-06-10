@@ -15,7 +15,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { Search, FileText, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Plus } from 'lucide-react';
+import { Search, FileText, X, ExternalLink, Trash2, RotateCcw, Trash, MoreVertical, ChevronDown, Check, ArrowUp, ArrowDown, Edit2, Sparkles, Upload } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getMaterials, archiveMaterial, getDeletedMaterials, restoreMaterial, permanentlyDeleteMaterial } from '../../lib/services/materialsClient';
 import { useSession } from '../../contexts/SessionContext';
@@ -29,16 +29,13 @@ import GoogleDriveImportModal from '../settings/GoogleDriveImportModal';
 import { calculateReusePotential } from '../../lib/utils/materialReuseLogic';
 import { supabase } from '../../lib/supabase';
 import { shouldSuppressError } from '../../lib/apiClient';
-import { DOCUMENT_ROLE_CHIPS, normalizeMaterial, normalizeUpload, matchesRole, roleLabel, mediaTypeLabel } from '../../lib/docs/roles';
+import { normalizeMaterial, normalizeUpload } from '../../lib/docs/roles';
 import { useToast } from '../Toast';
-import { getChildColorFromAvatar } from '../../utils/avatarColors';
 import { parseChildIds } from '../../lib/services/subjectsClient';
 import ConfirmDialog from '../ConfirmDialog';
 import MaterialDocViewerModal, { resolveMaterialDocViewerUrl } from './MaterialDocViewerModal';
 import { getSubjectIdsAffectedByMaterial } from '../../lib/materialsSubjectLinkUtils';
-
-// Single visible chip row everywhere: role-first
-const ROLE_CHIPS = DOCUMENT_ROLE_CHIPS;
+import ChildAvatarCluster, { sourceForChild } from '../ui/ChildAvatarCluster';
 
 /**
  * Web-only: invalidate subject detail caches + broadcast refreshes.
@@ -102,23 +99,18 @@ export default function MaterialsLibrary({
     return true;
   };
 
+  const handleOpenAddMaterialModal = () => {
+    if (!ensureCanEditMaterials()) return;
+    setAddModalDefaultRole(null);
+    setShowAddModal(true);
+  };
+
   /** Non-empty preloaded list — skip redundant fetch when parent has rows. */
   const preloadedMaterialsUsable =
     !isChildViewer && Array.isArray(preloadedMaterials) && preloadedMaterials.length > 0;
   /** Parent passed a snapshot (including []); avoids empty-state flash while cache is still null. */
   const hasPreloadedLibrarySnapshot = !isChildViewer && Array.isArray(preloadedMaterials);
 
-  // Get child colors for dots
-  const getChildDotColor = (childId) => {
-    const effectiveChildren = localChildren.length > 0 ? localChildren : children;
-    const child = effectiveChildren.find(c => c.id === childId);
-    if (!child || !child.avatar) {
-      return '#9CA3AF'; // Default gray
-    }
-    return getChildColorFromAvatar(child.avatar);
-  };
-  
-  // 
   const [materials, setMaterials] = useState(() =>
     !isChildViewer && Array.isArray(preloadedMaterials) ? preloadedMaterials : []
   );
@@ -153,7 +145,6 @@ export default function MaterialsLibrary({
   
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all'); // all | syllabus | lesson_plan | assignment | resource | assessment | book
   const [selectedChildId, setSelectedChildId] = useState(''); // '' = all
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [subjects, setSubjects] = useState(preloadedSubjects || []); // Deduplicated for filter display
@@ -967,17 +958,35 @@ export default function MaterialsLibrary({
 
   // All items are now materials, but we still need to normalize them correctly
   // Materials with storage_path should use normalizeUpload logic, others use normalizeMaterial
-  const visibleMaterials = roleFilter === 'all'
-    ? materials
-    : materials.filter((m) => {
-        const normalized = m.storage_path ? normalizeUpload(m) : normalizeMaterial(m);
-        return matchesRole(roleFilter, normalized);
-      });
+  const visibleMaterials = materials;
 
   const hasNoMaterials = libraryReady && allMaterials.length === 0;
   const nothingVisible = visibleMaterials.length === 0;
 
-  /** Children / Subjects / Types filter rows — shared by empty library hero and file list. */
+  /** Children / Subjects filter rows — shared by empty library hero and file list. */
+  const renderUploadMaterialButton = () => (
+    <TouchableOpacity
+      style={styles.uploadMaterialButton}
+      onPress={handleOpenAddMaterialModal}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel="Upload material"
+      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+    >
+      <Upload size={18} color="#334155" strokeWidth={2.25} />
+      <Text style={styles.uploadMaterialButtonText}>Upload material</Text>
+    </TouchableOpacity>
+  );
+
+  const renderMaterialsToolbar = () => (
+    <View style={styles.materialsToolbar}>
+      <Text style={styles.totalFilesText}>
+        Total Materials ({libraryReady ? allMaterials.length : '—'})
+      </Text>
+      {renderUploadMaterialButton()}
+    </View>
+  );
+
   const renderMaterialFilterChipRows = () => (
     <>
       {!isChildViewer ? (
@@ -996,7 +1005,6 @@ export default function MaterialsLibrary({
                   onPress={() => {
                     setSelectedChildId('');
                     setSelectedSubjectId(null);
-                    setRoleFilter('all');
                   }}
                 >
                   <Text style={[styles.childrenFilterChipText, !selectedChildId && styles.childrenFilterChipTextActive]}>
@@ -1006,7 +1014,6 @@ export default function MaterialsLibrary({
                 {effectiveChildren.map((child) => {
                   const isActive = selectedChildId === child.id;
                   const label = child.first_name || child.name || 'Child';
-                  const childColor = getChildDotColor(child.id);
                   return (
                     <TouchableOpacity
                       key={child.id}
@@ -1014,18 +1021,18 @@ export default function MaterialsLibrary({
                       onPress={() => {
                         setSelectedChildId(isActive ? '' : child.id);
                         setSelectedSubjectId(null);
-                        setRoleFilter('all');
                       }}
                     >
+                      <View style={styles.childrenFilterChipAvatarWrap}>
+                        <Image
+                          source={sourceForChild(child)}
+                          style={styles.childrenFilterChipAvatar}
+                          resizeMode="cover"
+                        />
+                      </View>
                       <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
                         {label}
                       </Text>
-                      <View
-                        style={[
-                          styles.childDot,
-                          { backgroundColor: childColor, marginLeft: 6 },
-                        ]}
-                      />
                     </TouchableOpacity>
                   );
                 })}
@@ -1054,7 +1061,6 @@ export default function MaterialsLibrary({
             style={[styles.childrenFilterChip, !selectedSubjectId && styles.childrenFilterChipActive]}
             onPress={() => {
               setSelectedSubjectId(null);
-              setRoleFilter('all');
             }}
           >
             <Text style={[styles.childrenFilterChipText, !selectedSubjectId && styles.childrenFilterChipTextActive]}>
@@ -1075,7 +1081,6 @@ export default function MaterialsLibrary({
                   style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
                   onPress={() => {
                     setSelectedSubjectId(isActive ? null : subject.id);
-                    setRoleFilter('all');
                   }}
                 >
                   <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]} numberOfLines={1}>
@@ -1084,31 +1089,6 @@ export default function MaterialsLibrary({
                 </TouchableOpacity>
               );
             })}
-        </ScrollView>
-      </View>
-
-      <View style={styles.typesFilterRow}>
-        <Text style={styles.typesLabelText}>Types</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.typesFilterScroll}
-          contentContainerStyle={styles.typesFilterScrollContent}
-        >
-          {ROLE_CHIPS.map((roleOption) => {
-            const isActive = roleFilter === roleOption.value;
-            return (
-              <TouchableOpacity
-                key={roleOption.value}
-                style={[styles.childrenFilterChip, isActive && styles.childrenFilterChipActive]}
-                onPress={() => setRoleFilter(roleOption.value)}
-              >
-                <Text style={[styles.childrenFilterChipText, isActive && styles.childrenFilterChipTextActive]}>
-                  {roleOption.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
         </ScrollView>
       </View>
 
@@ -1370,6 +1350,7 @@ export default function MaterialsLibrary({
         </View>
       ) : hasNoMaterials ? (
         <>
+          {renderMaterialsToolbar()}
           {renderMaterialFilterChipRows()}
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyTitle}>No materials yet</Text>
@@ -1377,15 +1358,13 @@ export default function MaterialsLibrary({
               Upload materials to connect artifacts to learning.
             </Text>
             <TouchableOpacity
-              style={styles.emptyButton}
-              onPress={() => {
-                if (!ensureCanEditMaterials()) return;
-                setAddModalDefaultRole(null);
-                setShowAddModal(true);
-              }}
+              style={styles.uploadMaterialButton}
+              onPress={handleOpenAddMaterialModal}
+              activeOpacity={0.85}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
-              <Plus size={16} color="#5AAEF2" />
-              <Text style={styles.emptyButtonText}>Add</Text>
+              <Upload size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.uploadMaterialButtonText}>Upload material</Text>
             </TouchableOpacity>
           </View>
         </>
@@ -1443,31 +1422,6 @@ export default function MaterialsLibrary({
                   </View>
                 )}
 
-                {/* Types Filter Section */}
-                {effectiveChildren.length > 0 && !isChildViewer && <View style={styles.dropdownDivider} />}
-                <View style={styles.dropdownSection}>
-                  <Text style={styles.dropdownSectionTitle}>TYPES</Text>
-                  {ROLE_CHIPS.map((opt) => {
-                    const isSelected = roleFilter === opt.value;
-                    return (
-                      <TouchableOpacity
-                        key={opt.value}
-                        style={styles.dropdownOption}
-                        onPress={() => {
-                          setRoleFilter(opt.value);
-                        }}
-                      >
-                        <View style={[styles.dropdownCheckbox, isSelected && styles.dropdownCheckboxActive]}>
-                          {isSelected && <Check size={10} color="#FFFFFF" />}
-                        </View>
-                        <Text style={styles.dropdownOptionText}>
-                          {opt.value === 'all' ? 'All Types' : opt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
                 {/* Subjects Filter Section */}
                 {subjects.length > 0 && (
                   <>
@@ -1506,6 +1460,7 @@ export default function MaterialsLibrary({
           )}
 
           <>
+            {renderMaterialsToolbar()}
             {renderMaterialFilterChipRows()}
             {renderListColumnHeaders()}
 
@@ -1586,36 +1541,6 @@ export default function MaterialsLibrary({
                           <Text style={styles.listItemTitle} numberOfLines={1}>
                             {normalized.title}
                           </Text>
-                          {(() => {
-                            // Build type string like "Algebra Syllabus (PDF)" from subject, role and mediaType
-                            const subjectName = data.subject_key;
-                            const roleText = normalized.role ? roleLabel(normalized.role) : null;
-                            const mediaTypeText = normalized.mediaType ? mediaTypeLabel(normalized.mediaType) : null;
-                            
-                            if (!roleText) return null;
-                            
-                            // Build subject prefix if subject exists
-                            let subjectPrefix = '';
-                            if (subjectName) {
-                              // Check if subject_key contains multiple subjects (comma-separated or "and")
-                              const subjects = subjectName.split(/[,\s]+and\s+|[,\s]+/i).filter(s => s.trim());
-                              if (subjects.length === 2) {
-                                subjectPrefix = `${subjects[0]} and ${subjects[1]} `;
-                              } else if (subjects.length > 0) {
-                                subjectPrefix = `${subjects[0]} `;
-                              }
-                            }
-                            
-                            const typeString = mediaTypeText 
-                              ? `${subjectPrefix}${roleText} (${mediaTypeText})`
-                              : `${subjectPrefix}${roleText}`;
-                            
-                            return (
-                              <Text style={styles.listItemType} numberOfLines={1}>
-                                {typeString}
-                              </Text>
-                            );
-                          })()}
                         </View>
                         <View style={styles.listItemMeta}>
                           {(() => {
@@ -1635,18 +1560,12 @@ export default function MaterialsLibrary({
                             if (hasChildren) {
                               return (
                                 <View style={styles.listItemSubtitleRow}>
-                                  {childIds.slice(0, 3).map((childId) => (
-                                    <View
-                                      key={childId}
-                                      style={[
-                                        styles.childDot,
-                                        { backgroundColor: getChildDotColor(childId) }
-                                      ]}
-                                    />
-                                  ))}
-                                  {childIds.length > 3 && (
-                                    <View style={[styles.childDot, { backgroundColor: 'rgba(156, 163, 175, 0.4)' }]} />
-                                  )}
+                                  <ChildAvatarCluster
+                                    childIds={childIds.slice(0, 3)}
+                                    familyChildren={effectiveChildren}
+                                    size={18}
+                                    overlap={-5}
+                                  />
                                   <Text style={styles.listItemSubtitle} numberOfLines={1}>
                                     {childNames.join(', ')}
                                   </Text>
@@ -1865,10 +1784,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#ffffff',
-    // Avoid double horizontal padding (rows below already handle their own inset)
-    paddingHorizontal: 0,
-    paddingTop: 0,
-    paddingBottom: 16,
+    // Match LearningSubjectsListView page gutter
+    paddingHorizontal: 28,
+    paddingTop: 24,
+    paddingBottom: 24,
     minHeight: '100%',
   },
   mainContent: {
@@ -2718,6 +2637,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: colors.text,
+    flexShrink: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -2756,6 +2676,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: colors.text,
+    flexShrink: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -2886,6 +2807,7 @@ const styles = StyleSheet.create({
   childrenFilterChip: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 7,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
@@ -2895,6 +2817,20 @@ const styles = StyleSheet.create({
     ...Platform.select({
       web: { cursor: 'pointer' },
     }),
+  },
+  childrenFilterChipAvatarWrap: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    flexShrink: 0,
+    overflow: 'hidden',
+    backgroundColor: '#f1f5f9',
+  },
+  childrenFilterChipAvatar: {
+    width: 18,
+    height: 18,
+    transform: [{ scale: 1.2 }],
+    ...(Platform.OS === 'web' && { objectFit: 'cover' }),
   },
   childrenFilterChipActive: {
     borderColor: '#6BB3E8',
@@ -2914,8 +2850,46 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  materialsToolbar: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 4,
+    ...(Platform.OS === 'web' && {
+      boxSizing: 'border-box',
+    }),
+  },
+  uploadMaterialButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.22)',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  uploadMaterialButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#334155',
+    letterSpacing: -0.1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   allFilesContainer: {
-    paddingHorizontal: 24,
+    paddingHorizontal: 0,
     paddingVertical: 12,
   },
   allFilesText: {
@@ -2930,13 +2904,13 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: colors.border || '#e5e7eb',
     marginBottom: 0,
-    marginHorizontal: 24,
+    marginHorizontal: 0,
   },
   listHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 24,
+    paddingHorizontal: 0,
   },
   listHeaderTitle: {
     flex: 1,
@@ -2989,7 +2963,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 24,
+    paddingHorizontal: 0,
     backgroundColor: '#ffffff',
     width: '100%',
     ...Platform.select({
@@ -3004,7 +2978,7 @@ const styles = StyleSheet.create({
   listItemDivider: {
     height: 1,
     backgroundColor: colors.border || '#e5e7eb',
-    marginHorizontal: 24,
+    marginHorizontal: 0,
   },
   listItemIcon: {
     width: 40,
@@ -3045,18 +3019,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-  },
-  childDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    flexShrink: 0,
-  },
-  childrenFilterChipDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    flexShrink: 0,
   },
   listItemSubtitle: {
     fontSize: 15,
@@ -3525,7 +3487,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 60,
-    paddingHorizontal: 24,
+    paddingHorizontal: 0,
   },
   emptyTitle: {
     fontSize: 18,

@@ -2,7 +2,7 @@
  * Child Home Screen
  *
  * Mirrors ParentHomeScreen layout: hero strip, bulletin board main column,
- * and right rail with today's schedule + subjects.
+ * and right rail with today's schedule.
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -10,11 +10,9 @@ import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native
 import { Calendar, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
-import { getPlanHealth } from '../../lib/services/academicYearClient';
 import RoleHomeShell from '../home/RoleHomeShell';
 import TodayScheduleCard from '../home/TodayScheduleCard';
 import BulletinBoardSection from '../bulletin/BulletinBoardSection';
-import { ParentHomeRightRail, statusToneFromDelta, statusLabel } from '../home/ParentHomeDashboard';
 import { applyChildFilter } from '../../lib/queryFilters';
 import { colors } from '../../theme/colors';
 
@@ -44,7 +42,6 @@ export default function ChildHomeScreen({
   const [todayEvents, setTodayEvents] = useState([]);
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
-  const [planHealth, setPlanHealth] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [bulletinComposerOpen, setBulletinComposerOpen] = useState(false);
 
@@ -61,7 +58,6 @@ export default function ChildHomeScreen({
     session?.role_flags?.isChild === true
     && session?.student_self_signup === true
     && session?.child_linked_via_accepted_invite !== true;
-  const canManageSubjects = isParentViewingChild || session?.role_flags?.isParent === true;
 
   useEffect(() => {
     if (!safeFamilyId || !safeChildId) return;
@@ -71,21 +67,6 @@ export default function ChildHomeScreen({
       loadData();
     }
   }, [sessionLoading, safeFamilyId, safeChildId, isParentViewingChild, selectedDate]);
-
-  useEffect(() => {
-    if (!safeFamilyId) return;
-    let cancelled = false;
-    getPlanHealth(safeFamilyId)
-      .then((data) => {
-        if (!cancelled) setPlanHealth(data || null);
-      })
-      .catch(() => {
-        if (!cancelled) setPlanHealth(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [safeFamilyId]);
 
   const loadData = async () => {
     if (!safeFamilyId || !safeChildId) return;
@@ -242,59 +223,6 @@ export default function ChildHomeScreen({
     return trimmed.split(/\s+/)[0];
   }, [overrideChildName, child?.first_name, child?.name, session?.accessible_children]);
 
-  const subjectSnapshot = useMemo(() => {
-    const perChildSubject = planHealth?.per_child_subject?.[safeChildId] || {};
-    const subjectIds = new Set([
-      ...subjects.map((s) => String(s.id)),
-      ...Object.keys(perChildSubject || {}),
-    ]);
-
-    const rows = Array.from(subjectIds).map((subjectId) => {
-      const subject = subjects.find((s) => String(s.id) === String(subjectId));
-      const name = subject?.name || 'Subject';
-      const stats = perChildSubject?.[subjectId];
-
-      if (!stats) {
-        return {
-          subjectId,
-          name,
-          childIds: safeChildId ? [safeChildId] : [],
-          childLabel: viewerFirstName,
-          tone: 'on_track',
-          statusLabel: 'Not started',
-          plannedDays: null,
-          targetDays: null,
-          progressPct: null,
-        };
-      }
-
-      const tone = statusToneFromDelta(stats.subject_delta_days);
-      const progressPct =
-        stats.subject_target_days && stats.planned_days != null
-          ? Math.round((stats.planned_days / stats.subject_target_days) * 100)
-          : null;
-
-      return {
-        subjectId,
-        name,
-        childIds: safeChildId ? [safeChildId] : [],
-        childLabel: viewerFirstName,
-        tone,
-        statusLabel: statusLabel(
-          tone,
-          stats.subject_delta_days,
-          stats.subject_target_days,
-          stats.planned_days
-        ),
-        plannedDays: stats.planned_days,
-        targetDays: stats.subject_target_days,
-        progressPct,
-      };
-    });
-
-    return rows.sort((a, b) => a.name.localeCompare(b.name)).slice(0, 6);
-  }, [planHealth, subjects, safeChildId, viewerFirstName]);
-
   if (sessionReady && (!childId || (!child && !isParentViewingChild))) {
     return (
       <View style={styles.errorContainer}>
@@ -426,49 +354,7 @@ export default function ChildHomeScreen({
     </View>
   );
 
-  const railContent = showRightRail ? (
-    <View style={styles.railStack}>
-      {renderSchedulePanel(styles.railScheduleSection)}
-      <View style={styles.railSubjectsSection}>
-        <ParentHomeRightRail
-          subjectSnapshot={subjectSnapshot}
-          familyChildren={children}
-          onNavigate={onNavigate}
-          onEditSubject={
-            canManageSubjects
-              ? (row) => {
-                  const subject = subjects.find((s) => String(s.id) === String(row?.subjectId));
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
-                      detail: {
-                        subject: subject || { id: row?.subjectId, name: row?.name },
-                      },
-                    }));
-                  }
-                }
-              : undefined
-          }
-          onAddEventForSubject={
-            canManageSubjects
-              ? (row) => {
-                  const childIds = row?.childIds || (safeChildId ? [safeChildId] : []);
-                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('openTaskModal', {
-                      detail: {
-                        subjectId: row?.subjectId,
-                        date: selectedDate,
-                        childIds,
-                        childId: childIds[0] || safeChildId || null,
-                      },
-                    }));
-                  }
-                }
-              : undefined
-          }
-        />
-      </View>
-    </View>
-  ) : null;
+  const railContent = showRightRail ? renderSchedulePanel(styles.railScheduleSection) : null;
 
   return (
     <View style={styles.homeRoot}>
@@ -680,40 +566,18 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  railStack: {
-    flex: 1,
-    gap: 14,
-    minHeight: 0,
-    width: '100%',
-    ...(Platform.OS === 'web' && {
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100%',
-      alignSelf: 'stretch',
-      overflow: 'hidden',
-    }),
-  },
   railScheduleSection: {
     flex: 1,
     flexBasis: 0,
     minHeight: 0,
     marginTop: 0,
+    width: '100%',
     ...(Platform.OS === 'web' && {
-      height: 'calc((100% - 14px) / 2)',
-      maxHeight: 'calc((100% - 14px) / 2)',
+      height: '100%',
+      maxHeight: '100%',
       overflowY: 'auto',
       overflowX: 'hidden',
       WebkitOverflowScrolling: 'touch',
-    }),
-  },
-  railSubjectsSection: {
-    flex: 1,
-    flexBasis: 0,
-    minHeight: 0,
-    ...(Platform.OS === 'web' && {
-      height: 'calc((100% - 14px) / 2)',
-      maxHeight: 'calc((100% - 14px) / 2)',
-      overflow: 'hidden',
     }),
   },
 });

@@ -1162,16 +1162,18 @@ export default function AttendanceView({
           );
         })}
       </View>
-      <TouchableOpacity
-        style={[styles.rangeBulkChip, (markingRangeAttended || children.length === 0 || readOnly) && styles.rangeBulkChipDisabled]}
-        onPress={() => setConfirmRangeVisible(true)}
-        disabled={markingRangeAttended || children.length === 0 || readOnly}
-        {...(Platform.OS === 'web' && { cursor: markingRangeAttended || readOnly ? 'default' : 'pointer' })}
-      >
-        <Text style={styles.rangeBulkChipText}>
-          {markingRangeAttended ? 'Marking range…' : 'Bulk actions'}
-        </Text>
-      </TouchableOpacity>
+      {!isYearPlannerLayout ? (
+        <TouchableOpacity
+          style={[styles.rangeBulkChip, (markingRangeAttended || children.length === 0 || readOnly) && styles.rangeBulkChipDisabled]}
+          onPress={() => setConfirmRangeVisible(true)}
+          disabled={markingRangeAttended || children.length === 0 || readOnly}
+          {...(Platform.OS === 'web' && { cursor: markingRangeAttended || readOnly ? 'default' : 'pointer' })}
+        >
+          <Text style={styles.rangeBulkChipText}>
+            {markingRangeAttended ? 'Marking range…' : 'Bulk actions'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 

@@ -46,7 +46,7 @@ const SIDEBAR_COLORS = {
 const NAV_ITEM_DEFS = {
   home: { key: 'home', label: 'Home', icon: MAIN_NAV_ICONS.home },
   messages: { key: 'messages', label: 'Messages', icon: MAIN_NAV_ICONS.messages },
-  subjects: { key: 'subjects', label: 'Learning', icon: MAIN_NAV_ICONS.subjects },
+  subjects: { key: 'subjects', label: 'Subjects', icon: MAIN_NAV_ICONS.subjects },
   materials: { key: 'materials', label: 'Materials', icon: MAIN_NAV_ICONS.materials },
   family: { key: 'family', label: 'Family', icon: MAIN_NAV_ICONS.family },
   planner: { key: 'planner', label: 'Planner', icon: MAIN_NAV_ICONS.planner },
@@ -64,8 +64,7 @@ const NAV_ITEM_DEFS = {
 
 const PARENT_NAV_BUCKET_KEYS = [
   ['home', 'messages'],
-  ['planner', 'planningPreferences'],
-  ['subjects', 'materials', 'family'],
+  ['planner', 'subjects', 'materials', 'family', 'planningPreferences'],
   ['profile'],
 ];
 

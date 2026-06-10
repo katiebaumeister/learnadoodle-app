@@ -1625,69 +1625,6 @@ export default function SubjectsPage({
   ]);
   const renderCoursesHeaderFilters = useCallback((options = {}) => {
     const { showTermRow = true, showChildrenRow = true, showSubjectRow = true } = options;
-    const canEditChildFromFilters = canShowEditChildButton && typeof onEditChild === 'function';
-    const canEditSubjectFromFilters = canShowEditSubjectButton && canManageSubjectsActions && typeof onEditSubject === 'function';
-    const canCreateChildFromHeader = !isChildView && canShowEditChildButton;
-    const canCreateSubjectFromHeader = !isChildView && canManageSubjectsActions;
-    const renderFilterLabelIcons = ({
-      showAdd,
-      showEdit,
-      onAdd,
-      onEdit,
-      addLabel,
-      editLabel,
-    }) => {
-      if (!showAdd && !showEdit) return null;
-      return (
-        <View style={styles.filterLabelActions}>
-          {showEdit ? (
-            <TouchableOpacity
-              style={styles.filterLabelIconBtn}
-              onPress={onEdit}
-              activeOpacity={0.75}
-              accessibilityRole="button"
-              accessibilityLabel={editLabel}
-              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-            >
-              <Pencil size={14} color="#64748B" />
-            </TouchableOpacity>
-          ) : null}
-          {showAdd ? (
-            <TouchableOpacity
-              style={styles.filterLabelIconBtn}
-              onPress={onAdd}
-              activeOpacity={0.75}
-              accessibilityRole="button"
-              accessibilityLabel={addLabel}
-              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-            >
-              <Plus size={14} color="#64748B" />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      );
-    };
-    const openAddChildFromFilter = () => {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('openAddChildModal'));
-      }
-    };
-    const openChildEditFromFilter = () => {
-      if (!canEditChildFromFilters) return;
-      if (safeChildren.length === 0 && !canCreateChildFromHeader) {
-        toast.push('No children to edit', 'error');
-        return;
-      }
-      setLearningHeaderPickerKind('child');
-    };
-    const openSubjectEditFromFilter = () => {
-      if (!canEditSubjectFromFilters) return;
-      if ((filteredSubjects || []).length === 0 && !canCreateSubjectFromHeader) {
-        toast.push('No subjects to edit', 'error');
-        return;
-      }
-      setLearningHeaderPickerKind('subject');
-    };
     return (
     <>
       {showChildrenRow && showInlineChildrenFilters ? (
@@ -1695,14 +1632,6 @@ export default function SubjectsPage({
           <View style={styles.filterRowMain}>
             <View style={styles.filterLabelGroup}>
               <Text style={styles.filterLabel}>Children</Text>
-              {renderFilterLabelIcons({
-                showAdd: canCreateChildFromHeader,
-                showEdit: canEditChildFromFilters,
-                onAdd: openAddChildFromFilter,
-                onEdit: openChildEditFromFilter,
-                addLabel: 'Add child',
-                editLabel: 'Edit children',
-              })}
             </View>
             <View style={styles.filterChipsWrap}>
               <View style={styles.filterChecklist}>
@@ -1815,14 +1744,6 @@ export default function SubjectsPage({
           <View style={styles.filterRowMain}>
             <View style={styles.filterLabelGroup}>
               <Text style={styles.filterLabel}>Subjects</Text>
-              {renderFilterLabelIcons({
-                showAdd: canCreateSubjectFromHeader,
-                showEdit: canEditSubjectFromFilters,
-                onAdd: openAddSubjectWithCurrentHeaders,
-                onEdit: openSubjectEditFromFilter,
-                addLabel: 'Add subject',
-                editLabel: 'Edit subjects',
-              })}
             </View>
             <View style={styles.filterChipsWrap}>
             <View style={styles.filterChecklist}>
@@ -1877,14 +1798,7 @@ export default function SubjectsPage({
     </>
   );
   }, [
-    isCatalogScreen,
-    canShowEditChildButton,
-    canShowEditSubjectButton,
-    canManageSubjectsActions,
-    onEditChild,
-    onEditSubject,
     showInlineChildrenFilters,
-    isChildView,
     selectedModeFilter,
     effectiveCoursesChildIds,
     toggleCourseChildFilter,
@@ -1898,9 +1812,7 @@ export default function SubjectsPage({
     effectiveCoursesSubjectIds,
     selectAllSubjectsFilter,
     toggleCourseSubjectFilter,
-    filteredSubjects,
-    openAddSubjectWithCurrentHeaders,
-    toast,
+    isChildView,
   ]);
 
   const selectedChildFilterForCards = useMemo(() => {
@@ -4282,7 +4194,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
   filterRowEditActions: {
     flexDirection: 'row',
@@ -4351,22 +4263,7 @@ const styles = StyleSheet.create({
   filterLabelGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    width: 132,
     flexShrink: 0,
-  },
-  filterLabelActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  filterLabelIconBtn: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   filterLabel: {
     fontSize: 15,
@@ -4385,7 +4282,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    paddingHorizontal: 8,
+    paddingRight: 8,
     paddingBottom: 6,
   },
   filterOptionChip: {

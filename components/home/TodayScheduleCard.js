@@ -12,6 +12,8 @@ import { completeEvent, updateEventStatus } from '../../lib/services/attendanceC
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
 
+const ATTENDANCE_RING_SIZE = 20;
+
 function ScheduleEventRow({
   event,
   familyChildren = [],
@@ -99,7 +101,7 @@ function ScheduleEventRow({
               >
                 <CompletionRing
                   isDone={done}
-                  size={14}
+                  size={ATTENDANCE_RING_SIZE}
                   pendingBorderColor="rgba(156, 163, 175, 0.45)"
                   onPress={() => handleAttendanceToggle(event)}
                 />
@@ -713,11 +715,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#F1F5F9',
   },
   attendanceSpacer: {
-    width: 14,
+    width: ATTENDANCE_RING_SIZE,
     flexShrink: 0,
   },
   attendanceHit: {
-    width: 14,
+    width: ATTENDANCE_RING_SIZE,
     flexShrink: 0,
     alignItems: 'center',
     justifyContent: 'center',

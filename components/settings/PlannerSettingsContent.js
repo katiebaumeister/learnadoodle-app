@@ -2018,21 +2018,34 @@ export default function PlannerSettingsContent({
   const pageYearNavRowStyle = {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
+    flexShrink: 0,
+  };
+  const pageYearNavChevronsStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
   };
   const pageYearNavBtnStyle = {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    padding: 4,
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   };
+  const pageYearNavTitleGroupStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  };
+  const pageYearNavTitleButtonStyle = {
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  };
+  const pageYearNavTitleButtonDisabledStyle = {
+    ...(Platform.OS === 'web' && { cursor: 'default' }),
+  };
   const pageYearNavTitleStyle = {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '600',
-    color: '#111827',
-    letterSpacing: 0,
+    color: '#1E293B',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -2277,7 +2290,7 @@ export default function PlannerSettingsContent({
               <Text style={pageYearNavTitleStyle}>{schoolYearHeaderLabel}</Text>
             ) : (
               <View style={pageYearNavRowStyle}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={pageYearNavChevronsStyle}>
                   <TouchableOpacity
                     style={[pageYearNavBtnStyle, !canShiftSchoolYear && { opacity: 0.35 }]}
                     onPress={() => shiftSelectedSchoolYear(-1)}
@@ -2286,7 +2299,7 @@ export default function PlannerSettingsContent({
                     accessibilityLabel="Previous school year"
                     {...(Platform.OS === 'web' && { cursor: canShiftSchoolYear ? 'pointer' : 'default' })}
                   >
-                    <ChevronLeft size={22} color="#A6AFBF" />
+                    <ChevronLeft size={16} color="rgba(15,23,42,0.4)" />
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[pageYearNavBtnStyle, !canShiftSchoolYear && { opacity: 0.35 }]}
@@ -2296,20 +2309,26 @@ export default function PlannerSettingsContent({
                     accessibilityLabel="Next school year"
                     {...(Platform.OS === 'web' && { cursor: canShiftSchoolYear ? 'pointer' : 'default' })}
                   >
-                    <ChevronRight size={22} color="#A6AFBF" />
+                    <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
                   </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                  onPress={jumpToCurrentSchoolYear}
-                  disabled={!canShiftSchoolYear || isAtCurrentSchoolYear}
-                  accessibilityRole="button"
-                  accessibilityLabel="Return to current school year"
-                  {...(Platform.OS === 'web' && {
-                    cursor: canShiftSchoolYear && !isAtCurrentSchoolYear ? 'pointer' : 'default',
-                  })}
-                >
-                  <Text style={pageYearNavTitleStyle}>{schoolYearHeaderLabel}</Text>
-                </TouchableOpacity>
+                <View style={pageYearNavTitleGroupStyle}>
+                  <TouchableOpacity
+                    style={[
+                      pageYearNavTitleButtonStyle,
+                      (!canShiftSchoolYear || isAtCurrentSchoolYear) && pageYearNavTitleButtonDisabledStyle,
+                    ]}
+                    onPress={jumpToCurrentSchoolYear}
+                    disabled={!canShiftSchoolYear || isAtCurrentSchoolYear}
+                    accessibilityRole="button"
+                    accessibilityLabel="Return to current school year"
+                    {...(Platform.OS === 'web' && {
+                      cursor: canShiftSchoolYear && !isAtCurrentSchoolYear ? 'pointer' : 'default',
+                    })}
+                  >
+                    <Text style={pageYearNavTitleStyle}>{schoolYearHeaderLabel}</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
             {savedIndicator ? (

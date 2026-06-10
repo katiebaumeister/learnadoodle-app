@@ -3966,29 +3966,31 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
-                      gap: 6,
-                      paddingHorizontal: 16,
-                      paddingVertical: 10,
-                      borderRadius: 20,
+                      gap: 4,
+                      paddingVertical: 13,
+                      paddingHorizontal: 14,
+                      borderRadius: 9999,
                       borderWidth: 1,
-                      borderColor: showSmartActionsMenu
-                        ? 'rgba(148, 163, 184, 0.45)'
-                        : 'rgba(148, 163, 184, 0.24)',
-                      backgroundColor: '#F9FAFB',
+                      borderColor: '#E6EBF2',
+                      backgroundColor: '#FFFFFF',
                       flexShrink: 0,
                     }}
                     onPress={() => setShowSmartActionsMenu((open) => !open)}
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
                     <Text style={{
-                      fontSize: 13,
+                      fontSize: 15,
+                      color: 'rgba(15,23,42,0.85)',
                       fontWeight: '500',
-                      color: '#475569',
                       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                     }}>
                       Smart Actions
                     </Text>
-                    <ChevronDown size={14} color="#64748b" />
+                    {showSmartActionsMenu ? (
+                      <ChevronUp size={16} color="rgba(15,23,42,0.7)" />
+                    ) : (
+                      <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
+                    )}
                   </TouchableOpacity>
                   <PlannerSmartActionsMenu
                     visible={showSmartActionsMenu}

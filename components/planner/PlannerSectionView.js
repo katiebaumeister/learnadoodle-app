@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import {
   ChevronDown,
+  ChevronUp,
   Sparkles,
 } from 'lucide-react';
 import { MAIN_NAV_ICONS, MAIN_NAV_PAGE_ICON_COLOR, MAIN_NAV_PAGE_ICON_SIZE } from '../layout/mainNavIcons';
@@ -194,7 +195,11 @@ export default function PlannerSectionView({
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <Text style={styles.smartActionsText}>Smart Actions</Text>
-              <ChevronDown size={14} color="#64748b" />
+              {showSmartActionsMenu ? (
+                <ChevronUp size={16} color="rgba(15,23,42,0.7)" />
+              ) : (
+                <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
+              )}
             </TouchableOpacity>
             <PlannerSmartActionsMenu
               visible={showSmartActionsMenu}
@@ -289,19 +294,22 @@ const styles = StyleSheet.create({
   smartActionsBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
+    gap: 4,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    borderRadius: 9999,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.24)',
-    backgroundColor: '#F9FAFB',
+    borderColor: '#E6EBF2',
+    backgroundColor: '#FFFFFF',
     flexShrink: 0,
   },
   smartActionsText: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '500',
-    color: '#475569',
+    color: 'rgba(15,23,42,0.85)',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   planningEngineContainer: {
     width: '100%',
