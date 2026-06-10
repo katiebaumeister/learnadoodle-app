@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
-import { TOKENS } from './attendance/constants';
+import { ATTENDANCE_COLORS, TOKENS } from './attendance/constants';
 import {
   buildMonthCells,
   buildMonthsInRange,
@@ -124,6 +124,7 @@ export default function PlannerYearGrid({
   events = [],
   academicYears = null,
   onSelectDay,
+  embedded = false,
 }) {
   const [hoveredCellKey, setHoveredCellKey] = useState(null);
   const cellSize = TOKENS.hmCell;
@@ -147,12 +148,8 @@ export default function PlannerYearGrid({
     return counts;
   }, [events, yearStart, yearEnd]);
 
-  return (
-    <ScrollView
-      style={styles.scroll}
-      contentContainerStyle={styles.scrollContent}
-      showsVerticalScrollIndicator={false}
-    >
+  const gridBody = (
+    <>
       <Text style={styles.sectionHelp}>
         Each month is a mini calendar for your school year. Blue days have scheduled events. Click a day to open the month view.
       </Text>
@@ -177,6 +174,10 @@ export default function PlannerYearGrid({
           <Text style={styles.legendPillText}>Has events</Text>
         </View>
         <View style={styles.legendPill}>
+          <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.absent }]} />
+          <Text style={styles.legendPillText}>Unattended</Text>
+        </View>
+        <View style={styles.legendPill}>
           <View style={[styles.legendDot, { backgroundColor: NO_EVENT_COLOR, borderWidth: 1, borderColor: 'rgba(15,23,42,0.06)' }]} />
           <Text style={styles.legendPillText}>No events</Text>
         </View>
@@ -185,6 +186,20 @@ export default function PlannerYearGrid({
           <Text style={styles.legendPillText}>Today</Text>
         </View>
       </View>
+    </>
+  );
+
+  if (embedded) {
+    return <View style={styles.embeddedContent}>{gridBody}</View>;
+  }
+
+  return (
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}
+    >
+      {gridBody}
     </ScrollView>
   );
 }
@@ -200,6 +215,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 16,
     paddingBottom: 32,
+  },
+  embeddedContent: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 16,
   },
   sectionHelp: {
     fontSize: TOKENS.fontSizeCaption,

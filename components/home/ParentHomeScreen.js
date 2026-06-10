@@ -3,13 +3,13 @@
  * 
  * Full parent dashboard with:
  * - Today Forecast hero
- * - Main column: QuickAdd, Schedule, Backlog
- * - Right rail: Notification Center, Rewards, Subscription
+ * - Main column: Bulletin Board
+ * - Right rail: Today's schedule + Family subjects
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, Platform, ScrollView, TouchableOpacity } from 'react-native';
-import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
 import { isAbortLikeError } from '../../lib/apiClient';
@@ -18,9 +18,23 @@ import RoleHomeShell from './RoleHomeShell';
 import TodayScheduleCard from './TodayScheduleCard';
 import ParentDigestModal from './ParentDigestModal';
 import { ParentHomeRightRail, statusToneFromDelta, statusLabel } from './ParentHomeDashboard';
+import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
+
+function getTimeBasedGreeting() {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return 'Good morning';
+  if (hour >= 12 && hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function formatGreetingDateInline(date) {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  return `${days[date.getDay()]}, ${months[date.getMonth()]} ${date.getDate()}`;
+}
 
 function applyAttendanceSnapshotToLearning(learning = [], attendanceRows = []) {
   const events = Array.isArray(learning) ? learning : [];
@@ -113,6 +127,7 @@ async function hydrateLearningAssignees(learning = [], familyId) {
 export default function ParentHomeScreen({
   familyId: propFamilyId,
   family = null,
+  profile = null,
   onNavigate,
   onOpenEvent = null,
   onAddEvent,
@@ -143,6 +158,7 @@ export default function ParentHomeScreen({
   const [notificationCount, setNotificationCount] = useState(0);
   const [error, setError] = useState(null);
   const [showParentDigest, setShowParentDigest] = useState(false);
+  const [bulletinComposerOpen, setBulletinComposerOpen] = useState(false);
   const initialDataReadyFiredRef = useRef(false);
   const onInitialDataReadyRef = useRef(onInitialDataReady);
   onInitialDataReadyRef.current = onInitialDataReady;
@@ -155,6 +171,13 @@ export default function ParentHomeScreen({
 
   // Get familyId from session if not provided as prop
   const familyId = propFamilyId || session?.family_id;
+
+  const viewerFirstName = useMemo(() => {
+    const raw = profile?.first_name || profile?.name || '';
+    const trimmed = String(raw).trim();
+    if (!trimmed) return null;
+    return trimmed.split(/\s+/)[0];
+  }, [profile?.first_name, profile?.name]);
 
   useEffect(() => {
     const incoming = pickSubjectListSource(preloadedSubjectsOverview, preloadedSubjects);
@@ -777,24 +800,6 @@ export default function ParentHomeScreen({
   }
 
 
-  const getDayDiffFromToday = (date) => {
-    const d = new Date(date);
-    if (Number.isNaN(d.getTime())) return 0;
-    const today = new Date();
-    const lhs = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
-    const rhs = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-    return Math.round((lhs - rhs) / (24 * 60 * 60 * 1000));
-  };
-
-  const getScheduleHeadingLabel = (date) => {
-    const diff = getDayDiffFromToday(date);
-    if (diff === 0) return "Today's schedule";
-    if (diff === -1) return "Yesterday's schedule";
-    if (diff === 1) return "Tomorrow's schedule";
-    const dateLabel = new Date(date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
-    return `${dateLabel}'s Schedule`;
-  };
-
   const shiftSelectedDay = (deltaDays) => {
     setSelectedDate((prev) => {
       const base = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev : new Date();
@@ -808,25 +813,17 @@ export default function ParentHomeScreen({
     setSelectedDate(new Date());
   };
 
-  const mainContent = (
-    <View style={styles.mainSurface}>
-      {/* Daily schedule — primary “Add event” lives in card empty state; header CTA when there are events */}
-      <View style={styles.scheduleSection}>
-        <View style={styles.sectionHeader}>
-          <View style={styles.scheduleNavGroup}>
+  const renderSchedulePanel = (panelStyle) => (
+    <View style={[styles.scheduleSection, panelStyle]}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.scheduleNavGroup}>
+          <View style={styles.dayNavButtonGroup}>
             <TouchableOpacity
               style={styles.dayNavButton}
               onPress={() => shiftSelectedDay(-1)}
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <ChevronLeft size={16} color="#64748b" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.scheduleTitleButton}
-              onPress={jumpToTodaySchedule}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={styles.sectionLabel}>{getScheduleHeadingLabel(selectedDate)}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.dayNavButton}
@@ -836,39 +833,86 @@ export default function ParentHomeScreen({
               <ChevronRight size={16} color="#64748b" />
             </TouchableOpacity>
           </View>
-          {blockCount > 0 ? (
-            <TouchableOpacity
-              style={styles.addButton}
-              onPress={onAddEvent}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={16} color="#64748b" />
-              <Text style={styles.addButtonText}>Add event</Text>
-            </TouchableOpacity>
-          ) : null}
+          <TouchableOpacity
+            style={styles.scheduleTitleButton}
+            onPress={jumpToTodaySchedule}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Text style={styles.sectionLabel}>Today's Schedule</Text>
+          </TouchableOpacity>
         </View>
-        <TodayScheduleCard
-          events={filteredLearning}
-          children={effectiveHomeData.children || []}
-          subjects={effectiveHomeData.subjects || []}
-          onOpenPlanner={() => onNavigate?.('planner')}
-          onOpenEvent={onOpenEvent}
-          onTabChange={onNavigate}
-          onAddBlock={onAddEvent}
-          suggestedRhythms={[]}
-          onAddSuggestedRhythm={() => {}}
-          noCard={true}
+      </View>
+      <TodayScheduleCard
+        events={filteredLearning}
+        children={effectiveHomeData.children || []}
+        subjects={effectiveHomeData.subjects || []}
+        onOpenPlanner={() => onNavigate?.('planner')}
+        onOpenEvent={onOpenEvent}
+        onTabChange={onNavigate}
+        onAddBlock={onAddEvent}
+        suggestedRhythms={[]}
+        onAddSuggestedRhythm={() => {}}
+        noCard={true}
+      />
+    </View>
+  );
+
+  const heroContent = (
+    <View style={styles.greetingContainer}>
+      <View style={styles.greetingInner}>
+        <View style={styles.greetingCopy}>
+          <Text style={styles.greetingTitle}>
+            {getTimeBasedGreeting()}
+            {viewerFirstName ? `, ${viewerFirstName}` : ''}.
+          </Text>
+          <Text style={styles.greetingSubtitle}>Let's see where learning takes us today.</Text>
+          <Text style={styles.greetingDateLine}>{formatGreetingDateInline(new Date())}</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.greetingAddButton}
+          onPress={onAddEvent}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Plus size={18} color="#334155" strokeWidth={2.25} />
+          <Text style={styles.greetingAddButtonText}>Add event</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const mainContent = (
+    <View style={styles.mainSurface}>
+      <View style={styles.bulletinBoardSection}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionLabel}>Bulletin Board</Text>
+          <TouchableOpacity
+            style={styles.greetingAddButton}
+            onPress={() => setBulletinComposerOpen(true)}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Pencil size={18} color="#334155" strokeWidth={2.25} />
+            <Text style={styles.greetingAddButtonText}>New note</Text>
+          </TouchableOpacity>
+        </View>
+        <BulletinBoardSection
+          familyId={familyId}
+          children={children}
+          subjects={effectiveHomeData.subjects?.length ? effectiveHomeData.subjects : stableSubjects}
+          profile={profile}
+          composerOpen={bulletinComposerOpen}
+          onComposerOpenChange={setBulletinComposerOpen}
         />
       </View>
     </View>
   );
 
   const railContent = (
-    <View style={styles.railContent}>
-      <ParentHomeRightRail
-        subjectSnapshot={subjectSnapshot}
-        userRole={session?.effective_role}
-        familyChildren={children}
+    <View style={styles.railStack}>
+      {renderSchedulePanel(styles.railScheduleSection)}
+      <View style={styles.railSubjectsSection}>
+        <ParentHomeRightRail
+          subjectSnapshot={subjectSnapshot}
+          familyChildren={children}
         onNavigate={onNavigate}
         onEditSubject={(row) => {
           const subjectsList =
@@ -900,10 +944,9 @@ export default function ParentHomeScreen({
           }
         }}
       />
+      </View>
     </View>
   );
-
-  // Calculate most active subject for digest
   const subjectCounts = {};
   (effectiveHomeData.learning || []).forEach(event => {
     if (event.subject_id) {
@@ -920,6 +963,7 @@ export default function ParentHomeScreen({
   return (
     <>
       <RoleHomeShell
+        hero={heroContent}
         main={mainContent}
         rail={railContent}
       />
@@ -959,6 +1003,88 @@ const styles = StyleSheet.create({
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  greetingContainer: {
+    position: 'relative',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.12)',
+    backgroundColor: colors.bgSubtle,
+    minHeight: 110,
+    paddingVertical: 22,
+    paddingHorizontal: 24,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      backgroundImage: 'linear-gradient(135deg, #f4f2ff 0%, #eef6ff 48%, #f0fdf6 100%)',
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
+    }),
+  },
+  greetingInner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+    minHeight: 88,
+  },
+  greetingCopy: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 6,
+    minWidth: 0,
+  },
+  greetingTitle: {
+    fontSize: 30,
+    fontWeight: '700',
+    color: '#0f172a',
+    letterSpacing: -0.4,
+    lineHeight: 34,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  greetingSubtitle: {
+    fontSize: 17,
+    fontWeight: '500',
+    color: '#334155',
+    lineHeight: 24,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  greetingDateLine: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#64748b',
+    lineHeight: 20,
+    marginTop: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  greetingAddButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.22)',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  greetingAddButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#334155',
+    letterSpacing: -0.1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   mainSurface: {
     flex: 1,
     backgroundColor: 'transparent',
@@ -968,6 +1094,23 @@ const styles = StyleSheet.create({
       flexDirection: 'column',
       height: '100%',
       minHeight: 0,
+    }),
+  },
+  bulletinBoardSection: {
+    flex: 1,
+    marginTop: 2,
+    paddingTop: 14,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.12)',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: 0,
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
     }),
   },
   scheduleSection: {
@@ -984,6 +1127,7 @@ const styles = StyleSheet.create({
       display: 'flex',
       flexDirection: 'column',
       minHeight: 0,
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
     }),
   },
   sectionHeader: {
@@ -1002,6 +1146,12 @@ const styles = StyleSheet.create({
     gap: 8,
     flexShrink: 1,
     minWidth: 0,
+  },
+  dayNavButtonGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 0,
+    flexShrink: 0,
   },
   dayNavButton: {
     alignItems: 'center',
@@ -1033,28 +1183,40 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.24)',
-    flexShrink: 0,
+  railStack: {
+    flex: 1,
+    gap: 14,
+    minHeight: 0,
+    width: '100%',
     ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      transition: 'all 0.2s ease',
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      alignSelf: 'stretch',
+      overflow: 'hidden',
     }),
   },
-  addButtonText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#475569',
+  railScheduleSection: {
+    flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
+    marginTop: 0,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      height: 'calc((100% - 14px) / 2)',
+      maxHeight: 'calc((100% - 14px) / 2)',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      WebkitOverflowScrolling: 'touch',
+    }),
+  },
+  railSubjectsSection: {
+    flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      height: 'calc((100% - 14px) / 2)',
+      maxHeight: 'calc((100% - 14px) / 2)',
+      overflow: 'hidden',
     }),
   },
   mainContent: {
@@ -1065,21 +1227,6 @@ const styles = StyleSheet.create({
       height: '100%',
       flex: 1,
       minHeight: 0,
-    }),
-    ...(Platform.OS !== 'web' && {
-      gap: 20,
-    }),
-  },
-  railContent: {
-    flex: 1,
-    minHeight: 0,
-    ...(Platform.OS === 'web' && {
-      display: 'flex',
-      flexDirection: 'column',
-      width: '100%',
-      height: '100%',
-      alignSelf: 'stretch',
-      overflow: 'hidden',
     }),
     ...(Platform.OS !== 'web' && {
       gap: 20,

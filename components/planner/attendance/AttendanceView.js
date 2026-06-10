@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, StyleSheet, Platform, Modal, TouchableOpacity } from 'react-native';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 
 /** Notify other views (planner calendar, home schedule, subject pages) so attendance stays in sync. */
@@ -35,10 +35,10 @@ import HeaderSummaryStrip from './HeaderSummaryStrip';
 import YearHeatmapGrid from './YearHeatmapGrid';
 import MonthlyCalendarView from './MonthlyCalendarView';
 import DayEventsPanel from './DayEventsPanel';
-import MarkRangeModal from './MarkRangeModal';
 import AttendanceExportModal from './AttendanceExportModal';
 import { useToast } from '../../Toast';
 import { TOKENS } from './constants';
+import { resolvePlannerYearRange } from '../plannerYearRange';
 
 const REQUIRED_DAYS_DEFAULT = 180;
 const REQUIRED_HOURS_DEFAULT = 1000;
@@ -142,6 +142,11 @@ export default function AttendanceView({
   onEditChild = null,
   plannerInitialSnapshot = null,
   mode = 'overview',
+  layoutMode = 'default',
+  plannerYearAnchor = null,
+  academicYears = null,
+  renderBelowToolbar = null,
+  readOnly = false,
 }) {
   const [loading, setLoading] = useState(true);
   const [academicYear, setAcademicYear] = useState(null);
@@ -150,7 +155,6 @@ export default function AttendanceView({
   const [yearEvents, setYearEvents] = useState([]);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState({ dateKey: null, childId: null });
-  const [markRangeVisible, setMarkRangeVisible] = useState(false);
   const [exportModalVisible, setExportModalVisible] = useState(false);
   const [exportModalChildId, setExportModalChildId] = useState(null);
   const [attendanceRefreshKey, setAttendanceRefreshKey] = useState(0);
@@ -167,6 +171,17 @@ export default function AttendanceView({
   const familyIdResolved = familyId || eventsProp[0]?.family_id || eventsProp[0]?.familyId;
   const children = childrenProp.length > 0 ? childrenProp : [];
   const isDrilldownMode = mode === 'drilldown';
+  const isYearPlannerLayout = layoutMode === 'year-planner';
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const handler = () => {
+      if (!isYearPlannerLayout || readOnly || children.length === 0) return;
+      setConfirmRangeVisible(true);
+    };
+    window.addEventListener('openPlannerBulkAttendance', handler);
+    return () => window.removeEventListener('openPlannerBulkAttendance', handler);
+  }, [isYearPlannerLayout, readOnly, children.length]);
 
   const { minStart, maxEnd } = useMemo(() => getAttendanceMinMaxRange(), []);
   const minStartKey = toLocalYYYYMMDD(minStart);
@@ -184,15 +199,36 @@ export default function AttendanceView({
     if (plannerInitialSnapshot && plannerInitialSnapshot.familyId === familyIdResolved) {
       const snap = plannerInitialSnapshot;
       setAcademicYear(snap.academicYear ?? null);
-      setYearRange({
-        start: new Date(snap.yearRange.start),
-        end: new Date(snap.yearRange.end),
-      });
+      if (!isYearPlannerLayout) {
+        setYearRange({
+          start: new Date(snap.yearRange.start),
+          end: new Date(snap.yearRange.end),
+        });
+      }
       setAttendanceRecords(snap.attendanceRecords ?? []);
       setYearEvents(snap.yearEvents ?? []);
-      setRangeReady(true);
+      if (!isYearPlannerLayout) {
+        setRangeReady(true);
+      }
       setLoading(false);
       return;
+    }
+    if (isYearPlannerLayout) {
+      let cancelled = false;
+      (async () => {
+        try {
+          const { data: years } = await supabase
+            .from('academic_years')
+            .select('id, year_name, start_date, end_date, attendance_tracking_mode')
+            .eq('family_id', familyIdResolved)
+            .order('start_date', { ascending: false })
+            .limit(1);
+          if (!cancelled && years?.[0]) setAcademicYear(years[0]);
+        } catch (_) {
+          // range + records load via plannerYearAnchor effect / fetch effect
+        }
+      })();
+      return () => { cancelled = true; };
     }
     setRangeReady(false);
     let cancelled = false;
@@ -228,7 +264,27 @@ export default function AttendanceView({
       }
     })();
     return () => { cancelled = true; };
-  }, [familyIdResolved, plannerInitialSnapshot]);
+  }, [familyIdResolved, plannerInitialSnapshot, isYearPlannerLayout]);
+
+  useEffect(() => {
+    if (!isYearPlannerLayout || !plannerYearAnchor) return;
+    const { yearStart, yearEnd } = resolvePlannerYearRange(plannerYearAnchor, academicYears);
+    if (!yearStart || !yearEnd) return;
+    setYearRange({
+      start: dateStringToDate(yearStart),
+      end: dateStringToDate(yearEnd),
+    });
+    if (Array.isArray(academicYears) && academicYears.length > 0) {
+      const match = academicYears.find((year) => {
+        const start = String(year?.start_date || '').slice(0, 10);
+        const end = String(year?.end_date || '').slice(0, 10);
+        return start === yearStart && end === yearEnd;
+      });
+      if (match) setAcademicYear(match);
+    }
+    setRangeReady(true);
+    setLoading(false);
+  }, [isYearPlannerLayout, plannerYearAnchor, academicYears]);
 
   // Fetch attendance and events when year range (or family/children/refresh) changes.
   const yearStartKey = yearRange.start ? toLocalYYYYMMDD(yearRange.start) : '';
@@ -866,20 +922,20 @@ export default function AttendanceView({
     }
   }, [familyIdResolved, eventsByDateChild, events, attendanceRecords, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, toast, attendanceTrackingMode]);
 
-  const handleMarkRangeConfirm = useCallback(({ childId, fromDate, toDate }) => {
-    // TODO: call API to mark all scheduled events in range as attended
-  }, []);
-
-  const handleMarkAllRangeAttended = useCallback(async () => {
+  const handleMarkAllRangeAttended = useCallback(async ({
+    startDate = yearRange.start,
+    endDate = yearRange.end,
+    childId = selectedHeatmapChildId,
+  } = {}) => {
     if (!familyIdResolved || markingRangeAttended || children.length === 0) return;
     setMarkingRangeAttended(true);
     try {
       const patchedAttendances = [];
-      const dateKeys = getDateKeysInRange(yearRange.start, yearRange.end);
+      const dateKeys = getDateKeysInRange(startDate, endDate);
       if (dateKeys.length === 0) return;
 
-      const childIds = selectedHeatmapChildId
-        ? [String(selectedHeatmapChildId)]
+      const childIds = childId
+        ? [String(childId)]
         : children.map((c) => String(c.id));
       const existingStandaloneByChildDay = new Map();
       const existingByEventChildDay = new Map();
@@ -992,20 +1048,6 @@ export default function AttendanceView({
     attendanceTrackingMode,
   ]);
 
-  if (loading && !familyIdResolved) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#887DEE" />
-        <Text style={styles.loadingText}>Loading attendance…</Text>
-      </View>
-    );
-  }
-
-  const rangeStartStr = yearRange.start ? toLocalYYYYMMDD(yearRange.start) : '';
-  const rangeEndStr = yearRange.end ? toLocalYYYYMMDD(yearRange.end) : '';
-  const selectedBulkChild = children.find((c) => c.id === selectedHeatmapChildId);
-  const selectedBulkChildName = selectedBulkChild?.first_name || selectedBulkChild?.name || 'the selected child';
-
   const setRangeStart = useCallback((ymd) => {
     const clamped = ymd < minStartKey ? minStartKey : ymd > maxEndKey ? maxEndKey : ymd;
     const start = dateStringToDate(clamped);
@@ -1023,6 +1065,20 @@ export default function AttendanceView({
     if (start > end) start = new Date(end);
     setYearRange({ start, end });
   }, [minStartKey, maxEndKey, yearRange.start]);
+
+  if (loading && !familyIdResolved) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color="#887DEE" />
+        <Text style={styles.loadingText}>Loading attendance…</Text>
+      </View>
+    );
+  }
+
+  const rangeStartStr = yearRange.start ? toLocalYYYYMMDD(yearRange.start) : '';
+  const rangeEndStr = yearRange.end ? toLocalYYYYMMDD(yearRange.end) : '';
+  const selectedBulkChild = children.find((c) => c.id === selectedHeatmapChildId);
+  const selectedBulkChildName = selectedBulkChild?.first_name || selectedBulkChild?.name || 'the selected child';
 
   const rangeRow = (
     <View style={styles.topToolbar}>
@@ -1107,10 +1163,10 @@ export default function AttendanceView({
         })}
       </View>
       <TouchableOpacity
-        style={[styles.rangeBulkChip, (markingRangeAttended || children.length === 0) && styles.rangeBulkChipDisabled]}
+        style={[styles.rangeBulkChip, (markingRangeAttended || children.length === 0 || readOnly) && styles.rangeBulkChipDisabled]}
         onPress={() => setConfirmRangeVisible(true)}
-        disabled={markingRangeAttended || children.length === 0}
-        {...(Platform.OS === 'web' && { cursor: markingRangeAttended ? 'default' : 'pointer' })}
+        disabled={markingRangeAttended || children.length === 0 || readOnly}
+        {...(Platform.OS === 'web' && { cursor: markingRangeAttended || readOnly ? 'default' : 'pointer' })}
       >
         <Text style={styles.rangeBulkChipText}>
           {markingRangeAttended ? 'Marking range…' : 'Bulk actions'}
@@ -1119,25 +1175,34 @@ export default function AttendanceView({
     </View>
   );
 
+  const belowToolbarContent = renderBelowToolbar
+    ? renderBelowToolbar()
+    : (
+      <YearHeatmapGrid
+        yearStart={yearRange.start.toISOString().slice(0, 10)}
+        yearEnd={yearRange.end.toISOString().slice(0, 10)}
+        selectedChildId={selectedHeatmapChildId}
+        dayStatusByChild={dayStatusByChild}
+        onMarkDayAttended={readOnly ? undefined : handleMarkDayAttended}
+        onExport={() => {
+          setExportModalChildId(selectedHeatmapChildId);
+          setExportModalVisible(true);
+        }}
+      />
+    );
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <HeaderSummaryStrip />
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.content, isYearPlannerLayout && styles.contentYearPlanner]}
+    >
+      {!isYearPlannerLayout && <HeaderSummaryStrip />}
       {children.length > 0 ? (
         <>
           {!isDrilldownMode && (
             <>
               {rangeRow}
-              <YearHeatmapGrid
-                yearStart={yearRange.start.toISOString().slice(0, 10)}
-                yearEnd={yearRange.end.toISOString().slice(0, 10)}
-                selectedChildId={selectedHeatmapChildId}
-                dayStatusByChild={dayStatusByChild}
-                onMarkDayAttended={handleMarkDayAttended}
-                onExport={() => {
-                  setExportModalChildId(selectedHeatmapChildId);
-                  setExportModalVisible(true);
-                }}
-              />
+              {belowToolbarContent}
             </>
           )}
           {isDrilldownMode && (
@@ -1185,6 +1250,8 @@ export default function AttendanceView({
             </View>
           )}
         </>
+      ) : isYearPlannerLayout && renderBelowToolbar ? (
+        renderBelowToolbar()
       ) : (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>Add children to see attendance.</Text>
@@ -1338,9 +1405,21 @@ export default function AttendanceView({
         </Modal>
       )}
       <Modal animationType="fade" transparent visible={confirmRangeVisible} onRequestClose={() => setConfirmRangeVisible(false)}>
-        <TouchableOpacity style={styles.calendarOverlay} activeOpacity={1} onPress={() => setConfirmRangeVisible(false)}>
+        <TouchableOpacity style={styles.confirmOverlay} activeOpacity={1} onPress={() => setConfirmRangeVisible(false)}>
           <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.confirmModal}>
-            <Text style={styles.confirmTitle}>Mark full range attended?</Text>
+            <View style={styles.confirmHeader}>
+              <Text style={styles.confirmTitle}>Mark full range attended?</Text>
+              <TouchableOpacity
+                style={styles.confirmCloseBtn}
+                onPress={() => setConfirmRangeVisible(false)}
+                disabled={markingRangeAttended}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+                {...(Platform.OS === 'web' && { cursor: markingRangeAttended ? 'default' : 'pointer' })}
+              >
+                <X size={18} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
             <Text style={styles.confirmBody}>
               This will mark all days from {rangeStartStr ? formatDateDisplay(rangeStartStr) : 'the start date'} to {rangeEndStr ? formatDateDisplay(rangeEndStr) : 'the end date'} as attended for {selectedHeatmapChildId ? selectedBulkChildName : 'all children'}.
             </Text>
@@ -1348,7 +1427,8 @@ export default function AttendanceView({
               <TouchableOpacity
                 style={styles.confirmCancelBtn}
                 onPress={() => setConfirmRangeVisible(false)}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                disabled={markingRangeAttended}
+                {...(Platform.OS === 'web' && { cursor: markingRangeAttended ? 'default' : 'pointer' })}
               >
                 <Text style={styles.confirmCancelText}>Cancel</Text>
               </TouchableOpacity>
@@ -1369,12 +1449,6 @@ export default function AttendanceView({
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
-      <MarkRangeModal
-        visible={markRangeVisible}
-        children={children}
-        onClose={() => setMarkRangeVisible(false)}
-        onConfirm={handleMarkRangeConfirm}
-      />
       <AttendanceExportModal
         visible={exportModalVisible}
         onClose={() => {
@@ -1396,6 +1470,10 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
     paddingHorizontal: TOKENS.contentPadX,
     width: '100%',
+  },
+  contentYearPlanner: {
+    paddingTop: 8,
+    paddingHorizontal: 24,
   },
   sectionTitle: {
     fontSize: 20,
@@ -1560,57 +1638,110 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#000',
   },
+  confirmOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
   confirmModal: {
-    width: Platform.OS === 'web' ? 420 : '90%',
-    maxWidth: 420,
-    borderRadius: 12,
-    padding: 18,
-    backgroundColor: TOKENS.bg ?? '#fff',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 10px 24px rgba(0, 0, 0, 0.2)' } : {}),
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 24,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.12), 0 12px 24px -8px rgba(0, 0, 0, 0.08)',
+    }),
+  },
+  confirmHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 8,
+  },
+  confirmCloseBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   confirmTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: TOKENS.text,
-    marginBottom: 8,
+    flex: 1,
+    minWidth: 0,
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#111827',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   confirmBody: {
     fontSize: 13,
-    color: TOKENS.textMuted,
-    lineHeight: 19,
-    marginBottom: 16,
+    lineHeight: 20,
+    color: '#475569',
+    marginTop: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   confirmActions: {
+    marginTop: 16,
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    alignItems: 'center',
     gap: 10,
   },
   confirmCancelBtn: {
-    borderRadius: 999,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: TOKENS.bgSubtle,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   confirmCancelText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: TOKENS.text,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   confirmPrimaryBtn: {
-    borderRadius: 999,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    minWidth: 88,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#9ECFFB',
+    backgroundColor: '#9ECFFB',
+    paddingHorizontal: 16,
     alignItems: 'center',
-    backgroundColor: TOKENS.accent ?? '#887DEE',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   confirmPrimaryBtnDisabled: {
     opacity: 0.6,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F1F5F9',
   },
   confirmPrimaryText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   calendarOverlay: {
     flex: 1,

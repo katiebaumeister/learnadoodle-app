@@ -1,13 +1,23 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import Dropdown from '../ui/Dropdown';
-import { PLANNER_SMART_ACTION_SECTIONS, dispatchPlannerSmartAction } from './plannerSmartActionsConfig';
+import { PLANNER_SMART_ACTION_SECTIONS, PLANNER_SMART_ACTION_TOOLS, PLANNER_SMART_ACTION_UTILITIES, dispatchPlannerSmartAction } from './plannerSmartActionsConfig';
 
-export default function PlannerSmartActionsMenu({ visible, triggerRef, onClose }) {
+const LEAGUE_SPARTAN =
+  Platform.OS === 'web'
+    ? { fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }
+    : {};
+
+export default function PlannerSmartActionsMenu({ visible, triggerRef, onClose, showExport = false }) {
   const handleSelect = (modeId) => {
     onClose?.();
     dispatchPlannerSmartAction(modeId);
   };
+
+  const utilities = [
+    ...PLANNER_SMART_ACTION_TOOLS,
+    ...(showExport ? PLANNER_SMART_ACTION_UTILITIES : []),
+  ];
 
   return (
     <Dropdown
@@ -19,14 +29,12 @@ export default function PlannerSmartActionsMenu({ visible, triggerRef, onClose }
       maxHeight={520}
     >
       <View style={styles.menu}>
-        <Text style={styles.menuIntro}>Choose a superpower to get started:</Text>
         {PLANNER_SMART_ACTION_SECTIONS.map((section, sectionIndex) => (
           <View
             key={section.id}
             style={[styles.section, sectionIndex > 0 && styles.sectionBorder]}
           >
             <Text style={styles.sectionTitle}>{section.title}</Text>
-            <Text style={styles.sectionDescription}>{section.description}</Text>
             <View style={styles.modeList}>
               {section.modes.map((mode) => (
                 <TouchableOpacity
@@ -41,6 +49,23 @@ export default function PlannerSmartActionsMenu({ visible, triggerRef, onClose }
             </View>
           </View>
         ))}
+        {utilities.length > 0 ? (
+          <View style={[styles.section, styles.sectionBorder]}>
+            <Text style={styles.sectionTitle}>Tools</Text>
+            <View style={styles.modeList}>
+              {utilities.map((mode) => (
+                <TouchableOpacity
+                  key={mode.id}
+                  style={styles.modeButton}
+                  onPress={() => handleSelect(mode.id)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.modeButtonText}>{mode.title}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : null}
       </View>
     </Dropdown>
   );
@@ -50,13 +75,6 @@ const styles = StyleSheet.create({
   menu: {
     paddingVertical: 8,
     paddingHorizontal: 4,
-  },
-  menuIntro: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: 'rgba(15, 23, 42, 0.55)',
-    paddingHorizontal: 12,
-    paddingBottom: 8,
   },
   section: {
     paddingHorizontal: 12,
@@ -72,11 +90,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#0F172A',
-  },
-  sectionDescription: {
-    fontSize: 12,
-    lineHeight: 17,
-    color: 'rgba(15, 23, 42, 0.58)',
+    ...LEAGUE_SPARTAN,
   },
   modeList: {
     flexDirection: 'row',
@@ -94,5 +108,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#0F172A',
+    ...LEAGUE_SPARTAN,
   },
 });

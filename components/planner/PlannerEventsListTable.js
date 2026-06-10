@@ -60,6 +60,10 @@ export default function PlannerEventsListTable({
   scrollToToday = false,
   /** Bump to re-anchor after panel disclosure animation (e.g. Learning attendance expand). */
   scrollToTodayEpoch = 0,
+  /** Planner list tab is visible (used to anchor scroll before reveal). */
+  viewActive = true,
+  /** When false, hold list hidden until section events are loaded (planner list). */
+  listDataReady = true,
   /** Opens create-event flow (planner list empty state). */
   onAddEvent = null,
   emptyTitle: emptyTitleProp = null,
@@ -85,8 +89,8 @@ export default function PlannerEventsListTable({
     () => new Date(sectionBaseDate.getFullYear() + 5, 11, 31, 23, 59, 59, 999),
     [sectionBaseDate]
   );
-  const [allPastMonths, setAllPastMonths] = useState(1);
-  const [allFutureMonths, setAllFutureMonths] = useState(2);
+  const [allPastMonths, setAllPastMonths] = useState(() => (embedded ? 1 : 3));
+  const [allFutureMonths, setAllFutureMonths] = useState(() => (embedded ? 2 : 6));
   const sectionAllStart = useMemo(() => {
     if (allPastMonths <= 0) {
       const d = new Date(actualTodayDate);
@@ -251,8 +255,11 @@ export default function PlannerEventsListTable({
   const scrollOffsetRef = useRef(0);
   const prevPastMonthsRef = useRef(allPastMonths);
   const prevTodayLayoutOffsetRef = useRef(0);
-  const [listVisibilityEpoch, setListVisibilityEpoch] = useState(0);
+  const hasAnchoredRef = useRef(false);
   const allWindowExpandAtRef = useRef({ past: 0, future: 0 });
+  const shouldAnchorToToday = plannerShellVisible || scrollToToday;
+  const canRevealList = !shouldAnchorToToday || !viewActive || listDataReady;
+  const [listRevealed, setListRevealed] = useState(() => !shouldAnchorToToday);
   const denseTodayIndex = useMemo(
     () => groupedDenseRows.findIndex((row) => row?.type === 'header' && row?.dateKey === todayYmd),
     [groupedDenseRows, todayYmd]
@@ -283,11 +290,10 @@ export default function PlannerEventsListTable({
     return `${month} ${day} • ${weekday}`;
   }, []);
 
-  const shouldAnchorToToday = plannerShellVisible || scrollToToday;
   const stickyHeaderIndices = embedded ? [] : denseStickyHeaderIndices;
 
   const recenterDenseList = useCallback(() => {
-    if (denseTodayIndex < 0 || userHasManuallyScrolledRef.current) return;
+    if (denseTodayIndex < 0 || userHasManuallyScrolledRef.current) return false;
     const target = Math.max(0, denseTodayIndex);
     const offset = denseItemLayouts[target] ?? 0;
     isProgrammaticScrollRef.current = true;
@@ -301,47 +307,56 @@ export default function PlannerEventsListTable({
       isProgrammaticScrollRef.current = false;
       allowExpandOnScrollRef.current = true;
     });
+    return true;
   }, [denseTodayIndex, denseItemLayouts]);
 
   useLayoutEffect(() => {
     userHasManuallyScrolledRef.current = false;
     allowExpandOnScrollRef.current = false;
-  }, [scrollToTodayEpoch, listVisibilityEpoch]);
-
-  const prevPlannerShellVisibleRef = useRef(plannerShellVisible);
-  useLayoutEffect(() => {
-    const wasVisible = prevPlannerShellVisibleRef.current;
-    prevPlannerShellVisibleRef.current = plannerShellVisible;
-    if (!plannerShellVisible || wasVisible) return;
-    allowExpandOnScrollRef.current = false;
-    setListVisibilityEpoch((value) => value + 1);
-  }, [plannerShellVisible]);
+    hasAnchoredRef.current = false;
+    if (shouldAnchorToToday) {
+      setListRevealed(false);
+    }
+  }, [scrollToTodayEpoch, shouldAnchorToToday]);
 
   useLayoutEffect(() => {
-    if (!shouldAnchorToToday || denseTodayIndex < 0) return;
-    if (userHasManuallyScrolledRef.current) return;
+    if (!viewActive) {
+      hasAnchoredRef.current = false;
+      if (shouldAnchorToToday) {
+        setListRevealed(false);
+      }
+      return;
+    }
+    if (!shouldAnchorToToday) {
+      setListRevealed(true);
+      return;
+    }
+    if (!listDataReady) {
+      setListRevealed(false);
+      return;
+    }
+    if (denseTodayIndex < 0) {
+      setListRevealed(true);
+      return;
+    }
+    if (hasAnchoredRef.current) {
+      setListRevealed(true);
+      return;
+    }
     allowExpandOnScrollRef.current = false;
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        recenterDenseList();
+    recenterDenseList();
+    hasAnchoredRef.current = true;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setListRevealed(true);
       });
     });
-    const retryMs = embedded ? [120, 320, 520] : [120, 320];
-    const timers = retryMs.map((ms) => setTimeout(() => recenterDenseList(), ms));
-    return () => {
-      cancelAnimationFrame(raf1);
-      if (raf2) cancelAnimationFrame(raf2);
-      timers.forEach(clearTimeout);
-    };
   }, [
+    viewActive,
     shouldAnchorToToday,
+    listDataReady,
     denseTodayIndex,
-    listRefreshEpoch,
-    scrollToTodayEpoch,
-    listVisibilityEpoch,
     recenterDenseList,
-    embedded,
   ]);
 
   useLayoutEffect(() => {
@@ -370,7 +385,7 @@ export default function PlannerEventsListTable({
   useLayoutEffect(() => {
     if (!embedded || shouldAnchorToToday) return;
     denseListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
-  }, [embedded, shouldAnchorToToday, listRefreshEpoch, listVisibilityEpoch]);
+  }, [embedded, shouldAnchorToToday, listRefreshEpoch]);
 
   const maybeExpandAllPast = useCallback(() => {
     const now = Date.now();
@@ -653,6 +668,7 @@ export default function PlannerEventsListTable({
       embedded && fillViewport && styles.denseListWrapFill,
       useEmbeddedMaxHeight && styles.denseListWrapEmbeddedFixed,
       useEmbeddedMaxHeight && { minHeight: maxListHeight, maxHeight: maxListHeight },
+      canRevealList && !listRevealed && styles.denseListWrapHidden,
     ]}>
       <View style={styles.denseTableHeaderRow}>
         <View style={styles.denseColLeading} />
@@ -663,10 +679,11 @@ export default function PlannerEventsListTable({
         <Text style={[styles.denseTableHeaderCell, styles.denseColAttachments]}>Attachments</Text>
       </View>
       <FlatList
-        key={`planner-list-${listRefreshEpoch}-${listVisibilityEpoch}-${scrollToTodayEpoch}`}
+        key={`planner-list-${listRefreshEpoch}-${scrollToTodayEpoch}`}
         ref={denseListRef}
         style={[
           styles.tasksList,
+          canRevealList && !listRevealed && styles.tasksListHidden,
           embedded && fillViewport && styles.tasksListFill,
           embedded && useEmbeddedMaxHeight && {
             maxHeight: embeddedListMaxHeight,
@@ -735,6 +752,11 @@ const styles = StyleSheet.create({
     flexGrow: 0,
     flexShrink: 0,
   },
+  denseListWrapHidden: {
+    ...(Platform.OS === 'web' && {
+      visibility: 'hidden',
+    }),
+  },
   denseListContent: {
     minWidth: DENSE_TABLE_MIN_WIDTH,
   },
@@ -768,6 +790,9 @@ const styles = StyleSheet.create({
   tasksList: {
     flex: 1,
     minHeight: 0,
+  },
+  tasksListHidden: {
+    opacity: 0,
   },
   tasksListFill: {
     flex: 1,

@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, Alert } from 'react-native';
 import { useSensoryMode } from '../../contexts/SensoryModeContext';
 import { getModeTokens, spacing, radius } from '../../theme/pastelDesignTokens';
+import { LEARNADOODLE_LIGHT_BLUE } from '../../theme/comingSoonModalTheme';
 import { Download } from 'lucide-react';
 
 const CARD_ROLES = {
@@ -165,12 +166,12 @@ export default function IDCardView({
       </View>
 
       <TouchableOpacity
-        style={[styles.exportButton, { backgroundColor: '#1e40af', borderColor: '#1e40af' }]}
+        style={styles.exportButton}
         onPress={handleExportAsImage}
         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
       >
-        <Download size={18} color="#ffffff" />
-        <Text style={styles.exportButtonText}>Export as image</Text>
+        <Download size={18} color="#ffffff" strokeWidth={2.25} />
+        <Text style={styles.exportButtonText}>EXPORT AS IMAGE</Text>
       </TouchableOpacity>
     </View>
   );
@@ -244,15 +245,26 @@ const styles = StyleSheet.create({
   exportButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 999,
+    backgroundColor: LEARNADOODLE_LIGHT_BLUE,
     borderWidth: 1,
+    borderColor: LEARNADOODLE_LIGHT_BLUE,
+    minWidth: 220,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 2px 6px rgba(158, 207, 251, 0.35)',
+    }),
   },
   exportButtonText: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#ffffff',
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.4,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
 });

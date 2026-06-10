@@ -24,8 +24,8 @@ import { formatSchoolYearLabel, getChildDisplayName } from './familySectionRouti
 import { familyCardStyle, familyStyles, FAMILY_CARD_GAP } from './familyDesignTokens';
 
 const GOAL_LABELS = {
-  HOMESCHOOL_COMPLIANCE: 'Homeschool Compliance',
-  AFTERSCHOOL_GOALS: 'Afterschool Goals',
+  HOMESCHOOL_COMPLIANCE: 'Homeschooling',
+  AFTERSCHOOL_GOALS: 'Afterschooling',
 };
 
 function StatCard({ icon: Icon, iconColor, iconBg, value, meta, label }) {

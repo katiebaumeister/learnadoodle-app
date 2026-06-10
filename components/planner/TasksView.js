@@ -23,6 +23,8 @@ export default function TasksView({
   plannerHolidaysCache = {},
   plannerExclusions = [],
   plannerShellVisible = true,
+  viewActive = true,
+  preloadedSectionEvents = null,
 }) {
   const isDoneStatus = useCallback((statusValue) => {
     const normalized = String(statusValue || '').trim().toLowerCase();
@@ -228,7 +230,12 @@ export default function TasksView({
   const [trashEvents, setTrashEvents] = useState(() =>
     preloadedTrashEvents != null ? preloadedTrashEvents : [],
   );
-  const [sectionEvents, setSectionEvents] = useState([]);
+  const [sectionEvents, setSectionEvents] = useState(() =>
+    Array.isArray(preloadedSectionEvents) ? preloadedSectionEvents : [],
+  );
+  const [sectionEventsLoaded, setSectionEventsLoaded] = useState(
+    () => preloadedSectionEvents != null,
+  );
   const resolveFamilyIdFromLocalSources = useCallback(() => {
     if (familyIdProp) return familyIdProp;
     const sourceEvents = Array.isArray(eventsRef.current) ? eventsRef.current : [];
@@ -267,8 +274,8 @@ export default function TasksView({
     () => new Date(sectionBaseDate.getFullYear() + 5, 11, 31, 23, 59, 59, 999),
     [sectionBaseDate]
   );
-  const [allPastMonths, setAllPastMonths] = useState(1);
-  const [allFutureMonths, setAllFutureMonths] = useState(2);
+  const [allPastMonths, setAllPastMonths] = useState(3);
+  const [allFutureMonths, setAllFutureMonths] = useState(6);
   const sectionAllStart = useMemo(
     () => {
       if (allPastMonths <= 0) {
@@ -445,14 +452,25 @@ export default function TasksView({
     }
   }, [resolveFamilyIdFromLocalSources]);
 
+  useEffect(() => {
+    if (preloadedSectionEvents != null) {
+      setSectionEvents(Array.isArray(preloadedSectionEvents) ? preloadedSectionEvents : []);
+      setSectionEventsLoaded(true);
+    }
+  }, [preloadedSectionEvents]);
+
   const fetchSectionEvents = useCallback(async (section) => {
     if (!['today', 'tomorrow', 'thismonth', 'nextmonth', 'all', 'completed'].includes(section)) {
       setSectionEvents([]);
+      setSectionEventsLoaded(true);
       return;
     }
     try {
       const familyIdFromEvents = resolveFamilyIdFromLocalSources();
-      if (!familyIdFromEvents) return;
+      if (!familyIdFromEvents) {
+        setSectionEventsLoaded(true);
+        return;
+      }
 
       let query = supabase
         .from('events')
@@ -509,6 +527,7 @@ export default function TasksView({
       const { data, error } = await query;
       if (error) {
         console.error(`[TasksView] Error fetching ${section} events:`, error);
+        setSectionEventsLoaded(true);
         return;
       }
       let merged = Array.isArray(data) ? [...data] : [];
@@ -520,8 +539,10 @@ export default function TasksView({
         if (holidayRows.length > 0) merged = merged.concat(holidayRows);
       }
       setSectionEvents(merged);
+      setSectionEventsLoaded(true);
     } catch (error) {
       console.error(`[TasksView] Error fetching ${section} events:`, error);
+      setSectionEventsLoaded(true);
     }
   }, [resolveFamilyIdFromLocalSources, sectionBaseDate, sectionTomorrowDate, sectionNextMonthStart, sectionAllStart, sectionAllEnd, mapHolidayToTaskEvent, toYmd, isUsPublicHolidayEvent]);
 
@@ -561,8 +582,8 @@ export default function TasksView({
 
   useEffect(() => {
     if (activeSection !== 'all') return;
-    setAllPastMonths((prev) => (prev < 1 ? 1 : prev));
-    setAllFutureMonths((prev) => (prev < 2 ? 2 : prev));
+    setAllPastMonths((prev) => (prev < 3 ? 3 : prev));
+    setAllFutureMonths((prev) => (prev < 6 ? 6 : prev));
   }, [activeSection]);
 
   // Listen for calendar refresh events to refetch backlog items
@@ -1229,6 +1250,8 @@ export default function TasksView({
             onEventRightClick={onEventRightClick}
             onEventComplete={onEventComplete}
             plannerShellVisible={plannerShellVisible}
+            viewActive={viewActive}
+            listDataReady={sectionEventsLoaded}
             onAddEvent={
               onCreateTask && activeSection !== 'completed'
                 ? () => onCreateTask(activeSection === 'backlog' ? 'backlog' : 'calendar')

@@ -1,3 +1,5 @@
+import { addDays, startOfWeek } from './utils/date';
+
 export const PLANNER_MAIN_TABS = [
   { key: 'calendar', label: 'Calendar' },
 ];
@@ -30,4 +32,14 @@ export function formatWeekRangeLabel(anchorDate) {
     return `${fmt(start)} – ${fmt(end)}, ${startYear}`;
   }
   return `${fmt(start)}, ${startYear} – ${fmt(end)}, ${endYear}`;
+}
+
+export function formatPlannerWeekHeaderLabel(anchorDate) {
+  const date = anchorDate instanceof Date && !Number.isNaN(anchorDate.getTime())
+    ? anchorDate
+    : new Date();
+  const start = startOfWeek(date);
+  const end = addDays(start, 6);
+  const fmt = (d) => d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  return `${fmt(start)} - ${fmt(end)}`;
 }

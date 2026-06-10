@@ -6,8 +6,34 @@ import { useToast } from '../Toast';
 import { SettingsTypography } from './settingsDesignTokens';
 
 export const FAMILY_APPROACH_OPTIONS = [
-  { id: 'HOMESCHOOL_COMPLIANCE', label: 'Homeschool Compliance' },
-  { id: 'AFTERSCHOOL_GOALS', label: 'Afterschool Goals' },
+  {
+    id: 'HOMESCHOOL_COMPLIANCE',
+    label: 'Homeschooling',
+    summary: 'Subject-focused learning management for families who homeschool as their primary education.',
+  },
+  {
+    id: 'AFTERSCHOOL_GOALS',
+    label: 'Afterschooling',
+    summary: 'Schedule-first setup for families who mainly want help optimizing routines outside the school day.',
+  },
+];
+
+const APPROACH_COMPARISON_INTRO =
+  'Choose how Learnadoodle is shaped for your family.';
+
+const APPROACH_COMPARISON_DETAILS = [
+  {
+    id: 'HOMESCHOOL_COMPLIANCE',
+    title: 'Homeschooling',
+    body:
+      'Built for families who homeschool as their primary education. Learnadoodle centers on subjects, curriculum, attendance, and progress tracking—so you can manage learning day to day and stay organized.',
+  },
+  {
+    id: 'AFTERSCHOOL_GOALS',
+    title: 'Afterschooling',
+    body:
+      'Built for families whose children learn elsewhere during the day. Learnadoodle is less subject-focused and emphasizes schedule optimization—activities, routines, and family time—rather than full learning management.',
+  },
 ];
 
 export default function FamilyApproachSelector({
@@ -15,7 +41,7 @@ export default function FamilyApproachSelector({
   family,
   onFamilyUpdate,
   readOnly = false,
-  description = 'Days vs hours, learning days, and breaks are saved per school year.',
+  description = null,
   fieldLabel = 'Family approach',
   onMenuOpenChange = null,
 }) {
@@ -86,9 +112,12 @@ export default function FamilyApproachSelector({
                   onPress={() => handleGoalChange(option.id)}
                   {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                 >
-                  <Text style={[styles.goalMenuItemText, selected && styles.goalMenuItemTextSelected]}>
-                    {option.label}
-                  </Text>
+                  <View style={styles.goalMenuItemContent}>
+                    <Text style={[styles.goalMenuItemText, selected && styles.goalMenuItemTextSelected]}>
+                      {option.label}
+                    </Text>
+                    <Text style={styles.goalMenuItemSummary}>{option.summary}</Text>
+                  </View>
                   {selected ? <Check size={14} color="#111827" /> : null}
                 </TouchableOpacity>
               );
@@ -96,7 +125,15 @@ export default function FamilyApproachSelector({
           </View>
         ) : null}
       </View>
-      {description ? <Text style={styles.fieldHint}>{description}</Text> : null}
+      <View style={styles.fieldHintBlock}>
+        <Text style={styles.fieldHint}>{description || APPROACH_COMPARISON_INTRO}</Text>
+        {APPROACH_COMPARISON_DETAILS.map((item) => (
+          <Text key={item.id} style={styles.approachDetail}>
+            <Text style={styles.approachDetailTitle}>{item.title} — </Text>
+            {item.body}
+          </Text>
+        ))}
+      </View>
     </View>
   );
 }
@@ -121,14 +158,29 @@ const styles = {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  fieldHintBlock: {
+    marginTop: 12,
+    gap: 10,
+  },
   fieldHint: {
     ...SettingsTypography.secondary,
     color: '#6b7280',
-    marginTop: 12,
     lineHeight: 20,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
+  },
+  approachDetail: {
+    ...SettingsTypography.secondary,
+    color: '#6b7280',
+    lineHeight: 20,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  approachDetailTitle: {
+    fontWeight: '600',
+    color: '#374151',
   },
   goalPickerWrap: {
     position: 'relative',
@@ -176,14 +228,28 @@ const styles = {
   },
   goalMenuItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
+    gap: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
+  },
+  goalMenuItemContent: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
   },
   goalMenuItemText: {
     fontSize: 14,
     color: '#374151',
+  },
+  goalMenuItemSummary: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#6b7280',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   goalMenuItemTextSelected: {
     fontWeight: '600',

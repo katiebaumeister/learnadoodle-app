@@ -394,6 +394,10 @@ function AttendanceYearHeatmapFull({ attendanceRecords = [], subjectEvents = [],
               <View style={[styles.subjectHeatmapLegendDot, styles.heatmapUpcoming]} />
               <Text style={styles.subjectHeatmapLegendText}>Upcoming</Text>
             </View>
+            <View style={styles.subjectHeatmapLegendPill}>
+              <View style={[styles.subjectHeatmapLegendDot, styles.heatmapNoEvents]} />
+              <Text style={styles.subjectHeatmapLegendText}>No events</Text>
+            </View>
           </View>
         </View>
       ) : null}
@@ -546,6 +550,10 @@ export function SubjectAttendanceMonthDrilldown({
           <View style={styles.subjectHeatmapLegendPill}>
             <View style={[styles.subjectHeatmapLegendDot, styles.heatmapUpcoming]} />
             <Text style={styles.subjectHeatmapLegendText}>Upcoming</Text>
+          </View>
+          <View style={styles.subjectHeatmapLegendPill}>
+            <View style={[styles.subjectHeatmapLegendDot, styles.heatmapNoEvents]} />
+            <Text style={styles.subjectHeatmapLegendText}>No events</Text>
           </View>
         </View>
       ) : null}

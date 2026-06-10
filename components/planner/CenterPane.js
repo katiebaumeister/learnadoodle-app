@@ -8,7 +8,6 @@ import BoardView from './BoardView';
 import TasksView from './TasksView';
 import AttendanceView from './attendance/AttendanceView';
 import MobileCardView from './MobileCardView';
-import PlannerYearGrid from './PlannerYearGrid';
 import { startOfToday, startOfWeek } from './utils/date';
 import { eventMatchesDaysOffFilter, isPlannerDaysOffEvent } from './plannerListTableUtils';
 
@@ -51,6 +50,7 @@ export default function CenterPane({
   onEditChild = null,
   preloadedBacklogEvents = null,
   preloadedTrashEvents = null,
+  preloadedSectionEvents = null,
   plannerAttendanceSnapshot = null,
   plannerHolidaysCache = {},
   plannerExclusions = [],
@@ -345,29 +345,66 @@ export default function CenterPane({
               />
             </View>
           )}
-          {mode === 'Tasks' && (
-            <TasksView
-              events={filtered}
-              monthDate={viewDate}
-              onEventPress={onEventSelect}
-              onEventRightClick={onEventRightClick}
-              onEventComplete={readOnly ? undefined : onEventComplete}
-              onCreateTask={readOnly ? undefined : onCreateTask}
-              children={children}
-              familyId={familyId}
-              preloadedBacklogEvents={preloadedBacklogEvents}
-              preloadedTrashEvents={preloadedTrashEvents}
-              plannerHolidaysCache={plannerHolidaysCache}
-              plannerExclusions={plannerExclusions}
-              plannerShellVisible={plannerShellVisible}
-            />
+          {Platform.OS === 'web' && !isMobile ? (
+            <View
+              style={{
+                flex: 1,
+                minHeight: 0,
+                ...(mode !== 'Tasks' ? { display: 'none' } : {}),
+              }}
+            >
+              <TasksView
+                events={filtered}
+                monthDate={viewDate}
+                onEventPress={onEventSelect}
+                onEventRightClick={onEventRightClick}
+                onEventComplete={readOnly ? undefined : onEventComplete}
+                onCreateTask={readOnly ? undefined : onCreateTask}
+                children={children}
+                familyId={familyId}
+                preloadedBacklogEvents={preloadedBacklogEvents}
+                preloadedTrashEvents={preloadedTrashEvents}
+                preloadedSectionEvents={preloadedSectionEvents}
+                plannerHolidaysCache={plannerHolidaysCache}
+                plannerExclusions={plannerExclusions}
+                plannerShellVisible={plannerShellVisible}
+                viewActive={mode === 'Tasks'}
+              />
+            </View>
+          ) : (
+            mode === 'Tasks' && (
+              <TasksView
+                events={filtered}
+                monthDate={viewDate}
+                onEventPress={onEventSelect}
+                onEventRightClick={onEventRightClick}
+                onEventComplete={readOnly ? undefined : onEventComplete}
+                onCreateTask={readOnly ? undefined : onCreateTask}
+                children={children}
+                familyId={familyId}
+                preloadedBacklogEvents={preloadedBacklogEvents}
+                preloadedTrashEvents={preloadedTrashEvents}
+                preloadedSectionEvents={preloadedSectionEvents}
+                plannerHolidaysCache={plannerHolidaysCache}
+                plannerExclusions={plannerExclusions}
+                plannerShellVisible={plannerShellVisible}
+                viewActive
+              />
+            )
           )}
           {mode === 'Year' && (
-            <PlannerYearGrid
-              anchorDate={viewDate}
+            <AttendanceView
+              familyId={familyId}
+              children={children}
               events={filtered}
+              onEventPress={onEventSelect}
+              onEditChild={readOnly ? undefined : onEditChild}
+              plannerInitialSnapshot={plannerAttendanceSnapshot}
+              mode="overview"
+              layoutMode="year-planner"
+              plannerYearAnchor={viewDate}
               academicYears={academicYears}
-              onSelectDay={switchToMonthForDay}
+              readOnly={readOnly}
             />
           )}
           {/* Web: keep mounted while on other planner modes so prefetch hydrates before first open (no blank flash). */}

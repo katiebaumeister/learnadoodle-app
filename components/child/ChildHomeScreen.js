@@ -1,21 +1,35 @@
 /**
  * Child Home Screen
  *
- * Mirrors ParentHomeScreen layout: header strip, today's schedule (embedded card),
- * and right rail with assignments. Child cannot add events from this screen.
+ * Mirrors ParentHomeScreen layout: hero strip, bulletin board main column,
+ * and right rail with today's schedule + subjects.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native';
-import { Calendar } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
 import { useSession } from '../../contexts/SessionContext';
 import { supabase } from '../../lib/supabase';
+import { getPlanHealth } from '../../lib/services/academicYearClient';
 import RoleHomeShell from '../home/RoleHomeShell';
 import TodayScheduleCard from '../home/TodayScheduleCard';
-import UpcomingWorkCard from './UpcomingWorkCard';
-import ChildHomeRightRail from './ChildHomeRightRail';
+import BulletinBoardSection from '../bulletin/BulletinBoardSection';
+import { ParentHomeRightRail, statusToneFromDelta, statusLabel } from '../home/ParentHomeDashboard';
 import { applyChildFilter } from '../../lib/queryFilters';
 import { colors } from '../../theme/colors';
+
+function getTimeBasedGreeting() {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return 'Good morning';
+  if (hour >= 12 && hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function formatGreetingDateInline(date) {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  return `${days[date.getDay()]}, ${months[date.getMonth()]} ${date.getDate()}`;
+}
 
 export default function ChildHomeScreen({
   familyId: propFamilyId,
@@ -30,7 +44,9 @@ export default function ChildHomeScreen({
   const [todayEvents, setTodayEvents] = useState([]);
   const [children, setChildren] = useState([]);
   const [subjects, setSubjects] = useState([]);
+  const [planHealth, setPlanHealth] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [bulletinComposerOpen, setBulletinComposerOpen] = useState(false);
 
   const isParentViewingChild = Boolean(overrideChildId);
   const childId = overrideChildId ?? session?.child_id ?? session?.accessible_children?.[0]?.id;
@@ -45,6 +61,8 @@ export default function ChildHomeScreen({
     session?.role_flags?.isChild === true
     && session?.student_self_signup === true
     && session?.child_linked_via_accepted_invite !== true;
+  const canManageSubjects = isParentViewingChild || session?.role_flags?.isParent === true;
+
   useEffect(() => {
     if (!safeFamilyId || !safeChildId) return;
     if (isParentViewingChild) {
@@ -52,7 +70,22 @@ export default function ChildHomeScreen({
     } else if (session && sessionLoading === false) {
       loadData();
     }
-  }, [sessionLoading, safeFamilyId, safeChildId, isParentViewingChild]);
+  }, [sessionLoading, safeFamilyId, safeChildId, isParentViewingChild, selectedDate]);
+
+  useEffect(() => {
+    if (!safeFamilyId) return;
+    let cancelled = false;
+    getPlanHealth(safeFamilyId)
+      .then((data) => {
+        if (!cancelled) setPlanHealth(data || null);
+      })
+      .catch(() => {
+        if (!cancelled) setPlanHealth(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [safeFamilyId]);
 
   const loadData = async () => {
     if (!safeFamilyId || !safeChildId) return;
@@ -123,6 +156,8 @@ export default function ChildHomeScreen({
         description: event.description,
         start: event.start_ts,
         end: event.end_ts,
+        start_ts: event.start_ts,
+        end_ts: event.end_ts,
         status: event.status,
         child_id: event.child_id,
         subject_id: event.subject_id,
@@ -194,6 +229,72 @@ export default function ChildHomeScreen({
   };
 
   const sessionReady = isParentViewingChild || (session && !session.loading);
+
+  const viewerFirstName = useMemo(() => {
+    const raw =
+      overrideChildName
+      || child?.first_name
+      || child?.name
+      || session?.accessible_children?.[0]?.first_name
+      || '';
+    const trimmed = String(raw).trim();
+    if (!trimmed) return null;
+    return trimmed.split(/\s+/)[0];
+  }, [overrideChildName, child?.first_name, child?.name, session?.accessible_children]);
+
+  const subjectSnapshot = useMemo(() => {
+    const perChildSubject = planHealth?.per_child_subject?.[safeChildId] || {};
+    const subjectIds = new Set([
+      ...subjects.map((s) => String(s.id)),
+      ...Object.keys(perChildSubject || {}),
+    ]);
+
+    const rows = Array.from(subjectIds).map((subjectId) => {
+      const subject = subjects.find((s) => String(s.id) === String(subjectId));
+      const name = subject?.name || 'Subject';
+      const stats = perChildSubject?.[subjectId];
+
+      if (!stats) {
+        return {
+          subjectId,
+          name,
+          childIds: safeChildId ? [safeChildId] : [],
+          childLabel: viewerFirstName,
+          tone: 'on_track',
+          statusLabel: 'Not started',
+          plannedDays: null,
+          targetDays: null,
+          progressPct: null,
+        };
+      }
+
+      const tone = statusToneFromDelta(stats.subject_delta_days);
+      const progressPct =
+        stats.subject_target_days && stats.planned_days != null
+          ? Math.round((stats.planned_days / stats.subject_target_days) * 100)
+          : null;
+
+      return {
+        subjectId,
+        name,
+        childIds: safeChildId ? [safeChildId] : [],
+        childLabel: viewerFirstName,
+        tone,
+        statusLabel: statusLabel(
+          tone,
+          stats.subject_delta_days,
+          stats.subject_target_days,
+          stats.planned_days
+        ),
+        plannedDays: stats.planned_days,
+        targetDays: stats.subject_target_days,
+        progressPct,
+      };
+    });
+
+    return rows.sort((a, b) => a.name.localeCompare(b.name)).slice(0, 6);
+  }, [planHealth, subjects, safeChildId, viewerFirstName]);
+
   if (sessionReady && (!childId || (!child && !isParentViewingChild))) {
     return (
       <View style={styles.errorContainer}>
@@ -201,45 +302,6 @@ export default function ChildHomeScreen({
       </View>
     );
   }
-
-  const getTimeBasedGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour >= 5 && hour < 12) {
-      return 'Good morning';
-    } else if (hour >= 12 && hour < 17) {
-      return 'Good afternoon';
-    }
-    return 'Good evening';
-  };
-
-  const formatDate = (date) => {
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const dayName = days[date.getDay()];
-    const month = months[date.getMonth()];
-    const day = date.getDate();
-    const year = date.getFullYear();
-    return `${dayName}, ${month} ${day}, ${year}`;
-  };
-
-  const isViewingToday = (() => {
-    const d = new Date(selectedDate);
-    if (Number.isNaN(d.getTime())) return true;
-    d.setHours(0, 0, 0, 0);
-    const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    return d.getTime() === t.getTime();
-  })();
-
-  const blockCount = todayEvents.length;
-  const scheduleSummaryLine =
-    blockCount === 0
-      ? isViewingToday
-        ? 'No events today'
-        : 'Nothing scheduled this day'
-      : blockCount === 1
-        ? '1 thing planned'
-        : `${blockCount} things planned`;
 
   const handleViewTodaysTodo = () => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -258,62 +320,159 @@ export default function ChildHomeScreen({
     }
   };
 
-  const mainContent = (
-    <View style={styles.mainSurface}>
-      <View style={styles.headerCard}>
-        <View style={styles.headerRow}>
-          <View style={styles.headerLeft}>
-            <Text style={styles.greetingText}>{getTimeBasedGreeting()}</Text>
-            <Text style={styles.dateText}>{formatDate(selectedDate)}</Text>
-            <Text style={styles.scheduleSummaryText}>{scheduleSummaryLine}</Text>
+  const shiftSelectedDay = (deltaDays) => {
+    setSelectedDate((prev) => {
+      const base = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev : new Date();
+      const next = new Date(base);
+      next.setDate(next.getDate() + deltaDays);
+      return next;
+    });
+  };
+
+  const jumpToTodaySchedule = () => {
+    setSelectedDate(new Date());
+  };
+
+  const renderSchedulePanel = (panelStyle) => (
+    <View style={[styles.scheduleSection, panelStyle]}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.scheduleNavGroup}>
+          <View style={styles.dayNavButtonGroup}>
+            <TouchableOpacity
+              style={styles.dayNavButton}
+              onPress={() => shiftSelectedDay(-1)}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <ChevronLeft size={16} color="#64748b" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.dayNavButton}
+              onPress={() => shiftSelectedDay(1)}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <ChevronRight size={16} color="#64748b" />
+            </TouchableOpacity>
           </View>
           <TouchableOpacity
-            style={styles.viewTodosButton}
-            onPress={handleViewTodaysTodo}
+            style={styles.scheduleTitleButton}
+            onPress={jumpToTodaySchedule}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Calendar size={16} color="#5B6B7A" />
-            <Text style={styles.viewTodosButtonText}>View To-Dos</Text>
+            <Text style={styles.sectionLabel}>Today's Schedule</Text>
           </TouchableOpacity>
         </View>
       </View>
+      <TodayScheduleCard
+        events={todayEvents}
+        children={children}
+        subjects={subjects}
+        onOpenPlanner={() => onNavigate?.('planner')}
+        onTabChange={onNavigate}
+        onAddBlock={undefined}
+        suggestedRhythms={[]}
+        onAddSuggestedRhythm={() => {}}
+        noCard
+        showEmptyAddButton={false}
+        hideSubjectDot={isSelfManagedStudent}
+      />
+    </View>
+  );
 
-      <View style={styles.scheduleSection}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionLabel}>Today's schedule</Text>
+  const heroContent = (
+    <View style={styles.greetingContainer}>
+      <View style={styles.greetingInner}>
+        <View style={styles.greetingCopy}>
+          <Text style={styles.greetingTitle}>
+            {getTimeBasedGreeting()}
+            {viewerFirstName ? `, ${viewerFirstName}` : ''}.
+          </Text>
+          <Text style={styles.greetingSubtitle}>Let's see where learning takes us today.</Text>
+          <Text style={styles.greetingDateLine}>{formatGreetingDateInline(new Date())}</Text>
         </View>
-        <TodayScheduleCard
-          events={todayEvents}
+        <TouchableOpacity
+          style={styles.greetingActionButton}
+          onPress={handleViewTodaysTodo}
+          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+        >
+          <Calendar size={18} color="#334155" strokeWidth={2.25} />
+          <Text style={styles.greetingActionButtonText}>View To-Dos</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const mainContent = (
+    <View style={styles.mainSurface}>
+      <View style={styles.bulletinBoardSection}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionLabel}>Bulletin Board</Text>
+          <TouchableOpacity
+            style={styles.greetingActionButton}
+            onPress={() => setBulletinComposerOpen(true)}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Pencil size={18} color="#334155" strokeWidth={2.25} />
+            <Text style={styles.greetingActionButtonText}>New note</Text>
+          </TouchableOpacity>
+        </View>
+        <BulletinBoardSection
+          familyId={safeFamilyId}
           children={children}
           subjects={subjects}
-          onOpenPlanner={() => onNavigate?.('planner')}
-          onTabChange={onNavigate}
-          onAddBlock={undefined}
-          suggestedRhythms={[]}
-          onAddSuggestedRhythm={() => {}}
-          noCard
-          showEmptyAddButton={false}
-          hideSubjectDot={isSelfManagedStudent}
+          composerOpen={bulletinComposerOpen}
+          onComposerOpenChange={setBulletinComposerOpen}
         />
       </View>
-
-      <UpcomingWorkCard familyId={safeFamilyId} childId={safeChildId} />
     </View>
   );
 
   const railContent = showRightRail ? (
-    <View style={styles.railContent}>
-      {safeFamilyId ? (
-        <ChildHomeRightRail familyId={safeFamilyId} childId={safeChildId} />
-      ) : (
-        <View style={{ minHeight: 120 }} />
-      )}
+    <View style={styles.railStack}>
+      {renderSchedulePanel(styles.railScheduleSection)}
+      <View style={styles.railSubjectsSection}>
+        <ParentHomeRightRail
+          subjectSnapshot={subjectSnapshot}
+          familyChildren={children}
+          onNavigate={onNavigate}
+          onEditSubject={
+            canManageSubjects
+              ? (row) => {
+                  const subject = subjects.find((s) => String(s.id) === String(row?.subjectId));
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openAddSubjectModal', {
+                      detail: {
+                        subject: subject || { id: row?.subjectId, name: row?.name },
+                      },
+                    }));
+                  }
+                }
+              : undefined
+          }
+          onAddEventForSubject={
+            canManageSubjects
+              ? (row) => {
+                  const childIds = row?.childIds || (safeChildId ? [safeChildId] : []);
+                  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openTaskModal', {
+                      detail: {
+                        subjectId: row?.subjectId,
+                        date: selectedDate,
+                        childIds,
+                        childId: childIds[0] || safeChildId || null,
+                      },
+                    }));
+                  }
+                }
+              : undefined
+          }
+        />
+      </View>
     </View>
   ) : null;
 
   return (
     <View style={styles.homeRoot}>
-      <RoleHomeShell main={mainContent} rail={railContent} />
+      <RoleHomeShell hero={heroContent} main={mainContent} rail={railContent} />
     </View>
   );
 }
@@ -342,6 +501,88 @@ const styles = StyleSheet.create({
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  greetingContainer: {
+    position: 'relative',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.12)',
+    backgroundColor: colors.bgSubtle,
+    minHeight: 110,
+    paddingVertical: 22,
+    paddingHorizontal: 24,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      backgroundImage: 'linear-gradient(135deg, #f4f2ff 0%, #eef6ff 48%, #f0fdf6 100%)',
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
+    }),
+  },
+  greetingInner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16,
+    minHeight: 88,
+  },
+  greetingCopy: {
+    flex: 1,
+    justifyContent: 'center',
+    gap: 6,
+    minWidth: 0,
+  },
+  greetingTitle: {
+    fontSize: 30,
+    fontWeight: '700',
+    color: '#0f172a',
+    letterSpacing: -0.4,
+    lineHeight: 34,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  greetingSubtitle: {
+    fontSize: 17,
+    fontWeight: '500',
+    color: '#334155',
+    lineHeight: 24,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  greetingDateLine: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#64748b',
+    lineHeight: 20,
+    marginTop: 2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  greetingActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.22)',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  greetingActionButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#334155',
+    letterSpacing: -0.1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
   mainSurface: {
     flex: 1,
     backgroundColor: 'transparent',
@@ -353,142 +594,126 @@ const styles = StyleSheet.create({
       minHeight: 0,
     }),
   },
-  headerCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.12)',
-    backgroundColor: colors.bgSubtle,
-    paddingVertical: 18,
-    paddingHorizontal: 16,
-    marginBottom: 2,
-    ...(Platform.OS === 'web' && {
-      backgroundImage: 'linear-gradient(135deg, #f4f2ff 0%, #eef6ff 48%, #f0fdf6 100%)',
-      boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
-    }),
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    flexWrap: 'wrap',
-    gap: 14,
-  },
-  headerLeft: {
-    flexDirection: 'column',
-    gap: 6,
-    flex: 1,
-    minWidth: 200,
-    ...(Platform.OS === 'web' && {
-      minWidth: 220,
-    }),
-  },
-  greetingText: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#0f172a',
-    letterSpacing: -0.3,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  dateText: {
-    fontSize: 14,
-    color: '#475569',
-    fontWeight: '500',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  scheduleSummaryText: {
-    fontSize: 13,
-    color: '#64748b',
-    fontWeight: '400',
-    marginTop: 4,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  viewTodosButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    alignSelf: 'flex-start',
-    ...(Platform.OS === 'web' && {
-      cursor: 'pointer',
-      transition: 'all 0.2s ease',
-      backdropFilter: 'blur(8px)',
-      WebkitBackdropFilter: 'blur(8px)',
-    }),
-  },
-  viewTodosButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(148, 163, 184, 0.2)',
-    marginTop: 12,
-    marginBottom: 12,
-  },
-  scheduleSection: {
+  bulletinBoardSection: {
     flex: 1,
     marginTop: 2,
-    paddingTop: 6,
+    paddingTop: 14,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
     borderWidth: 1,
     borderColor: 'rgba(148, 163, 184, 0.12)',
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
       minHeight: 0,
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
+    }),
+  },
+  scheduleSection: {
+    flex: 1,
+    marginTop: 2,
+    paddingTop: 14,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.12)',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: 0,
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
     }),
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingTop: 6,
-    marginBottom: 10,
-    marginHorizontal: -16,
-    paddingHorizontal: 16,
+    alignItems: 'center',
+    paddingTop: 0,
+    marginBottom: 8,
+    marginHorizontal: -12,
+    paddingHorizontal: 12,
+    paddingRight: 10,
+  },
+  scheduleNavGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  dayNavButtonGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 0,
+    flexShrink: 0,
+  },
+  dayNavButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+    paddingVertical: 2,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  scheduleTitleButton: {
+    flexShrink: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
   },
   sectionLabel: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#1e293b',
     letterSpacing: -0.2,
     textTransform: 'none',
-    marginTop: 4,
+    marginTop: 0,
+    flexShrink: 1,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  railContent: {
+  railStack: {
     flex: 1,
-    flexDirection: 'column',
+    gap: 14,
     minHeight: 0,
     width: '100%',
-    alignSelf: 'stretch',
     ...(Platform.OS === 'web' && {
       display: 'flex',
+      flexDirection: 'column',
       height: '100%',
-      flex: 1,
+      alignSelf: 'stretch',
+      overflow: 'hidden',
     }),
-    ...(Platform.OS !== 'web' && {
-      gap: 20,
+  },
+  railScheduleSection: {
+    flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
+    marginTop: 0,
+    ...(Platform.OS === 'web' && {
+      height: 'calc((100% - 14px) / 2)',
+      maxHeight: 'calc((100% - 14px) / 2)',
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      WebkitOverflowScrolling: 'touch',
+    }),
+  },
+  railSubjectsSection: {
+    flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      height: 'calc((100% - 14px) / 2)',
+      maxHeight: 'calc((100% - 14px) / 2)',
+      overflow: 'hidden',
     }),
   },
 });

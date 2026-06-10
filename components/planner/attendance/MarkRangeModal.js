@@ -1,20 +1,31 @@
-import React, { useState } from 'react';
-import { View, Text, Modal, TouchableOpacity, TextInput, StyleSheet, Platform } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, Modal, TouchableOpacity, TextInput, StyleSheet, Platform, ActivityIndicator } from 'react-native';
 import { X } from 'lucide-react';
 
 export default function MarkRangeModal({
   visible,
   children = [],
+  initialChildId = null,
+  initialFromDate = '',
+  initialToDate = '',
+  marking = false,
   onClose,
   onConfirm,
 }) {
-  const [childId, setChildId] = useState(children[0]?.id || null);
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
+  const [childId, setChildId] = useState(initialChildId || children[0]?.id || null);
+  const [fromDate, setFromDate] = useState(initialFromDate || '');
+  const [toDate, setToDate] = useState(initialToDate || '');
+
+  useEffect(() => {
+    if (!visible) return;
+    setChildId(initialChildId || children[0]?.id || null);
+    setFromDate(initialFromDate || '');
+    setToDate(initialToDate || '');
+  }, [visible, initialChildId, initialFromDate, initialToDate, children]);
 
   const handleConfirm = () => {
-    onConfirm && onConfirm({ childId, fromDate, toDate });
-    onClose();
+    if (!fromDate || !toDate || !childId || marking) return;
+    onConfirm?.({ childId, fromDate, toDate });
   };
 
   if (!visible) return null;
@@ -25,7 +36,7 @@ export default function MarkRangeModal({
         <TouchableOpacity style={styles.box} activeOpacity={1} onPress={() => {}}>
           <View style={styles.header}>
             <Text style={styles.title}>Mark attendance</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <TouchableOpacity onPress={onClose} hitSlop={12} disabled={marking}>
               <X size={24} color="#6B7280" />
             </TouchableOpacity>
           </View>
@@ -37,6 +48,7 @@ export default function MarkRangeModal({
                   key={c.id}
                   style={[styles.childChip, childId === c.id && styles.childChipActive]}
                   onPress={() => setChildId(c.id)}
+                  disabled={marking}
                 >
                   <Text style={[styles.childChipText, childId === c.id && styles.childChipTextActive]}>
                     {c.first_name || c.name || 'Child'}
@@ -50,6 +62,7 @@ export default function MarkRangeModal({
               onChangeText={setFromDate}
               placeholder="YYYY-MM-DD"
               style={styles.input}
+              editable={!marking}
             />
             <Text style={styles.label}>To</Text>
             <TextInput
@@ -57,18 +70,23 @@ export default function MarkRangeModal({
               onChangeText={setToDate}
               placeholder="YYYY-MM-DD"
               style={styles.input}
+              editable={!marking}
             />
           </View>
           <View style={styles.footer}>
-            <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
+            <TouchableOpacity style={styles.cancelBtn} onPress={onClose} disabled={marking}>
               <Text style={styles.cancelBtnText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.confirmBtn, (!fromDate || !toDate) && styles.confirmBtnDisabled]}
+              style={[styles.confirmBtn, (!fromDate || !toDate || !childId || marking) && styles.confirmBtnDisabled]}
               onPress={handleConfirm}
-              disabled={!fromDate || !toDate}
+              disabled={!fromDate || !toDate || !childId || marking}
             >
-              <Text style={styles.confirmBtnText}>Mark all scheduled events attended</Text>
+              {marking ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.confirmBtnText}>Mark all scheduled events attended</Text>
+              )}
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -136,7 +154,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#059669',
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 40,
   },
   confirmBtnDisabled: { opacity: 0.5 },
-  confirmBtnText: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  confirmBtnText: { fontSize: 14, fontWeight: '600', color: '#fff', textAlign: 'center' },
 });

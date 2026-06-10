@@ -1639,19 +1639,7 @@ export default function SubjectsPage({
     }) => {
       if (!showAdd && !showEdit) return null;
       return (
-        <View style={styles.filterRowEditActions}>
-          {showAdd ? (
-            <TouchableOpacity
-              style={styles.filterLabelIconBtn}
-              onPress={onAdd}
-              activeOpacity={0.75}
-              accessibilityRole="button"
-              accessibilityLabel={addLabel}
-              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
-            >
-              <Plus size={14} color="#64748B" />
-            </TouchableOpacity>
-          ) : null}
+        <View style={styles.filterLabelActions}>
           {showEdit ? (
             <TouchableOpacity
               style={styles.filterLabelIconBtn}
@@ -1662,6 +1650,18 @@ export default function SubjectsPage({
               {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
             >
               <Pencil size={14} color="#64748B" />
+            </TouchableOpacity>
+          ) : null}
+          {showAdd ? (
+            <TouchableOpacity
+              style={styles.filterLabelIconBtn}
+              onPress={onAdd}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={addLabel}
+              {...(Platform.OS === 'web' ? { cursor: 'pointer' } : {})}
+            >
+              <Plus size={14} color="#64748B" />
             </TouchableOpacity>
           ) : null}
         </View>
@@ -1691,10 +1691,18 @@ export default function SubjectsPage({
     return (
     <>
       {showChildrenRow && showInlineChildrenFilters ? (
-        <View style={[styles.filterRow, styles.coursesFilterRowTop, styles.filterRowWithTrailingActions]}>
+        <View style={[styles.filterRow, styles.coursesFilterRowTop]}>
           <View style={styles.filterRowMain}>
             <View style={styles.filterLabelGroup}>
               <Text style={styles.filterLabel}>Children</Text>
+              {renderFilterLabelIcons({
+                showAdd: canCreateChildFromHeader,
+                showEdit: canEditChildFromFilters,
+                onAdd: openAddChildFromFilter,
+                onEdit: openChildEditFromFilter,
+                addLabel: 'Add child',
+                editLabel: 'Edit children',
+              })}
             </View>
             <View style={styles.filterChipsWrap}>
               <View style={styles.filterChecklist}>
@@ -1740,14 +1748,6 @@ export default function SubjectsPage({
               </View>
             </View>
           </View>
-          {renderFilterLabelIcons({
-            showAdd: canCreateChildFromHeader,
-            showEdit: canEditChildFromFilters,
-            onAdd: openAddChildFromFilter,
-            onEdit: openChildEditFromFilter,
-            addLabel: 'Add child',
-            editLabel: 'Edit children',
-          })}
         </View>
       ) : null}
 
@@ -1811,10 +1811,18 @@ export default function SubjectsPage({
       ) : null}
 
       {showSubjectRow && (isCatalogScreen || allCourseSubjectIds.length > 0) ? (
-        <View style={[styles.filterRow, styles.filterRowBelowTerm, styles.filterRowWithTrailingActions]}>
+        <View style={[styles.filterRow, styles.filterRowBelowTerm]}>
           <View style={styles.filterRowMain}>
             <View style={styles.filterLabelGroup}>
               <Text style={styles.filterLabel}>Subjects</Text>
+              {renderFilterLabelIcons({
+                showAdd: canCreateSubjectFromHeader,
+                showEdit: canEditSubjectFromFilters,
+                onAdd: openAddSubjectWithCurrentHeaders,
+                onEdit: openSubjectEditFromFilter,
+                addLabel: 'Add subject',
+                editLabel: 'Edit subjects',
+              })}
             </View>
             <View style={styles.filterChipsWrap}>
             <View style={styles.filterChecklist}>
@@ -1864,14 +1872,6 @@ export default function SubjectsPage({
             </View>
             </View>
           </View>
-          {renderFilterLabelIcons({
-            showAdd: canCreateSubjectFromHeader,
-            showEdit: canEditSubjectFromFilters,
-            onAdd: openAddSubjectWithCurrentHeaders,
-            onEdit: openSubjectEditFromFilter,
-            addLabel: 'Add subject',
-            editLabel: 'Edit subjects',
-          })}
         </View>
       ) : null}
     </>
@@ -4352,7 +4352,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    width: 108,
+    width: 132,
     flexShrink: 0,
   },
   filterLabelActions: {

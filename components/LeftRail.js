@@ -52,7 +52,7 @@ const NAV_ITEM_DEFS = {
   planner: { key: 'planner', label: 'Planner', icon: MAIN_NAV_ICONS.planner },
   planningPreferences: {
     key: 'planning-preferences',
-    label: 'Plan Preferences',
+    label: 'Year Preferences',
     icon: MAIN_NAV_ICONS.planningPreferences,
   },
   records: { key: 'records', label: 'Records', icon: MAIN_NAV_ICONS.records },
@@ -65,7 +65,7 @@ const NAV_ITEM_DEFS = {
 const PARENT_NAV_BUCKET_KEYS = [
   ['home', 'messages'],
   ['planner', 'planningPreferences'],
-  ['subjects', 'family', 'materials'],
+  ['subjects', 'materials', 'family'],
   ['profile'],
 ];
 
@@ -261,13 +261,10 @@ export default function LeftRail({
 
   const renderNavItem = (item) => {
     const NavIcon = item.icon;
-    const isMessages = item.key === 'messages';
     const isCreate = item.key === 'create';
-    const active = messagesPaneOpen
-      ? isMessages
-      : createPaneOpen
-        ? isCreate
-        : topActive === item.key;
+    const active = createPaneOpen
+      ? isCreate
+      : topActive === item.key;
     const isHovered = hoveredItem === item.key && !active;
     const isPlanner = item.key === 'planner';
     const isMore = item.key === 'more';

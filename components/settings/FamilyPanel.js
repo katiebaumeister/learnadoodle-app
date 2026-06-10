@@ -1895,6 +1895,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     setIdCardSelected(selected);
     if (role === 'child' && selected) {
       setIdCardDisplayName(selected.name || selected.first_name || 'Child');
+    } else if (role === 'parent' && selected) {
+      setIdCardDisplayName(
+        selected.first_name ||
+          selected.name ||
+          getFamilyRowDisplayName(family?.family_name, { isParentViewer: showFamilyRowYouCue }) ||
+          selected.email ||
+          'Parent'
+      );
     } else {
       setIdCardDisplayName('');
     }
@@ -3044,15 +3052,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       </TouchableOpacity>
                     )}
                   </View>
-                  {hasProfileChanges && (
-                    <Text style={styles.profileEmailSaveHint}>
-                      Click the checkmark to save your changes
-                    </Text>
-                  )}
                   <Text style={styles.profileEmailHint}>
                     {isChildRestrictedView
                       ? "Your email and account is managed by your parent's account."
-                      : 'Changing your email will send a verification link to the new address. Your email will only be updated after you verify it.'}
+                      : 'Click the checkmark to save your changes and we will send a verification link to the new address. Your email will only be updated after you verify it.'}
                   </Text>
                   {user && !user.email_confirmed_at && (
                     <View style={styles.profileEmailVerify}>
@@ -3095,9 +3098,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       )}
                     </TouchableOpacity>
                   </View>
-                  <Text style={styles.profileResetPasswordHint}>
-                    We'll send you an email with a link to reset your password.
-                  </Text>
                 </View>
               </View>
             </View>
@@ -3241,7 +3241,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                     onFamilyUpdate?.(updatedFamily);
                   }}
                   readOnly={familyUserControls.isRestrictedViewer && !familyUserControls.allowed('planning_preferences')}
-                  description="Days vs hours, learning days, and breaks are saved per school year in Family → Learning preferences."
                   onMenuOpenChange={setAppearanceGoalMenuOpen}
                 />
               </View>
@@ -3272,15 +3271,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                       <Text style={styles.profileResetPasswordButtonText}>Reset password</Text>
                     )}
                   </TouchableOpacity>
-                  <Text style={styles.profileResetPasswordHint}>
-                    We&apos;ll send you an email with a link to reset your password.
-                  </Text>
                 </View>
               </View>
             </View>
           </View>
         );
-
+      
       case 'notifications':
         const NotificationCheckbox = ({ value, onValueChange, label }) => (
           <View style={styles.notifRow}>
@@ -5703,7 +5699,7 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   </TouchableOpacity>
                 </View>
                 <ScrollView style={{ maxHeight: '70vh' }} contentContainerStyle={{ paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
-                  {idCardRole === 'child' && (
+                  {(idCardRole === 'child' || idCardRole === 'parent') && (
                     <View style={styles.idCardNameFieldRow}>
                       <Text style={styles.idCardNameFieldLabel}>Name on ID (Learnadoodle will not save this)</Text>
                       <TextInput
@@ -5717,8 +5713,20 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                   )}
                   <IDCardView
                     child={
-                      idCardRole === 'child'
-                        ? { ...normalizeMemberForIdCard(idCardSelected, idCardRole), first_name: idCardDisplayName || (idCardSelected?.name || idCardSelected?.first_name || 'Child'), name: idCardDisplayName || (idCardSelected?.name || idCardSelected?.first_name || 'Child') }
+                      idCardRole === 'child' || idCardRole === 'parent'
+                        ? {
+                            ...normalizeMemberForIdCard(idCardSelected, idCardRole),
+                            first_name:
+                              idCardDisplayName ||
+                              (idCardRole === 'child'
+                                ? (idCardSelected?.name || idCardSelected?.first_name || 'Child')
+                                : (normalizeMemberForIdCard(idCardSelected, idCardRole).name || 'Parent')),
+                            name:
+                              idCardDisplayName ||
+                              (idCardRole === 'child'
+                                ? (idCardSelected?.name || idCardSelected?.first_name || 'Child')
+                                : (normalizeMemberForIdCard(idCardSelected, idCardRole).name || 'Parent')),
+                          }
                         : normalizeMemberForIdCard(idCardSelected, idCardRole)
                     }
                     familyId={family?.id || familyId}
@@ -5765,6 +5773,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
                           setIdCardSelected(member);
                           if (idCardRole === 'child') {
                             setIdCardDisplayName(member.name || member.first_name || 'Child');
+                          } else if (idCardRole === 'parent') {
+                            setIdCardDisplayName(
+                              member.first_name ||
+                                member.name ||
+                                getFamilyRowDisplayName(family?.family_name, { isParentViewer: showFamilyRowYouCue }) ||
+                                member.email ||
+                                'Parent'
+                            );
                           }
                         }}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -7505,13 +7521,6 @@ function createStyles(tokens) {
       color: '#3b82f6',
       textDecorationLine: 'underline',
     },
-    profileEmailSaveHint: {
-      ...SettingsTypography.secondary,
-      color: '#60a5fa',
-      marginTop: 10,
-      lineHeight: 18,
-      fontWeight: '500',
-    },
     profileEmailHint: {
       ...SettingsTypography.secondary,
       color: '#6b7280',
@@ -7565,12 +7574,6 @@ function createStyles(tokens) {
       ...(Platform.OS === 'web' && {
         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }),
-    },
-    profileResetPasswordHint: {
-      ...SettingsTypography.secondary,
-      color: '#6b7280',
-      marginTop: 10,
-      lineHeight: 18,
     },
     profilePasswordActions: {
       flexDirection: 'row',

@@ -28,6 +28,10 @@ export function SubjectAttendanceSummaryKeyArchived() {
               <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUpcoming]} />
               <Text style={styles.attendanceKeyText}>Upcoming</Text>
             </View>
+            <View style={styles.attendanceKeyPill}>
+              <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotNoEvents]} />
+              <Text style={styles.attendanceKeyText}>No events</Text>
+            </View>
           </View>
         </View>
       </View>
@@ -73,5 +77,6 @@ const styles = StyleSheet.create({
   attendanceKeyDotAttended: { backgroundColor: '#6BB3E8' },
   attendanceKeyDotUnattended: { backgroundColor: '#F2A0A0' },
   attendanceKeyDotUpcoming: { backgroundColor: '#C7DDF6' },
+  attendanceKeyDotNoEvents: { backgroundColor: '#E5E7EB' },
   attendanceKeyText: { fontSize: 12, color: '#6B7280', ...WEB_BODY_FONT },
 });

@@ -13,7 +13,6 @@ import {
   Eye,
   Edit2,
 } from 'lucide-react';
-import { useSession } from '../../contexts/SessionContext';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
@@ -257,24 +256,15 @@ function SubjectSnapshotRow({ row, familyChildren = [], onNavigate, onEditSubjec
 
 export function ParentHomeRightRail({
   subjectSnapshot = [],
-  userRole = null,
   familyChildren = [],
   onNavigate,
   onEditSubject,
   onAddEventForSubject,
 }) {
-  const session = useSession();
-  const resolvedRole = userRole ?? session?.effective_role ?? '';
-  const isChildRole =
-    resolvedRole === 'child' ||
-    resolvedRole === 'student' ||
-    session?.role_flags?.isChild === true;
-  const subjectsTitle = isChildRole ? 'Your Subjects' : "Your Family's Subjects";
-
   return (
     <View style={styles.railStack}>
       <DashboardCard
-        title={subjectsTitle}
+        title="Subjects"
         fillRail
         style={styles.railCardFull}
       >
@@ -516,7 +506,7 @@ const styles = StyleSheet.create({
     padding: 18,
     gap: 14,
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 10px rgba(15, 23, 42, 0.06)',
+      boxShadow: '0 2px 8px rgba(15, 23, 42, 0.06)',
     }),
   },
   cardHeader: {

@@ -9,7 +9,6 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
-import { SquarePen } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { getFamilyMembers } from '../../lib/apiClient';
 import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
@@ -23,7 +22,6 @@ import {
   sortParticipantsByActivity,
 } from '../../lib/familyDmClient';
 import FamilyDmChat from './FamilyDmChat';
-import FamilyNewMessagePicker from './FamilyNewMessagePicker';
 import MessagesPaneCloseButton from './MessagesPaneCloseButton';
 
 function avatarSourceForParticipant(participant) {
@@ -158,24 +156,11 @@ export default function FamilyMessagesPane({
     setPaneView('chat');
   }, []);
 
-  const handleOpenNewMessage = useCallback(() => {
-    setPaneView('picker');
-  }, []);
-
-  const handlePickerNext = useCallback((participant) => {
-    setChatParticipant(participant);
-    setPaneView('chat');
-  }, []);
-
   const handleBackFromChat = useCallback(() => {
     setChatParticipant(null);
     setPaneView('inbox');
     loadInbox();
   }, [loadInbox]);
-
-  const handleBackFromPicker = useCallback(() => {
-    setPaneView('inbox');
-  }, []);
 
   const listRows = useMemo(
     () => participants.map((participant) => {
@@ -190,23 +175,6 @@ export default function FamilyMessagesPane({
     }),
     [participants, previewMap]
   );
-
-  if (paneView === 'picker') {
-    return (
-      <View style={[
-        styles.container,
-        styles.containerFlex,
-        placement === 'left' ? styles.containerLeft : styles.containerRight,
-      ]}>
-        <FamilyNewMessagePicker
-          participants={participants}
-          onBack={handleBackFromPicker}
-          onNext={handlePickerNext}
-          onClosePane={showPaneClose ? onClosePane : null}
-        />
-      </View>
-    );
-  }
 
   if (paneView === 'chat' && chatParticipant) {
     return (
@@ -251,20 +219,6 @@ export default function FamilyMessagesPane({
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          <TouchableOpacity
-            style={styles.newMessageRow}
-            onPress={handleOpenNewMessage}
-            activeOpacity={0.8}
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <View style={styles.newMessageIconWrap}>
-              <SquarePen size={18} color="rgba(99, 102, 241, 1)" />
-            </View>
-            <Text style={styles.newMessageLabel}>New message</Text>
-          </TouchableOpacity>
-
-          <Text style={styles.sectionLabel}>Messages</Text>
-
           {listRows.map(({ participant, key, preview, lastActivityAt }) => (
             <TouchableOpacity
               key={key}
@@ -336,37 +290,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
+    paddingTop: 4,
     paddingBottom: 24,
-  },
-  newMessageRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  newMessageIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 0,
-    backgroundColor: 'rgba(139, 92, 246, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(139, 92, 246, 0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  newMessageLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#0F172A',
-  },
-  sectionLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0F172A',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 6,
   },
   threadRow: {
     flexDirection: 'row',

@@ -8,9 +8,10 @@
 import React from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
 
-export default function RoleHomeShell({ main, rail }) {
+export default function RoleHomeShell({ hero, main, rail }) {
   return (
     <View style={styles.container}>
+      {hero ? <View style={styles.heroSection}>{hero}</View> : null}
       {/* Responsive grid */}
       <View style={styles.gridContainer}>
         {/* Left: Main column (full width when no rail) */}
@@ -35,6 +36,7 @@ const styles = StyleSheet.create({
     minHeight: 0,
     width: '100%',
     backgroundColor: 'transparent',
+    gap: 14,
     ...(Platform.OS === 'web' && {
       maxWidth: '100%',
       alignSelf: 'stretch',
@@ -46,6 +48,13 @@ const styles = StyleSheet.create({
       paddingHorizontal: 16,
       paddingTop: 16,
       paddingBottom: 24,
+    }),
+  },
+  heroSection: {
+    width: '100%',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      alignSelf: 'stretch',
     }),
   },
   gridContainer: {

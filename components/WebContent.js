@@ -635,6 +635,7 @@ import { createEventViaSupabaseRpc, deleteEvent as deletePlannerEvent, restoreEv
 import {
   prefetchWeekViewIntoOffline,
   prefetchBacklogAndTrash,
+  prefetchPlannerListEvents,
   prefetchPlannerAttendanceSnapshot,
   prefetchPlanEditListForFamily,
 } from '../lib/services/plannerPrefetch'
@@ -5007,6 +5008,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   const [isCalendarDataLoaded, setIsCalendarDataLoaded] = useState(false)
   // Pre-fetched planner tasks + attendance (null = not yet loaded for this family)
   const [plannerPreloadedBacklog, setPlannerPreloadedBacklog] = useState(null)
+  const [plannerPreloadedListEvents, setPlannerPreloadedListEvents] = useState(null)
   const [plannerPreloadedTrash, setPlannerPreloadedTrash] = useState(null)
   const [plannerAttendanceSnapshot, setPlannerAttendanceSnapshot] = useState(null)
   // Planner view date (synced from WebLayout via plannerMonthChange)
@@ -5083,6 +5085,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     if (!familyId) {
       setPlannerPreloadedBacklog(null);
       setPlannerPreloadedTrash(null);
+      setPlannerPreloadedListEvents(null);
       setPlannerAttendanceSnapshot(null);
       plannerPreloadedForKeyRef.current = null;
       return;
@@ -5094,6 +5097,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     plannerPreloadedForKeyRef.current = preloadKey;
     setPlannerPreloadedBacklog(null);
     setPlannerPreloadedTrash(null);
+    setPlannerPreloadedListEvents(null);
     setPlannerAttendanceSnapshot(null);
     // Library list: same moment as planner month — not chained after calendar (avoids “Loading materials…” on first Library open).
     getMaterials(familyId, {}, propSession)
@@ -5129,6 +5133,9 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           prefetchBacklogAndTrash(familyId).then(({ backlog, trash }) => {
             setPlannerPreloadedBacklog(backlog);
             setPlannerPreloadedTrash(trash);
+          }),
+          prefetchPlannerListEvents(familyId, preloadAnchorDate).then((rows) => {
+            setPlannerPreloadedListEvents(rows);
           }),
         ]).catch(() => {});
       });
@@ -10310,6 +10317,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         onEditChild={plannerReadOnly ? undefined : onEditChild}
         preloadedBacklogEvents={plannerPreloadedBacklog}
         preloadedTrashEvents={plannerPreloadedTrash}
+        preloadedSectionEvents={plannerPreloadedListEvents}
         plannerAttendanceSnapshot={plannerAttendanceSnapshot}
         plannerShellVisible={isPlannerShellTab}
         academicYears={propPreloadedAcademicYears}
@@ -10511,6 +10519,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
       <ParentHomeScreen
         familyId={fid}
         family={propFamily}
+        profile={propProfile}
         onInitialDataReady={onHomeInitialDataReady}
         onNavigate={onTabChange}
         onOpenEvent={(event) => {
@@ -10613,7 +10622,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               overrideFamilyId={familyId}
               overrideChildName={child.first_name || child.name}
               overrideChildren={[child]}
-              showRightRail={!hideChildHomeRightRail}
             />
           </View>
         );
@@ -10680,7 +10688,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               <ChildHomeScreen
                 familyId={familyId}
                 onNavigate={onTabChange}
-                showRightRail={!hideChildHomeRightRail}
               />
             );
           }
@@ -10691,7 +10698,6 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
             <ChildHomeScreen
               familyId={familyId}
               onNavigate={onTabChange}
-              showRightRail={!hideChildHomeRightRail}
             />
           );
         }
@@ -10705,6 +10711,25 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
               onNavigate={onTabChange}
             />
           );
+        }
+        if (parentViewingAsChildId && homeFamilyIdForContent) {
+          const viewingChild = (children || []).find(
+            (c) => String(c.id) === String(parentViewingAsChildId)
+          );
+          if (viewingChild) {
+            return (
+              <View style={{ flex: 1 }}>
+                <ChildHomeScreen
+                  familyId={homeFamilyIdForContent}
+                  onNavigate={onTabChange}
+                  overrideChildId={viewingChild.id}
+                  overrideFamilyId={homeFamilyIdForContent}
+                  overrideChildName={viewingChild.first_name || viewingChild.name}
+                  overrideChildren={[viewingChild]}
+                />
+              </View>
+            );
+          }
         }
         if (
           propSession &&

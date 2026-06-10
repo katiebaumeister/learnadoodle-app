@@ -63,6 +63,9 @@ function formatEventChipWhen(event) {
   });
 }
 
+const COMPOSER_BUTTON_SIZE = 36;
+const COMPOSER_MAX_HEIGHT = 120;
+
 export default function FamilyDmChat({
   participant,
   familyId,
@@ -77,6 +80,7 @@ export default function FamilyDmChat({
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState([]);
   const [composerText, setComposerText] = useState('');
+  const [composerInputHeight, setComposerInputHeight] = useState(COMPOSER_BUTTON_SIZE);
   const [sending, setSending] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
@@ -84,6 +88,9 @@ export default function FamilyDmChat({
   const [pendingMaterial, setPendingMaterial] = useState(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const scrollRef = useRef(null);
+  const composerInputRef = useRef(null);
+  const handleSendRef = useRef(null);
+  const sendInFlightRef = useRef(false);
   const scrollToBottomOnLoadRef = useRef(true);
 
   const childCtx = useMemo(
@@ -321,8 +328,28 @@ export default function FamilyDmChat({
     composerText.trim() || pendingEvent?.id || pendingMaterial?.id,
   );
 
+  const handleComposerContentSizeChange = useCallback((event) => {
+    const contentHeight = event?.nativeEvent?.contentSize?.height;
+    if (!Number.isFinite(contentHeight)) return;
+    const nextHeight = Math.min(
+      COMPOSER_MAX_HEIGHT,
+      Math.max(COMPOSER_BUTTON_SIZE, Math.ceil(contentHeight)),
+    );
+    setComposerInputHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+  }, []);
+
+  useEffect(() => {
+    if (!composerText) {
+      setComposerInputHeight(COMPOSER_BUTTON_SIZE);
+    }
+  }, [composerText]);
+
   const handleSend = useCallback(async () => {
-    if (!canSend || sending) return;
+    if (sending || sendInFlightRef.current) return;
+    const trimmed = String(composerText || '').trim();
+    const hasContent = Boolean(trimmed || pendingEvent?.id || pendingMaterial?.id);
+    if (!hasContent) return;
+
     const payload = buildSendPayload(
       familyId,
       participant,
@@ -333,12 +360,21 @@ export default function FamilyDmChat({
         materialId: pendingMaterial?.id || null,
       },
     );
-    if (!payload) return;
+    if (!payload) {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert?.('Could not send this message. Please try again.');
+      }
+      return;
+    }
+    sendInFlightRef.current = true;
     setSending(true);
     try {
       const { error } = await supabase.from('family_direct_messages').insert(payload);
       if (error) {
         console.error('[FamilyDmChat] send error:', error);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.alert?.(`Could not send message: ${error.message || 'Unknown error'}`);
+        }
         return;
       }
       setComposerText('');
@@ -349,11 +385,14 @@ export default function FamilyDmChat({
       await loadMessages();
     } catch (error) {
       console.error('[FamilyDmChat] send exception:', error);
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert?.(`Could not send message: ${error?.message || error}`);
+      }
     } finally {
+      sendInFlightRef.current = false;
       setSending(false);
     }
   }, [
-    canSend,
     composerText,
     currentUserId,
     familyId,
@@ -363,6 +402,34 @@ export default function FamilyDmChat({
     pendingMaterial?.id,
     sending,
   ]);
+
+  handleSendRef.current = handleSend;
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || childInviteGate) return undefined;
+    let cleanup = () => {};
+    const id = window.setTimeout(() => {
+      const node = composerInputRef.current;
+      if (!node) return;
+      const el = typeof node.querySelector === 'function'
+        ? node.querySelector('textarea') || node
+        : node;
+      if (!el || typeof el.addEventListener !== 'function') return;
+      const handler = (e) => {
+        if ((e.key === 'Enter' || e.keyCode === 13) && !e.shiftKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleSendRef.current?.();
+        }
+      };
+      el.addEventListener('keydown', handler, true);
+      cleanup = () => el.removeEventListener('keydown', handler, true);
+    }, 100);
+    return () => {
+      window.clearTimeout(id);
+      cleanup();
+    };
+  }, [childInviteGate, participant?.id]);
 
   const pickFile = useCallback(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined' || uploadingFile) return;
@@ -720,39 +787,53 @@ export default function FamilyDmChat({
             </View>
 
             <TextInput
+              ref={composerInputRef}
               value={composerText}
               onChangeText={setComposerText}
               placeholder="Type a message..."
               placeholderTextColor="#94A3B8"
-              style={styles.composerInput}
+              style={[
+                styles.composerInput,
+                { height: composerInputHeight },
+              ]}
               multiline
               maxLength={2000}
+              scrollEnabled={composerInputHeight >= COMPOSER_MAX_HEIGHT}
+              onContentSizeChange={handleComposerContentSizeChange}
+              textAlignVertical="top"
               returnKeyType="send"
               blurOnSubmit={false}
               onSubmitEditing={() => {
-                if (canSend && !sending) handleSend();
+                handleSendRef.current?.();
               }}
-              {...(Platform.OS === 'web' && {
-                onKeyDown: (e) => {
-                  if ((e.key === 'Enter' || e.keyCode === 13) && !e.shiftKey) {
-                    e.preventDefault();
-                    if (canSend && !sending) handleSend();
-                  }
-                },
-              })}
+              onKeyDown={Platform.OS === 'web' ? (e) => {
+                if ((e.key === 'Enter' || e.keyCode === 13) && !e.shiftKey) {
+                  e.preventDefault?.();
+                  e.stopPropagation?.();
+                  handleSendRef.current?.();
+                }
+              } : undefined}
               onKeyPress={Platform.OS === 'web' ? undefined : (e) => {
                 const key = e.nativeEvent?.key;
-                if (key === 'Enter' && !e.shiftKey && canSend && !sending) {
-                  handleSend();
+                if (key === 'Enter' && !e.shiftKey) {
+                  handleSendRef.current?.();
                 }
               }}
             />
             <TouchableOpacity
               style={[styles.sendButton, (!canSend || sending) && styles.sendButtonDisabled]}
-              onPress={handleSend}
+              onPress={() => handleSendRef.current?.()}
               disabled={!canSend || sending}
               activeOpacity={0.8}
-              {...(Platform.OS === 'web' && { cursor: !canSend || sending ? 'default' : 'pointer' })}
+              {...(Platform.OS === 'web' && {
+                cursor: !canSend || sending ? 'default' : 'pointer',
+                onClick: (e) => {
+                  if (!canSend || sending) return;
+                  e.preventDefault?.();
+                  e.stopPropagation?.();
+                  handleSendRef.current?.();
+                },
+              })}
             >
               <ArrowUp size={16} color="#FFFFFF" />
             </TouchableOpacity>
@@ -1027,9 +1108,9 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   attachButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: COMPOSER_BUTTON_SIZE,
+    height: COMPOSER_BUTTON_SIZE,
+    borderRadius: COMPOSER_BUTTON_SIZE / 2,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     alignItems: 'center',
@@ -1064,21 +1145,25 @@ const styles = StyleSheet.create({
   },
   composerInput: {
     flex: 1,
-    minHeight: 40,
-    maxHeight: 100,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    borderRadius: 20,
+    borderRadius: COMPOSER_BUTTON_SIZE / 2,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingTop: 8,
+    paddingBottom: 8,
     fontSize: 14,
+    lineHeight: 20,
     color: '#0F172A',
-    ...(Platform.OS === 'web' && { outlineStyle: 'none' }),
+    ...(Platform.OS === 'web' && {
+      outlineStyle: 'none',
+      resize: 'none',
+      overflow: 'hidden',
+    }),
   },
   sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: COMPOSER_BUTTON_SIZE,
+    height: COMPOSER_BUTTON_SIZE,
+    borderRadius: COMPOSER_BUTTON_SIZE / 2,
     backgroundColor: '#1E293B',
     alignItems: 'center',
     justifyContent: 'center',

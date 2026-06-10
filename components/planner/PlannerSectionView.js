@@ -194,7 +194,7 @@ export default function PlannerSectionView({
               {...(Platform.OS === 'web' && { cursor: 'pointer' })}
             >
               <Text style={styles.smartActionsText}>Smart Actions</Text>
-              <ChevronDown size={14} color="#6B7280" />
+              <ChevronDown size={14} color="#64748b" />
             </TouchableOpacity>
             <PlannerSmartActionsMenu
               visible={showSmartActionsMenu}
@@ -290,17 +290,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-    backgroundColor: '#FFFFFF',
+    borderColor: 'rgba(148, 163, 184, 0.24)',
+    backgroundColor: '#F9FAFB',
+    flexShrink: 0,
   },
   smartActionsText: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
+    fontWeight: '500',
+    color: '#475569',
   },
   planningEngineContainer: {
     width: '100%',

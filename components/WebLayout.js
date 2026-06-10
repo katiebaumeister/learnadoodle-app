@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal, ActivityIndicator, Image, LayoutAnimation, Alert } from 'react-native';
+import { Platform, View, Text, ScrollView, StyleSheet, TouchableOpacity, Modal, ActivityIndicator, Image, LayoutAnimation, Alert } from 'react-native';
 
 // For web portal rendering
 let ReactDOM;
@@ -12,7 +12,8 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
 import { formatPlannerYearHeaderLabel, shiftPlannerYearAnchor } from './planner/plannerYearRange';
-import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, Search, ExternalLink, Bot, Download } from 'lucide-react';
+import { formatPlannerWeekHeaderLabel } from './planner/plannerSectionRouting';
+import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, ExternalLink, Bot } from 'lucide-react';
 import { sourceForChild } from './ui/ChildAvatarCluster';
 import { useAuth } from '../contexts/AuthContext';
 import { useOptionalFamilyUserControls } from '../contexts/FamilyUserControlsContext';
@@ -64,6 +65,7 @@ import BuildCurriculumModal from './planner/modals/BuildCurriculumModal';
 import ProgressForecastModal from './planner/modals/ProgressForecastModal';
 import SchedulingAssistant from './planner/SchedulingAssistant';
 import PlannerSettingsPopover from './planner/PlannerSettingsPopover';
+import PlannerSmartActionsMenu from './planner/PlannerSmartActionsMenu';
 import OnboardingModal from './onboarding/OnboardingModal';
 import ExplorerTourOverlay from './onboarding/ExplorerTourOverlay';
 import LearnerQuickStartModal from './onboarding/LearnerQuickStartModal';
@@ -76,8 +78,6 @@ import FamilyMessagesPane from './messages/FamilyMessagesPane';
 import FamilyCreatePane from './create/FamilyCreatePane';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 import { AVATAR_KEYS } from '../assets/imageAssetMap';
-import { comingSoonModalStyles } from '../theme/comingSoonModalTheme';
-
 /**
  * Parent-only post-onboarding explorer tour (spotlight copy).
  * Retired: parent onboarding is the Doodle setup checklist in SearchModal (DoodleSetupGuidePanel).
@@ -483,14 +483,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showSchedulingAssistantModal, setShowSchedulingAssistantModal] = useState(false);
   const [schedulingAssistantChildId, setSchedulingAssistantChildId] = useState(null);
   const [schedulingAssistantWeekStart, setSchedulingAssistantWeekStart] = useState(() => startOfWeek(new Date()));
-  const [plannerSearchQuery, setPlannerSearchQuery] = useState('');
-  const plannerSearchInputRef = useRef(null);
-  const [plannerSearchResults, setPlannerSearchResults] = useState([]);
-  const [isSearchingPlanner, setIsSearchingPlanner] = useState(false);
-  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
-  const searchInputRef = useRef(null);
-  const searchDropdownRef = useRef(null);
-  const [searchDropdownPosition, setSearchDropdownPosition] = useState({ top: 0, left: 0 });
+  const [showSmartActionsMenu, setShowSmartActionsMenu] = useState(false);
+  const smartActionsButtonRef = useRef(null);
   const [showAnalyticsDashboard, setShowAnalyticsDashboard] = useState(false);
   const [showProgressReport, setShowProgressReport] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -643,15 +637,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const filterButtonRef = useRef(null);
   const [filterDropdownPosition, setFilterDropdownPosition] = useState({ top: 0, left: 0 });
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
-  const [connectedAccountsComingSoonLabel, setConnectedAccountsComingSoonLabel] = useState(null);
   const topToolbarFiltersButtonRef = useRef(null);
   const [showPlannerSettingsPopover, setShowPlannerSettingsPopover] = useState(false);
   const [plannerSettingsPopoverPosition, setPlannerSettingsPopoverPosition] = useState({ top: 0, left: 0 });
   const settingsButtonRef = useRef(null);
   const [filtersDropdownPosition, setFiltersDropdownPosition] = useState({ top: 0, left: 0 });
   const filtersDropdownRef = useRef(null);
-  const [selectedEventTypes, setSelectedEventTypes] = useState(null);
-  const [selectedConnectedAccounts, setSelectedConnectedAccounts] = useState(null);
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false);
   const connectedAccounts = useMemo(() => {
     const allowed = new Set(['google', 'apple']);
@@ -758,6 +749,20 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [exportModalSubjectId, setExportModalSubjectId] = useState(null);
   const [exportModalSubjectName, setExportModalSubjectName] = useState(null);
 
+  const openPlannerExportModal = useCallback(() => {
+    setTooltip({ visible: false, text: '', x: 0, y: 0 });
+    const m = currentMonth.getMonth();
+    const y = currentMonth.getFullYear();
+    const firstDay = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+    const lastDay = new Date(y, m + 1, 0);
+    const lastDayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
+    setExportStartDate(firstDay);
+    setExportEndDate(lastDayStr);
+    setExportModalSubjectId(null);
+    setExportModalSubjectName(null);
+    setShowExportModal(true);
+  }, [currentMonth]);
+
   const syncGoogleCalendarIntoPlanner = useCallback(async ({ showAlert = false } = {}) => {
     if (!googleCalendarConnected || syncingGoogleCalendarPullRef.current) return;
     syncingGoogleCalendarPullRef.current = true;
@@ -824,11 +829,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     window.addEventListener('message', handleOAuthMessage);
     return () => window.removeEventListener('message', handleOAuthMessage);
   }, [refreshGoogleCalendarConnection, syncGoogleCalendarIntoPlanner]);
-
-  const openConnectedAccountsComingSoon = useCallback((providerLabel) => {
-    setShowFiltersDropdown(false);
-    setConnectedAccountsComingSoonLabel(providerLabel || 'Calendar connection');
-  }, []);
 
   const handlePlannerProviderConnect = useCallback(async (providerId, providerLabel, options = {}) => {
     if (providerId !== 'google') {
@@ -1036,7 +1036,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
 
   // Update view chip slider position when currentView changes (Month / Week / Year)
   useEffect(() => {
-    const chipKeys = ['board', 'month', 'tasks', 'year'];
+    const chipKeys = ['board', 'month', 'year', 'tasks'];
     if (!chipKeys.includes(currentView)) {
       setViewChipSlider({ left: 0, width: 0 });
       return;
@@ -1130,297 +1130,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       return () => document.removeEventListener('click', handleClickOutside, true);
     }
   }, [showPlanYearDropdown]);
-
-  // Search events when query changes
-  useEffect(() => {
-    if (!plannerSearchQuery.trim() || !familyId) {
-      setPlannerSearchResults([]);
-      setShowSearchDropdown(false);
-      return;
-    }
-
-    const searchEvents = async () => {
-      setIsSearchingPlanner(true);
-      try {
-        const normalizedQuery = String(plannerSearchQuery || '').toLowerCase().trim();
-        const queryTokens = normalizedQuery.split(/\s+/).filter(Boolean);
-        const escapedQuery = normalizedQuery.replace(/[%_]/g, '\\$&');
-        console.log('[PlannerSearch] Searching with query:', plannerSearchQuery, 'familyId:', familyId);
-        const childNameById = new Map(
-          (children || []).map((child) => [String(child?.id || ''), String(child?.first_name || child?.name || '').trim()])
-        );
-
-        // Match child-name tokens (e.g., "max", "lily") to IDs.
-        const matchedChildIds = (children || [])
-          .filter((child) => {
-            const fullName = `${child?.first_name || ''} ${child?.last_name || ''} ${child?.name || ''}`.toLowerCase();
-            return queryTokens.some((token) => token && fullName.includes(token));
-          })
-          .map((child) => child?.id)
-          .filter(Boolean);
-
-        const textSearch = await supabase
-          .from('events')
-          .select('*')
-          .eq('family_id', familyId)
-          .is('deleted_at', null)
-          .neq('status', 'canceled')
-          .or(`title.ilike.%${escapedQuery}%,description.ilike.%${escapedQuery}%,subject.ilike.%${escapedQuery}%,subject_name.ilike.%${escapedQuery}%,event_type.ilike.%${escapedQuery}%,source.ilike.%${escapedQuery}%`)
-          .order('start_ts', { ascending: false })
-          .limit(250);
-
-        // Fallback text query in case some columns in OR are unavailable in a deployment.
-        const titleOnlySearch = textSearch.error
-          ? await supabase
-              .from('events')
-              .select('*')
-              .eq('family_id', familyId)
-              .is('deleted_at', null)
-              .neq('status', 'canceled')
-              .ilike('title', `%${escapedQuery}%`)
-              .order('start_ts', { ascending: false })
-              .limit(250)
-          : null;
-
-        const childSearch = matchedChildIds.length > 0
-          ? await supabase
-              .from('events')
-              .select('*')
-              .eq('family_id', familyId)
-              .is('deleted_at', null)
-              .neq('status', 'canceled')
-              .in('child_id', matchedChildIds)
-              .order('start_ts', { ascending: false })
-              .limit(250)
-          : { data: [], error: null };
-
-        if (textSearch.error && titleOnlySearch?.error) {
-          console.error('[PlannerSearch] Error searching events:', textSearch.error, titleOnlySearch.error);
-          setPlannerSearchResults([]);
-          setShowSearchDropdown(true);
-          return;
-        }
-
-        const mergedById = new Map();
-        [...(textSearch.data || []), ...(titleOnlySearch?.data || []), ...(childSearch.data || [])].forEach((event) => {
-          if (!event?.id) return;
-          mergedById.set(event.id, event);
-        });
-
-        const mergedEvents = Array.from(mergedById.values());
-        const results = mergedEvents
-          .map((event) => {
-              const eventDate = event.start_ts ? new Date(event.start_ts) : null;
-              const hasValidDate = eventDate && Number.isFinite(eventDate.getTime());
-              const isBacklog = event.is_backlog === true || (hasValidDate && eventDate.getFullYear() >= 2099);
-              const title = String(event.title || 'Untitled Event');
-              const description = String(event.description || '');
-              const eventType = String(event.event_type || event.source || '');
-              const subjectName = String(event.subject_name || event.subject || '');
-              const childNames = [];
-              const childId = String(event.child_id || '');
-              if (childId && childNameById.has(childId)) {
-                childNames.push(childNameById.get(childId));
-              }
-              if (Array.isArray(event.child_ids)) {
-                event.child_ids.forEach((id) => {
-                  const key = String(id || '');
-                  if (!key) return;
-                  const candidate = childNameById.get(key);
-                  if (candidate) childNames.push(candidate);
-                });
-              }
-              const uniqueChildNames = [...new Set(childNames.filter(Boolean))];
-              const childNamesText = uniqueChildNames.join(' ');
-
-              const fullDateLabel = hasValidDate
-                ? eventDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-                : '';
-              const shortDateLabel = hasValidDate
-                ? eventDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                : '';
-              const compactDateLabel = hasValidDate
-                ? `${eventDate.getMonth() + 1}/${eventDate.getDate()}`
-                : '';
-
-              const haystack = [
-                title,
-                description,
-                eventType,
-                subjectName,
-                childNamesText,
-                fullDateLabel,
-                shortDateLabel,
-                compactDateLabel,
-              ].join(' ').toLowerCase();
-
-              if (queryTokens.length > 0 && !queryTokens.every((token) => haystack.includes(token))) {
-                return null;
-              }
-
-              let score = 0;
-              let matchReason = 'Matched details';
-              const titleLower = title.toLowerCase();
-              const subjectLower = subjectName.toLowerCase();
-              const typeLower = eventType.toLowerCase();
-              const childLower = childNamesText.toLowerCase();
-              const dateLower = [fullDateLabel, shortDateLabel, compactDateLabel].join(' ').toLowerCase();
-
-              if (normalizedQuery && titleLower.includes(normalizedQuery)) {
-                score += 50;
-                matchReason = 'Matched title';
-              } else if (normalizedQuery && subjectLower.includes(normalizedQuery)) {
-                score += 35;
-                matchReason = 'Matched subject';
-              } else if (normalizedQuery && childLower.includes(normalizedQuery)) {
-                score += 30;
-                matchReason = 'Matched student';
-              } else if (normalizedQuery && typeLower.includes(normalizedQuery)) {
-                score += 25;
-                matchReason = 'Matched event type';
-              } else if (normalizedQuery && dateLower.includes(normalizedQuery)) {
-                score += 20;
-                matchReason = 'Matched date';
-              }
-
-              queryTokens.forEach((token) => {
-                if (titleLower.includes(token)) score += 8;
-                if (subjectLower.includes(token)) score += 6;
-                if (childLower.includes(token)) score += 6;
-                if (typeLower.includes(token)) score += 4;
-                if (dateLower.includes(token)) score += 3;
-              });
-
-              return {
-                id: event.id,
-                title,
-                date: hasValidDate ? eventDate : new Date(0),
-                dateStr: isBacklog
-                  ? 'Backlog'
-                  : hasValidDate
-                    ? eventDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                    : 'No date',
-                isBacklog,
-                matchReason,
-                score,
-              };
-            })
-            .filter(Boolean)
-            .sort((a, b) => {
-              if (b.score !== a.score) return b.score - a.score;
-              return b.date - a.date;
-            })
-            .slice(0, 20);
-
-        console.log('[PlannerSearch] Mapped results:', results.length);
-        setPlannerSearchResults(results);
-        setShowSearchDropdown(true);
-      } catch (error) {
-        console.error('[PlannerSearch] Exception searching events:', error);
-        setPlannerSearchResults([]);
-        setShowSearchDropdown(true);
-      } finally {
-        setIsSearchingPlanner(false);
-      }
-    };
-
-    const timeoutId = setTimeout(searchEvents, 300);
-    return () => clearTimeout(timeoutId);
-  }, [plannerSearchQuery, familyId, children]);
-
-  // Update search dropdown position
-  useEffect(() => {
-    if (showSearchDropdown && Platform.OS === 'web' && searchInputRef.current) {
-      const updatePosition = () => {
-        const node = searchInputRef.current?._nativeNode || searchInputRef.current;
-        if (node && typeof node.getBoundingClientRect === 'function') {
-          const rect = node.getBoundingClientRect();
-          setSearchDropdownPosition({
-            top: rect.bottom + 4,
-            left: rect.left,
-          });
-        }
-      };
-      
-      updatePosition();
-      window.addEventListener('scroll', updatePosition, true);
-      window.addEventListener('resize', updatePosition);
-      
-      return () => {
-        window.removeEventListener('scroll', updatePosition, true);
-        window.removeEventListener('resize', updatePosition);
-      };
-    }
-  }, [showSearchDropdown]);
-
-  // Handle click outside search dropdown
-  useEffect(() => {
-    if (showSearchDropdown && Platform.OS === 'web' && typeof document !== 'undefined') {
-      const handleClickOutside = (event) => {
-        const inputNode = searchInputRef.current?._nativeNode || searchInputRef.current;
-        const dropdownNode = searchDropdownRef.current?._nativeNode || searchDropdownRef.current;
-        
-        const target = event.target;
-        const isInsideInput = inputNode && (inputNode === target || inputNode.contains(target));
-        const isInsideDropdown = dropdownNode && (dropdownNode === target || dropdownNode.contains(target));
-        
-        if (!isInsideInput && !isInsideDropdown) {
-          setShowSearchDropdown(false);
-        }
-      };
-      
-      document.addEventListener('click', handleClickOutside, true);
-      
-      return () => {
-        document.removeEventListener('click', handleClickOutside, true);
-      };
-    }
-  }, [showSearchDropdown]);
-
-  // Handle selecting a search result - navigate to date or backlog
-  const handleSearchResultSelect = (result) => {
-    setPlannerSearchQuery('');
-    setShowSearchDropdown(false);
-    setPlannerSearchResults([]);
-    
-    if (typeof window !== 'undefined') {
-      // If event is in backlog, switch to tasks view with backlog tab
-      if (result.isBacklog) {
-        // Switch to tasks view with backlog section in URL
-        const url = new URL(window.location.href);
-        url.searchParams.set('view', 'tasks');
-        url.searchParams.set('section', 'backlog');
-        window.history.pushState({}, '', url.toString());
-        
-        // Dispatch event to switch to tasks view
-        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'tasks' }));
-        
-        // Also dispatch event to set backlog section (in case TasksView listens to it)
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('plannerTasksViewChange', { detail: { section: 'backlog' } }));
-        }, 200);
-      } else {
-        // Calendar event: navigate to event's date and open event modal (no screen switch)
-        const eventDate = result.date;
-        setCurrentMonth(eventDate);
-        
-        // If currently in tasks view, switch to calendar (month) view so modal shows over calendar
-        if (currentView === 'tasks') {
-          const url = new URL(window.location.href);
-          url.searchParams.set('view', 'month');
-          window.history.pushState({}, '', url.toString());
-          window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
-          setCurrentView('month');
-        }
-        
-        window.dispatchEvent(new CustomEvent('plannerMonthChange', { detail: eventDate }));
-        // Open event modal instead of just navigating
-        if (result.id) {
-          window.dispatchEvent(new CustomEvent('openEventModal', { detail: { eventId: result.id } }));
-        }
-      }
-    }
-  };
 
   // Calculate dropdown position when it opens
   useEffect(() => {
@@ -2388,16 +2097,16 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       // Preserve activeChildId so Profile can show the child's email when parent is "viewing as" that child
       return;
     }
-    const subtabIsChildId =
-      activeSubtab &&
-      Array.isArray(children) &&
-      children.some((c) => String(c.id) === String(activeSubtab));
-    if (subtabIsChildId) {
-      setActiveChildId(activeSubtab);
-    } else {
-      setActiveChildId(null);
-      setActiveChildSection('affirmation');
+    if (activeTab === 'children-list') {
+      const subtabIsChildId =
+        activeSubtab &&
+        Array.isArray(children) &&
+        children.some((c) => String(c.id) === String(activeSubtab));
+      if (subtabIsChildId) {
+        setActiveChildId(activeSubtab);
+      }
     }
+    // Parent "viewing as child" persists across tabs until handleExitChildView clears activeChildId.
   }, [activeTab, activeSubtab, children]);
 
   const syncTopNavFromActiveTab = useCallback(() => {
@@ -2428,15 +2137,17 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       setActiveTopNav(activeSubtab === 'planner-settings' ? 'planning-preferences' : 'profile');
     } else if (activeTab === 'tutor-students') {
       setActiveTopNav('tutor-students');
-    } else if ((activeTab === 'children-list' || (activeTab && activeTab.startsWith('child-'))) && activeChildId) {
+    } else if (activeTab && activeTab.startsWith('child-')) {
+      setActiveTopNav('home');
+    } else if (activeTab === 'children-list' && activeChildId) {
       setActiveTopNav('family');
     }
   }, [activeTab, activeSubtab, activeChildId]);
 
   useEffect(() => {
-    if (isMessagesPaneOpen || isCreatePaneOpen) return;
+    if (isCreatePaneOpen) return;
     syncTopNavFromActiveTab();
-  }, [activeTab, activeChildId, isMessagesPaneOpen, isCreatePaneOpen, syncTopNavFromActiveTab]);
+  }, [activeTab, activeChildId, isCreatePaneOpen, syncTopNavFromActiveTab]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -2833,13 +2544,31 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         case 'heatmap':
           navigateToIntelligence({ tab: 'planner-ai', tool: 'heatmap' });
           break;
+        case 'bulk-attendance': {
+          setActiveRightTool(null);
+          setCurrentView('year');
+          setDefaultView('year');
+          if (Platform.OS === 'web') {
+            const url = new URL(window.location);
+            url.searchParams.set('view', 'year');
+            window.history.pushState({}, '', url);
+            window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'year' }));
+            window.setTimeout(() => {
+              window.dispatchEvent(new CustomEvent('openPlannerBulkAttendance'));
+            }, 150);
+          }
+          break;
+        }
+        case 'export':
+          openPlannerExportModal();
+          break;
         default:
           break;
       }
     };
     window.addEventListener('plannerSmartAction', handler);
     return () => window.removeEventListener('plannerSmartAction', handler);
-  }, [navigateToIntelligence]);
+  }, [navigateToIntelligence, openPlannerExportModal]);
 
   // Listen for openPlanYearModal event (from PlanHealthBanner / FixItSuggestionsModal / EventDetails / AddSubjectModal / MagicExtract / Library)
   useEffect(() => {
@@ -3285,12 +3014,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         return;
       }
 
-      setIsMessagesPaneOpen(false);
       setIsCreatePaneOpen(false);
       setActiveTopNav(key);
       switch (key) {
         case 'home':
-          handleTabChange('home');
+          if (activeChildId) {
+            handleTabChange(`child-${activeChildId}`);
+          } else {
+            handleTabChange('home');
+          }
           if (Platform.OS === 'web' && typeof window !== 'undefined') {
             window.history.pushState({}, '', '/');
           }
@@ -3374,7 +3106,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           handleTabChange('home');
       }
     },
-    [handleTabChange, isCreatePaneOpen, isMessagesPaneOpen, syncTopNavFromActiveTab]
+    [activeChildId, handleTabChange, isCreatePaneOpen, isMessagesPaneOpen, syncTopNavFromActiveTab]
   );
 
   useEffect(() => {
@@ -3833,6 +3565,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   maxWidth: '100%',
                   flexShrink: 0,
                 }}>
+                  {currentView !== 'tasks' ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <TouchableOpacity
                       onPress={() => {
@@ -3885,7 +3618,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       <ChevronRight size={16} color="rgba(15,23,42,0.4)" />
                     </TouchableOpacity>
                   </View>
+                  ) : null}
 
+                  {currentView === 'tasks' ? (
+                    <Text style={{
+                      fontSize: 26,
+                      color: '#1E293B',
+                      fontWeight: '600',
+                      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }}>
+                      All Events
+                    </Text>
+                  ) : (
                   <TouchableOpacity
                     activeOpacity={0.8}
                     onPress={() => {
@@ -3906,9 +3650,12 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                     }}>
                       {currentView === 'year'
                         ? formatPlannerYearHeaderLabel(currentMonth, preloadedAcademicYears)
-                        : currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                        : (currentView === 'board' || currentView === 'week')
+                          ? formatPlannerWeekHeaderLabel(currentMonth)
+                          : currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                     </Text>
                   </TouchableOpacity>
+                  )}
                 </View>
                 
                 {/* Center: View State Controls (View Mode chips) */}
@@ -3934,77 +3681,168 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       />
                     </View>
                   )}
-                  {/* Filters dropdown - opened from right toolbar */}
-                  {showFiltersDropdown && Platform.OS === 'web' && (
+                  
+                  {/* View Mode - Segmented control with sliding highlight */}
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      borderRadius: 9999,
+                      borderWidth: 1,
+                      borderColor: '#E6EBF2',
+                      backgroundColor: '#FFFFFF',
+                      padding: 6,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {/* Sliding highlight — matches Learning / filter chip active blue */}
+                    {showTopPlannerSegmentHighlight && viewChipSlider.width > 0 && (
                       <View
-                        ref={filtersDropdownRef}
                         style={{
-                          position: 'fixed',
-                          top: filtersDropdownPosition.top,
-                          left: filtersDropdownPosition.left,
-                          backgroundColor: '#FFFFFF',
-                          borderRadius: 8,
+                          position: 'absolute',
+                          left: viewChipSlider.left,
+                          top: 6,
+                          bottom: 6,
+                          width: viewChipSlider.width,
+                          borderRadius: 9999,
+                          backgroundColor: 'rgba(139, 92, 246, 0.15)',
                           borderWidth: 1,
-                          borderColor: 'rgba(15,23,42,0.08)',
-                          padding: 4,
-                          minWidth: 200,
-                          maxWidth: 350,
-                          zIndex: 1000,
-                          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                          borderColor: 'rgba(139, 92, 246, 0.5)',
+                        }}
+                      />
+                    )}
+                    {[
+                      { key: 'board', label: 'Week' },
+                      { key: 'month', label: 'Month' },
+                      { key: 'year', label: 'Year' },
+                      { key: 'tasks', label: 'List' },
+                    ].map((view) => {
+                      const isActive = showTopPlannerSegmentHighlight && currentView === view.key;
+                      return (
+                        <TouchableOpacity
+                          key={view.key}
+                          onLayout={(e) => {
+                            const { x, width } = e.nativeEvent.layout;
+                            viewChipLayouts.current[view.key] = { x, width };
+                            if (currentView === view.key) {
+                              setViewChipSlider({ left: x, width });
+                            }
+                          }}
+                          onPress={() => {
+                            const viewValue = view.key;
+                            if (currentView === 'plan-year' || currentView === 'edit-year') {
+                              resetInlinePlanYearOpenState();
+                            }
+                            if (Platform.OS !== 'web') {
+                              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                            }
+                            setActiveRightTool(null);
+                            setCurrentView(viewValue);
+                            setDefaultView(viewValue);
+                            if (Platform.OS === 'web') {
+                              const url = new URL(window.location);
+                              url.searchParams.set('view', viewValue);
+                              window.history.pushState({}, '', url);
+                              window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewValue }));
+                            }
+                          }}
+                          style={{
+                            paddingVertical: 8,
+                            paddingHorizontal: 14,
+                            borderRadius: 9999,
+                            zIndex: 10,
+                          }}
+                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                        >
+                          <Text style={{
+                            fontSize: 15,
+                            color: isActive ? 'rgba(99, 102, 241, 1)' : 'rgba(15,23,42,0.85)',
+                            fontWeight: isActive ? '600' : '500',
+                            fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          }}>
+                            {view.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  
+                </View>
+
+                {/* Filters + Smart Actions */}
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                  flexShrink: 0,
+                }}>
+                  {children && children.length > 1 && showFiltersDropdown && Platform.OS === 'web' && (
+                    <View
+                      ref={filtersDropdownRef}
+                      style={{
+                        position: 'fixed',
+                        top: filtersDropdownPosition.top,
+                        left: filtersDropdownPosition.left,
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: 'rgba(15,23,42,0.08)',
+                        padding: 4,
+                        minWidth: 200,
+                        maxWidth: 350,
+                        zIndex: 1000,
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                      }}
+                    >
+                      <View style={{
+                        paddingVertical: 6,
+                        paddingHorizontal: 10,
+                        borderBottomWidth: 1,
+                        borderBottomColor: 'rgba(15,23,42,0.06)',
+                        marginBottom: 4,
+                      }}>
+                        <Text style={{
+                          fontSize: 13,
+                          color: 'rgba(107, 114, 128, 0.7)',
+                          fontWeight: '600',
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.5,
+                          fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }}>
+                          Children
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 8,
+                          paddingVertical: 6,
+                          paddingHorizontal: 10,
+                          borderRadius: 4,
+                        }}
+                        onPress={() => {
+                          setSelectedCalendarChildren(null);
                         }}
                       >
-                        {/* Children Filter Section */}
-                        {children && children.length > 1 && (
-                          <>
-                            <View style={{
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
-                              borderBottomWidth: 1,
-                              borderBottomColor: 'rgba(15,23,42,0.06)',
-                              marginBottom: 4,
-                            }}>
-                              <Text style={{ 
-                                fontSize: 13, 
-                                color: 'rgba(107, 114, 128, 0.7)',
-                                fontWeight: '600',
-                                textTransform: 'uppercase',
-                                letterSpacing: 0.5,
-                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                              }}>
-                                Children
-                              </Text>
-                            </View>
-                            <TouchableOpacity
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingVertical: 6,
-                                paddingHorizontal: 10,
-                                borderRadius: 4,
-                              }}
-                              onPress={() => {
-                                setSelectedCalendarChildren(null);
-                              }}
-                            >
-                              <View style={{
-                                width: 14,
-                                height: 14,
-                                borderRadius: 3,
-                                borderWidth: 1.5,
-                                borderColor: selectedCalendarChildren === null ? '#8B5CF6' : '#D1D5DB',
-                                backgroundColor: selectedCalendarChildren === null ? '#8B5CF6' : 'transparent',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                              }}>
-                                {selectedCalendarChildren === null && (
-                                  <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: 'bold' }}>✓</Text>
-                                )}
-                              </View>
-                              <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                                All Children
-                              </Text>
-                            </TouchableOpacity>
+                        <View style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: 3,
+                          borderWidth: 1.5,
+                          borderColor: selectedCalendarChildren === null ? '#8B5CF6' : '#D1D5DB',
+                          backgroundColor: selectedCalendarChildren === null ? '#8B5CF6' : 'transparent',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          {selectedCalendarChildren === null && (
+                            <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: 'bold' }}>✓</Text>
+                          )}
+                        </View>
+                        <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+                          All Children
+                        </Text>
+                      </TouchableOpacity>
                       {children.map((child) => {
                         const isSelected = selectedCalendarChildren !== null && selectedCalendarChildren?.includes(child.id);
                         return (
@@ -4072,592 +3910,92 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           </TouchableOpacity>
                         );
                       })}
-                            <View style={{
-                              height: 1,
-                              backgroundColor: 'rgba(15,23,42,0.06)',
-                              marginVertical: 4,
-                            }} />
-                          </>
-                        )}
-                        
-                        {/* Event Types Filter Section */}
-                        <View style={{
-                          paddingVertical: 6,
-                          paddingHorizontal: 10,
-                          borderBottomWidth: 1,
-                          borderBottomColor: 'rgba(15,23,42,0.06)',
-                          marginBottom: 4,
-                        }}>
-                          <Text style={{ 
-                            fontSize: 13, 
-                            color: 'rgba(107, 114, 128, 0.7)',
-                            fontWeight: '600',
-                            textTransform: 'uppercase',
-                            letterSpacing: 0.5,
-                            fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                          }}>
-                            Event Types
-                          </Text>
-                        </View>
-                        <TouchableOpacity
-                          style={{
-                            flexDirection: 'row',
-                            alignItems: 'center',
-                            gap: 8,
-                            paddingVertical: 6,
-                            paddingHorizontal: 10,
-                            borderRadius: 4,
-                          }}
-                          onPress={() => {
-                            setSelectedEventTypes(null);
-                          }}
-                        >
-                          <View style={{
-                            width: 14,
-                            height: 14,
-                            borderRadius: 3,
-                            borderWidth: 1.5,
-                            borderColor: selectedEventTypes === null ? '#8B5CF6' : '#D1D5DB',
-                            backgroundColor: selectedEventTypes === null ? '#8B5CF6' : 'transparent',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}>
-                            {selectedEventTypes === null && (
-                              <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: 'bold' }}>✓</Text>
-                            )}
-                          </View>
-                          <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                            All Event Types
-                          </Text>
-                        </TouchableOpacity>
-                        {['Lesson', 'Assignment', 'Activity', 'Appointment', 'Project', 'Exam', 'Day Off'].map((eventType) => {
-                          const isSelected = selectedEventTypes?.includes(eventType);
-                          
-                          // Get background color for event type (matching EventChip colors)
-                          const getEventTypeBackgroundColor = (type) => {
-                            const typeLower = type.toLowerCase();
-                            if (typeLower === 'lesson') return '#E3F0FF'; // Soft Blue
-                            if (typeLower === 'activity') return '#EDE6FF'; // Lavender
-                            if (typeLower === 'assignment') return '#DFF7E3'; // Soft Green
-                            if (typeLower === 'appointment') return '#F2F4F7'; // Warm Gray
-                            if (typeLower === 'project') return '#D6F0ED'; // Soft Teal
-                            if (typeLower === 'exam') return '#FCE7F3'; // Soft Pink
-                            if (typeLower === 'day off') return '#FFEDE2'; // Soft Peach
-                            return 'transparent';
-                          };
-                          
-                          return (
-                            <TouchableOpacity
-                              key={eventType}
-                              style={{
-                                flexDirection: 'row',
-                                alignItems: 'center',
-                                gap: 8,
-                                paddingVertical: 6,
-                                paddingHorizontal: 10,
-                                borderRadius: 4,
-                                backgroundColor: getEventTypeBackgroundColor(eventType),
-                              }}
-                              onPress={() => {
-                                const current = selectedEventTypes || [];
-                                const newSelection = isSelected
-                                  ? current.filter(type => type !== eventType)
-                                  : [...current, eventType];
-                                setSelectedEventTypes(newSelection.length > 0 ? newSelection : null);
-                              }}
-                            >
-                              <View
-                                style={{
-                                  width: 14,
-                                  height: 14,
-                                  borderRadius: 3,
-                                  borderWidth: 1.5,
-                                  borderColor: isSelected ? '#8B5CF6' : '#D1D5DB',
-                                  backgroundColor: isSelected ? '#8B5CF6' : 'transparent',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                }}
-                              >
-                                {isSelected && (
-                                  <Check size={10} color="#FFFFFF" />
-                                )}
-                              </View>
-                              <Text style={{ fontSize: 15, color: 'rgba(15,23,42,0.9)', fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
-                                {eventType}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-
-                        <View style={{
-                          height: 1,
-                          backgroundColor: 'rgba(15,23,42,0.06)',
-                          marginVertical: 4,
-                        }} />
-
-                        <View style={{
-                          paddingVertical: 6,
-                          paddingHorizontal: 10,
-                          borderBottomWidth: 1,
-                          borderBottomColor: 'rgba(15,23,42,0.06)',
-                          marginBottom: 4,
-                        }}>
-                          <Text style={{
-                            fontSize: 13,
-                            color: 'rgba(107, 114, 128, 0.7)',
-                            fontWeight: '600',
-                            textTransform: 'uppercase',
-                            letterSpacing: 0.5,
-                            fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                          }}>
-                            Connected Accounts
-                          </Text>
-                        </View>
-
-                        <View style={{ paddingVertical: 4, gap: 2 }}>
-                          {[
-                            { id: 'google', label: 'Google Calendar' },
-                            { id: 'apple', label: 'Apple Calendar' },
-                          ].map((provider) => {
-                            const isConnected = plannerConnectedProviderIds.includes(provider.id);
-                            const isSelected = !!selectedConnectedAccounts?.includes(provider.id);
-                            const openComingSoon = () => openConnectedAccountsComingSoon(provider.label);
-                            return (
-                              <TouchableOpacity
-                                key={provider.id}
-                                onPress={isConnected ? undefined : openComingSoon}
-                                activeOpacity={isConnected ? 1 : 0.75}
-                                style={{
-                                  paddingVertical: 6,
-                                  paddingHorizontal: 10,
-                                  ...(Platform.OS === 'web' && !isConnected && { cursor: 'pointer' }),
-                                }}
-                              >
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                  {isConnected ? (
-                                    <TouchableOpacity
-                                      onPress={() => {
-                                        const current = selectedConnectedAccounts || [];
-                                        const next = isSelected
-                                          ? current.filter((item) => item !== provider.id)
-                                          : [...current, provider.id];
-                                        setSelectedConnectedAccounts(next.length > 0 ? next : null);
-                                      }}
-                                      style={{
-                                        width: 14,
-                                        height: 14,
-                                        borderRadius: 3,
-                                        borderWidth: 1.5,
-                                        borderColor: isSelected ? '#8B5CF6' : '#D1D5DB',
-                                        backgroundColor: isSelected ? '#8B5CF6' : 'transparent',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                      }}
-                                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                                    >
-                                      {isSelected && <Check size={10} color="#FFFFFF" />}
-                                    </TouchableOpacity>
-                                  ) : (
-                                    <View
-                                      style={{
-                                        width: 14,
-                                        height: 14,
-                                        borderRadius: 3,
-                                        borderWidth: 1.5,
-                                        borderColor: '#D1D5DB',
-                                        backgroundColor: '#F3F4F6',
-                                      }}
-                                    />
-                                  )}
-
-                                  <TouchableOpacity
-                                    onPress={openComingSoon}
-                                    style={{ ...(Platform.OS === 'web' && { cursor: 'pointer' }) }}
-                                  >
-                                    <Text
-                                      style={{
-                                        fontSize: 15,
-                                        color: 'rgba(15,23,42,0.9)',
-                                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                                      }}
-                                    >
-                                      {provider.label}
-                                    </Text>
-                                  </TouchableOpacity>
-                                </View>
-
-                                {!isConnected && (
-                                  <View style={{ marginLeft: 22, marginTop: 4 }}>
-                                    <Text
-                                      style={{
-                                        fontSize: 12,
-                                        color: 'rgba(107,114,128,0.8)',
-                                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                                      }}
-                                    >
-                                      Account not connected
-                                    </Text>
-                                  </View>
-                                )}
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </View>
-                      </View>
-                    )}
-                  
-                  {/* Filters chip - left of view control, matches views control height */}
-                  <TouchableOpacity
-                    ref={topToolbarFiltersButtonRef}
-                    onPress={() => {
-                      if (showFiltersDropdown) {
-                        setShowFiltersDropdown(false);
-                        return;
-                      }
-                      if (Platform.OS === 'web' && topToolbarFiltersButtonRef.current) {
-                        const node = topToolbarFiltersButtonRef.current._nativeNode || topToolbarFiltersButtonRef.current;
-                        if (node && typeof node.getBoundingClientRect === 'function') {
-                          const rect = node.getBoundingClientRect();
-                          setFiltersDropdownPosition({
-                            top: rect.bottom + 4,
-                            left: rect.left,
-                          });
-                        }
-                      }
-                      setShowFiltersDropdown(true);
-                    }}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 4,
-                      paddingVertical: 13,
-                      paddingHorizontal: 14,
-                      borderRadius: 9999,
-                      borderWidth: 1,
-                      borderColor: '#E6EBF2',
-                      backgroundColor: '#FFFFFF',
-                      flexShrink: 0,
-                    }}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Text style={{
-                      fontSize: 15,
-                      color: 'rgba(15,23,42,0.85)',
-                      fontWeight: '500',
-                      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                    }}>
-                      Filters
-                    </Text>
-                    {showFiltersDropdown ? (
-                      <ChevronUp size={16} color="rgba(15,23,42,0.7)" />
-                    ) : (
-                      <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
-                    )}
-                  </TouchableOpacity>
-                  
-                  {/* View Mode - Segmented control with sliding highlight */}
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      borderRadius: 9999,
-                      borderWidth: 1,
-                      borderColor: '#E6EBF2',
-                      backgroundColor: '#FFFFFF',
-                      padding: 6,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {/* Sliding highlight — matches Learning / filter chip active blue */}
-                    {showTopPlannerSegmentHighlight && viewChipSlider.width > 0 && (
-                      <View
-                        style={{
-                          position: 'absolute',
-                          left: viewChipSlider.left,
-                          top: 6,
-                          bottom: 6,
-                          width: viewChipSlider.width,
-                          borderRadius: 9999,
-                          backgroundColor: 'rgba(139, 92, 246, 0.15)',
-                          borderWidth: 1,
-                          borderColor: 'rgba(139, 92, 246, 0.5)',
-                        }}
-                      />
-                    )}
-                    {[
-                      { key: 'board', label: 'Week' },
-                      { key: 'month', label: 'Month' },
-                      { key: 'tasks', label: 'List' },
-                      { key: 'year', label: 'Year' },
-                    ].map((view) => {
-                      const isActive = showTopPlannerSegmentHighlight && currentView === view.key;
-                      return (
-                        <TouchableOpacity
-                          key={view.key}
-                          onLayout={(e) => {
-                            const { x, width } = e.nativeEvent.layout;
-                            viewChipLayouts.current[view.key] = { x, width };
-                            if (currentView === view.key) {
-                              setViewChipSlider({ left: x, width });
-                            }
-                          }}
-                          onPress={() => {
-                            const viewValue = view.key;
-                            if (currentView === 'plan-year' || currentView === 'edit-year') {
-                              resetInlinePlanYearOpenState();
-                            }
-                            if (Platform.OS !== 'web') {
-                              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                            }
-                            setActiveRightTool(null);
-                            setCurrentView(viewValue);
-                            setDefaultView(viewValue);
-                            if (Platform.OS === 'web') {
-                              const url = new URL(window.location);
-                              url.searchParams.set('view', viewValue);
-                              window.history.pushState({}, '', url);
-                              window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewValue }));
-                            }
-                          }}
-                          style={{
-                            paddingVertical: 8,
-                            paddingHorizontal: 14,
-                            borderRadius: 9999,
-                            zIndex: 10,
-                          }}
-                          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                        >
-                          <Text style={{
-                            fontSize: 15,
-                            color: isActive ? 'rgba(99, 102, 241, 1)' : 'rgba(15,23,42,0.85)',
-                            fontWeight: isActive ? '600' : '500',
-                            fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                          }}>
-                            {view.label}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  
-                  {/* Export icons - right of Filters (hidden for learner child accounts) */}
-                  {showPlannerHeaderQuickActions ? (
+                    </View>
+                  )}
+                  {children && children.length > 1 ? (
                     <TouchableOpacity
+                      ref={topToolbarFiltersButtonRef}
                       onPress={() => {
-                        setTooltip({ visible: false, text: '', x: 0, y: 0 });
-                        const m = currentMonth.getMonth();
-                        const y = currentMonth.getFullYear();
-                        const firstDay = `${y}-${String(m + 1).padStart(2, '0')}-01`;
-                        const lastDay = new Date(y, m + 1, 0);
-                        const lastDayStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`;
-                        setExportStartDate(firstDay);
-                        setExportEndDate(lastDayStr);
-                        setExportModalSubjectId(null);
-                        setExportModalSubjectName(null);
-                        setShowExportModal(true);
-                      }}
-                      style={{ padding: 4, flexShrink: 0 }}
-                      {...(Platform.OS === 'web' && {
-                        cursor: 'pointer',
-                        onMouseEnter: (e) => {
-                          const node = e?.currentTarget || e?.target;
+                        if (showFiltersDropdown) {
+                          setShowFiltersDropdown(false);
+                          return;
+                        }
+                        if (Platform.OS === 'web' && topToolbarFiltersButtonRef.current) {
+                          const node = topToolbarFiltersButtonRef.current._nativeNode || topToolbarFiltersButtonRef.current;
                           if (node && typeof node.getBoundingClientRect === 'function') {
                             const rect = node.getBoundingClientRect();
-                            setTooltip({
-                              visible: true,
-                              text: 'Export planner',
-                              x: rect.left + rect.width / 2,
-                              y: rect.bottom,
+                            setFiltersDropdownPosition({
+                              top: rect.bottom + 4,
+                              left: rect.left,
                             });
                           }
-                        },
-                        onMouseLeave: () => setTooltip((prev) => ({ ...prev, visible: false })),
-                      })}
-                    >
-                      <Download size={20} color="rgba(15,23,42,0.7)" />
-                    </TouchableOpacity>
-                  ) : null}
-                  
-                </View>
-
-                {/* Search Bar and New Event Button */}
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 12,
-                  flexShrink: 0,
-                }}>
-                  {/* Search Bar */}
-                  <View style={{ position: 'relative' }}>
-                    <TouchableOpacity
-                      ref={searchInputRef}
+                        }
+                        setShowFiltersDropdown(true);
+                      }}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
-                        maxWidth: 250,
-                        gap: 8,
-                        paddingHorizontal: 12,
-                        borderRadius: 8,
+                        gap: 4,
+                        paddingVertical: 13,
+                        paddingHorizontal: 14,
+                        borderRadius: 9999,
                         borderWidth: 1,
-                        borderColor: showSearchDropdown ? '#8b5cf6' : '#E6EBF2',
+                        borderColor: '#E6EBF2',
                         backgroundColor: '#FFFFFF',
-                        height: 36,
-                        ...Platform.select({
-                          web: {
-                            cursor: 'text',
-                          },
-                        }),
+                        flexShrink: 0,
                       }}
-                      onPress={() => plannerSearchInputRef.current?.focus()}
-                      activeOpacity={1}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <TextInput
-                        ref={plannerSearchInputRef}
-                        style={[
-                          {
-                            flex: 1,
-                            fontSize: 16,
-                            color: '#111827',
-                            backgroundColor: 'transparent',
-                            ...Platform.select({
-                              web: {
-                                fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                                outline: 'none',
-                                border: 'none',
-                                boxShadow: 'none',
-                                WebkitAppearance: 'none',
-                                MozAppearance: 'none',
-                                WebkitFocusRingColor: 'transparent',
-                              },
-                            }),
-                          },
-                        ]}
-                        placeholder="Search planner..."
-                        value={plannerSearchQuery}
-                        onChangeText={(text) => {
-                          setPlannerSearchQuery(text);
-                          if (text.length > 0) {
-                            setShowSearchDropdown(true);
-                          }
-                        }}
-                        onFocus={() => {
-                          if (plannerSearchResults.length > 0 || plannerSearchQuery.length > 0) {
-                            setShowSearchDropdown(true);
-                          }
-                        }}
-                        placeholderTextColor="#9ca3af"
-                        {...(Platform.OS === 'web' && {
-                          nativeID: 'planner-search-input',
-                        })}
-                      />
-                      {plannerSearchQuery.length > 0 ? (
-                        <TouchableOpacity
-                          onPress={() => {
-                            setPlannerSearchQuery('');
-                            setPlannerSearchResults([]);
-                            setShowSearchDropdown(false);
-                          }}
-                          style={{
-                            padding: 4,
-                            ...Platform.select({
-                              web: {
-                                cursor: 'pointer',
-                              },
-                            }),
-                          }}
-                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        >
-                          <X size={18} color="#9ca3af" />
-                        </TouchableOpacity>
+                      <Text style={{
+                        fontSize: 15,
+                        color: 'rgba(15,23,42,0.85)',
+                        fontWeight: '500',
+                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      }}>
+                        Filters
+                      </Text>
+                      {showFiltersDropdown ? (
+                        <ChevronUp size={16} color="rgba(15,23,42,0.7)" />
                       ) : (
-                        <View style={{ padding: 4 }}>
-                          <Search size={18} color="#9ca3af" />
-                        </View>
+                        <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
                       )}
                     </TouchableOpacity>
-
-                    {/* Search Results Dropdown */}
-                    {showSearchDropdown && Platform.OS === 'web' && (
-                      <View
-                        ref={searchDropdownRef}
-                        style={{
-                          position: 'fixed',
-                          top: searchDropdownPosition.top,
-                          left: searchDropdownPosition.left,
-                          width: 250,
-                          maxHeight: 300,
-                          backgroundColor: '#ffffff',
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderColor: '#e5e7eb',
-                          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-                          zIndex: 1000,
-                          overflow: 'hidden',
-                        }}
-                      >
-                        {plannerSearchResults.length > 0 ? (
-                          <ScrollView style={{ maxHeight: 300 }}>
-                            {plannerSearchResults.map((result) => (
-                              <TouchableOpacity
-                                key={result.id}
-                                onPress={() => handleSearchResultSelect(result)}
-                                style={{
-                                  padding: 12,
-                                  borderBottomWidth: 1,
-                                  borderBottomColor: '#f3f4f6',
-                                  ...Platform.select({
-                                    web: {
-                                      cursor: 'pointer',
-                                    },
-                                  }),
-                                }}
-                                activeOpacity={0.7}
-                              >
-                                <Text
-                                  style={{
-                                    fontSize: 14,
-                                    fontWeight: '500',
-                                    color: '#111827',
-                                    marginBottom: 4,
-                                    ...Platform.select({
-                                      web: {
-                                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                                      },
-                                    }),
-                                  }}
-                                  numberOfLines={1}
-                                >
-                                  {result.title}
-                                </Text>
-                                <Text
-                                  style={{
-                                    fontSize: 12,
-                                    color: '#6b7280',
-                                    ...Platform.select({
-                                      web: {
-                                        fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                                      },
-                                    }),
-                                  }}
-                                >
-                                  {result.dateStr}
-                                </Text>
-                              </TouchableOpacity>
-                            ))}
-                          </ScrollView>
-                        ) : isSearchingPlanner ? (
-                          <View style={{ padding: 16, alignItems: 'center' }}>
-                            <Text style={{ fontSize: 14, color: '#6b7280' }}>Searching...</Text>
-                          </View>
-                        ) : (
-                          <View style={{ padding: 16, alignItems: 'center' }}>
-                            <Text style={{ fontSize: 14, color: '#6b7280' }}>None found</Text>
-                          </View>
-                        )}
-                      </View>
-                    )}
-                  </View>
-
+                  ) : null}
+                  <TouchableOpacity
+                    ref={smartActionsButtonRef}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 6,
+                      paddingHorizontal: 16,
+                      paddingVertical: 10,
+                      borderRadius: 20,
+                      borderWidth: 1,
+                      borderColor: showSmartActionsMenu
+                        ? 'rgba(148, 163, 184, 0.45)'
+                        : 'rgba(148, 163, 184, 0.24)',
+                      backgroundColor: '#F9FAFB',
+                      flexShrink: 0,
+                    }}
+                    onPress={() => setShowSmartActionsMenu((open) => !open)}
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <Text style={{
+                      fontSize: 13,
+                      fontWeight: '500',
+                      color: '#475569',
+                      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    }}>
+                      Smart Actions
+                    </Text>
+                    <ChevronDown size={14} color="#64748b" />
+                  </TouchableOpacity>
+                  <PlannerSmartActionsMenu
+                    visible={showSmartActionsMenu}
+                    triggerRef={smartActionsButtonRef}
+                    onClose={() => setShowSmartActionsMenu(false)}
+                    showExport={showPlannerHeaderQuickActions}
+                  />
                 </View>
               </View>
 
@@ -4783,8 +4121,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 onAddSyllabus={() => setShowSyllabusUpload(true)}
                 selectedCalendarChildren={selectedCalendarChildren}
                 onSelectedCalendarChildrenChange={setSelectedCalendarChildren}
-                selectedEventTypes={selectedEventTypes}
-                onSelectedEventTypesChange={setSelectedEventTypes}
                 onCurrentMonthChange={setCurrentMonth}
                 subjects={subjects}
                 fullSubjects={fullSubjects}
@@ -5837,42 +5173,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           </TouchableOpacity>
         </Modal>
       )}
-
-      <Modal
-        visible={!!connectedAccountsComingSoonLabel}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setConnectedAccountsComingSoonLabel(null)}
-      >
-        <View style={comingSoonModalStyles.overlay}>
-          <View style={comingSoonModalStyles.content}>
-            <TouchableOpacity
-              style={comingSoonModalStyles.close}
-              onPress={() => setConnectedAccountsComingSoonLabel(null)}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Close"
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <X size={24} color="#64748b" />
-            </TouchableOpacity>
-            <Text style={comingSoonModalStyles.title}>Coming soon</Text>
-            <Text style={comingSoonModalStyles.body}>
-              {connectedAccountsComingSoonLabel
-                ? `${connectedAccountsComingSoonLabel} integration is in development. Stay tuned for updates!`
-                : 'This feature is in development. Stay tuned for updates!'}
-            </Text>
-            <TouchableOpacity
-              style={comingSoonModalStyles.button}
-              onPress={() => setConnectedAccountsComingSoonLabel(null)}
-              activeOpacity={0.8}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Text style={comingSoonModalStyles.buttonText}>Got it</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
 
       {/* Scheduling Assistant Modal */}
       <Modal

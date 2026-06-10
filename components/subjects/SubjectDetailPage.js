@@ -62,7 +62,6 @@ import {
   SubjectAttendanceMonthDrilldown,
 } from './SubjectSectionDrilldownPanels';
 import { supabase } from '../../lib/supabase';
-import SubjectProgressPlanSection from './SubjectProgressPlanSection';
 import SubjectAllEventsSection from './SubjectAllEventsSection';
 import { getStudentSubmissionStatusLabel, getWorkStatusLabel } from '../../lib/workEventHelpers';
 import AssignmentMessageModal from './AssignmentMessageModal';
@@ -77,7 +76,6 @@ import LearningSubjectDetailView from '../learning/LearningSubjectDetailView';
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_EVENTS_SECTION = true;
 const SHOW_SUBJECT_ASSIGNMENTS_SECTION = true;
-const SHOW_SUBJECT_PROGRESS = true;
 const SHOW_SUBJECT_ATTENDANCE_SECTION = false;
 const SHOW_SUBJECT_GRADES_SECTION = false;
 const SHOW_SUBJECT_MATERIALS_SECTION = true;
@@ -2101,6 +2099,10 @@ export default function SubjectDetailPage({
                 <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotUpcoming]} />
                 <Text style={styles.attendanceKeyText}>Upcoming</Text>
               </View>
+              <View style={styles.attendanceKeyPill}>
+                <View style={[styles.attendanceKeyDot, styles.attendanceKeyDotNoEvents]} />
+                <Text style={styles.attendanceKeyText}>No events</Text>
+              </View>
             </View>
           </View>
           <View style={styles.attendanceCountShell}>
@@ -3315,23 +3317,6 @@ export default function SubjectDetailPage({
             </View>
           )}
         </View>
-        ) : null}
-
-        {SHOW_SUBJECT_PROGRESS ? (
-          <View id="progress-section" style={styles.section}>
-            <View style={styles.attendanceSectionHeader}>
-              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Progress</Text>
-            </View>
-            <SubjectProgressPlanSection
-              familyId={familyId}
-              subjectId={subject?.id}
-              subjectName={subject?.name}
-              children={children}
-              assignedChildIds={assignedChildren}
-              isParentViewer={isParentViewer}
-              onRefresh={() => loadSubjectDetail({ silent: true })}
-            />
-          </View>
         ) : null}
 
         {SHOW_SUBJECT_UNITS_LESSONS_SECTION ? (

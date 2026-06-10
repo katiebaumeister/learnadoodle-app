@@ -1,11 +1,197 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ScrollView } from 'react-native';
-import { Plus, FileText, Check, CalendarDays } from 'lucide-react';
+import { Plus, CalendarDays, MoreVertical, Edit2, Trash2 } from 'lucide-react';
+import CompletionRing from '../calendar/CompletionRing';
 import { colors } from '../../theme/colors';
 import { getEventChildIdsForDisplay } from '../../lib/utils/eventChildIds';
 import ChildAvatarCluster from '../ui/ChildAvatarCluster';
+import Dropdown, { DropdownItem } from '../ui/Dropdown';
+import ConfirmDialog from '../ConfirmDialog';
+import { useSession } from '../../contexts/SessionContext';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
+import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import { cleanPlannerEventId } from '../../lib/utils/recurringEventUtils';
+
+function ScheduleEventRow({
+  event,
+  familyChildren = [],
+  primaryLabel,
+  showTitleSubtitle,
+  rawTitle,
+  timeLabel,
+  hasTimeLabel,
+  done,
+  showCheck,
+  showAttendanceToggle,
+  eventChildIds,
+  showEventMenu,
+  onOpenEvent,
+  onRequestDelete,
+  handleAttendanceToggle,
+  handleEventContextMenu,
+  formatChildNamesLine,
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef(null);
+
+  const runMenuAction = (action) => {
+    setMenuOpen(false);
+    action?.();
+  };
+
+  const handleEditEvent = () => {
+    if (typeof onOpenEvent === 'function') {
+      onOpenEvent(event);
+      return;
+    }
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('openEventModal', {
+          detail: {
+            eventId: event.id,
+            initialEvent: event,
+          },
+        })
+      );
+    }
+  };
+
+  return (
+    <View
+      style={styles.eventRow}
+      {...(Platform.OS === 'web' && {
+        'data-event-id': String(event?.id || ''),
+        onMouseDown: (e) => {
+          const button = e?.button ?? e?.nativeEvent?.button;
+          if (button !== 2) return;
+          e.preventDefault?.();
+          e.stopPropagation?.();
+          handleEventContextMenu(event, e?.nativeEvent || e);
+        },
+        onContextMenu: (e) => {
+          e.preventDefault?.();
+          e.stopPropagation?.();
+          handleEventContextMenu(event, e?.nativeEvent || e);
+        },
+      })}
+    >
+      <TouchableOpacity
+        style={styles.eventRowMain}
+        onPress={handleEditEvent}
+        activeOpacity={0.7}
+        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+      >
+        <View style={styles.eventRowInner}>
+          {showAttendanceToggle ? (
+            showCheck ? (
+              <View
+                {...(Platform.OS === 'web' && typeof window !== 'undefined'
+                  ? {
+                      onClick: (e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        handleAttendanceToggle(event);
+                      },
+                      onMouseDown: (e) => e.stopPropagation(),
+                    }
+                  : {})}
+                style={styles.attendanceHit}
+              >
+                <CompletionRing
+                  isDone={done}
+                  size={14}
+                  pendingBorderColor="rgba(156, 163, 175, 0.45)"
+                  onPress={() => handleAttendanceToggle(event)}
+                />
+              </View>
+            ) : (
+              <View style={styles.attendanceSpacer} />
+            )
+          ) : null}
+          <View style={styles.detailsCell}>
+            <Text
+              style={[styles.eventPrimaryTitle, done && styles.eventTitleDone]}
+              numberOfLines={1}
+            >
+              {primaryLabel}
+            </Text>
+            {showTitleSubtitle ? (
+              <Text
+                style={[styles.eventSubtitle, done && styles.eventMetaDone]}
+                numberOfLines={1}
+              >
+                {rawTitle}
+              </Text>
+            ) : null}
+            <View style={styles.sublineRow}>
+              <Text
+                style={[
+                  styles.timeText,
+                  !hasTimeLabel && styles.timePlaceholderText,
+                  done && styles.eventMetaDone,
+                ]}
+                numberOfLines={1}
+              >
+                {timeLabel}
+              </Text>
+              {eventChildIds.length > 0 ? (
+                <View style={styles.childLabel}>
+                  <ChildAvatarCluster
+                    childIds={eventChildIds}
+                    familyChildren={familyChildren}
+                    size={20}
+                    overlap={-9}
+                    hideBackground
+                  />
+                  <Text style={[styles.childLabelText, done && styles.eventMetaDone]} numberOfLines={1}>
+                    {formatChildNamesLine(eventChildIds)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+      {showEventMenu ? (
+        <View style={styles.eventMenuWrap}>
+          <TouchableOpacity
+            ref={menuBtnRef}
+            style={[styles.eventMenuBtn, menuOpen && styles.eventMenuBtnActive]}
+            onPress={(e) => {
+              e?.stopPropagation?.();
+              setMenuOpen((open) => !open);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`${primaryLabel} actions`}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <MoreVertical size={16} color="#94A3B8" />
+          </TouchableOpacity>
+          <Dropdown
+            visible={menuOpen}
+            triggerRef={menuBtnRef}
+            onClose={() => setMenuOpen(false)}
+            placement="bottom-end"
+            width={220}
+            variant="context"
+          >
+            <DropdownItem
+              icon={Edit2}
+              label="Edit Event"
+              onPress={() => runMenuAction(handleEditEvent)}
+            />
+            <DropdownItem
+              icon={Trash2}
+              label="Delete Event"
+              danger
+              onPress={() => runMenuAction(() => onRequestDelete?.(event))}
+            />
+          </Dropdown>
+        </View>
+      ) : null}
+    </View>
+  );
+}
 
 export default function TodayScheduleCard({
   events = [],
@@ -24,6 +210,10 @@ export default function TodayScheduleCard({
 }) {
   /** Optimistic done state by event id until server props catch up */
   const [attendanceOptimistic, setAttendanceOptimistic] = useState({});
+  const [pendingDeleteEvent, setPendingDeleteEvent] = useState(null);
+  const [deletingEvent, setDeletingEvent] = useState(false);
+  const session = useSession();
+  const familyId = session?.family_id;
 
   useEffect(() => {
     setAttendanceOptimistic((prev) => {
@@ -137,6 +327,31 @@ export default function TodayScheduleCard({
     );
   }, []);
 
+  const handleRequestDeleteEvent = useCallback((event) => {
+    setPendingDeleteEvent(event);
+  }, []);
+
+  const handleConfirmDeleteEvent = useCallback(async () => {
+    const event = pendingDeleteEvent;
+    const cleanId = cleanPlannerEventId(String(event?.id || ''));
+    if (!cleanId || !familyId) {
+      setPendingDeleteEvent(null);
+      return;
+    }
+    setDeletingEvent(true);
+    try {
+      const { error } = await deletePlannerEvent(cleanId, familyId);
+      if (error) throw error;
+    } catch (err) {
+      if (Platform.OS === 'web') {
+        window.alert?.(`Could not delete event: ${err?.message || err}`);
+      }
+    } finally {
+      setDeletingEvent(false);
+      setPendingDeleteEvent(null);
+    }
+  }, [pendingDeleteEvent, familyId]);
+
   const formatTime = (timeString) => {
     if (!timeString) return '';
     // Handle both "HH:MM" and full timestamp formats
@@ -176,6 +391,7 @@ export default function TodayScheduleCard({
   const hasEvents = events && events.length > 0;
 
   return (
+    <>
     <View style={noCard ? styles.contentOnly : styles.container}>
       {!noCard && (
         <View style={styles.header}>
@@ -262,7 +478,6 @@ export default function TodayScheduleCard({
             const timeRange = startTime ? (endTime ? `${startTime} - ${endTime}` : startTime) : '';
             const hasTimeLabel = Boolean(timeRange);
             const timeLabel = hasTimeLabel ? timeRange : 'No time added';
-            const isAssignment = (event.event_type || event.type || '').toLowerCase() === 'assignment';
             const isHoliday = (event.event_type || event.type || '').toLowerCase() === 'holiday';
             const done = isEventDone(event);
             const showCheck = showAttendanceToggle && !isHoliday;
@@ -275,142 +490,28 @@ export default function TodayScheduleCard({
                   rawTitle &&
                   rawTitle.toLowerCase() !== String(subjectName).toLowerCase()
               );
-            /** Subject chip only if we could not resolve a name for the headline */
-            const showSubjectPill = Boolean(event.subject_id && !subjectName);
 
             return (
-              <View
+              <ScheduleEventRow
                 key={event.id}
-                style={styles.eventRow}
-                {...(Platform.OS === 'web' && {
-                  'data-event-id': String(event?.id || ''),
-                  onMouseDown: (e) => {
-                    const button = e?.button ?? e?.nativeEvent?.button;
-                    if (button !== 2) return;
-                    e.preventDefault?.();
-                    e.stopPropagation?.();
-                    handleEventContextMenu(event, e?.nativeEvent || e);
-                  },
-                  onContextMenu: (e) => {
-                    e.preventDefault?.();
-                    e.stopPropagation?.();
-                    handleEventContextMenu(event, e?.nativeEvent || e);
-                  },
-                })}
-              >
-                <TouchableOpacity
-                  style={styles.eventRowMain}
-                  onPress={() => {
-                    if (typeof onOpenEvent === 'function') {
-                      onOpenEvent(event);
-                      return;
-                    }
-                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('openEventModal', {
-                        detail: {
-                          eventId: event.id,
-                          initialEvent: event,
-                        }
-                      }));
-                    }
-                  }}
-                  activeOpacity={0.7}
-                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                >
-                  <View style={styles.timeColumn}>
-                    <Text style={[styles.timeText, !hasTimeLabel && styles.timePlaceholderText]}>{timeLabel}</Text>
-                  </View>
-                  <View style={styles.contentColumn}>
-                    <View style={styles.titleRow}>
-                      {(event.subject_id || isAssignment) ? (
-                        <View style={styles.eventHeader}>
-                          {event.subject_id && !hideSubjectDot && (
-                            <View style={[styles.subjectDot, { backgroundColor: getSubjectColor(event.subject_id) }]} />
-                          )}
-                          {isAssignment && (
-                            <FileText size={12} color={colors.textSecondary} />
-                          )}
-                        </View>
-                      ) : null}
-                      <View style={styles.titleStack}>
-                        <Text
-                          style={styles.eventPrimaryTitle}
-                          numberOfLines={2}
-                        >
-                          {primaryLabel}
-                        </Text>
-                        {showTitleSubtitle ? (
-                          <Text
-                            style={styles.eventSubtitle}
-                            numberOfLines={2}
-                          >
-                            {rawTitle}
-                          </Text>
-                        ) : null}
-                      </View>
-                    </View>
-                    <View style={styles.pillsRow}>
-                      {eventChildIds.length > 0 && (
-                        <View style={styles.childLabel}>
-                          <ChildAvatarCluster
-                            childIds={eventChildIds}
-                            familyChildren={children}
-                            size={28}
-                            overlap={-8}
-                          />
-                          <Text style={styles.childLabelText}>
-                            {formatChildNamesLine(eventChildIds)}
-                          </Text>
-                        </View>
-                      )}
-                      {showSubjectPill ? (
-                        <View style={[styles.pill, { backgroundColor: getSubjectColor(event.subject_id) + '20' }]}>
-                          <Text style={[styles.pillText, { color: getSubjectColor(event.subject_id) }]}>
-                            {getSubjectName(event.subject_id)}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  </View>
-                </TouchableOpacity>
-                {showAttendanceToggle ? (
-                  showCheck ? (
-                    <View
-                      {...(Platform.OS === 'web' && typeof window !== 'undefined'
-                        ? {
-                            onClick: (e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                              handleAttendanceToggle(event);
-                            },
-                            onMouseDown: (e) => e.stopPropagation(),
-                          }
-                        : {})}
-                      style={styles.attendanceHit}
-                    >
-                      <TouchableOpacity
-                        onPress={(e) => {
-                          e?.stopPropagation?.();
-                          handleAttendanceToggle(event);
-                        }}
-                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                        style={styles.attendanceInner}
-                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                      >
-                        {done ? (
-                          <View style={styles.attendanceChecked}>
-                            <Check size={12} color="#FFFFFF" strokeWidth={2.5} />
-                          </View>
-                        ) : (
-                          <View style={styles.attendanceUnchecked} />
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={styles.attendanceSpacer} />
-                  )
-                ) : null}
-              </View>
+                event={event}
+                familyChildren={children}
+                primaryLabel={primaryLabel}
+                showTitleSubtitle={showTitleSubtitle}
+                rawTitle={rawTitle}
+                timeLabel={timeLabel}
+                hasTimeLabel={hasTimeLabel}
+                done={done}
+                showCheck={showCheck}
+                showAttendanceToggle={showAttendanceToggle}
+                eventChildIds={eventChildIds}
+                showEventMenu={!isHoliday}
+                onOpenEvent={onOpenEvent}
+                onRequestDelete={handleRequestDeleteEvent}
+                handleAttendanceToggle={handleAttendanceToggle}
+                handleEventContextMenu={handleEventContextMenu}
+                formatChildNamesLine={formatChildNamesLine}
+              />
             );
           })}
         </ScrollView>
@@ -443,6 +544,19 @@ export default function TodayScheduleCard({
         </View>
       )}
     </View>
+    <ConfirmDialog
+      visible={!!pendingDeleteEvent}
+      title="Delete event?"
+      message="Are you sure you want to delete this event?"
+      confirmLabel={deletingEvent ? 'Deleting…' : 'Delete'}
+      cancelLabel="Cancel"
+      destructive
+      onConfirm={handleConfirmDeleteEvent}
+      onCancel={() => {
+        if (!deletingEvent) setPendingDeleteEvent(null);
+      }}
+    />
+    </>
   );
 }
 
@@ -570,7 +684,7 @@ const styles = StyleSheet.create({
   eventRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
+    gap: 4,
     paddingVertical: 8,
     ...(Platform.OS === 'web' && {
       transition: 'background-color 0.2s ease',
@@ -579,45 +693,79 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  attendanceSpacer: {
-    width: 36,
+  eventMenuWrap: {
     flexShrink: 0,
+    position: 'relative',
+    zIndex: 2,
+    marginTop: -2,
   },
-  attendanceHit: {
-    width: 36,
-    flexShrink: 0,
+  eventMenuBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
     alignItems: 'center',
-    paddingTop: 2,
+    justifyContent: 'center',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
     }),
   },
-  attendanceInner: {
+  eventMenuBtnActive: {
+    backgroundColor: '#F1F5F9',
+  },
+  attendanceSpacer: {
+    width: 14,
+    flexShrink: 0,
+  },
+  attendanceHit: {
+    width: 14,
+    flexShrink: 0,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  attendanceUnchecked: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 1.5,
-    borderColor: 'rgba(156, 163, 175, 0.45)',
-    backgroundColor: 'transparent',
-  },
-  attendanceChecked: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#10B981',
-    alignItems: 'center',
-    justifyContent: 'center',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+    }),
   },
   eventRowMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  eventRowInner: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    flex: 1,
-    gap: 16,
+    gap: 8,
+    width: '100%',
     minWidth: 0,
+  },
+  detailsCell: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'flex-start',
+    gap: 2,
+  },
+  sublineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    width: '100%',
+    minWidth: 0,
+  },
+  childLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  childLabelText: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '400',
+    flexShrink: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   eventTitleDone: {
     textDecorationLine: 'line-through',
@@ -630,56 +778,12 @@ const styles = StyleSheet.create({
   eventMetaDone: {
     opacity: 0.55,
   },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    flex: 1,
-    minWidth: 0,
-    marginBottom: 4,
-  },
-  titleStack: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: 'column',
-  },
-  eventHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingTop: 3,
-    flexShrink: 0,
-  },
-  subjectDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  childLabel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-    minWidth: 0,
-  },
-  childLabelText: {
-    fontSize: 12,
-    color: '#94a3b8',
-    fontWeight: '400',
-    flex: 1,
-    minWidth: 0,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  timeColumn: {
-    width: 80,
-    alignSelf: 'flex-start',
-  },
   timeText: {
     fontSize: 12,
-    color: '#94a3b8',
+    color: '#64748B',
     fontWeight: '400',
+    flexShrink: 0,
+    lineHeight: 16,
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
@@ -687,19 +791,17 @@ const styles = StyleSheet.create({
   timePlaceholderText: {
     color: '#9ca3af',
   },
-  contentColumn: {
-    flex: 1,
-  },
   /** Primary row label: subject name or event title */
   eventPrimaryTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0f172a',
-    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
     minWidth: 0,
-    letterSpacing: -0.2,
+    lineHeight: 18,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      margin: 0,
+      padding: 0,
     }),
   },
   /** Secondary line when both subject and a distinct title exist */
@@ -707,7 +809,8 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '400',
     color: '#64748b',
-    marginTop: 2,
+    lineHeight: 16,
+    marginTop: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
