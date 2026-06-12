@@ -3,7 +3,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, Platform, TouchableOpacity, Image } from 'react-native';
+import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native';
 import { Plus, RotateCw } from 'lucide-react';
 import { useToast } from '../Toast';
 import ConfirmDialog from '../ConfirmDialog';
@@ -18,23 +18,7 @@ import {
   normalizeChildProfile,
   normalizeTutorProfile,
 } from '../../lib/permissions/userPermissionProfiles';
-import { sourceForChild } from '../ui/ChildAvatarCluster';
 import { formatInviteLastSent } from '../../lib/services/childInviteStatus';
-
-const CHILD_PROFILES = [
-  {
-    id: 'guided',
-    title: 'Guided',
-  },
-  {
-    id: 'standard',
-    title: 'Standard',
-  },
-  {
-    id: 'independent',
-    title: 'Independent Learning',
-  },
-];
 
 const TUTOR_PROFILES = [
   {
@@ -255,14 +239,6 @@ export default function UserControlsSettingsContent({
       null,
     [resolvedSettings.tutors, selectedTutorId]
   );
-  const childById = useMemo(() => {
-    const map = new Map();
-    (Array.isArray(children) ? children : []).forEach((child) => {
-      const id = String(child?.id || '').trim();
-      if (id) map.set(id, child);
-    });
-    return map;
-  }, [children]);
 
   const showChildControls = resolvedSettings.children.length > 0;
   const showTutorControls = resolvedSettings.tutors.length > 0;
@@ -291,30 +267,6 @@ export default function UserControlsSettingsContent({
     setConfirmDialog((prev) => ({ ...prev, visible: false }));
     if (typeof apply === 'function') apply();
   }, []);
-
-  const handleChildRowSelect = useCallback(
-    (childId, profileId) => {
-      const normalized = normalizeChildProfile(profileId);
-      const currentChild = resolvedSettings.children.find((child) => child.id === childId);
-      if (!currentChild || currentChild.permission_profile === normalized) return;
-      const target = CHILD_PROFILES.find((profile) => profile.id === normalized);
-      requestSettingConfirmation({
-        title: 'Save learner permission change?',
-        message: `Set ${currentChild.name || 'this learner'} to ${target?.title || 'this mode'}?`,
-        onConfirm: () =>
-          savePatch(
-            { childProfiles: [{ childId, permission_profile: normalized }] },
-            (current) => ({
-              ...current,
-              children: current.children.map((child) =>
-                child.id === childId ? { ...child, permission_profile: normalized } : child
-              ),
-            })
-          ),
-      });
-    },
-    [requestSettingConfirmation, resolvedSettings.children, savePatch]
-  );
 
   const handleTutorSelect = useCallback(
     (memberId, profileId) => {
@@ -407,47 +359,6 @@ export default function UserControlsSettingsContent({
                 <Plus size={16} color="#374151" />
                 <Text style={styles.inviteButtonText}>Invite tutor</Text>
               </TouchableOpacity>
-            </View>
-          </View>
-        ) : null}
-
-        {showChildControls ? (
-          <View style={[styles.sectionBlock, styles.sectionBlockFirst]}>
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>Child Permissions</Text>
-              <View style={styles.sectionHeaderActions}>
-                {saving ? <Text style={styles.savingHint}>Saving...</Text> : null}
-                {showHeaderInviteButtons ? (
-                  <TouchableOpacity
-                    style={styles.inviteButton}
-                    onPress={onInviteChildPress}
-                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                  >
-                    <Plus size={16} color="#374151" />
-                    <Text style={styles.inviteButtonText}>Invite child</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            </View>
-            <View style={styles.subsectionDivider} />
-            <View style={styles.memberList}>
-              {resolvedSettings.children.map((child, index) => (
-                <View key={child.id} style={[styles.memberRow, index > 0 && styles.memberRowBorder]}>
-                  <View style={styles.memberIdentityRow}>
-                    <View style={styles.memberAvatarWrap}>
-                      <Image
-                        source={sourceForChild(childById.get(String(child.id)))}
-                        style={styles.memberAvatar}
-                        resizeMode="cover"
-                      />
-                    </View>
-                    <Text style={styles.memberName}>{child.name}</Text>
-                  </View>
-                  {renderCompactProfileSelect(CHILD_PROFILES, child.permission_profile, (value) =>
-                    handleChildRowSelect(child.id, value)
-                  )}
-                </View>
-              ))}
             </View>
           </View>
         ) : null}
@@ -558,7 +469,7 @@ export default function UserControlsSettingsContent({
         {!showChildControls && hasLoadedSettings ? (
           <View style={styles.sectionBlock}>
             <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>Child Permissions</Text>
+              <Text style={styles.sectionTitle}>Children</Text>
               {showHeaderInviteButtons ? (
                 <TouchableOpacity
                   style={styles.inviteButton}

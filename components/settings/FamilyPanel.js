@@ -363,15 +363,14 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Sync activeSection when initialSection prop changes (e.g. navigated from shell)
   useEffect(() => {
     if (!propInitialSection || !String(propInitialSection).trim()) return;
-    setActiveSection(normalizeSettingsSection(propInitialSection));
+    const nextSection = normalizeSettingsSection(propInitialSection);
+    setActiveSection((prev) => (prev === nextSection ? prev : nextSection));
   }, [normalizeSettingsSection, propInitialSection]);
 
   useEffect(() => {
     if (!isChildRestrictedView) return;
-    if (activeSection !== 'profile') {
-      setActiveSection('profile');
-    }
-  }, [activeSection, isChildRestrictedView]);
+    setActiveSection((prev) => (prev === 'profile' ? prev : 'profile'));
+  }, [isChildRestrictedView]);
 
   useEffect(() => {
     if (activeSection !== 'subscription' || !familyId) return;
@@ -585,6 +584,8 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   // Full family payload (including members[]) — server sees linked children; props/RLS often do not
   useEffect(() => {
     if (activeSection !== 'members' || !user) return;
+    const propMembers = Array.isArray(propFamily?.members) ? propFamily.members : [];
+    if (embeddedInModal && propFamily?.id && propMembers.length > 0) return;
     const fid = family?.id || familyId || propFamilyId;
     if (!fid) return;
     let cancelled = false;
@@ -593,14 +594,28 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         const { data, error: err } = await getFamilyMembers();
         if (cancelled || err || !data?.id) return;
         if (String(data.id) !== String(fid)) return;
-        setFamily(data);
-        if (data.id) setFamilyId(data.id);
+        setFamily((prev) => {
+          if (
+            prev?.id != null
+            && String(prev.id) === String(data.id)
+            && String(prev?.family_name || '') === String(data?.family_name || '')
+            && (Array.isArray(prev?.members) ? prev.members.length : 0)
+              === (Array.isArray(data?.members) ? data.members.length : 0)
+          ) {
+            return prev;
+          }
+          return data;
+        });
+        setFamilyId((prev) => {
+          const nextId = data.id ? String(data.id) : prev;
+          return prev === nextId ? prev : nextId;
+        });
       } catch (_) {}
     })();
     return () => {
       cancelled = true;
     };
-  }, [activeSection, familyId, propFamilyId, user?.id, childrenFetchKey]);
+  }, [activeSection, embeddedInModal, propFamily?.id, propFamily?.members, familyId, propFamilyId, user?.id, childrenFetchKey]);
 
   const styles = createStyles(tokens);
 
@@ -662,6 +677,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const quizletLogo = require('../../assets/quizlet.png');
   const canvasLogo = require('../../assets/canvas.png');
   const appleLogo = require('../../assets/apple.png');
+
+  const propFamilySyncKey = useMemo(() => {
+    if (!propFamily?.id) return '';
+    try {
+      return JSON.stringify({
+        id: propFamily.id,
+        family_name: propFamily.family_name ?? null,
+        default_planning_mode: propFamily.default_planning_mode ?? null,
+        members_len: Array.isArray(propFamily.members) ? propFamily.members.length : 0,
+        child_invite_summaries: propFamily.child_invite_summaries ?? null,
+        pending_parent_invites: propFamily.pending_parent_invites ?? [],
+        role: propFamily.role ?? null,
+      });
+    } catch (_) {
+      return String(propFamily.id);
+    }
+  }, [propFamily]);
 
   // Update local state when prop changes
   useEffect(() => {
@@ -740,12 +772,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       };
       loadFamily();
     }
-  }, [propFamily, user?.id]);
+  }, [propFamilySyncKey, user?.id]);
 
   useEffect(() => {
-    if (propFamilyId) {
-      setFamilyId(propFamilyId);
-    }
+    if (!propFamilyId) return;
+    setFamilyId((prev) => (String(prev || '') === String(propFamilyId) ? prev : propFamilyId));
   }, [propFamilyId]);
 
   useEffect(() => {
@@ -813,7 +844,23 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
           avatar: c.avatar || c.avatar_url || null,
           archived: c.archived === true,
         }));
-        setChildrenFromDb(list);
+        setChildrenFromDb((prev) => {
+          const prevList = Array.isArray(prev) ? prev : [];
+          if (prevList.length !== list.length) return list;
+          for (let i = 0; i < list.length; i += 1) {
+            const prevRow = prevList[i] || {};
+            const nextRow = list[i] || {};
+            if (
+              String(prevRow.id || '') !== String(nextRow.id || '')
+              || String(prevRow.name || '') !== String(nextRow.name || '')
+              || String(prevRow.first_name || '') !== String(nextRow.first_name || '')
+              || prevRow.archived !== nextRow.archived
+            ) {
+              return list;
+            }
+          }
+          return prev;
+        });
       } catch (_) {
         if (!cancelled) setChildrenFromDb(null);
       }
@@ -844,14 +891,19 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       }
 
       setProfile((prev) => {
-        if (!prev) return propProfile;
-        const sameId = String(prev?.id || '') === String(propProfile?.id || '');
+        const mergedProfile = {
+          ...(prev || propProfile),
+          ...propProfile,
+          email: incomingEmail,
+        };
+        if (!prev) return mergedProfile;
+        const sameId = String(prev?.id || '') === String(mergedProfile?.id || '');
         const sameCore =
-          String(prev?.name || prev?.first_name || '') === String(propProfile?.name || propProfile?.first_name || '')
-          && String(prev?.email || '') === String(propProfile?.email || '')
-          && String(prev?.phone || '') === String(propProfile?.phone || '')
-          && String(prev?.role || '') === String(propProfile?.role || '');
-        return sameId && sameCore ? prev : propProfile;
+          String(prev?.name || prev?.first_name || '') === String(mergedProfile?.name || mergedProfile?.first_name || '')
+          && String(prev?.email || '') === String(mergedProfile?.email || '')
+          && String(prev?.phone || '') === String(mergedProfile?.phone || '')
+          && String(prev?.role || '') === String(mergedProfile?.role || '');
+        return sameId && sameCore ? prev : mergedProfile;
       });
       setProfileName((prev) => (prev === incomingName ? prev : incomingName));
       setProfileEmail((prev) => (prev === incomingEmail ? prev : incomingEmail));
@@ -1169,7 +1221,24 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         .order('name');
       
       if (!error && data) {
-        setSubjects(data);
+        setSubjects((prev) => {
+          const prevList = Array.isArray(prev) ? prev : [];
+          if (prevList.length !== data.length) return data;
+          for (let i = 0; i < data.length; i += 1) {
+            const prevRow = prevList[i] || {};
+            const nextRow = data[i] || {};
+            if (
+              String(prevRow.id || '') !== String(nextRow.id || '')
+              || String(prevRow.name || '') !== String(nextRow.name || '')
+              || String(prevRow.child_id || '') !== String(nextRow.child_id || '')
+              || String(prevRow.updated_at || '') !== String(nextRow.updated_at || '')
+              || String(prevRow.school_year || '') !== String(nextRow.school_year || '')
+            ) {
+              return data;
+            }
+          }
+          return prev;
+        });
       }
     } catch (err) {
       console.error('[FamilyPanel] Error loading subjects:', err);
@@ -1180,10 +1249,10 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   // Preload subjects when familyId is available so Courses section shows instantly when navigating
   useEffect(() => {
-    if (familyId) {
-      loadSubjects();
-    }
-  }, [familyId]);
+    if (!familyId) return;
+    if (embeddedInModal && propPreloadedSubjects != null) return;
+    loadSubjects();
+  }, [familyId, embeddedInModal, propPreloadedSubjects]);
 
   // When switching to Courses, silently refetch to stay in sync (e.g. subject added from Add Subject modal)
   const prevActiveSectionRef = useRef(activeSection);
@@ -1366,6 +1435,45 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     (childrenWithAvatars || []).forEach(mergeChild);
     return Array.from(byId.values());
   }, [family?.children, childrenFromDb, childrenWithAvatars]);
+
+  const children = useMemo(() => {
+    const baseChildren = childrenFromDb != null ? childrenFromDb : (family?.children || []);
+    const byId = new Map(
+      (familyChildrenForSubjectDots || [])
+        .filter((child) => child?.id != null)
+        .map((child) => [String(child.id), child])
+    );
+    return (baseChildren || []).map((child) => {
+      const key = child?.id != null ? String(child.id) : null;
+      const merged = key ? byId.get(key) : null;
+      if (!merged) return child;
+      return {
+        ...child,
+        ...merged,
+        id: child?.id ?? merged?.id,
+      };
+    });
+  }, [childrenFromDb, family?.children, familyChildrenForSubjectDots]);
+
+  useEffect(() => {
+    if (!Array.isArray(children) || children.length === 0) return;
+    if (typeof Image?.prefetch !== 'function') return;
+
+    const urisToPrefetch = [];
+    children.forEach((child) => {
+      const source = sourceForChild(child);
+      const uri = source && typeof source === 'object' ? source.uri : null;
+      if (typeof uri !== 'string') return;
+      const trimmed = uri.trim();
+      if (!trimmed || (!trimmed.startsWith('https://') && !trimmed.startsWith('http://'))) return;
+      if (prefetchedAvatarUrisRef.current.has(trimmed)) return;
+      prefetchedAvatarUrisRef.current.add(trimmed);
+      urisToPrefetch.push(trimmed);
+    });
+
+    if (urisToPrefetch.length === 0) return;
+    Promise.allSettled(urisToPrefetch.map((uri) => Image.prefetch(uri))).catch(() => {});
+  }, [children]);
 
   // Helper to get child names for a subject (child_id can be single UUID or semicolon-separated)
   const getSubjectChildNames = (subject) => {
@@ -1753,60 +1861,53 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
 
   // Sync email from auth.users to profiles when email is verified
   useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return undefined;
 
-    const syncEmail = async () => {
+    const authEmail = String(user?.email || '').trim();
+    if (!authEmail) return undefined;
+
+    const profileEmailValue = String(profileEmail || profile?.email || '').trim();
+    if (authEmail === profileEmailValue) return undefined;
+
+    let cancelled = false;
+    (async () => {
       try {
-        // Check if auth email differs from profile email
-        const authEmail = user?.email || '';
-        const profileEmailValue = profile?.email || '';
-        
-        if (authEmail && authEmail !== profileEmailValue) {
-          // Call the sync function to update profile email
-          const { error } = await supabase.rpc('sync_current_user_email');
-          
-          if (!error) {
-            // Refresh profile data
-            const { data: updatedProfile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', user.id)
-              .single();
-            
-            if (updatedProfile) {
-              setProfile(updatedProfile);
-              setProfileEmail(updatedProfile.email || authEmail);
-            }
-          }
-        }
+        const { error } = await supabase.rpc('sync_current_user_email');
+        if (cancelled || error) return;
+
+        const { data: updatedProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+
+        if (cancelled || !updatedProfile) return;
+
+        const resolvedEmail = String(updatedProfile.email || authEmail).trim();
+        setProfile((prev) => {
+          const merged = {
+            ...(prev || {}),
+            ...updatedProfile,
+            email: resolvedEmail,
+          };
+          const sameCore =
+            String(prev?.name || prev?.first_name || '') === String(merged?.name || merged?.first_name || '')
+            && String(prev?.email || '') === String(merged?.email || '')
+            && String(prev?.phone || '') === String(merged?.phone || '')
+            && String(prev?.role || '') === String(merged?.role || '');
+          return sameCore ? prev : merged;
+        });
+        setProfileEmail((prev) => (prev === resolvedEmail ? prev : resolvedEmail));
       } catch (err) {
         // Silently fail - email sync is not critical
         console.log('Email sync check failed:', err);
       }
+    })();
+
+    return () => {
+      cancelled = true;
     };
-
-    // Check on mount and when user/profile changes
-    syncEmail();
-  }, [user?.email, profile?.email, user?.id]);
-
-  if (error && !family) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.headerRow}>
-          <Text style={styles.sectionTitle}>FAMILY</Text>
-          <Text style={styles.sectionSubtitle}>
-            Manage your family profile, children, and tutor access.
-          </Text>
-        </View>
-        <View style={styles.headerDivider} />
-        <View style={styles.contentWrapper}>
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        </View>
-      </View>
-    );
-  }
+  }, [user?.id, user?.email, profileEmail, profile?.email]);
 
   const allParents = (family?.members || []).filter(
     (m) => (m.member_role || m.role) === 'parent'
@@ -1844,44 +1945,6 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
         .filter((invite) => invite.id || invite.email)
     : [];
   const latestPendingParentInvite = pendingParentInvites[0] || null;
-  const children = useMemo(() => {
-    const baseChildren = childrenFromDb != null ? childrenFromDb : (family?.children || []);
-    const byId = new Map(
-      (familyChildrenForSubjectDots || [])
-        .filter((child) => child?.id != null)
-        .map((child) => [String(child.id), child])
-    );
-    return (baseChildren || []).map((child) => {
-      const key = child?.id != null ? String(child.id) : null;
-      const merged = key ? byId.get(key) : null;
-      if (!merged) return child;
-      return {
-        ...child,
-        ...merged,
-        id: child?.id ?? merged?.id,
-      };
-    });
-  }, [childrenFromDb, family?.children, familyChildrenForSubjectDots]);
-
-  useEffect(() => {
-    if (!Array.isArray(children) || children.length === 0) return;
-    if (typeof Image?.prefetch !== 'function') return;
-
-    const urisToPrefetch = [];
-    children.forEach((child) => {
-      const source = sourceForChild(child);
-      const uri = source && typeof source === 'object' ? source.uri : null;
-      if (typeof uri !== 'string') return;
-      const trimmed = uri.trim();
-      if (!trimmed || (!trimmed.startsWith('https://') && !trimmed.startsWith('http://'))) return;
-      if (prefetchedAvatarUrisRef.current.has(trimmed)) return;
-      prefetchedAvatarUrisRef.current.add(trimmed);
-      urisToPrefetch.push(trimmed);
-    });
-
-    if (urisToPrefetch.length === 0) return;
-    Promise.allSettled(urisToPrefetch.map((uri) => Image.prefetch(uri))).catch(() => {});
-  }, [children]);
 
   const openIdCardModal = (role, candidates) => {
     if (!candidates || candidates.length === 0) {
@@ -5123,6 +5186,25 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const hasAccountSidebarItems = SETTINGS_SIDEBAR_ACCOUNT_KEYS.some((key) => visibleSettingsKeys.has(key));
   const hasSupportSidebarItems = SETTINGS_SIDEBAR_SUPPORT_KEYS.some((key) => visibleSettingsKeys.has(key));
 
+  if (error && !family) {
+    return (
+      <View style={[styles.container, embeddedInModal && styles.containerFamilyModal]}>
+        <View style={styles.headerRow}>
+          <Text style={styles.sectionTitle}>FAMILY</Text>
+          <Text style={styles.sectionSubtitle}>
+            Manage your family profile, children, and tutor access.
+          </Text>
+        </View>
+        <View style={styles.headerDivider} />
+        <View style={styles.contentWrapper}>
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, embeddedInModal && styles.containerFamilyModal]}>
       <View style={[styles.twoColumnLayout, embeddedInModal && styles.twoColumnLayoutFamilyModal]}>
@@ -6247,25 +6329,19 @@ function createStyles(tokens) {
       paddingRight: 24,
     },
     containerFamilyModal: {
-      flexGrow: 0,
-      flexShrink: 0,
-      height: 'auto',
+      flex: 1,
+      minHeight: 0,
+      width: '100%',
     },
     twoColumnLayoutFamilyModal: {
-      flexGrow: 0,
-      flexShrink: 0,
-      height: 'auto',
-      ...(Platform.OS === 'web' && {
-        overflow: 'visible',
-      }),
+      flex: 1,
+      minHeight: 0,
+      width: '100%',
     },
     mainContentFamilyModal: {
-      flexGrow: 0,
-      flexShrink: 0,
-      ...(Platform.OS === 'web' && {
-        overflow: 'visible',
-        overflowY: 'visible',
-      }),
+      flex: 1,
+      minHeight: 0,
+      width: '100%',
     },
     mainContentContainerFamilyModal: {
       padding: 0,

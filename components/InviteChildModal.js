@@ -24,25 +24,7 @@ import {
   mergeServerChildInviteSummaries,
 } from '../lib/services/childInviteStatus';
 import { LEARNADOODLE_LIGHT_BLUE } from '../theme/comingSoonModalTheme';
-import { DEFAULT_CHILD_PROFILE, normalizeChildProfile } from '../lib/permissions/userPermissionProfiles';
-
-const CHILD_PERMISSION_OPTIONS = [
-  {
-    id: 'guided',
-    label: 'Guided',
-    summary: 'Best for high parent control and simple "follow assigned work" use. Child can view Home and Subjects, but cannot access Planner, Materials, or Progress and Schedule views.',
-  },
-  {
-    id: 'standard',
-    label: 'Standard',
-    summary: 'Best for most learners: broad visibility + engagement, without planning/content editing power. Child can view all but add/edit is constrained.',
-  },
-  {
-    id: 'independent',
-    label: 'Independent',
-    summary: 'Best for older/self-directed students who should manage day-to-day learning structure. Child can view and edit all, except family settings.',
-  },
-];
+import { DEFAULT_CHILD_PROFILE } from '../lib/permissions/userPermissionProfiles';
 
 function isValidEmail(value) {
   const t = (value || '').trim();
@@ -82,7 +64,6 @@ export default function InviteChildModal({
   const [inviting, setInviting] = useState(false);
   const [successInfo, setSuccessInfo] = useState(null);
   const [emailFocused, setEmailFocused] = useState(false);
-  const [childPermissionProfile, setChildPermissionProfile] = useState(DEFAULT_CHILD_PROFILE);
 
   const list = useMemo(
     () => (familyChildren || []).filter((c) => c && c.id != null && !c.archived),
@@ -125,7 +106,6 @@ export default function InviteChildModal({
     } else {
       setSelectedChildId(null);
     }
-    setChildPermissionProfile(DEFAULT_CHILD_PROFILE);
   }, [visible, childKey, list.length]);
 
   useEffect(() => {
@@ -172,12 +152,9 @@ export default function InviteChildModal({
 
   const selectChild = useCallback((childId) => {
     setSelectedChildId(childId);
-    const matched = mergedList.find((child) => String(child?.id) === String(childId));
-    const preset = matched?.permission_profile || DEFAULT_CHILD_PROFILE;
-    setChildPermissionProfile(normalizeChildProfile(preset));
     setEmailDirty(false);
     setError(null);
-  }, [mergedList]);
+  }, []);
 
   const emailOk = isValidEmail(email);
   const canSend =
@@ -221,7 +198,7 @@ export default function InviteChildModal({
         email: email.trim(),
         role: 'child',
         child_ids: [selectedChildId],
-        child_permission_profile: normalizeChildProfile(childPermissionProfile),
+        child_permission_profile: DEFAULT_CHILD_PROFILE,
       });
       if (err) throw err;
       const name = childDisplayName(selectedChild);
@@ -362,35 +339,6 @@ export default function InviteChildModal({
                   </View>
                 ) : (
                   <View style={styles.emailSection}>
-                    <Text style={styles.emailLabel}>Permission level</Text>
-                    <View style={styles.permissionPills}>
-                      {CHILD_PERMISSION_OPTIONS.map((option) => {
-                        const selected = option.id === childPermissionProfile;
-                        return (
-                          <TouchableOpacity
-                            key={option.id}
-                            style={[
-                              styles.permissionPill,
-                              selected && styles.permissionPillSelected,
-                              inviting && styles.permissionPillDisabled,
-                            ]}
-                            onPress={() => setChildPermissionProfile(option.id)}
-                            disabled={inviting}
-                            activeOpacity={0.85}
-                            {...(Platform.OS === 'web' && { cursor: inviting ? 'not-allowed' : 'pointer' })}
-                          >
-                            <Text style={[styles.permissionPillText, selected && styles.permissionPillTextSelected]}>
-                              {option.label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    <Text style={styles.permissionPillSummary}>
-                      {CHILD_PERMISSION_OPTIONS.find((option) => option.id === childPermissionProfile)?.summary
-                        || CHILD_PERMISSION_OPTIONS[0]?.summary
-                        || ''}
-                    </Text>
                     <Text style={styles.emailLabel}>Child email</Text>
                     <TextInput
                       ref={emailInputRef}

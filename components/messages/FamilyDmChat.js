@@ -10,7 +10,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { ArrowLeft, ArrowUp, Calendar, Paperclip, Plus, X } from 'lucide-react';
+import { ArrowLeft, ArrowUp, Calendar, Paperclip, Plus, UserPlus, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { resolveBundledAvatarSource } from '../../assets/imageAssetMap';
 import { sourceForChild } from '../ui/ChildAvatarCluster';
@@ -19,16 +19,25 @@ import {
   ASSIGNMENT_SELECT,
   buildSendPayload,
   formatChatEventDateLabel,
+  insertFamilyDirectMessage,
   isDirectMessageRecipient,
   isUnifiedMessageMine,
   markDirectMessagesRead,
   mergeUnifiedStream,
   messageMatchesParticipant,
+  queryFamilyDirectMessages,
   resolveAssignmentChildContext,
   resolveLinkedEventId,
+  familyDirectMessagesSupportAttachments,
 } from '../../lib/familyDmClient';
 import DmAttachEventModal from './DmAttachEventModal';
 import MessagesPaneCloseButton from './MessagesPaneCloseButton';
+import useSwipeBackGesture from './useSwipeBackGesture';
+
+/** Matches ModalFooter / Add subject Create button accent */
+const LEARNADOODLE_CREATE_BLUE = '#9ECFFB';
+/** @deprecated HMR/back-compat alias */
+const BRAND_SKY_BLUE_TEXT = LEARNADOODLE_CREATE_BLUE;
 
 function avatarSourceForParticipant(participant) {
   if (!participant) return resolveBundledAvatarSource('prof1');
@@ -87,18 +96,25 @@ export default function FamilyDmChat({
   const [pendingEvent, setPendingEvent] = useState(null);
   const [pendingMaterial, setPendingMaterial] = useState(null);
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [attachmentsSupported, setAttachmentsSupported] = useState(() => familyDirectMessagesSupportAttachments());
   const scrollRef = useRef(null);
   const composerInputRef = useRef(null);
   const handleSendRef = useRef(null);
   const sendInFlightRef = useRef(false);
   const scrollToBottomOnLoadRef = useRef(true);
+  const swipeBackRef = useRef(null);
+
+  const { swipeStyle, panHandlers: swipeBackHandlers, webHandlers: swipeBackWebHandlers } = useSwipeBackGesture({
+    onBack,
+    enabled: typeof onBack === 'function',
+  });
 
   const childCtx = useMemo(
     () => resolveAssignmentChildContext(participant, viewerRole, viewerChildId),
     [participant, viewerChildId, viewerRole]
   );
 
-  const canAttachEvent = Boolean(childCtx?.childId && familyId);
+  const canAttachEvent = Boolean(childCtx?.childId && familyId && attachmentsSupported);
 
   const childInviteGate = useMemo(() => {
     if (participant?.type !== 'child') return null;
@@ -187,12 +203,13 @@ export default function FamilyDmChat({
     }
     setLoading(true);
     try {
-      const dmPromise = supabase
-        .from('family_direct_messages')
-        .select('id, sender_user_id, recipient_child_id, recipient_user_id, body, linked_event_id, material_id, created_at, read_at')
-        .eq('family_id', familyId)
-        .order('created_at', { ascending: false })
-        .limit(300);
+      const { data: dmRows, error: dmError, attachmentsSupported: dmAttachmentsSupported } =
+        await queryFamilyDirectMessages(supabase, {
+        familyId,
+        limit: 300,
+        ascending: false,
+      });
+      setAttachmentsSupported(dmAttachmentsSupported);
 
       const assignmentsPromise = childCtx?.childId
         ? supabase
@@ -204,10 +221,7 @@ export default function FamilyDmChat({
           .limit(200)
         : Promise.resolve({ data: [], error: null });
 
-      const [{ data: dmRows, error: dmError }, { data: assignmentRows, error: asgError }] = await Promise.all([
-        dmPromise,
-        assignmentsPromise,
-      ]);
+      const { data: assignmentRows, error: asgError } = await assignmentsPromise;
 
       if (dmError) {
         console.warn('[FamilyDmChat] direct messages unavailable:', dmError.message);
@@ -369,7 +383,7 @@ export default function FamilyDmChat({
     sendInFlightRef.current = true;
     setSending(true);
     try {
-      const { error } = await supabase.from('family_direct_messages').insert(payload);
+      const { error } = await insertFamilyDirectMessage(supabase, payload);
       if (error) {
         console.error('[FamilyDmChat] send error:', error);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -580,7 +594,16 @@ export default function FamilyDmChat({
   };
 
   return (
-    <View style={styles.container}>
+    <View
+      ref={swipeBackRef}
+      style={[
+        styles.container,
+        Platform.OS === 'web' && typeof onBack === 'function' && styles.swipeBackSurface,
+        swipeStyle,
+      ]}
+      {...swipeBackHandlers}
+      {...swipeBackWebHandlers}
+    >
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
@@ -611,18 +634,11 @@ export default function FamilyDmChat({
           <View style={styles.introBlock}>
             <Image source={avatarSource} style={styles.introAvatar} />
             <Text style={styles.introName}>{participant?.name}</Text>
-            {!childInviteGate ? (
-              <Text style={styles.introHint}>Send messages here</Text>
-            ) : null}
           </View>
 
           {childInviteGate ? (
             <View style={styles.inviteCard}>
-              <Text style={styles.inviteCardTitle}>
-                {childInviteGate.status === 'pending'
-                  ? `Waiting for ${childInviteGate.childName}`
-                  : `Invite ${childInviteGate.childName}`}
-              </Text>
+              <Text style={styles.inviteCardTitle}>Not yet connected</Text>
               <Text style={styles.inviteCardSubtitle}>
                 {childInviteGate.status === 'pending'
                   ? `${childInviteGate.childName} has not accepted yet. Resend the invite so they can use Messages and get assignments.`
@@ -634,8 +650,11 @@ export default function FamilyDmChat({
                 activeOpacity={0.85}
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
+                <UserPlus size={16} color="#FFFFFF" strokeWidth={2.25} />
                 <Text style={styles.inviteCardButtonText}>
-                  {childInviteGate.status === 'pending' ? 'Resend invite' : 'Invite child'}
+                  {childInviteGate.status === 'pending'
+                    ? 'RESEND INVITE'
+                    : `INVITE ${String(childInviteGate.childName || '').trim().toUpperCase()}`}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -744,6 +763,7 @@ export default function FamilyDmChat({
           ) : null}
 
           <View style={styles.composerRow}>
+            {attachmentsSupported ? (
             <View style={styles.attachWrap}>
               <TouchableOpacity
                 style={styles.attachButton}
@@ -785,6 +805,7 @@ export default function FamilyDmChat({
                 </View>
               ) : null}
             </View>
+            ) : null}
 
             <TextInput
               ref={composerInputRef}
@@ -858,6 +879,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
+  swipeBackSurface: {
+    ...(Platform.OS === 'web' && {
+      touchAction: 'pan-y',
+    }),
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -882,7 +908,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: '600',
-    color: '#2563EB',
+    color: '#0F172A',
   },
   loadingState: {
     flex: 1,
@@ -913,12 +939,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0F172A',
   },
-  introHint: {
-    fontSize: 13,
-    color: '#94A3B8',
-    textAlign: 'center',
-    paddingHorizontal: 12,
-  },
   inviteCard: {
     width: '100%',
     maxWidth: 360,
@@ -928,16 +948,16 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: 'rgba(238, 242, 255, 0.95)',
+    backgroundColor: 'rgba(158, 207, 251, 0.16)',
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.2)',
+    borderColor: 'rgba(158, 207, 251, 0.38)',
     ...(Platform.OS === 'web' && {
-      boxShadow: '0 2px 8px rgba(99, 102, 241, 0.08)',
+      boxShadow: '0 2px 8px rgba(158, 207, 251, 0.12)',
     }),
   },
   inviteCardTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#0F172A',
     marginBottom: 6,
     textAlign: 'center',
@@ -957,22 +977,27 @@ const styles = StyleSheet.create({
     }),
   },
   inviteCardButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     alignSelf: 'center',
     paddingVertical: 10,
     paddingHorizontal: 18,
     borderRadius: 999,
-    backgroundColor: '#4F46E5',
+    backgroundColor: LEARNADOODLE_CREATE_BLUE,
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
-      boxShadow: '0 2px 6px rgba(79, 70, 229, 0.3)',
+      boxShadow: '0 2px 6px rgba(158, 207, 251, 0.35)',
     }),
   },
   inviteCardButtonText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#FFFFFF',
+    letterSpacing: 0.4,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   dateDivider: {

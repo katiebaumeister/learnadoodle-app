@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Download } from 'lucide-react';
 import { ATTENDANCE_COLORS, TOKENS } from './constants';
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -71,6 +70,9 @@ function MonthMiniCalendar({
   selectedChildId,
   dayStatusByChild,
   onMarkDayAttended,
+  onDayPress,
+  interactionMode = 'attendance',
+  selectedDateKey = null,
   cellSize,
   gap,
   isWeb,
@@ -113,7 +115,9 @@ function MonthMiniCalendar({
                 ? (ATTENDANCE_COLORS[status] || (status === 'partial' ? ATTENDANCE_COLORS.present : ATTENDANCE_COLORS.noEvents))
                 : ATTENDANCE_COLORS.noEvents;
               const isNone = status === 'noEvents';
-              const isDisabled = !inRange || !selectedChildId;
+              const isEventsMode = interactionMode === 'events';
+              const isDisabled = !inRange || !selectedChildId || (isEventsMode ? !onDayPress : !onMarkDayAttended);
+              const isSelected = isEventsMode && selectedDateKey === key;
 
               return (
                 <TouchableOpacity
@@ -129,12 +133,21 @@ function MonthMiniCalendar({
                     },
                     inRange && isNone && styles.cellNone,
                     !inRange && styles.cellOutOfRange,
+                    isSelected && styles.cellSelected,
                     isWeb && !isDisabled && styles.cellWeb,
                     isWeb && hoveredCellKey === cellKey && styles.cellHover,
                   ]}
                   activeOpacity={0.8}
                   disabled={isDisabled}
-                  onPress={() => onMarkDayAttended && onMarkDayAttended(key, selectedChildId)}
+                  onPress={() => {
+                    if (isEventsMode && onDayPress) {
+                      onDayPress(key);
+                      return;
+                    }
+                    if (onMarkDayAttended) {
+                      onMarkDayAttended(key, selectedChildId);
+                    }
+                  }}
                   {...(isWeb && !isDisabled && {
                     onMouseEnter: () => setHoveredCellKey(cellKey),
                     onMouseLeave: () => setHoveredCellKey(null),
@@ -159,13 +172,39 @@ function MonthMiniCalendar({
   );
 }
 
+export function YearHeatmapLegend({ style }) {
+  return (
+    <View style={[styles.legend, style]}>
+      <View style={styles.legendPill}>
+        <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.present }]} />
+        <Text style={styles.legendPillText}>Attended</Text>
+      </View>
+      <View style={styles.legendPill}>
+        <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.absent }]} />
+        <Text style={styles.legendPillText}>Unattended</Text>
+      </View>
+      <View style={styles.legendPill}>
+        <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.unmarked }]} />
+        <Text style={styles.legendPillText}>Upcoming</Text>
+      </View>
+      <View style={styles.legendPill}>
+        <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.noEvents }]} />
+        <Text style={styles.legendPillText}>No events</Text>
+      </View>
+    </View>
+  );
+}
+
 export default function YearHeatmapGrid({
   yearStart,
   yearEnd,
   selectedChildId = null,
   dayStatusByChild = {},
   onMarkDayAttended,
-  onExport = null,
+  onDayPress = null,
+  interactionMode = 'attendance',
+  selectedDateKey = null,
+  showLegend = true,
 }) {
   const [hoveredCellKey, setHoveredCellKey] = useState(null);
   const cellSize = TOKENS.hmCell;
@@ -174,62 +213,32 @@ export default function YearHeatmapGrid({
 
   const months = useMemo(() => buildMonthsInRange(yearStart, yearEnd), [yearStart, yearEnd]);
 
+  if (!selectedChildId) {
+    return null;
+  }
+
   return (
     <>
-      <View style={styles.titleRow}>
-        <Text style={styles.sectionTitle}>Year at a glance</Text>
-        {onExport && (
-          <TouchableOpacity
-            style={styles.exportIconBtn}
-            onPress={onExport}
-            activeOpacity={0.8}
-            {...(Platform.OS === 'web' && { accessibilityRole: 'button', accessibilityLabel: 'Export attendance' })}
-          >
-            <Download size={18} color="#374151" />
-          </TouchableOpacity>
-        )}
+      <View style={styles.monthGrid}>
+        {months.map((m) => (
+          <MonthMiniCalendar
+            key={m.index}
+            month={m}
+            selectedChildId={selectedChildId}
+            dayStatusByChild={dayStatusByChild}
+            onMarkDayAttended={onMarkDayAttended}
+            onDayPress={onDayPress}
+            interactionMode={interactionMode}
+            selectedDateKey={selectedDateKey}
+            cellSize={cellSize}
+            gap={gap}
+            isWeb={isWeb}
+            hoveredCellKey={hoveredCellKey}
+            setHoveredCellKey={setHoveredCellKey}
+          />
+        ))}
       </View>
-      <Text style={styles.sectionHelp}>
-        Each month is a calendar grid. Use the child filter above to switch learners; use the date range to change the school year. Click a day to mark it attended or unattended. You can mark days with no scheduled lessons. Shared lessons mark all children attended; unmarking affects only the selected child.
-      </Text>
-      {!selectedChildId ? (
-        <Text style={styles.emptyHint}>Select a child above to view their calendar.</Text>
-      ) : (
-        <View style={styles.monthGrid}>
-          {months.map((m) => (
-            <MonthMiniCalendar
-              key={m.index}
-              month={m}
-              selectedChildId={selectedChildId}
-              dayStatusByChild={dayStatusByChild}
-              onMarkDayAttended={onMarkDayAttended}
-              cellSize={cellSize}
-              gap={gap}
-              isWeb={isWeb}
-              hoveredCellKey={hoveredCellKey}
-              setHoveredCellKey={setHoveredCellKey}
-            />
-          ))}
-        </View>
-      )}
-      <View style={styles.legend}>
-        <View style={styles.legendPill}>
-          <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.present }]} />
-          <Text style={styles.legendPillText}>Attended</Text>
-        </View>
-        <View style={styles.legendPill}>
-          <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.absent }]} />
-          <Text style={styles.legendPillText}>Unattended</Text>
-        </View>
-        <View style={styles.legendPill}>
-          <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.unmarked }]} />
-          <Text style={styles.legendPillText}>Upcoming</Text>
-        </View>
-        <View style={styles.legendPill}>
-          <View style={[styles.legendDot, { backgroundColor: ATTENDANCE_COLORS.noEvents }]} />
-          <Text style={styles.legendPillText}>No events</Text>
-        </View>
-      </View>
+      {showLegend ? <YearHeatmapLegend /> : null}
     </>
   );
 }
@@ -237,37 +246,6 @@ export default function YearHeatmapGrid({
 const MONTH_PANEL_WIDTH = 7 * (TOKENS.hmCell + TOKENS.hmGap);
 
 const styles = StyleSheet.create({
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: TOKENS.s2,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: TOKENS.text,
-    letterSpacing: 0.6,
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }),
-  },
-  exportIconBtn: {
-    padding: 4,
-    borderRadius: 6,
-    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
-  },
-  sectionHelp: {
-    fontSize: TOKENS.fontSizeCaption,
-    color: TOKENS.textMuted,
-    marginBottom: TOKENS.s4,
-  },
-  emptyHint: {
-    fontSize: TOKENS.fontSizeCaption,
-    color: TOKENS.textMuted,
-    marginBottom: TOKENS.s4,
-    fontStyle: 'italic',
-  },
   monthGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -320,6 +298,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderColor: 'transparent',
     opacity: 0.35,
+  },
+  cellSelected: {
+    borderColor: '#6366F1',
+    borderWidth: 2,
+    ...(Platform.OS === 'web' && { boxShadow: '0 0 0 2px rgba(99, 102, 241, 0.18)' }),
   },
   cellDayText: {
     fontSize: 10,

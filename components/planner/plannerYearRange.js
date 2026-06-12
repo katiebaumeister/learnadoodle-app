@@ -60,6 +60,43 @@ export function buildMonthCells(year, month) {
   return { cells, fullRows };
 }
 
+/** School year label (e.g. 2025/26) for the planner year header anchor. */
+export function resolveSchoolYearLabelFromAnchor(anchorDate, academicYears = null) {
+  const range = resolvePlannerYearRange(anchorDate, academicYears);
+  const label = String(range.label || '').trim();
+  const compactMatch = label.match(/^(\d{4})\/(\d{2})$/);
+  if (compactMatch) return `${compactMatch[1]}/${compactMatch[2]}`;
+  const longMatch = label.match(/^(\d{4})\/(\d{4})$/);
+  if (longMatch) return `${longMatch[1]}/${longMatch[2].slice(-2)}`;
+  const anchor = anchorDate instanceof Date && !Number.isNaN(anchorDate.getTime())
+    ? anchorDate
+    : new Date();
+  const month = anchor.getMonth() + 1;
+  const startYear = month >= 8 ? anchor.getFullYear() : anchor.getFullYear() - 1;
+  return `${startYear}/${String(startYear + 1).slice(-2)}`;
+}
+
+/** Calendar year bounds for planner Year view (Jan 1 – Dec 31 of anchor year). */
+export function resolveCalendarYearRange(anchorDate) {
+  const anchor = anchorDate instanceof Date && !Number.isNaN(anchorDate.getTime())
+    ? anchorDate
+    : new Date();
+  const y = anchor.getFullYear();
+  return {
+    yearStart: `${y}-01-01`,
+    yearEnd: `${y}-12-31`,
+    label: String(y),
+  };
+}
+
+export function shiftCalendarYearAnchor(anchorDate, direction) {
+  const anchor = anchorDate instanceof Date && !Number.isNaN(anchorDate.getTime())
+    ? new Date(anchorDate)
+    : new Date();
+  anchor.setFullYear(anchor.getFullYear() + direction);
+  return anchor;
+}
+
 export function resolvePlannerYearRange(anchorDate, academicYears = null) {
   const anchor = anchorDate instanceof Date && !Number.isNaN(anchorDate.getTime())
     ? anchorDate

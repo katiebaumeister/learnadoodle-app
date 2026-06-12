@@ -30,6 +30,7 @@ import SubmissionColumnCell from './SubmissionColumnCell';
 const DENSE_DATE_HEADER_HEIGHT = 32;
 const DENSE_EVENT_ROW_HEIGHT = 64;
 const DENSE_TABLE_MIN_WIDTH = 960;
+const DEFAULT_LIST_VIEWPORT_HEIGHT = 520;
 
 function defaultIsDoneStatus(statusValue) {
   const normalized = String(statusValue || '').trim().toLowerCase();
@@ -256,10 +257,12 @@ export default function PlannerEventsListTable({
   const prevPastMonthsRef = useRef(allPastMonths);
   const prevTodayLayoutOffsetRef = useRef(0);
   const hasAnchoredRef = useRef(false);
+  const listViewportMeasuredRef = useRef(false);
   const allWindowExpandAtRef = useRef({ past: 0, future: 0 });
   const shouldAnchorToToday = plannerShellVisible || scrollToToday;
   const canRevealList = !shouldAnchorToToday || !viewActive || listDataReady;
   const [listRevealed, setListRevealed] = useState(() => !shouldAnchorToToday);
+  const [listViewportHeight, setListViewportHeight] = useState(DEFAULT_LIST_VIEWPORT_HEIGHT);
   const denseTodayIndex = useMemo(
     () => groupedDenseRows.findIndex((row) => row?.type === 'header' && row?.dateKey === todayYmd),
     [groupedDenseRows, todayYmd]
@@ -280,6 +283,53 @@ export default function PlannerEventsListTable({
     });
     return offsets;
   }, [groupedDenseRows]);
+
+  const denseTotalContentHeight = useMemo(() => {
+    if (!groupedDenseRows.length) return 0;
+    const lastIndex = groupedDenseRows.length - 1;
+    const lastRow = groupedDenseRows[lastIndex];
+    const lastRowHeight = lastRow?.type === 'header' ? DENSE_DATE_HEADER_HEIGHT : DENSE_EVENT_ROW_HEIGHT;
+    return (denseItemLayouts[lastIndex] ?? 0) + lastRowHeight;
+  }, [groupedDenseRows, denseItemLayouts]);
+
+  /** Extra scroll room below the last row so "today" can pin under the column headers. */
+  const denseBottomSpacerHeight = useMemo(() => {
+    if (!shouldAnchorToToday || denseTodayIndex < 0) return 0;
+    const todayOffset = denseItemLayouts[denseTodayIndex] ?? 0;
+    const contentAfterToday = Math.max(0, denseTotalContentHeight - todayOffset);
+    const embeddedFixedHeight = embedded && !fillViewport && Number.isFinite(maxListHeight)
+      ? Math.max(240, maxListHeight - 40)
+      : null;
+    const viewportHeight = Math.max(
+      embeddedFixedHeight || listViewportHeight || DEFAULT_LIST_VIEWPORT_HEIGHT,
+      DEFAULT_LIST_VIEWPORT_HEIGHT
+    );
+    return Math.max(0, viewportHeight - contentAfterToday);
+  }, [
+    shouldAnchorToToday,
+    denseTodayIndex,
+    denseItemLayouts,
+    denseTotalContentHeight,
+    listViewportHeight,
+    embedded,
+    fillViewport,
+    maxListHeight,
+  ]);
+
+  const denseListContentStyle = useMemo(
+    () => [
+      styles.denseListContent,
+      denseBottomSpacerHeight > 0 && { paddingBottom: denseBottomSpacerHeight },
+    ],
+    [denseBottomSpacerHeight]
+  );
+
+  const handleDenseListLayout = useCallback((event) => {
+    const nextHeight = Math.round(event?.nativeEvent?.layout?.height || 0);
+    if (nextHeight <= 0) return;
+    listViewportMeasuredRef.current = true;
+    setListViewportHeight((prev) => (Math.abs(prev - nextHeight) <= 1 ? prev : nextHeight));
+  }, []);
 
   const formatDenseDateHeader = useCallback((dateYmd) => {
     const d = new Date(`${dateYmd}T00:00:00`);
@@ -314,6 +364,7 @@ export default function PlannerEventsListTable({
     userHasManuallyScrolledRef.current = false;
     allowExpandOnScrollRef.current = false;
     hasAnchoredRef.current = false;
+    listViewportMeasuredRef.current = false;
     if (shouldAnchorToToday) {
       setListRevealed(false);
     }
@@ -339,7 +390,15 @@ export default function PlannerEventsListTable({
       setListRevealed(true);
       return;
     }
-    if (hasAnchoredRef.current) {
+    const embeddedFixedHeight = embedded && !fillViewport && Number.isFinite(maxListHeight)
+      ? Math.max(240, maxListHeight - 40)
+      : null;
+    const viewportReady = Boolean(embeddedFixedHeight) || listViewportMeasuredRef.current;
+    if (!viewportReady) {
+      setListRevealed(false);
+      return;
+    }
+    if (hasAnchoredRef.current && denseBottomSpacerHeight === 0) {
       setListRevealed(true);
       return;
     }
@@ -357,6 +416,11 @@ export default function PlannerEventsListTable({
     listDataReady,
     denseTodayIndex,
     recenterDenseList,
+    denseBottomSpacerHeight,
+    listViewportHeight,
+    embedded,
+    fillViewport,
+    maxListHeight,
   ]);
 
   useLayoutEffect(() => {
@@ -681,6 +745,7 @@ export default function PlannerEventsListTable({
       <FlatList
         key={`planner-list-${listRefreshEpoch}-${scrollToTodayEpoch}`}
         ref={denseListRef}
+        onLayout={handleDenseListLayout}
         style={[
           styles.tasksList,
           canRevealList && !listRevealed && styles.tasksListHidden,
@@ -691,7 +756,7 @@ export default function PlannerEventsListTable({
           },
           embedded && fillViewport && Platform.OS === 'web' && { overflowY: 'auto', flex: 1 },
         ]}
-        contentContainerStyle={styles.denseListContent}
+        contentContainerStyle={denseListContentStyle}
         data={groupedDenseRows}
         keyExtractor={(item) => String(item?.key || '')}
         renderItem={renderDenseListItem}

@@ -10,7 +10,6 @@ import { designTokens } from '../theme/designTokens';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { destructiveButtonStyles } from './ui/destructiveButtonStyles';
-import { DEFAULT_CHILD_PROFILE, normalizeChildProfile } from '../lib/permissions/userPermissionProfiles';
 
 /** Normalize DB row for client lists (name + avatar for color chips). */
 function mapChildRowForClient(row) {
@@ -56,26 +55,6 @@ export default function EditChildModal({
   onChildUpdated,
   onChildDeleted
 }) {
-  const CHILD_PROFILE_OPTIONS = useMemo(
-    () => [
-      {
-        id: 'guided',
-        label: 'Guided',
-        summary: 'Best for high parent control and simple "follow assigned work" use. Child can view Home and Subjects, but cannot access Planner, Materials, or Progress and Schedule views.',
-      },
-      {
-        id: 'standard',
-        label: 'Standard',
-        summary: 'Best for most learners: broad visibility + engagement, without planning/content editing power. Child can view all but add/edit is constrained.',
-      },
-      {
-        id: 'independent',
-        label: 'Independent',
-        summary: 'Best for older/self-directed students who should manage day-to-day learning structure. Child can view and edit all, except family settings.',
-      },
-    ],
-    []
-  );
   const formRef = useRef(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -91,8 +70,6 @@ export default function EditChildModal({
   /** Web: second RNModal stacks above Edit Child; window.confirm can sit behind RN Web modals */
   const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [childPermissionProfile, setChildPermissionProfile] = useState(DEFAULT_CHILD_PROFILE);
-  const [initialChildPermissionProfile, setInitialChildPermissionProfile] = useState(DEFAULT_CHILD_PROFILE);
 
   const toast = useToast();
 
@@ -116,9 +93,6 @@ export default function EditChildModal({
     if (visible && child?.id) {
       setFormCanSubmit(false);
       setAccountDisconnectedThisSession(false);
-      const normalizedProfile = normalizeChildProfile(child?.permission_profile || DEFAULT_CHILD_PROFILE);
-      setChildPermissionProfile(normalizedProfile);
-      setInitialChildPermissionProfile(normalizedProfile);
     }
   }, [visible, child?.id]);
 
@@ -137,8 +111,6 @@ export default function EditChildModal({
       setAccountDisconnectedThisSession(false);
       setDisconnectConfirmOpen(false);
       setDeleteConfirmOpen(false);
-      setChildPermissionProfile(DEFAULT_CHILD_PROFILE);
-      setInitialChildPermissionProfile(DEFAULT_CHILD_PROFILE);
     }
   }, [visible, child?.id, familyId, linkedLoginEmail]);
 
@@ -154,9 +126,6 @@ export default function EditChildModal({
       if (fetchError) return;
 
       setFullChildData(data);
-      const normalizedProfile = normalizeChildProfile(data?.permission_profile || DEFAULT_CHILD_PROFILE);
-      setChildPermissionProfile(normalizedProfile);
-      setInitialChildPermissionProfile(normalizedProfile);
 
       const { data: supportData, error: supportErr } = await supabase
         .from('child_support_profiles')
@@ -350,7 +319,6 @@ export default function EditChildModal({
         avatar: formData.avatar || null,
         interests: Array.isArray(formData.interests) ? formData.interests : [],
         learning_style: formData.learningStyle || null,
-        permission_profile: normalizeChildProfile(childPermissionProfile),
       };
 
       const { data, error: updateError } = await supabase
@@ -418,7 +386,6 @@ export default function EditChildModal({
       }
 
       const clientRow = mapChildRowForClient(data);
-      setInitialChildPermissionProfile(normalizeChildProfile(childPermissionProfile));
       if (onChildUpdated) {
         onChildUpdated(clientRow);
       }
@@ -574,46 +541,10 @@ export default function EditChildModal({
       ? `\n• Delete linked account (${displayLinkedEmail})\n• Remove them from this family`
       : '';
   const deleteConfirmBodyModal = `This will:\n• Delete all learning data\n• Remove planner history, goals, and records${deleteLoginBulletsModal}\n\nThis cannot be undone.`;
-  const hasAttachedEmail =
-    (displayLinkedEmail != null && displayLinkedEmail !== '') ||
-    (childInviteStatus === 'pending' && pendingInviteEmail && String(pendingInviteEmail).trim() !== '');
-  const permissionDirty =
-    normalizeChildProfile(childPermissionProfile) !== normalizeChildProfile(initialChildPermissionProfile);
   const hasRequiredEditFields = Boolean(String(initialData?.name || '').trim())
     && Boolean(String(initialData?.age || '').trim())
     && Boolean(String(initialData?.grade || '').trim())
     && Boolean(String(initialData?.avatar || '').trim());
-
-  const savePermissionOnly = async () => {
-    const effectiveFamilyId = familyId || fullChildData?.family_id || child?.family_id;
-    if (!effectiveFamilyId || !child?.id) {
-      setError('Family ID or Child ID not found. Please refresh and try again.');
-      return;
-    }
-    setIsSubmitting(true);
-    setError(null);
-    try {
-      const { data, error: updateError } = await supabase
-        .from('children')
-        .update({ permission_profile: normalizeChildProfile(childPermissionProfile) })
-        .eq('id', child.id)
-        .eq('family_id', effectiveFamilyId)
-        .select()
-        .single();
-      if (updateError) throw updateError;
-      const clientRow = mapChildRowForClient(data);
-      setInitialChildPermissionProfile(normalizeChildProfile(childPermissionProfile));
-      if (onChildUpdated) onChildUpdated(clientRow);
-      if (toast?.push) toast.push('Permission level updated.', 'success');
-      setTimeout(() => {
-        onClose?.();
-      }, 400);
-    } catch (err) {
-      setError(err?.message || 'Failed to update permission level. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   return (
     <>
@@ -641,10 +572,6 @@ export default function EditChildModal({
                     formRef.current.submit();
                     return;
                   }
-                  if (permissionDirty) {
-                    void savePermissionOnly();
-                    return;
-                  }
                   if (hasRequiredEditFields && formRef.current?.submit) {
                     formRef.current.submit();
                   }
@@ -654,7 +581,7 @@ export default function EditChildModal({
                 }}
                 accent="#9ECFFB"
                 disabled={isSubmitting}
-                visuallyDisabled={!formCanSubmit && !permissionDirty && !hasRequiredEditFields}
+                visuallyDisabled={!formCanSubmit && !hasRequiredEditFields}
                 loading={isSubmitting}
               />
             )}
@@ -746,34 +673,6 @@ export default function EditChildModal({
                       ) : null}
                     </>
                   )}
-                  {hasAttachedEmail ? (
-                    <View style={styles.permissionFieldWrap}>
-                      <Text style={styles.permissionLabel}>Permission level</Text>
-                      <View style={styles.permissionPills}>
-                        {CHILD_PROFILE_OPTIONS.map((option) => {
-                          const selected = option.id === childPermissionProfile;
-                          return (
-                            <TouchableOpacity
-                              key={option.id}
-                              style={[styles.permissionPill, selected && styles.permissionPillSelected]}
-                              onPress={() => setChildPermissionProfile(option.id)}
-                              activeOpacity={0.85}
-                              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-                            >
-                              <Text style={[styles.permissionPillText, selected && styles.permissionPillTextSelected]}>
-                                {option.label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                      <Text style={styles.permissionPillSummary}>
-                        {CHILD_PROFILE_OPTIONS.find((option) => option.id === childPermissionProfile)?.summary
-                          || CHILD_PROFILE_OPTIONS[0]?.summary
-                          || ''}
-                      </Text>
-                    </View>
-                  ) : null}
                 </View>
                 </>
               ) : null}

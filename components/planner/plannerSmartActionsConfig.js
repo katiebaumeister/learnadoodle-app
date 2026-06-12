@@ -30,6 +30,7 @@ export const PLANNER_SMART_ACTION_SECTIONS = [
 
 export const PLANNER_SMART_ACTION_TOOLS = [
   { id: 'bulk-attendance', title: 'Bulk Attendance' },
+  { id: 'export-attendance', title: 'Export Attendance' },
 ];
 
 export const PLANNER_SMART_ACTION_UTILITIES = [

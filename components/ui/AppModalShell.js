@@ -29,6 +29,12 @@ export default function AppModalShell({
         contentContainerStyle: styles.scrollContent,
         showsVerticalScrollIndicator: false,
       };
+  const bodyStyles = [
+    styles.body,
+    disableShellScroll && styles.bodyNoOuterScroll,
+    contentContainerStyle,
+    bodyStyle,
+  ];
   return (
     <View style={[styles.modal, shellStyle]}>
       <ShellScroller {...shellScrollerProps}>
@@ -46,7 +52,7 @@ export default function AppModalShell({
           </TouchableOpacity>
         </View>
 
-        <View style={[styles.body, contentContainerStyle, bodyStyle]}>{children}</View>
+        <View style={bodyStyles}>{children}</View>
       </ShellScroller>
 
       {footer ? <View style={[styles.footer, footerStyle]}>{footer}</View> : null}
@@ -67,6 +73,10 @@ const styles = StyleSheet.create({
     shadowRadius: 28,
     shadowOffset: { width: 0, height: 12 },
     elevation: 10,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
   },
   scroll: {
     flex: 1,
@@ -75,8 +85,21 @@ const styles = StyleSheet.create({
     paddingBottom: 0,
   },
   scrollContentNoScroll: {
-    flexGrow: 0,
-    flexShrink: 0,
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  bodyNoOuterScroll: {
+    flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+    }),
   },
   titleRow: {
     flexDirection: 'row',

@@ -1850,25 +1850,29 @@ export default function PlannerSettingsContent({
   }, [persist, onRequestClose, readOnly]);
 
   const handleRequestClose = handleDiscardAndClose;
+  const lastEmbeddedFooterStateRef = useRef({ saving: null, readOnly: null });
+  const handleModalSaveRef = useRef(handleModalSave);
+  const handleDiscardAndCloseRef = useRef(handleDiscardAndClose);
+  handleModalSaveRef.current = handleModalSave;
+  handleDiscardAndCloseRef.current = handleDiscardAndClose;
 
   useEffect(() => {
     if (!(embeddedInModal && hideEmbeddedHeader) || typeof onEmbeddedModalActionsReady !== 'function') return undefined;
     onEmbeddedModalActionsReady({
-      handleSave: handleModalSave,
-      handleCancel: handleDiscardAndClose,
+      handleSave: (...args) => handleModalSaveRef.current?.(...args),
+      handleCancel: (...args) => handleDiscardAndCloseRef.current?.(...args),
     });
-  }, [
-    embeddedInModal,
-    hideEmbeddedHeader,
-    onEmbeddedModalActionsReady,
-    handleModalSave,
-    handleDiscardAndClose,
-  ]);
+  }, [embeddedInModal, hideEmbeddedHeader, onEmbeddedModalActionsReady]);
 
   useEffect(() => {
     if (!(embeddedInModal && hideEmbeddedHeader) || typeof onEmbeddedModalFooterStateChange !== 'function') {
       return undefined;
     }
+    const last = lastEmbeddedFooterStateRef.current;
+    if (last.saving === saving && last.readOnly === readOnly) {
+      return undefined;
+    }
+    lastEmbeddedFooterStateRef.current = { saving, readOnly };
     onEmbeddedModalFooterStateChange({ saving, readOnly });
   }, [embeddedInModal, hideEmbeddedHeader, onEmbeddedModalFooterStateChange, saving, readOnly]);
 
@@ -2291,7 +2295,10 @@ export default function PlannerSettingsContent({
 
   return (
     <ScrollView
-      style={{ flex: 1, minHeight: 0 }}
+      style={[
+        { flex: 1, minHeight: 0 },
+        embeddedInModal && hideEmbeddedHeader && Platform.OS === 'web' && { height: '100%' },
+      ]}
       contentContainerStyle={{
         paddingBottom: embeddedInModal ? 32 : 32,
         paddingHorizontal: embeddedInModal ? (hideEmbeddedHeader ? 0 : 26) : 0,

@@ -140,6 +140,7 @@ function shiftSchoolYearLabel(schoolYearLabel, direction) {
 
 const ALL_YEARS_FILTER = 'all_years';
 const ALL_TERMS_FILTER = 'all_terms';
+const EMPTY_SUBJECTS_LIST = Object.freeze([]);
 const SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY = 'ld_pending_subject_schedule_plan_open';
 const SUBJECTS_PENDING_SCHEDULE_MODAL_OPEN_STORAGE_KEY = 'ld_pending_subject_schedule_modal_open';
 
@@ -267,17 +268,21 @@ export default function SubjectsPage({
   );
   
   const [subjects, setSubjects] = useState(preloadedSubjects || []);
+  const familyModalSubjects = useMemo(
+    () => fullSubjects || subjects || preloadedSubjects || EMPTY_SUBJECTS_LIST,
+    [fullSubjects, subjects, preloadedSubjects]
+  );
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   // Auto-set child filter for child/student role
   const [selectedChildFilter, setSelectedChildFilter] = useState(() => {
     if (isChildView && childId) return childId;
-    if (safeChildren.length > 0) return safeChildren[0].id;
     return 'all';
   });
+  const [allChildrenFilterActive, setAllChildrenFilterActive] = useState(true);
   const [selectedCourseChildIds, setSelectedCourseChildIds] = useState(() => {
     if (isChildView && childId) return [String(childId)];
-    return (safeChildren || []).map((child) => String(child?.id || '')).filter(Boolean);
+    return [];
   });
   const [selectedModeFilter, setSelectedModeFilter] = useState(() => {
     if (forcedModeFilter) return forcedModeFilter;
@@ -426,6 +431,7 @@ export default function SubjectsPage({
   const effectiveCoursesChildIds = useMemo(() => {
     if (isChildView && childId) return [String(childId)];
     if (!allCourseChildIds.length) return [];
+    if (allChildrenFilterActive) return allCourseChildIds;
     const selectedSet = new Set(
       (Array.isArray(selectedCourseChildIds) ? selectedCourseChildIds : [])
         .map((id) => String(id || '').trim())
@@ -433,7 +439,7 @@ export default function SubjectsPage({
     );
     const validSelected = allCourseChildIds.filter((id) => selectedSet.has(id));
     return validSelected.length > 0 ? validSelected : allCourseChildIds;
-  }, [isChildView, childId, allCourseChildIds, selectedCourseChildIds]);
+  }, [isChildView, childId, allCourseChildIds, selectedCourseChildIds, allChildrenFilterActive]);
 
   useEffect(() => {
     if ((subjectsExportType === 'schedule' || subjectsExportType === 'schedule_tables') && subjectsExportFormat !== 'excel' && subjectsExportFormat !== 'pdf') {
@@ -564,10 +570,15 @@ export default function SubjectsPage({
   useEffect(() => {
     if (isChildView && childId) {
       setSelectedCourseChildIds([String(childId)]);
+      setAllChildrenFilterActive(false);
       return;
     }
     if (!allCourseChildIds.length) {
       setSelectedCourseChildIds([]);
+      return;
+    }
+    if (allChildrenFilterActive) {
+      setSelectedCourseChildIds((prev) => (Array.isArray(prev) && prev.length === 0 ? prev : []));
       return;
     }
     setSelectedCourseChildIds((prev) => {
@@ -575,15 +586,24 @@ export default function SubjectsPage({
         (Array.isArray(prev) ? prev : []).map((id) => String(id || '').trim()).filter(Boolean)
       );
       const validSelected = allCourseChildIds.filter((id) => selectedSet.has(id));
-      return validSelected.length > 0 ? validSelected : allCourseChildIds;
+      return validSelected.length > 0 ? validSelected : [];
     });
-  }, [isChildView, childId, allCourseChildIds]);
+  }, [isChildView, childId, allCourseChildIds, allChildrenFilterActive]);
+
+  useEffect(() => {
+    if (isChildView || allChildrenFilterActive) return;
+    if (!selectedCourseChildIds.length) {
+      setAllChildrenFilterActive(true);
+    }
+  }, [isChildView, allChildrenFilterActive, selectedCourseChildIds.length]);
+
   useEffect(() => {
     if (isChildView) return;
     if (!Array.isArray(safeChildren) || safeChildren.length === 0) return;
+    if (selectedChildFilter === 'all') return;
     const currentIsValid = safeChildren.some((child) => String(child?.id) === String(selectedChildFilter));
     if (!currentIsValid) {
-      setSelectedChildFilter(safeChildren[0].id);
+      setSelectedChildFilter('all');
     }
   }, [isChildView, safeChildren, selectedChildFilter]);
 
@@ -987,20 +1007,21 @@ export default function SubjectsPage({
     selectedYearFilter,
   ]);
 
-  const toggleCourseChildFilter = useCallback((nextChildId) => {
+  const selectAllChildrenFilter = useCallback(() => {
+    setAllChildrenFilterActive(true);
+    setSelectedCourseChildIds([]);
+  }, []);
+
+  const handleCourseChildChipPress = useCallback((nextChildId) => {
     const safeId = String(nextChildId || '').trim();
     if (!safeId || isChildView) return;
-    setSelectedCourseChildIds((prev) => {
-      const current = Array.isArray(prev)
-        ? prev.map((id) => String(id || '').trim()).filter(Boolean)
-        : [];
-      const exists = current.includes(safeId);
-      if (exists) {
-        return current.length <= 1 ? current : current.filter((id) => id !== safeId);
-      }
-      return [...current, safeId];
-    });
-  }, [isChildView]);
+    if (!allChildrenFilterActive && effectiveCoursesChildIds.includes(safeId)) {
+      selectAllChildrenFilter();
+      return;
+    }
+    setAllChildrenFilterActive(false);
+    setSelectedCourseChildIds([safeId]);
+  }, [isChildView, allChildrenFilterActive, effectiveCoursesChildIds, selectAllChildrenFilter]);
 
   const allCourseSubjectIds = useMemo(
     () =>
@@ -1665,10 +1686,37 @@ export default function SubjectsPage({
             </View>
             <View style={styles.filterChipsWrap}>
               <View style={styles.filterChecklist}>
+              <TouchableOpacity
+                style={[
+                  styles.filterOptionChip,
+                  (selectedModeFilter === 'view'
+                    ? allChildrenFilterActive
+                    : selectedChildFilter === 'all') && styles.filterOptionChipActive,
+                ]}
+                onPress={() => {
+                  if (selectedModeFilter === 'view') {
+                    selectAllChildrenFilter();
+                    return;
+                  }
+                  setSelectedChildFilter('all');
+                }}
+              >
+                <Text
+                  style={[
+                    styles.filterOptionChipText,
+                    (selectedModeFilter === 'view'
+                      ? allChildrenFilterActive
+                      : selectedChildFilter === 'all') && styles.filterOptionChipTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  All children
+                </Text>
+              </TouchableOpacity>
               {safeChildren.map((child) => {
                 const childIdString = String(child.id);
                 const isActive = selectedModeFilter === 'view'
-                  ? effectiveCoursesChildIds.includes(childIdString)
+                  ? !allChildrenFilterActive && effectiveCoursesChildIds.includes(childIdString)
                   : String(selectedChildFilter) === childIdString;
                 return (
                   <TouchableOpacity
@@ -1679,7 +1727,7 @@ export default function SubjectsPage({
                     ]}
                     onPress={() => {
                       if (selectedModeFilter === 'view') {
-                        toggleCourseChildFilter(child.id);
+                        handleCourseChildChipPress(child.id);
                         return;
                       }
                       setSelectedChildFilter(child.id);
@@ -1830,8 +1878,10 @@ export default function SubjectsPage({
   }, [
     showInlineChildrenFilters,
     selectedModeFilter,
+    allChildrenFilterActive,
     effectiveCoursesChildIds,
-    toggleCourseChildFilter,
+    selectAllChildrenFilter,
+    handleCourseChildChipPress,
     selectedChildFilter,
     safeChildren,
     registeredTerms,
@@ -2707,9 +2757,11 @@ export default function SubjectsPage({
     </Modal>
   );
 
-  const renderPlanningPreferencesModal = () => (
+  const renderPlanningPreferencesModal = () => {
+    if (!showPlanningPreferencesModal) return null;
+    return (
     <Modal
-      visible={showPlanningPreferencesModal}
+      visible
       transparent
       animationType="fade"
       onRequestClose={requestPlanningPreferencesClose}
@@ -2734,7 +2786,7 @@ export default function SubjectsPage({
             bodyStyle={[styles.learnadoodleModalBody, styles.learnadoodleModalScrollBody]}
             contentContainerStyle={styles.learnadoodleModalBodyContent}
             footerStyle={styles.learnadoodleModalFooter}
-            footer={showPlanningPreferencesModal ? (
+            footer={(
               <ModalFooter
                 mode="edit"
                 compact
@@ -2747,7 +2799,7 @@ export default function SubjectsPage({
                 disabled={planningModalFooterState.saving || planningModalFooterState.readOnly}
                 loading={planningModalFooterState.saving}
               />
-            ) : null}
+            )}
           >
             <PlannerSettingsContent
               familyId={familyId}
@@ -2782,15 +2834,18 @@ export default function SubjectsPage({
         </TouchableOpacity>
       </View>
     </Modal>
-  );
+    );
+  };
 
   const closeFamilyMembersModal = useCallback(() => {
     setShowFamilyMembersModal(false);
   }, []);
 
-  const renderFamilyMembersModal = () => (
+  const renderFamilyMembersModal = () => {
+    if (!showFamilyMembersModal) return null;
+    return (
     <Modal
-      visible={showFamilyMembersModal}
+      visible
       transparent
       animationType="fade"
       onRequestClose={closeFamilyMembersModal}
@@ -2812,7 +2867,7 @@ export default function SubjectsPage({
             disableShellScroll
             scrollerStyle={styles.learnadoodleModalScroller}
             shellStyle={styles.learnadoodleModalShellWide}
-            bodyStyle={styles.learnadoodleModalBody}
+            bodyStyle={[styles.learnadoodleModalBody, styles.learnadoodleModalScrollBody]}
             contentContainerStyle={styles.learnadoodleModalBodyContent}
           >
             <ScrollView
@@ -2827,19 +2882,19 @@ export default function SubjectsPage({
                 familyId={familyId}
                 onFamilyUpdate={onFamilyUpdate}
                 profile={profile}
-                preloadedSubjects={fullSubjects || subjects || preloadedSubjects || []}
+                preloadedSubjects={familyModalSubjects}
                 userRole={userRole}
                 initialSection="members"
                 hideInternalSidebar
                 embeddedInModal
-                onEditChild={onEditChild}
               />
             </ScrollView>
           </AppModalShell>
         </TouchableOpacity>
       </View>
     </Modal>
-  );
+    );
+  };
 
   // If a subject is selected, show detail view
   if (selectedSubjectId) {
@@ -3797,6 +3852,14 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 8,
   },
+  learnadoodleModalBodyNatural: {
+    flex: 0,
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    paddingTop: 0,
+    paddingBottom: 8,
+  },
   learnadoodleModalBodyContent: {
     flex: 1,
     minHeight: 0,
@@ -3811,6 +3874,7 @@ const styles = StyleSheet.create({
     minHeight: 0,
   },
   learnadoodleModalInnerScrollContent: {
+    flexGrow: 1,
     paddingBottom: 24,
   },
   learnadoodleModalFooter: {

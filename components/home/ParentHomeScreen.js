@@ -766,12 +766,14 @@ export default function ParentHomeScreen({
     <View style={styles.greetingContainer}>
       <View style={styles.greetingInner}>
         <View style={styles.greetingCopy}>
-          <Text style={styles.greetingTitle}>
-            {getTimeBasedGreeting()}
-            {viewerFirstName ? `, ${viewerFirstName}` : ''}.
-          </Text>
-          <Text style={styles.greetingSubtitle}>Let's see where learning takes us today.</Text>
-          <Text style={styles.greetingDateLine}>{formatGreetingDateInline(new Date())}</Text>
+          <View style={styles.greetingTitleRow}>
+            <Text style={styles.greetingTitle}>
+              {getTimeBasedGreeting()}
+              {viewerFirstName ? `, ${viewerFirstName}` : ''}
+            </Text>
+            <Text style={styles.greetingDateLine}>{formatGreetingDateInline(new Date())}</Text>
+          </View>
+          <Text style={styles.greetingSubtitle}>Let's see where learning takes us today</Text>
         </View>
       </View>
     </View>
@@ -866,8 +868,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(99, 102, 241, 0.12)',
     backgroundColor: colors.bgSubtle,
-    minHeight: 110,
-    paddingVertical: 22,
+    minHeight: 92,
+    paddingVertical: 18,
     paddingHorizontal: 24,
     overflow: 'hidden',
     ...(Platform.OS === 'web' && {
@@ -877,18 +879,26 @@ const styles = StyleSheet.create({
   },
   greetingInner: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: 16,
-    minHeight: 88,
   },
   greetingCopy: {
     flex: 1,
     justifyContent: 'center',
-    gap: 6,
+    gap: 4,
     minWidth: 0,
   },
+  greetingTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+    width: '100%',
+  },
   greetingTitle: {
+    flex: 1,
+    minWidth: 0,
     fontSize: 30,
     fontWeight: '700',
     color: '#0f172a',
@@ -908,11 +918,12 @@ const styles = StyleSheet.create({
     }),
   },
   greetingDateLine: {
+    flexShrink: 0,
     fontSize: 14,
     fontWeight: '500',
     color: '#64748b',
     lineHeight: 20,
-    marginTop: 2,
+    textAlign: 'right',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

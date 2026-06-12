@@ -275,54 +275,6 @@ function AttendanceYearHeatmapFull({ attendanceRecords = [], subjectEvents = [],
 
   return (
     <View style={styles.subjectHeatmapWrap}>
-      <View style={styles.yearAtGlanceHeaderRow}>
-        <Text style={[styles.attendanceDrilldownTitle, styles.yearAtGlanceTitle]}>Year at a glance</Text>
-      </View>
-      <View style={styles.yearAtGlanceRangeRow}>
-        <View style={styles.subjectRangeActionsWrap}>
-          <View style={styles.subjectRangeRowWrap}>
-            <Text style={styles.subjectRangeRowLabel}>Attendance range</Text>
-            <View style={styles.subjectRangeDateWrap}>
-              <TouchableOpacity
-                onPress={() => handleShiftStart(-1)}
-                disabled={!yearStartKey || !yearEndKey}
-                {...(Platform.OS === 'web' && { cursor: yearStartKey && yearEndKey ? 'pointer' : 'default' })}
-              >
-                <ChevronLeft size={14} color={TOKENS.textMuted} />
-              </TouchableOpacity>
-              <Text style={styles.subjectRangeDate}>{formatDateDisplay(yearStartKey)}</Text>
-              <TouchableOpacity
-                onPress={() => handleShiftStart(1)}
-                disabled={!yearStartKey || !yearEndKey}
-                {...(Platform.OS === 'web' && { cursor: yearStartKey && yearEndKey ? 'pointer' : 'default' })}
-              >
-                <ChevronRight size={14} color={TOKENS.textMuted} />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.subjectRangeArrow}>→</Text>
-            <View style={styles.subjectRangeDateWrap}>
-              <TouchableOpacity
-                onPress={() => handleShiftEnd(-1)}
-                disabled={!yearStartKey || !yearEndKey}
-                {...(Platform.OS === 'web' && { cursor: yearStartKey && yearEndKey ? 'pointer' : 'default' })}
-              >
-                <ChevronLeft size={14} color={TOKENS.textMuted} />
-              </TouchableOpacity>
-              <Text style={styles.subjectRangeDate}>{formatDateDisplay(yearEndKey)}</Text>
-              <TouchableOpacity
-                onPress={() => handleShiftEnd(1)}
-                disabled={!yearStartKey || !yearEndKey}
-                {...(Platform.OS === 'web' && { cursor: yearStartKey && yearEndKey ? 'pointer' : 'default' })}
-              >
-                <ChevronRight size={14} color={TOKENS.textMuted} />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </View>
-      <Text style={styles.subjectHeatmapHelpText}>
-        Click a cell to mark that day as attended or unattended. For courses shared with multiple children, marking attended marks attendance for all of them. Scroll left and right for other months.
-      </Text>
       <ScrollView
         horizontal
         style={styles.subjectHeatmapScroll}

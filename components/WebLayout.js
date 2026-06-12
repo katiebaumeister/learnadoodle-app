@@ -11,7 +11,7 @@ if (Platform.OS === 'web' && typeof window !== 'undefined') {
   }
 }
 import { addMonths, addDays, addWeeks, startOfWeek } from './planner/utils/date';
-import { formatPlannerYearHeaderLabel, shiftPlannerYearAnchor } from './planner/plannerYearRange';
+import { shiftCalendarYearAnchor } from './planner/plannerYearRange';
 import { formatPlannerWeekHeaderLabel } from './planner/plannerSectionRouting';
 import { X, Filter, Check, SlidersHorizontal, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, BookOpen, RefreshCw, Plus, LayoutGrid, Clock, Kanban, CheckSquare, Sparkles, RotateCcw, Target, Package, BarChart3, FileText, Activity, Star, Link, AlertTriangle, ExternalLink, Bot } from 'lucide-react';
 import { sourceForChild } from './ui/ChildAvatarCluster';
@@ -2559,6 +2559,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
           break;
         }
+        case 'export-attendance': {
+          setActiveRightTool(null);
+          setCurrentView('year');
+          setDefaultView('year');
+          if (Platform.OS === 'web') {
+            const url = new URL(window.location);
+            url.searchParams.set('view', 'year');
+            window.history.pushState({}, '', url);
+            window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'year' }));
+            window.setTimeout(() => {
+              window.dispatchEvent(new CustomEvent('openPlannerExportAttendance'));
+            }, 150);
+          }
+          break;
+        }
         case 'export':
           openPlannerExportModal();
           break;
@@ -3554,16 +3569,15 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
               {/* Single Row: All Controls */}
               <View style={{ 
                 flexDirection: 'row', 
-                alignItems: 'center', 
-                justifyContent: 'space-between',
+                alignItems: 'center',
               }}>
                 {/* Left: Date & Term/School Year */}
                 <View style={{ 
                   flexDirection: 'row', 
                   alignItems: 'center',
                   gap: 8,
-                  maxWidth: '100%',
-                  flexShrink: 0,
+                  flex: 1,
+                  minWidth: 0,
                 }}>
                   {currentView !== 'tasks' ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -3575,7 +3589,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         } else if (currentView === 'week' || currentView === 'Week') {
                           newDate = addWeeks(currentMonth, -1);
                         } else if (currentView === 'year') {
-                          newDate = shiftPlannerYearAnchor(currentMonth, -1, preloadedAcademicYears);
+                          newDate = shiftCalendarYearAnchor(currentMonth, -1);
                         } else {
                           const newMonth = addMonths(currentMonth, -1);
                           newDate = new Date(newMonth.getFullYear(), newMonth.getMonth(), 1);
@@ -3600,7 +3614,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         } else if (currentView === 'week' || currentView === 'Week') {
                           newDate = addWeeks(currentMonth, 1);
                         } else if (currentView === 'year') {
-                          newDate = shiftPlannerYearAnchor(currentMonth, 1, preloadedAcademicYears);
+                          newDate = shiftCalendarYearAnchor(currentMonth, 1);
                         } else {
                           const newMonth = addMonths(currentMonth, 1);
                           newDate = new Date(newMonth.getFullYear(), newMonth.getMonth(), 1);
@@ -3621,17 +3635,22 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   ) : null}
 
                   {currentView === 'tasks' ? (
-                    <Text style={{
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      style={{
                       fontSize: 26,
                       color: '#1E293B',
                       fontWeight: '600',
                       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      flexShrink: 1,
                     }}>
                       All Events
                     </Text>
                   ) : (
                   <TouchableOpacity
                     activeOpacity={0.8}
+                    style={{ flexShrink: 1, minWidth: 0, maxWidth: '100%' }}
                     onPress={() => {
                       if (currentView === 'month' || currentView === 'week' || currentView === 'board' || currentView === 'year') {
                         const today = new Date();
@@ -3642,14 +3661,18 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                       }
                     }}
                   >
-                    <Text style={{
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      style={{
                       fontSize: 26,
                       color: '#1E293B',
                       fontWeight: '600',
                       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      flexShrink: 1,
                     }}>
                       {currentView === 'year'
-                        ? formatPlannerYearHeaderLabel(currentMonth, preloadedAcademicYears)
+                        ? String(currentMonth.getFullYear())
                         : (currentView === 'board' || currentView === 'week')
                           ? formatPlannerWeekHeaderLabel(currentMonth)
                           : currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
@@ -3658,14 +3681,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   )}
                 </View>
                 
-                {/* Center: View State Controls (View Mode chips) */}
+                {/* Center: View State Controls (View Mode chips) — fixed true center via balanced side columns */}
                 <View 
                   style={{ 
                     flexDirection: 'row', 
                     alignItems: 'center', 
                     gap: 8,
-                    flex: 1,
-                    justifyContent: 'center',
+                    flexShrink: 0,
                   }}
                 >
                   {/* Planner Settings popover - mini Planning Preferences */}
@@ -3774,7 +3796,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   flexDirection: 'row',
                   alignItems: 'center',
                   gap: 12,
-                  flexShrink: 0,
+                  flex: 1,
+                  minWidth: 0,
+                  justifyContent: 'flex-end',
                 }}>
                   {children && children.length > 1 && showFiltersDropdown && Platform.OS === 'web' && (
                     <View

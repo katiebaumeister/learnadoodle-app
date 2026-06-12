@@ -32,18 +32,31 @@ import { updateEventStatus } from '../../../lib/services/attendanceClient';
 import { getAttendanceMode, isClassDayMode } from '../../../lib/attendanceMode';
 import { trackEvent } from '../../../lib/analytics';
 import HeaderSummaryStrip from './HeaderSummaryStrip';
-import YearHeatmapGrid from './YearHeatmapGrid';
+import YearHeatmapGrid, { YearHeatmapLegend } from './YearHeatmapGrid';
 import MonthlyCalendarView from './MonthlyCalendarView';
 import DayEventsPanel from './DayEventsPanel';
 import AttendanceExportModal from './AttendanceExportModal';
 import { useToast } from '../../Toast';
 import { TOKENS } from './constants';
-import { resolvePlannerYearRange } from '../plannerYearRange';
+import { resolveCalendarYearRange } from '../plannerYearRange';
 
 const REQUIRED_DAYS_DEFAULT = 180;
 const REQUIRED_HOURS_DEFAULT = 1000;
 /** Minutes logged when marking a day present with no scheduled events (matches assistant quick-mark default). */
 const STANDALONE_DAY_ATTENDANCE_MINUTES = 300;
+const FAMILY_HEATMAP_CHILD_ID = '__family__';
+const YEAR_PLANNER_MODE_ATTENDANCE = 'attendance';
+const YEAR_PLANNER_MODE_EVENTS = 'events';
+const YEAR_PLANNER_MODE_COPY = {
+  [YEAR_PLANNER_MODE_ATTENDANCE]: {
+    label: 'Attendance check',
+    help: 'Click a day to mark it attended or unattended. You can mark days with no scheduled lessons. Shared lessons mark all filtered children attended; unmarking affects only the selected child.',
+  },
+  [YEAR_PLANNER_MODE_EVENTS]: {
+    label: 'View events',
+    help: 'Click a day to open that day’s lessons. Use the circle on each event to mark it attended or unattended. Only instructional-time events count toward attendance.',
+  },
+};
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /** Allowed attendance range: full year before through full year after current year. */
@@ -145,6 +158,7 @@ export default function AttendanceView({
   layoutMode = 'default',
   plannerYearAnchor = null,
   academicYears = null,
+  plannerChildFilterIds = null,
   renderBelowToolbar = null,
   readOnly = false,
 }) {
@@ -166,6 +180,8 @@ export default function AttendanceView({
   const [markingRangeAttended, setMarkingRangeAttended] = useState(false);
   const [confirmRangeVisible, setConfirmRangeVisible] = useState(false);
   const [selectedHeatmapChildId, setSelectedHeatmapChildId] = useState(null);
+  const [yearPlannerInteractionMode, setYearPlannerInteractionMode] = useState(YEAR_PLANNER_MODE_ATTENDANCE);
+  const [yearPlannerDayPanelVisible, setYearPlannerDayPanelVisible] = useState(false);
 
   const toast = useToast();
   const familyIdResolved = familyId || eventsProp[0]?.family_id || eventsProp[0]?.familyId;
@@ -267,24 +283,15 @@ export default function AttendanceView({
   }, [familyIdResolved, plannerInitialSnapshot, isYearPlannerLayout]);
 
   useEffect(() => {
-    if (!isYearPlannerLayout || !plannerYearAnchor) return;
-    const { yearStart, yearEnd } = resolvePlannerYearRange(plannerYearAnchor, academicYears);
-    if (!yearStart || !yearEnd) return;
+    if (!isYearPlannerLayout || !plannerYearAnchor || !familyIdResolved) return;
+    const { yearStart, yearEnd } = resolveCalendarYearRange(plannerYearAnchor);
     setYearRange({
       start: dateStringToDate(yearStart),
       end: dateStringToDate(yearEnd),
     });
-    if (Array.isArray(academicYears) && academicYears.length > 0) {
-      const match = academicYears.find((year) => {
-        const start = String(year?.start_date || '').slice(0, 10);
-        const end = String(year?.end_date || '').slice(0, 10);
-        return start === yearStart && end === yearEnd;
-      });
-      if (match) setAcademicYear(match);
-    }
     setRangeReady(true);
     setLoading(false);
-  }, [isYearPlannerLayout, plannerYearAnchor, academicYears]);
+  }, [isYearPlannerLayout, plannerYearAnchor, familyIdResolved]);
 
   // Fetch attendance and events when year range (or family/children/refresh) changes.
   const yearStartKey = yearRange.start ? toLocalYYYYMMDD(yearRange.start) : '';
@@ -412,6 +419,80 @@ export default function AttendanceView({
     return byChild;
   }, [children, yearRange, eventsByDateChild, attendanceRecords]);
 
+  const visibleHeatmapChildren = useMemo(() => {
+    if (!isYearPlannerLayout) return children;
+    if (!Array.isArray(plannerChildFilterIds) || plannerChildFilterIds.length === 0) {
+      return children;
+    }
+    const idSet = new Set(plannerChildFilterIds.map(String));
+    return children.filter((child) => idSet.has(String(child?.id)));
+  }, [children, isYearPlannerLayout, plannerChildFilterIds]);
+
+  const heatmapSelectedChildId = useMemo(() => {
+    if (!isYearPlannerLayout) return selectedHeatmapChildId;
+    if (visibleHeatmapChildren.length === 1) return visibleHeatmapChildren[0]?.id ?? null;
+    if (visibleHeatmapChildren.length === 0) return null;
+    return FAMILY_HEATMAP_CHILD_ID;
+  }, [isYearPlannerLayout, selectedHeatmapChildId, visibleHeatmapChildren]);
+
+  const heatmapDayStatusByChild = useMemo(() => {
+    if (heatmapSelectedChildId !== FAMILY_HEATMAP_CHILD_ID) return dayStatusByChild;
+    const familyStatus = {};
+    const childIds = visibleHeatmapChildren.map((child) => child.id).filter(Boolean);
+    const endStr = yearRange.end ? toLocalYYYYMMDD(yearRange.end) : '';
+    for (let i = 0; i < 400; i += 1) {
+      const d = new Date(yearRange.start);
+      d.setDate(d.getDate() + i);
+      const key = toLocalYYYYMMDD(d);
+      if (endStr && key > endStr) break;
+      const statuses = childIds.map((id) => dayStatusByChild[id]?.[key] || 'noEvents');
+      if (statuses.every((status) => status === 'noEvents')) {
+        familyStatus[key] = 'noEvents';
+      } else if (statuses.some((status) => status === 'present')) {
+        familyStatus[key] = 'present';
+      } else if (statuses.some((status) => status === 'unmarked')) {
+        familyStatus[key] = 'unmarked';
+      } else if (statuses.some((status) => status === 'absent')) {
+        familyStatus[key] = 'absent';
+      } else {
+        familyStatus[key] = 'noEvents';
+      }
+    }
+    return { [FAMILY_HEATMAP_CHILD_ID]: familyStatus };
+  }, [dayStatusByChild, heatmapSelectedChildId, visibleHeatmapChildren, yearRange]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
+    const handler = () => {
+      if (!isYearPlannerLayout || children.length === 0) return;
+      if (
+        heatmapSelectedChildId
+        && heatmapSelectedChildId !== FAMILY_HEATMAP_CHILD_ID
+      ) {
+        setExportModalChildId(heatmapSelectedChildId);
+      } else {
+        setExportModalChildId(null);
+      }
+      setExportModalVisible(true);
+    };
+    window.addEventListener('openPlannerExportAttendance', handler);
+    return () => window.removeEventListener('openPlannerExportAttendance', handler);
+  }, [isYearPlannerLayout, children.length, heatmapSelectedChildId]);
+
+  useEffect(() => {
+    if (yearPlannerInteractionMode !== YEAR_PLANNER_MODE_EVENTS) {
+      setYearPlannerDayPanelVisible(false);
+    }
+  }, [yearPlannerInteractionMode]);
+
+  const yearPlannerDayChildId = useMemo(() => {
+    if (!isYearPlannerLayout) return null;
+    if (heatmapSelectedChildId && heatmapSelectedChildId !== FAMILY_HEATMAP_CHILD_ID) {
+      return heatmapSelectedChildId;
+    }
+    return null;
+  }, [isYearPlannerLayout, heatmapSelectedChildId]);
+
   const summaryPerChild = useMemo(() => {
     return children.map((c) => {
       const daysSet = new Set();
@@ -441,6 +522,7 @@ export default function AttendanceView({
   }, [children, attendanceRecords, academicYear]);
 
   useEffect(() => {
+    if (isYearPlannerLayout) return;
     if (children.length === 0) {
       setSelectedHeatmapChildId(null);
       return;
@@ -449,7 +531,7 @@ export default function AttendanceView({
       if (prev && children.some((c) => c.id === prev)) return prev;
       return children[0]?.id ?? null;
     });
-  }, [children]);
+  }, [children, isYearPlannerLayout]);
 
   const exceptions = useMemo(() => {
     const list = [];
@@ -538,6 +620,8 @@ export default function AttendanceView({
     });
   }, [children, attendanceRecords, academicYear, yearRange]);
 
+  const exportModalChildren = isYearPlannerLayout ? visibleHeatmapChildren : children;
+
   const exportRows = useMemo(() => {
     const startStr = yearRange.start.toISOString().split('T')[0];
     const endStr = yearRange.end.toISOString().split('T')[0];
@@ -562,6 +646,7 @@ export default function AttendanceView({
 
   const selectedDayEvents = useMemo(() => {
     if (!selectedDay.dateKey) return [];
+    const scopeChildren = isYearPlannerLayout ? visibleHeatmapChildren : children;
     if (selectedDay.childId != null) {
       return eventsByDateChild[selectedDay.dateKey]?.[selectedDay.childId] || [];
     }
@@ -569,7 +654,7 @@ export default function AttendanceView({
     if (!byChild) return [];
     const seen = new Set();
     const list = [];
-    children.forEach((c) => {
+    scopeChildren.forEach((c) => {
       (byChild[c.id] || []).forEach((e) => {
         if (!seen.has(e.id)) {
           seen.add(e.id);
@@ -578,12 +663,30 @@ export default function AttendanceView({
       });
     });
     return list.sort((a, b) => (a.start_ts || a.start || '').localeCompare(b.start_ts || b.start || ''));
-  }, [selectedDay.dateKey, selectedDay.childId, eventsByDateChild, children]);
+  }, [selectedDay.dateKey, selectedDay.childId, eventsByDateChild, children, isYearPlannerLayout, visibleHeatmapChildren]);
   const selectedDayChild = selectedDay.childId != null ? children.find((c) => c.id === selectedDay.childId) : null;
+
+  const yearPlannerDayPanelChildName = useMemo(() => {
+    if (yearPlannerDayChildId) {
+      const child = children.find((c) => c.id === yearPlannerDayChildId);
+      return child?.first_name || child?.name || 'Child';
+    }
+    if (visibleHeatmapChildren.length === children.length) return 'All children';
+    if (visibleHeatmapChildren.length === 1) {
+      const child = visibleHeatmapChildren[0];
+      return child?.first_name || child?.name || 'Child';
+    }
+    return `${visibleHeatmapChildren.length} children`;
+  }, [yearPlannerDayChildId, visibleHeatmapChildren, children.length, children]);
 
   const handleDayPress = useCallback((dateKey, childId) => {
     setSelectedDay({ dateKey, childId: childId !== undefined ? childId : null });
   }, []);
+
+  const handleYearPlannerDayPress = useCallback((dateKey) => {
+    setSelectedDay({ dateKey, childId: yearPlannerDayChildId });
+    setYearPlannerDayPanelVisible(true);
+  }, [yearPlannerDayChildId]);
 
   const getEventMinutes = useCallback((e) => {
     if (e.duration_minutes != null) return e.duration_minutes;
@@ -922,10 +1025,20 @@ export default function AttendanceView({
     }
   }, [familyIdResolved, eventsByDateChild, events, attendanceRecords, getEventMinutes, getChildIdsForEvent, getSiblingEventsOnDay, toast, attendanceTrackingMode]);
 
+  const handleHeatmapMarkDay = useCallback(async (dateKey, childId) => {
+    if (childId === FAMILY_HEATMAP_CHILD_ID) {
+      await Promise.all(
+        visibleHeatmapChildren.map((child) => handleMarkDayAttended(dateKey, child.id))
+      );
+      return;
+    }
+    return handleMarkDayAttended(dateKey, childId);
+  }, [handleMarkDayAttended, visibleHeatmapChildren]);
+
   const handleMarkAllRangeAttended = useCallback(async ({
     startDate = yearRange.start,
     endDate = yearRange.end,
-    childId = selectedHeatmapChildId,
+    childId = isYearPlannerLayout ? heatmapSelectedChildId : selectedHeatmapChildId,
   } = {}) => {
     if (!familyIdResolved || markingRangeAttended || children.length === 0) return;
     setMarkingRangeAttended(true);
@@ -934,9 +1047,14 @@ export default function AttendanceView({
       const dateKeys = getDateKeysInRange(startDate, endDate);
       if (dateKeys.length === 0) return;
 
-      const childIds = childId
-        ? [String(childId)]
-        : children.map((c) => String(c.id));
+      let childIds;
+      if (childId === FAMILY_HEATMAP_CHILD_ID) {
+        childIds = visibleHeatmapChildren.map((c) => String(c.id));
+      } else if (childId) {
+        childIds = [String(childId)];
+      } else {
+        childIds = children.map((c) => String(c.id));
+      }
       const existingStandaloneByChildDay = new Map();
       const existingByEventChildDay = new Map();
       attendanceRecords.forEach((r) => {
@@ -1038,6 +1156,9 @@ export default function AttendanceView({
     markingRangeAttended,
     children,
     selectedHeatmapChildId,
+    isYearPlannerLayout,
+    heatmapSelectedChildId,
+    visibleHeatmapChildren,
     yearRange.start,
     yearRange.end,
     attendanceRecords,
@@ -1077,14 +1198,16 @@ export default function AttendanceView({
 
   const rangeStartStr = yearRange.start ? toLocalYYYYMMDD(yearRange.start) : '';
   const rangeEndStr = yearRange.end ? toLocalYYYYMMDD(yearRange.end) : '';
-  const selectedBulkChild = children.find((c) => c.id === selectedHeatmapChildId);
-  const selectedBulkChildName = selectedBulkChild?.first_name || selectedBulkChild?.name || 'the selected child';
+  const bulkTargetChildId = isYearPlannerLayout ? heatmapSelectedChildId : selectedHeatmapChildId;
+  const selectedBulkChild = children.find((c) => c.id === bulkTargetChildId);
+  const selectedBulkChildName = bulkTargetChildId === FAMILY_HEATMAP_CHILD_ID
+    ? (visibleHeatmapChildren.length === children.length ? 'all children' : 'the filtered children')
+    : (selectedBulkChild?.first_name || selectedBulkChild?.name || 'the selected child');
 
-  const rangeRow = (
-    <View style={styles.topToolbar}>
-      <View style={styles.rangeRowWrap}>
-        <Text style={styles.rangeRowLabel}>Attendance range</Text>
-        <View style={styles.dateRangeRow}>
+  const attendanceDateRangePicker = (
+    <View style={styles.rangeRowWrap}>
+      <Text style={styles.rangeRowLabel}>Attendance range</Text>
+      <View style={styles.dateRangeRow}>
         <View style={styles.dateRangeSide}>
           <TouchableOpacity
             onPress={() => { if (!rangeStartStr) return; const d = new Date(rangeStartStr + 'T12:00:00'); d.setDate(d.getDate() - 1); setRangeStart(toLocalYYYYMMDD(d)); }}
@@ -1136,8 +1259,13 @@ export default function AttendanceView({
             <ChevronRight size={14} color={rangeEndStr && rangeEndStr !== maxEndKey ? TOKENS.text : TOKENS.textMuted} />
           </TouchableOpacity>
         </View>
-        </View>
       </View>
+    </View>
+  );
+
+  const rangeRow = (
+    <View style={styles.topToolbar}>
+      {attendanceDateRangePicker}
       <View style={styles.childFilterChips}>
         {children.map((child) => {
           const selected = selectedHeatmapChildId === child.id;
@@ -1177,19 +1305,59 @@ export default function AttendanceView({
     </View>
   );
 
+  const yearPlannerRangeRow = (
+    <View style={styles.yearPlannerToolbar}>
+      <View style={styles.yearPlannerTopRow}>
+        <View style={styles.yearPlannerModeSwitch}>
+          {[YEAR_PLANNER_MODE_ATTENDANCE, YEAR_PLANNER_MODE_EVENTS].map((mode) => {
+            const selected = yearPlannerInteractionMode === mode;
+            return (
+              <TouchableOpacity
+                key={mode}
+                style={[styles.yearPlannerModeChip, selected && styles.yearPlannerModeChipSelected]}
+                onPress={() => setYearPlannerInteractionMode(mode)}
+                activeOpacity={0.85}
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Text style={[styles.yearPlannerModeChipText, selected && styles.yearPlannerModeChipTextSelected]}>
+                  {YEAR_PLANNER_MODE_COPY[mode].label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <YearHeatmapLegend style={styles.yearPlannerInlineLegend} />
+      </View>
+      <Text style={styles.yearPlannerModeHelp}>
+        {YEAR_PLANNER_MODE_COPY[yearPlannerInteractionMode].help}
+      </Text>
+    </View>
+  );
+
   const belowToolbarContent = renderBelowToolbar
     ? renderBelowToolbar()
     : (
       <YearHeatmapGrid
         yearStart={yearRange.start.toISOString().slice(0, 10)}
         yearEnd={yearRange.end.toISOString().slice(0, 10)}
-        selectedChildId={selectedHeatmapChildId}
-        dayStatusByChild={dayStatusByChild}
-        onMarkDayAttended={readOnly ? undefined : handleMarkDayAttended}
-        onExport={() => {
-          setExportModalChildId(selectedHeatmapChildId);
-          setExportModalVisible(true);
-        }}
+        selectedChildId={heatmapSelectedChildId}
+        dayStatusByChild={heatmapDayStatusByChild}
+        showLegend={!isYearPlannerLayout}
+        onMarkDayAttended={
+          readOnly
+          || (isYearPlannerLayout && yearPlannerInteractionMode !== YEAR_PLANNER_MODE_ATTENDANCE)
+            ? undefined
+            : handleHeatmapMarkDay
+        }
+        onDayPress={
+          isYearPlannerLayout && yearPlannerInteractionMode === YEAR_PLANNER_MODE_EVENTS
+            ? handleYearPlannerDayPress
+            : null
+        }
+        interactionMode={isYearPlannerLayout ? yearPlannerInteractionMode : YEAR_PLANNER_MODE_ATTENDANCE}
+        selectedDateKey={
+          isYearPlannerLayout && yearPlannerDayPanelVisible ? selectedDay.dateKey : null
+        }
       />
     );
 
@@ -1203,7 +1371,7 @@ export default function AttendanceView({
         <>
           {!isDrilldownMode && (
             <>
-              {rangeRow}
+              {isYearPlannerLayout ? yearPlannerRangeRow : rangeRow}
               {belowToolbarContent}
             </>
           )}
@@ -1258,6 +1426,64 @@ export default function AttendanceView({
         <View style={styles.empty}>
           <Text style={styles.emptyText}>Add children to see attendance.</Text>
         </View>
+      )}
+
+      {yearPlannerDayPanelVisible && isYearPlannerLayout && (
+        <Modal
+          animationType="fade"
+          transparent
+          visible={yearPlannerDayPanelVisible}
+          onRequestClose={() => setYearPlannerDayPanelVisible(false)}
+        >
+          <TouchableOpacity
+            style={styles.confirmOverlay}
+            activeOpacity={1}
+            onPress={() => setYearPlannerDayPanelVisible(false)}
+          >
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+              style={styles.yearPlannerDayModal}
+            >
+              <View style={styles.confirmHeader}>
+                <Text style={styles.confirmTitle}>Day events</Text>
+                <TouchableOpacity
+                  style={styles.confirmCloseBtn}
+                  onPress={() => setYearPlannerDayPanelVisible(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <X size={18} color="#6B7280" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.yearPlannerDayModalBody}>
+              <DayEventsPanel
+                dateLabel={selectedDay.dateKey ? formatDateLabel(selectedDay.dateKey) : null}
+                childName={yearPlannerDayPanelChildName}
+                events={selectedDayEvents}
+                attendanceByEventId={selectedDayAttendanceByEventId}
+                onToggleEventAttendance={readOnly ? undefined : handleToggleEventAttendance}
+                onMarkAllAttended={
+                  readOnly || !selectedDay.dateKey
+                    ? null
+                    : (yearPlannerDayChildId
+                      ? () => handleMarkDayAttended(selectedDay.dateKey, yearPlannerDayChildId)
+                      : async () => {
+                        const withEvents = visibleHeatmapChildren.filter(
+                          (c) => (eventsByDateChild[selectedDay.dateKey]?.[c.id] || []).length > 0
+                        );
+                        await Promise.all(withEvents.map((c) => handleMarkDayAttended(selectedDay.dateKey, c.id)));
+                      })
+                }
+                onEventPress={onEventPress}
+                getEventMinutes={getEventMinutes}
+                compactEventRows
+              />
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
       )}
 
       {showStartDatePicker && (
@@ -1423,7 +1649,7 @@ export default function AttendanceView({
               </TouchableOpacity>
             </View>
             <Text style={styles.confirmBody}>
-              This will mark all days from {rangeStartStr ? formatDateDisplay(rangeStartStr) : 'the start date'} to {rangeEndStr ? formatDateDisplay(rangeEndStr) : 'the end date'} as attended for {selectedHeatmapChildId ? selectedBulkChildName : 'all children'}.
+              This will mark all days from {rangeStartStr ? formatDateDisplay(rangeStartStr) : 'the start date'} to {rangeEndStr ? formatDateDisplay(rangeEndStr) : 'the end date'} as attended for {bulkTargetChildId ? selectedBulkChildName : 'all children'}.
             </Text>
             <View style={styles.confirmActions}>
               <TouchableOpacity
@@ -1458,7 +1684,7 @@ export default function AttendanceView({
           setExportModalChildId(null);
         }}
         exportRows={exportRows}
-        children={children}
+        children={exportModalChildren}
         singleChildId={exportModalChildId}
       />
     </ScrollView>
@@ -1564,6 +1790,69 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 12,
     marginBottom: TOKENS.s4,
+  },
+  yearPlannerToolbar: {
+    gap: 10,
+    marginBottom: TOKENS.s4,
+  },
+  yearPlannerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 16,
+  },
+  yearPlannerInlineLegend: {
+    marginTop: 0,
+    flexShrink: 1,
+  },
+  yearPlannerModeSwitch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    flexShrink: 0,
+    padding: 4,
+    borderRadius: 999,
+    backgroundColor: TOKENS.bgSubtle,
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.06)',
+  },
+  yearPlannerModeChip: {
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+  },
+  yearPlannerModeChipSelected: {
+    backgroundColor: '#FFFFFF',
+    ...(Platform.OS === 'web' && { boxShadow: '0 1px 2px rgba(15, 23, 42, 0.08)' }),
+  },
+  yearPlannerModeChipText: {
+    fontSize: TOKENS.fontSizeCaption,
+    fontWeight: '600',
+    color: TOKENS.textMuted,
+  },
+  yearPlannerModeChipTextSelected: {
+    color: TOKENS.text,
+  },
+  yearPlannerModeHelp: {
+    fontSize: TOKENS.fontSizeCaption,
+    color: TOKENS.textMuted,
+    lineHeight: 18,
+    maxWidth: 760,
+  },
+  yearPlannerDayModal: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '78vh',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    ...(Platform.OS === 'web' && { boxShadow: '0 18px 48px rgba(15, 23, 42, 0.18)' }),
+  },
+  yearPlannerDayModalBody: {
+    maxHeight: 420,
+    minHeight: 120,
+    marginTop: 8,
   },
   childFilterChips: {
     flexDirection: 'row',

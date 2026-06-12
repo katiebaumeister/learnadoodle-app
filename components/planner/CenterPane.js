@@ -404,6 +404,7 @@ export default function CenterPane({
               layoutMode="year-planner"
               plannerYearAnchor={viewDate}
               academicYears={academicYears}
+              plannerChildFilterIds={filters?.childIds || []}
               readOnly={readOnly}
             />
           )}

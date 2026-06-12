@@ -19,6 +19,7 @@ import {
   buildPreviewMapFromUnified,
   formatDmRelativeTime,
   participantKey,
+  queryFamilyDirectMessages,
   sortParticipantsByActivity,
 } from '../../lib/familyDmClient';
 import FamilyDmChat from './FamilyDmChat';
@@ -84,12 +85,7 @@ export default function FamilyMessagesPane({
       });
 
       const [dmResult, assignmentsResult] = await Promise.all([
-        supabase
-          .from('family_direct_messages')
-          .select('id, sender_user_id, recipient_child_id, recipient_user_id, body, created_at, read_at')
-          .eq('family_id', familyId)
-          .order('created_at', { ascending: false })
-          .limit(300),
+        queryFamilyDirectMessages(supabase, { familyId, limit: 300, ascending: false }),
         supabase
           .from('assignments')
           .select(ASSIGNMENT_SELECT)
