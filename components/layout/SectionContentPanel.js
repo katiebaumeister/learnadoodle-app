@@ -68,6 +68,7 @@ export default function SectionContentPanel({
         materialsCache={materialsCache}
         onMaterialsUpdate={onMaterialsUpdate}
         subjectsCallbacks={subjectsCallbacks}
+        onFamilyUpdate={onFamilyUpdate}
         viewingAsChildId={viewingAsChildId}
         onViewAsChild={onViewAsChild}
         onExitChildView={onExitChildView}

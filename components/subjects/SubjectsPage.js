@@ -49,7 +49,13 @@ import {
   dispatchSubjectDeletedSideEffects,
 } from '../../lib/services/deleteSubjectCascade';
 import PlannerSettingsContent from '../settings/PlannerSettingsContent';
+import FamilyPanel from '../settings/FamilyPanel';
+import AppModalShell from '../ui/AppModalShell';
+import { ModalFooter } from '../ui/ModalFooter';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
+
+const PLANNING_PREFERENCES_MODAL_MAX_WIDTH = 740;
+const FAMILY_MODAL_MAX_WIDTH = 920;
 
 const SEARCH_SECTION_KEYWORDS = {
   'attendance-section': ['attendance', 'attended', 'present', 'absent', 'lesson', 'lessons', 'event', 'events'],
@@ -185,6 +191,11 @@ function writeStoredSubjectsMode(storageKey, mode) {
 export default function SubjectsPage({
   familyId,
   planningMode = null,
+  family = null,
+  user = null,
+  profile = null,
+  fullSubjects = null,
+  onFamilyUpdate = null,
   children = [],
   preloadedSubjects = null,
   preloadedSubjectDetailCache = {},
@@ -295,6 +306,12 @@ export default function SubjectsPage({
   const [archiveSubjectTarget, setArchiveSubjectTarget] = useState(null);
   const [archivingSubject, setArchivingSubject] = useState(false);
   const [showPlanningPreferencesModal, setShowPlanningPreferencesModal] = useState(false);
+  const planningModalActionsRef = useRef(null);
+  const [planningModalFooterState, setPlanningModalFooterState] = useState({
+    saving: false,
+    readOnly: false,
+  });
+  const [showFamilyMembersModal, setShowFamilyMembersModal] = useState(false);
   const [planningPreferencesSchoolYearLabel, setPlanningPreferencesSchoolYearLabel] = useState(null);
   const [planningPreferencesInitialDataByYear, setPlanningPreferencesInitialDataByYear] = useState({});
   const [planningPreferencesSavedSinceOpen, setPlanningPreferencesSavedSinceOpen] = useState(false);
@@ -346,11 +363,24 @@ export default function SubjectsPage({
     setShowPlanningPreferencesModal(true);
   }, [preloadPlanningPreferencesData, selectedYearFilter, planningPreferencesInitialDataByYear]);
 
+  const handlePlanningModalActionsReady = useCallback((actions) => {
+    planningModalActionsRef.current = actions;
+  }, []);
+
+  const handlePlanningModalFooterStateChange = useCallback(({ saving, readOnly }) => {
+    setPlanningModalFooterState((prev) => {
+      if (prev.saving === saving && prev.readOnly === readOnly) return prev;
+      return { saving, readOnly };
+    });
+  }, []);
+
   const closePlanningPreferencesModal = useCallback(() => {
     const closedYearLabel = String(planningPreferencesSchoolYearLabelRef.current || planningPreferencesSchoolYearLabel || '').trim();
     const savedSinceOpen = planningPreferencesSavedSinceOpenRef.current;
     setShowPlanningPreferencesModal(false);
     setPlanningPreferencesSchoolYearLabel(null);
+    planningModalActionsRef.current = null;
+    setPlanningModalFooterState({ saving: false, readOnly: false });
     planningPreferencesSchoolYearLabelRef.current = null;
     if (savedSinceOpen) {
       if (closedYearLabel) {
@@ -2684,17 +2714,48 @@ export default function SubjectsPage({
       animationType="fade"
       onRequestClose={requestPlanningPreferencesClose}
     >
-      <TouchableOpacity
-        style={styles.exportModalBackdrop}
-        activeOpacity={1}
-        onPress={requestPlanningPreferencesClose}
-      >
-        <TouchableOpacity style={styles.planningPreferencesModalCard} activeOpacity={1} onPress={(e) => e.stopPropagation()}>
-          <View style={styles.planningPreferencesBody}>
+      <View style={styles.learnadoodleModalOverlay}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={requestPlanningPreferencesClose}
+        />
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={(e) => e.stopPropagation()}
+          style={styles.learnadoodleModalWrap}
+        >
+          <AppModalShell
+            title="Planning Preferences"
+            onClose={requestPlanningPreferencesClose}
+            disableShellScroll
+            scrollerStyle={styles.learnadoodleModalScroller}
+            shellStyle={styles.learnadoodleModalShell}
+            bodyStyle={[styles.learnadoodleModalBody, styles.learnadoodleModalScrollBody]}
+            contentContainerStyle={styles.learnadoodleModalBodyContent}
+            footerStyle={styles.learnadoodleModalFooter}
+            footer={showPlanningPreferencesModal ? (
+              <ModalFooter
+                mode="edit"
+                compact
+                primaryLabel={
+                  planningModalFooterState.saving ? 'Saving...' : 'Save changes'
+                }
+                onCancel={() => planningModalActionsRef.current?.handleCancel?.()}
+                onPrimary={() => planningModalActionsRef.current?.handleSave?.()}
+                accent="#9ECFFB"
+                disabled={planningModalFooterState.saving || planningModalFooterState.readOnly}
+                loading={planningModalFooterState.saving}
+              />
+            ) : null}
+          >
             <PlannerSettingsContent
               familyId={familyId}
               initialData={planningPreferencesInitialDataByYear[String(planningPreferencesSchoolYearLabel || '').trim()] || null}
               embeddedInModal
+              hideEmbeddedHeader
+              onEmbeddedModalActionsReady={handlePlanningModalActionsReady}
+              onEmbeddedModalFooterStateChange={handlePlanningModalFooterStateChange}
               lockedSchoolYearLabel={planningPreferencesSchoolYearLabel || null}
               onRequestClose={closePlanningPreferencesModal}
               onSave={() => {
@@ -2717,9 +2778,66 @@ export default function SubjectsPage({
                 loadSubjects();
               }}
             />
-          </View>
+          </AppModalShell>
         </TouchableOpacity>
-      </TouchableOpacity>
+      </View>
+    </Modal>
+  );
+
+  const closeFamilyMembersModal = useCallback(() => {
+    setShowFamilyMembersModal(false);
+  }, []);
+
+  const renderFamilyMembersModal = () => (
+    <Modal
+      visible={showFamilyMembersModal}
+      transparent
+      animationType="fade"
+      onRequestClose={closeFamilyMembersModal}
+    >
+      <View style={styles.learnadoodleModalOverlay}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={closeFamilyMembersModal}
+        />
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={(e) => e.stopPropagation()}
+          style={styles.learnadoodleModalWrapWide}
+        >
+          <AppModalShell
+            title="Family"
+            onClose={closeFamilyMembersModal}
+            disableShellScroll
+            scrollerStyle={styles.learnadoodleModalScroller}
+            shellStyle={styles.learnadoodleModalShellWide}
+            bodyStyle={styles.learnadoodleModalBody}
+            contentContainerStyle={styles.learnadoodleModalBodyContent}
+          >
+            <ScrollView
+              style={styles.learnadoodleModalInnerScroll}
+              contentContainerStyle={styles.learnadoodleModalInnerScrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <FamilyPanel
+                user={user}
+                family={family}
+                familyId={familyId}
+                onFamilyUpdate={onFamilyUpdate}
+                profile={profile}
+                preloadedSubjects={fullSubjects || subjects || preloadedSubjects || []}
+                userRole={userRole}
+                initialSection="members"
+                hideInternalSidebar
+                embeddedInModal
+                onEditChild={onEditChild}
+              />
+            </ScrollView>
+          </AppModalShell>
+        </TouchableOpacity>
+      </View>
     </Modal>
   );
 
@@ -2763,6 +2881,7 @@ export default function SubjectsPage({
           onOpenExportModalForSection={(sectionType) => openSubjectsExportModal(sectionType)}
         />
         {renderPlanningPreferencesModal()}
+        {renderFamilyMembersModal()}
         {renderSubjectsExportModal()}
         {renderLearningHeaderPickerModal()}
       </>
@@ -2988,6 +3107,7 @@ export default function SubjectsPage({
         </>
       ) : null}
       {renderPlanningPreferencesModal()}
+      {renderFamilyMembersModal()}
       {renderSubjectsExportModal()}
       {renderLearningHeaderPickerModal()}
       <ConfirmDialog
@@ -3038,6 +3158,11 @@ export default function SubjectsPage({
           onJumpToCurrentSchoolYear={jumpToCurrentCoursesYear}
           isAtCurrentSchoolYear={isAtCurrentCoursesYear}
           onEditSchoolYear={!isChildView ? () => openPlanningPreferencesModal(selectedCoursesYear) : undefined}
+          onEditFamily={
+            !isChildView
+              ? () => setShowFamilyMembersModal(true)
+              : undefined
+          }
           onFixGap={() => {
             onTabChange?.('planner', 'calendar');
             if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -3625,6 +3750,73 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
+  learnadoodleModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  learnadoodleModalWrap: {
+    width: '100%',
+    maxWidth: PLANNING_PREFERENCES_MODAL_MAX_WIDTH,
+  },
+  learnadoodleModalWrapWide: {
+    width: '100%',
+    maxWidth: FAMILY_MODAL_MAX_WIDTH,
+  },
+  learnadoodleModalShell: {
+    maxWidth: PLANNING_PREFERENCES_MODAL_MAX_WIDTH,
+    height: Platform.OS === 'web' ? '86vh' : '86%',
+    maxHeight: Platform.OS === 'web' ? '90vh' : '86%',
+    borderRadius: 28,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+    }),
+  },
+  learnadoodleModalShellWide: {
+    maxWidth: FAMILY_MODAL_MAX_WIDTH,
+    height: Platform.OS === 'web' ? '86vh' : '86%',
+    maxHeight: Platform.OS === 'web' ? '90vh' : '86%',
+    borderRadius: 28,
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+    }),
+  },
+  learnadoodleModalScroller: {
+    flex: 1,
+    minHeight: 0,
+  },
+  learnadoodleModalBody: {
+    flex: 1,
+    minHeight: 0,
+    paddingTop: 0,
+    paddingBottom: 8,
+  },
+  learnadoodleModalBodyContent: {
+    flex: 1,
+    minHeight: 0,
+    paddingBottom: 0,
+  },
+  learnadoodleModalScrollBody: {
+    flex: 1,
+    minHeight: 0,
+  },
+  learnadoodleModalInnerScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  learnadoodleModalInnerScrollContent: {
+    paddingBottom: 24,
+  },
+  learnadoodleModalFooter: {
+    paddingTop: 4,
+    paddingBottom: 12,
+  },
   exportModalCard: {
     width: '100%',
     maxWidth: 700,
@@ -3693,6 +3885,22 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 520,
     paddingBottom: 8,
+  },
+  familyMembersModalCard: {
+    width: '100%',
+    maxWidth: 940,
+    maxHeight: '90%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  familyMembersBody: {
+    flex: 1,
+    minHeight: 520,
+    paddingBottom: 8,
+    ...(Platform.OS === 'web' && { maxHeight: '80vh' }),
   },
   exportModalTitle: {
     fontSize: 24,
@@ -4294,7 +4502,9 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 0,
+    minHeight: 36,
+    justifyContent: 'center',
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   filterOptionChipActive: {
@@ -4303,6 +4513,7 @@ const styles = StyleSheet.create({
   },
   filterOptionChipText: {
     fontSize: 14,
+    lineHeight: 18,
     color: 'rgba(15,23,42,0.9)',
     fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },

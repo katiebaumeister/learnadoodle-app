@@ -524,24 +524,6 @@ export default function TodayScheduleCard({
               <CalendarDays size={28} color="#94a3b8" strokeWidth={1.75} />
             </View>
             <Text style={styles.emptyTitle}>Nothing scheduled</Text>
-            <TouchableOpacity
-              style={styles.emptyPrimaryCta}
-              onPress={() => {
-                if (onAddBlock) {
-                  onAddBlock();
-                } else if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                  window.dispatchEvent(
-                    new CustomEvent('openTaskModal', {
-                      detail: { date: new Date(), placement: 'calendar' },
-                    })
-                  );
-                }
-              }}
-              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-            >
-              <Plus size={18} color="#fff" strokeWidth={2.5} />
-              <Text style={styles.emptyPrimaryCtaText}>Add event</Text>
-            </TouchableOpacity>
           </View>
         </View>
       )}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput } from 'react-native';
-import { ChevronDown, CheckCircle, BookOpen, FileText, Plus, Edit2, Layers } from 'lucide-react';
+import { ChevronDown, CheckCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { isAbortLikeError } from '../lib/apiClient';
 import { useToast } from './Toast';
@@ -11,7 +11,7 @@ import { getSubjectProgressCache, mergeSubjectProgressCache } from '../lib/subje
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
-import { ModalSectionCard } from './ui/ModalSectionCard';
+import Dropdown from './ui/Dropdown';
 import ConfirmDialog from './ConfirmDialog';
 import {
   deleteSubjectCascade,
@@ -19,6 +19,7 @@ import {
 } from '../lib/services/deleteSubjectCascade';
 
 const GRADE_OPTIONS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
+const SUBJECT_MODAL_MAX_WIDTH = 560;
 
 const formatSchoolYearLabel = (startYear) => `${startYear}/${String(startYear + 1).slice(-2)}`;
 const parseSchoolYearLabel = (label) => {
@@ -144,8 +145,8 @@ export default function AddSubjectModal({
   const [openingAddUnits, setOpeningAddUnits] = useState(false);
   const finalizedSubjectSaveRef = useRef(false);
   const materialDropdownRef = useRef(null);
-  const schoolYearDropdownRef = useRef(null);
-  const schoolTermDropdownRef = useRef(null);
+  const schoolYearTriggerRef = useRef(null);
+  const schoolTermTriggerRef = useRef(null);
 
   useEffect(() => {
     draftSubjectIdRef.current = draftSubjectId || null;
@@ -733,38 +734,6 @@ export default function AddSubjectModal({
     }
   }, [children, visible, defaultChildId, defaultChildIds, selectedChildIds.length, subject]);
 
-  useEffect(() => {
-    if (!showSchoolYearDropdown || Platform.OS !== 'web' || typeof document === 'undefined') return;
-    const handleOutsidePointer = (event) => {
-      const rawNode = schoolYearDropdownRef.current;
-      const container = rawNode?._nativeNode || rawNode;
-      if (!container || (typeof container.contains === 'function' && container.contains(event.target))) return;
-      setShowSchoolYearDropdown(false);
-    };
-    document.addEventListener('mousedown', handleOutsidePointer);
-    document.addEventListener('touchstart', handleOutsidePointer);
-    return () => {
-      document.removeEventListener('mousedown', handleOutsidePointer);
-      document.removeEventListener('touchstart', handleOutsidePointer);
-    };
-  }, [showSchoolYearDropdown]);
-
-  useEffect(() => {
-    if (!showSchoolTermDropdown || Platform.OS !== 'web' || typeof document === 'undefined') return;
-    const handleOutsidePointer = (event) => {
-      const rawNode = schoolTermDropdownRef.current;
-      const container = rawNode?._nativeNode || rawNode;
-      if (!container || (typeof container.contains === 'function' && container.contains(event.target))) return;
-      setShowSchoolTermDropdown(false);
-    };
-    document.addEventListener('mousedown', handleOutsidePointer);
-    document.addEventListener('touchstart', handleOutsidePointer);
-    return () => {
-      document.removeEventListener('mousedown', handleOutsidePointer);
-      document.removeEventListener('touchstart', handleOutsidePointer);
-    };
-  }, [showSchoolTermDropdown]);
-
   const fetchChildren = async () => {
     try {
       setLoadingChildren(true);
@@ -986,18 +955,18 @@ export default function AddSubjectModal({
           <AppModalShell
             mode={subject ? 'edit' : 'add'}
             title={subject ? 'Edit subject' : 'New subject'}
-            eyebrow="SUBJECT"
-            accent="#9ECFFB"
-            accentSoft="#F0F8FF"
-            HeroIcon={BookOpen}
             onClose={handleCloseWithDraftCleanup}
+            disableShellScroll
             shellStyle={styles.compactSubjectShell}
+            footerStyle={!subject ? styles.compactFooter : undefined}
+            titleRowStyle={!subject ? styles.compactTitleRow : undefined}
             contentContainerStyle={styles.scrollContent}
             bodyStyle={styles.shellBody}
             footer={(
               <ModalFooter
                 mode={subject ? 'edit' : 'add'}
-                primaryLabel={isSubmitting ? 'Saving...' : (subject ? 'Save changes' : 'Save Subject')}
+                compact={!subject}
+                primaryLabel={isSubmitting ? 'Saving...' : (subject ? 'Save changes' : 'Create')}
                 destructiveLabel={subject?.id ? (deletingSubject ? 'Deleting...' : 'Delete subject') : undefined}
                 onCancel={handleCloseWithDraftCleanup}
                 onDelete={subject?.id ? () => setShowDeleteSubjectConfirm(true) : undefined}
@@ -1018,9 +987,9 @@ export default function AddSubjectModal({
 
             {/* Subject Name */}
             <View style={styles.formGroup}>
-              <Text style={styles.subjectNameLabel}>Subject Name <Text style={{ color: '#dc2626' }}>*</Text></Text>
+              <Text style={styles.fieldLabel}>Subject name<Text style={styles.required}> *</Text></Text>
               <TextInput
-                style={[styles.subjectNameInput, subjectNameInputFocused && styles.subjectNameInputFocused]}
+                style={[styles.fieldInput, subjectNameInputFocused && styles.fieldInputFocused]}
                 value={subjectName}
                 onChangeText={setSubjectName}
                 placeholder="e.g., Algebra I, World History, Spanish"
@@ -1034,17 +1003,13 @@ export default function AddSubjectModal({
             {/* Students Selection */}
             {loadingChildren ? (
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Students<Text style={styles.required}> *</Text></Text>
+                <Text style={styles.fieldLabel}>Students<Text style={styles.required}> *</Text></Text>
                 <Text style={styles.loadingText}>Loading children...</Text>
               </View>
             ) : children.length > 0 ? (
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Students<Text style={styles.required}> *</Text></Text>
-                <ScrollView 
-                  horizontal 
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.childrenScroll}
-                >
+                <Text style={styles.fieldLabel}>Students<Text style={styles.required}> *</Text></Text>
+                <View style={styles.chipRow}>
                   {children.map((child) => {
                     const isSelected = selectedChildIds.includes(child.id);
                     return (
@@ -1071,354 +1036,119 @@ export default function AddSubjectModal({
                       </TouchableOpacity>
                     );
                   })}
-                </ScrollView>
-                {selectedChildIds.length > 1 ? (
-                  <Text style={styles.studentsMultiSubjectNote}>
-                    If adding a subject for multiple children but differing learning materials or learning levels,
-                    we recommend adding as two separate subjects.
-                  </Text>
-                ) : null}
+                </View>
               </View>
             ) : null}
 
-            {/* Grade Level & Credits side by side */}
             <View style={styles.formGroup}>
-              <View style={{ flexDirection: 'row', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <View style={{ flex: 1, minWidth: 200 }}>
-                  <Text style={styles.label}>Grade Level</Text>
-                  <ScrollView 
-                    horizontal 
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.gradeScroll}
-                  >
-                    {GRADE_OPTIONS.map((g) => (
-                      <TouchableOpacity
-                        key={g}
-                        style={[
-                          styles.gradeChip,
-                          grade === g && styles.gradeChipSelected
-                        ]}
-                        onPress={() => {
-                          setGrade(g);
-                          setGradeManuallyEdited(true);
-                        }}
-                      >
-                        <Text style={[
-                          styles.gradeChipText,
-                          grade === g && styles.gradeChipTextSelected
-                        ]}>
-                          {g}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-                <View style={{ width: 160, minWidth: 120 }}>
-                  <Text style={styles.label}>Credits</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={credits}
-                    onChangeText={(text) => {
-                      // Allow only numbers and decimal point
-                      const numericValue = text.replace(/[^0-9.]/g, '');
-                      // Prevent multiple decimal points
-                      const parts = numericValue.split('.');
-                      const filteredValue = parts.length > 2 
-                        ? parts[0] + '.' + parts.slice(1).join('')
-                        : numericValue;
-                      setCredits(filteredValue);
-                    }}
-                    placeholder="e.g., 0.5, 1.0, 1.5"
-                    placeholderTextColor="#9ca3af"
-                    keyboardType="numeric"
-                  />
-                </View>
-              </View>
-            </View>
-
-            <View
-              style={[
-                styles.formGroup,
-                (showSchoolYearDropdown || showSchoolTermDropdown) && styles.schoolScopeFormGroupOpen,
-              ]}
-            >
-              <View
-                style={[
-                  styles.schoolScopeRow,
-                  (showSchoolYearDropdown || showSchoolTermDropdown) && styles.schoolScopeRowOpen,
-                ]}
-              >
-                <View
-                  ref={schoolYearDropdownRef}
-                  style={[styles.schoolScopeField, showSchoolYearDropdown && styles.schoolScopeFieldOpen]}
-                >
-                  <Text style={styles.label}>School year</Text>
+              <Text style={styles.fieldLabel}>Grade level</Text>
+              <View style={styles.gradeChipRow}>
+                {GRADE_OPTIONS.map((gradeOption) => (
                   <TouchableOpacity
-                    style={styles.dropdownButton}
+                    key={gradeOption}
+                    style={[
+                      styles.gradeChip,
+                      grade === gradeOption && styles.gradeChipSelected
+                    ]}
                     onPress={() => {
-                      setShowSchoolTermDropdown(false);
-                      setShowSchoolYearDropdown(!showSchoolYearDropdown);
+                      setGrade(gradeOption);
+                      setGradeManuallyEdited(true);
                     }}
-                    activeOpacity={0.7}
                   >
-                    <Text style={styles.dropdownButtonText}>{schoolYear}</Text>
-                    <ChevronDown size={18} color="#6b7280" />
-                  </TouchableOpacity>
-                  {showSchoolYearDropdown && (
-                    <View style={styles.dropdownList}>
-                      <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
-                        {schoolYearOptions.map((opt) => (
-                          <TouchableOpacity
-                            key={opt}
-                            style={[styles.dropdownOption, opt === schoolYear && styles.dropdownOptionSelected]}
-                            onPress={() => {
-                              setSchoolYear(opt);
-                              setShowSchoolYearDropdown(false);
-                            }}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={[styles.dropdownOptionText, opt === schoolYear && styles.dropdownOptionTextSelected]}>{opt}</Text>
-                            {opt === schoolYear && <CheckCircle size={16} color="#3b82f6" />}
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    </View>
-                  )}
-                </View>
-                <View
-                  ref={schoolTermDropdownRef}
-                  style={[styles.schoolScopeField, showSchoolTermDropdown && styles.schoolScopeFieldOpen]}
-                >
-                  <Text style={styles.label}>Term</Text>
-                  <TouchableOpacity
-                    style={styles.dropdownButton}
-                    onPress={() => {
-                      setShowSchoolYearDropdown(false);
-                      setShowSchoolTermDropdown(!showSchoolTermDropdown);
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.dropdownButtonText}>
-                      {(TERM_OPTIONS.find((opt) => opt.id === schoolTerm) || TERM_OPTIONS[0]).label}
+                    <Text style={[
+                      styles.gradeChipText,
+                      grade === gradeOption && styles.gradeChipTextSelected
+                    ]}>
+                      {gradeOption}
                     </Text>
-                    <ChevronDown size={18} color="#6b7280" />
                   </TouchableOpacity>
-                  {showSchoolTermDropdown && (
-                    <View style={styles.dropdownList}>
-                      {TERM_OPTIONS.map((opt) => (
-                        <TouchableOpacity
-                          key={opt.id}
-                          style={[styles.dropdownOption, opt.id === schoolTerm && styles.dropdownOptionSelected]}
-                          onPress={() => {
-                            setSchoolTerm(opt.id);
-                            setShowSchoolTermDropdown(false);
-                          }}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.dropdownOptionText, opt.id === schoolTerm && styles.dropdownOptionTextSelected]}>{opt.label}</Text>
-                          {opt.id === schoolTerm && <CheckCircle size={16} color="#3b82f6" />}
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  )}
-                </View>
+                ))}
               </View>
             </View>
 
-            <ModalSectionCard
-              Icon={Layers}
-              title="Units and lessons"
-              subtitle={unitsLessonsAccordionSubtitle}
-              expanded={showUnitsLessonsAccordion}
-              onPress={() => setShowUnitsLessonsAccordion(!showUnitsLessonsAccordion)}
-              accent="#9ECFFB"
-            >
-              <View style={styles.accordionContent}>
-                <View style={styles.unitsLessonsActionsRow}>
-                  {!hasUnitsOrLessonsContent ? (
+            <View style={[styles.formGroup, styles.formGroupLast]}>
+              <View style={styles.stackedFields}>
+              <View style={styles.schoolScopeFieldStacked}>
+                <Text style={styles.fieldLabel}>School year</Text>
+                <TouchableOpacity
+                  ref={schoolYearTriggerRef}
+                  style={styles.dropdownButton}
+                  onPress={() => {
+                    setShowSchoolTermDropdown(false);
+                    setShowSchoolYearDropdown(!showSchoolYearDropdown);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.dropdownButtonText}>{schoolYear}</Text>
+                  <ChevronDown size={18} color="#6b7280" />
+                </TouchableOpacity>
+                <Dropdown
+                  visible={showSchoolYearDropdown}
+                  triggerRef={schoolYearTriggerRef}
+                  onClose={() => setShowSchoolYearDropdown(false)}
+                  placement="bottom-start"
+                  matchTriggerWidth
+                  maxHeight={220}
+                >
+                  {schoolYearOptions.map((opt) => (
                     <TouchableOpacity
-                      style={styles.unitsLessonsHeaderButton}
-                      onPress={() => openAddUnitsCurriculumAction('manual')}
-                      activeOpacity={0.8}
-                      disabled={openingAddUnits}
-                      {...(Platform.OS === 'web' && { cursor: openingAddUnits ? 'default' : 'pointer' })}
+                      key={opt}
+                      style={[styles.dropdownOption, opt === schoolYear && styles.dropdownOptionSelected]}
+                      onPress={() => {
+                        setSchoolYear(opt);
+                        setShowSchoolYearDropdown(false);
+                      }}
+                      activeOpacity={0.7}
                     >
-                      <View style={styles.unitsLessonsHeaderButtonInner}>
-                        <Plus size={14} color="#6B7280" />
-                        <Text style={styles.unitsLessonsHeaderButtonText}>
-                          {openingAddUnits ? 'Opening...' : 'Add new units'}
-                        </Text>
-                      </View>
+                      <Text style={[styles.dropdownOptionText, opt === schoolYear && styles.dropdownOptionTextSelected]}>{opt}</Text>
+                      {opt === schoolYear && <CheckCircle size={16} color="#3b82f6" />}
                     </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.unitsLessonsEditButton}
-                      onPress={() => openAddUnitsCurriculumAction('manual')}
-                      activeOpacity={0.8}
-                      disabled={openingAddUnits}
-                      {...(Platform.OS === 'web' && { cursor: openingAddUnits ? 'default' : 'pointer' })}
-                    >
-                      <View style={styles.unitsLessonsHeaderButtonInner}>
-                        <Edit2 size={14} color="#5E6C84" />
-                        <Text style={styles.unitsLessonsEditButtonText}>
-                          {openingAddUnits ? 'Opening...' : 'Edit current units'}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {loadingCurriculum && !hasLoadedCurriculumOnce ? (
-                  <Text style={styles.unitsLessonsEmptyText}>Loading units...</Text>
-                ) : !hasUnitsOrLessonsContent ? (
-                  <Text style={styles.unitsLessonsEmptyText}>
-                    Units and lessons appear once you add class lessons or units.
-                  </Text>
-                ) : (
-                  <>
-                    <View style={styles.unitsLessonsMethodHeader}>
-                      <Text style={styles.unitsLessonsMethodTitle}>SAVED UNITS</Text>
-                      <Text style={styles.unitsLessonsMethodSubtitle}>{curriculumBuildSummaryLine}</Text>
-                    </View>
-                    <View style={styles.unitsLessonsDivider} />
-                    <View style={styles.unitsLessonsList}>
-                      {curriculumUnits.map((unit, unitIndex) => {
-                        const lessonTitles = (unit?.lessons || [])
-                          .map((lesson) => String(lesson?.title || '').trim())
-                          .filter(Boolean);
-                        return (
-                          <View key={`${unit?.title || 'unit'}-${unitIndex}`} style={styles.unitsLessonsUnitCard}>
-                            <Text style={styles.unitsLessonsUnitTitle}>
-                              {unit?.title || `Unit ${unitIndex + 1}`}
-                            </Text>
-                            <Text style={styles.unitsLessonsUnitMeta}>
-                              {lessonTitles.length} {lessonTitles.length === 1 ? 'lesson' : 'lessons'}
-                            </Text>
-                            {lessonTitles.slice(0, 4).map((lessonTitle, lessonIndex) => (
-                              <Text key={`${lessonTitle}-${lessonIndex}`} style={styles.unitsLessonsLessonRow}>
-                                • {lessonTitle}
-                              </Text>
-                            ))}
-                            {lessonTitles.length > 4 ? (
-                              <Text style={styles.unitsLessonsMoreText}>
-                                +{lessonTitles.length - 4} more lessons
-                              </Text>
-                            ) : null}
-                          </View>
-                        );
-                      })}
-                    </View>
-                  </>
-                )}
+                  ))}
+                </Dropdown>
               </View>
-            </ModalSectionCard>
-
-            {/* Notes */}
-            <ModalSectionCard
-              Icon={FileText}
-              title="Notes and attachments"
-              subtitle="Anything else to remember"
-              expanded={showAdditionalNotesAccordion}
-              onPress={() => setShowAdditionalNotesAccordion(!showAdditionalNotesAccordion)}
-              accent="#9ECFFB"
-              allowOverflow
-            >
-                <View style={styles.accordionContent}>
-                  <View style={styles.formGroup}>
-                    <TextInput
-                      style={[styles.input, styles.textArea]}
-                      placeholder="Add any additional notes about this subject"
-                      value={additionalNotes}
-                      onChangeText={setAdditionalNotes}
-                      placeholderTextColor="#9ca3af"
-                      multiline
-                      numberOfLines={3}
-                      textAlignVertical="top"
-                    />
-                  </View>
-                  <View style={styles.formGroup}>
-                    <Text style={styles.label}>Attachments</Text>
-                    <View style={styles.materialSelectorContainer}>
-                      <View style={[styles.materialSelectorFieldWrap, showMaterialDropdown && styles.materialSelectorFieldWrapOpen]}>
-                        <TouchableOpacity
-                          style={styles.materialSelector}
-                          onPress={() => setShowMaterialDropdown((prev) => !prev)}
-                          activeOpacity={0.7}
-                        >
-                          <Text
-                            numberOfLines={1}
-                            style={[
-                              styles.materialSelectorText,
-                              !selectedMaterial && styles.materialSelectorPlaceholder,
-                            ]}
-                          >
-                            {selectedMaterial
-                              ? (selectedMaterial.title || selectedMaterial.provider_name || 'Untitled material')
-                              : (loadingMaterials ? 'Loading attachments...' : 'Select attachment...')}
-                          </Text>
-                          <ChevronDown size={16} color="#6b7280" />
-                        </TouchableOpacity>
-                        {showMaterialDropdown && (
-                          <View ref={materialDropdownRef} style={styles.materialDropdownList}>
-                            <ScrollView style={styles.dropdownScroll} nestedScrollEnabled>
-                              <TouchableOpacity
-                                style={[styles.dropdownOption, !selectedMaterialId && styles.dropdownOptionSelected]}
-                                onPress={() => {
-                                  setSelectedMaterialId(null);
-                                  setShowMaterialDropdown(false);
-                                }}
-                                activeOpacity={0.7}
-                              >
-                                <Text style={[styles.dropdownOptionText, !selectedMaterialId && styles.dropdownOptionTextSelected]}>
-                                  None
-                                </Text>
-                              </TouchableOpacity>
-                              {materials.map((material) => {
-                                const isSelected = String(selectedMaterialId || '') === String(material.id);
-                                return (
-                                  <TouchableOpacity
-                                    key={material.id}
-                                    style={[styles.dropdownOption, isSelected && styles.dropdownOptionSelected]}
-                                    onPress={() => {
-                                      setSelectedMaterialId(material.id);
-                                      setShowMaterialDropdown(false);
-                                    }}
-                                    activeOpacity={0.7}
-                                  >
-                                    <Text style={[styles.dropdownOptionText, isSelected && styles.dropdownOptionTextSelected]}>
-                                      {material.title || material.provider_name || 'Untitled material'}
-                                    </Text>
-                                  </TouchableOpacity>
-                                );
-                              })}
-                            </ScrollView>
-                          </View>
-                        )}
-                      </View>
-                      <TouchableOpacity
-                        style={styles.addMaterialButton}
-                        onPress={() => {
-                          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                            window.dispatchEvent(
-                              new CustomEvent('openAddMaterialModal', {
-                                detail: {
-                                  subjectId: effectiveSubjectId || null,
-                                  subjectName: subjectName?.trim() || subject?.name || null,
-                                  childIds: selectedChildIds,
-                                },
-                              })
-                            );
-                          }
-                        }}
-                        activeOpacity={0.85}
-                      >
-                        <Plus size={14} color="#6BB3E8" />
-                        <Text style={styles.addMaterialText}>Add New</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-            </ModalSectionCard>
+              <View style={[styles.schoolScopeFieldStacked, showSchoolTermDropdown && styles.schoolScopeFieldOpen]}>
+                <Text style={styles.fieldLabel}>Term</Text>
+                <TouchableOpacity
+                  ref={schoolTermTriggerRef}
+                  style={styles.dropdownButton}
+                  onPress={() => {
+                    setShowSchoolYearDropdown(false);
+                    setShowSchoolTermDropdown((open) => !open);
+                  }}
+                  activeOpacity={0.7}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.dropdownButtonText}>
+                    {(TERM_OPTIONS.find((opt) => opt.id === schoolTerm) || TERM_OPTIONS[0]).label}
+                  </Text>
+                  <ChevronDown size={18} color="#6b7280" />
+                </TouchableOpacity>
+                <Dropdown
+                  visible={showSchoolTermDropdown}
+                  triggerRef={schoolTermTriggerRef}
+                  onClose={() => setShowSchoolTermDropdown(false)}
+                  placement="top-start"
+                  matchTriggerWidth
+                  maxHeight={220}
+                >
+                  {TERM_OPTIONS.map((opt) => (
+                    <TouchableOpacity
+                      key={opt.id}
+                      style={[styles.dropdownOption, opt.id === schoolTerm && styles.dropdownOptionSelected]}
+                      onPress={() => {
+                        setSchoolTerm(opt.id);
+                        setShowSchoolTermDropdown(false);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.dropdownOptionText, opt.id === schoolTerm && styles.dropdownOptionTextSelected]}>{opt.label}</Text>
+                      {opt.id === schoolTerm && <CheckCircle size={16} color="#3b82f6" />}
+                    </TouchableOpacity>
+                  ))}
+                </Dropdown>
+              </View>
+              </View>
+            </View>
 
           </AppModalShell>
         </TouchableOpacity>
@@ -1457,15 +1187,28 @@ const styles = StyleSheet.create({
   },
   modalWrap: {
     width: '100%',
-    maxWidth: 860,
+    maxWidth: SUBJECT_MODAL_MAX_WIDTH,
   },
   compactSubjectShell: {
-    ...(Platform.OS === 'web'
-      ? { height: '82vh' }
-      : { height: '86%' }),
+    height: 'auto',
+    maxHeight: Platform.OS === 'web' ? '90vh' : '86%',
+    borderRadius: 28,
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+    }),
   },
   shellBody: {
-    paddingTop: 18,
+    paddingTop: 0,
+    paddingBottom: 4,
+  },
+  compactFooter: {
+    paddingTop: 4,
+    paddingBottom: 12,
+  },
+  compactTitleRow: {
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   scrollContainer: {
     backgroundColor: '#ffffff',
@@ -1483,7 +1226,7 @@ const styles = StyleSheet.create({
     }),
   },
   scrollContent: {
-    paddingBottom: 18,
+    paddingBottom: 4,
   },
   addUnitsPillsRow: {
     flexDirection: 'row',
@@ -1585,7 +1328,59 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   formGroup: {
-    marginBottom: 20,
+    marginBottom: 14,
+  },
+  formGroupLast: {
+    marginBottom: 0,
+  },
+  stackedFields: {
+    gap: 14,
+    overflow: 'visible',
+    position: 'relative',
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6B7280',
+    marginBottom: 6,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  fieldInput: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#111827',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#9CA3AF',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
+      transition: 'border-color 0.15s ease',
+    }),
+  },
+  fieldInputFocused: {
+    borderBottomColor: '#2563EB',
+    borderBottomWidth: 2,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  gradeChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    gap: 6,
+    alignItems: 'center',
   },
   /** Tighter vertical rhythm inside Planning Preferences accordion only */
   planningDefaultsField: {
@@ -1882,31 +1677,33 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     color: '#6b7280',
-    marginBottom: 8,
+    marginBottom: 6,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   subjectNameInput: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '400',
     color: '#111827',
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 6,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    minHeight: 48,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#9CA3AF',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       outlineStyle: 'none',
       transition: 'border-color 0.15s ease',
     }),
   },
   subjectNameInputFocused: {
-    borderColor: '#85C4F2',
-    borderWidth: 1.5,
+    borderBottomColor: '#2563EB',
+    borderBottomWidth: 2,
   },
   input: {
     borderWidth: 1,
@@ -1921,11 +1718,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: colors.border || 'rgba(15, 23, 42, 0.08)',
-    borderRadius: 8,
-    padding: 10,
-    backgroundColor: colors.card || '#ffffff',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#9CA3AF',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
   },
   dropdownButtonText: {
     fontSize: 14,
@@ -1936,8 +1737,13 @@ const styles = StyleSheet.create({
     minWidth: 220,
     position: 'relative',
   },
+  schoolScopeFieldStacked: {
+    width: '100%',
+    position: 'relative',
+  },
   schoolScopeFormGroupOpen: {
-    zIndex: 120,
+    zIndex: 200,
+    overflow: 'visible',
     ...(Platform.OS === 'web' && { isolation: 'isolate' }),
   },
   schoolScopeRow: {
@@ -1953,8 +1759,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { isolation: 'isolate' }),
   },
   schoolScopeFieldOpen: {
-    zIndex: 140,
-    ...(Platform.OS === 'web' && { isolation: 'isolate' }),
+    zIndex: 2,
+    ...(Platform.OS === 'web' && { position: 'relative' }),
+  },
+  schoolScopeFieldUnder: {
+    zIndex: 1,
   },
   dropdownList: {
     position: 'absolute',
@@ -1967,7 +1776,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#ffffff',
     maxHeight: 200,
-    zIndex: 150,
+    zIndex: 300,
+    elevation: 12,
+    ...(Platform.OS === 'web' && {
+      boxShadow: '0 10px 24px rgba(15, 23, 42, 0.14)',
+    }),
   },
   dropdownScroll: {
     maxHeight: 200,
@@ -2000,7 +1813,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   childrenScroll: {
-    marginTop: 6,
+    marginTop: 0,
   },
   studentsMultiSubjectNote: {
     marginTop: 8,
@@ -2013,12 +1826,11 @@ const styles = StyleSheet.create({
   },
   childChip: {
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginRight: 6,
-    borderRadius: 20,
-    backgroundColor: '#ffffff',
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: '#D1D5DB',
   },
   childChipSelected: {
     borderColor: '#85C4F2',
@@ -2040,16 +1852,18 @@ const styles = StyleSheet.create({
     }),
   },
   gradeScroll: {
-    marginTop: 6,
+    marginTop: 0,
   },
   gradeChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: '#fff',
+    minWidth: 32,
+    height: 32,
+    paddingHorizontal: 6,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    marginRight: 6,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   gradeChipSelected: {
     borderColor: '#85C4F2',

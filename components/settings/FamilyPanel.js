@@ -189,7 +189,7 @@ function confirmParentReinvite(email) {
   });
 }
 
-export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null, hideInternalSidebar = false, embeddedInFamily = false, onViewAsChild = null, onExitChildView = null }) {
+export default function FamilyPanel({ user, family: propFamily = null, familyId: propFamilyId = null, onFamilyUpdate = null, profile: propProfile = null, preloadedSubjects: propPreloadedSubjects = null, userRole: propUserRole = null, currentChildId: propCurrentChildId = null, viewingAsChildId: propViewingAsChildId = null, initialSection: propInitialSection = null, hideInternalSidebar = false, embeddedInFamily = false, embeddedInModal = false, onViewAsChild = null, onExitChildView = null }) {
   const isChildMode = propUserRole === 'child' || propUserRole === 'student';
   const currentChildId = propCurrentChildId ?? null;
   const viewingAsChildId = propViewingAsChildId ?? null;
@@ -3342,8 +3342,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       
       case 'members':
         return (
-          <View style={[styles.mainContentInner, embeddedInFamily && styles.mainContentInnerFamilyEmbedded]}>
-            {!(hideInternalSidebar || embeddedInFamily) ? (
+          <View style={[
+            styles.mainContentInner,
+            embeddedInFamily && styles.mainContentInnerFamilyEmbedded,
+            embeddedInModal && styles.mainContentInnerFamilyModal,
+          ]}>
+            {!(hideInternalSidebar || isFamilyContentEmbedded) ? (
               <Text style={styles.mainContentTitle}>Family Members</Text>
             ) : null}
 
@@ -5080,9 +5084,12 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
     }
   };
 
+  const isFamilyContentEmbedded = embeddedInFamily || embeddedInModal;
+
   const mainContentContainerStyle = [
     styles.mainContentContainer,
     embeddedInFamily && styles.mainContentContainerFamilyEmbedded,
+    embeddedInModal && styles.mainContentContainerFamilyModal,
     (activeSection === 'about' || activeSection === 'terms' || activeSection === 'privacy' || activeSection === 'datavault') && styles.mainContentContainerAbout,
     activeSection === 'subscription' && styles.mainContentContainerSubscriptionFill,
   ];
@@ -5117,11 +5124,11 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
   const hasSupportSidebarItems = SETTINGS_SIDEBAR_SUPPORT_KEYS.some((key) => visibleSettingsKeys.has(key));
 
   return (
-    <View style={styles.container}>
-      <View style={styles.twoColumnLayout}>
+    <View style={[styles.container, embeddedInModal && styles.containerFamilyModal]}>
+      <View style={[styles.twoColumnLayout, embeddedInModal && styles.twoColumnLayoutFamilyModal]}>
         {/* Main settings content */}
         {Platform.OS === 'web' ? (
-          <View style={mainContentPanelStyle}>
+          <View style={[mainContentPanelStyle, embeddedInModal && styles.mainContentFamilyModal]}>
             <View style={mainContentContainerStyle}>
               {renderMainContent()}
             </View>
@@ -6239,6 +6246,30 @@ function createStyles(tokens) {
       padding: 24,
       paddingRight: 24,
     },
+    containerFamilyModal: {
+      flexGrow: 0,
+      flexShrink: 0,
+      height: 'auto',
+    },
+    twoColumnLayoutFamilyModal: {
+      flexGrow: 0,
+      flexShrink: 0,
+      height: 'auto',
+      ...(Platform.OS === 'web' && {
+        overflow: 'visible',
+      }),
+    },
+    mainContentFamilyModal: {
+      flexGrow: 0,
+      flexShrink: 0,
+      ...(Platform.OS === 'web' && {
+        overflow: 'visible',
+        overflowY: 'visible',
+      }),
+    },
+    mainContentContainerFamilyModal: {
+      padding: 0,
+    },
     mainContentCard: {
       backgroundColor: '#ffffff',
       borderRadius: 16,
@@ -6270,6 +6301,11 @@ function createStyles(tokens) {
       borderWidth: 1,
       borderColor: 'rgba(148, 163, 184, 0.24)',
       backgroundColor: '#FFFFFF',
+    },
+    mainContentInnerFamilyModal: {
+      padding: 0,
+      borderWidth: 0,
+      backgroundColor: 'transparent',
     },
     mainContentTitle: {
       ...SettingsTypography.pageTitle,

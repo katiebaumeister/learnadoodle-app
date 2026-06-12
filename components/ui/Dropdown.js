@@ -26,27 +26,30 @@ export default function Dropdown({
   offset = 8, // Distance from trigger
   maxHeight = 400,
   width = 200,
+  matchTriggerWidth = false,
   variant = 'default', // 'default' | 'context'
 }) {
   const [position, setPosition] = useState(null);
   const dropdownRef = useRef(null);
   
   useLayoutEffect(() => {
-    if (!visible || !triggerRef?.current || Platform.OS !== 'web') {
+    if (!visible || Platform.OS !== 'web') {
       setPosition(null);
       return undefined;
     }
     
     const updatePosition = () => {
-      if (!triggerRef.current) return;
+      if (!triggerRef?.current) return false;
       
       // Handle React Native refs that may need _nativeNode
       const triggerNode = triggerRef.current._nativeNode || triggerRef.current;
-      if (!triggerNode || !triggerNode.getBoundingClientRect) return;
+      if (!triggerNode || !triggerNode.getBoundingClientRect) return false;
       
       const triggerRect = triggerNode.getBoundingClientRect();
+      if (!triggerRect.width && !triggerRect.height) return false;
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
+      const resolvedWidth = matchTriggerWidth ? triggerRect.width : width;
       
       let top = 0;
       let left = 0;
@@ -56,8 +59,8 @@ export default function Dropdown({
         // Position to the right and below the trigger
         left = triggerRect.right + window.scrollX + offset;
         top = triggerRect.bottom + window.scrollY + offset;
-        setPosition({ top, left });
-        return;
+        setPosition({ top, left, width: resolvedWidth });
+        return true;
       } else if (placement === 'right-up') {
         // Position to the right and above the trigger
         // Estimate height: ~48px per item (padding + border) × number of items
@@ -66,8 +69,8 @@ export default function Dropdown({
         left = triggerRect.right + window.scrollX + offset;
         // Position dropdown so its bottom edge is just above the button's top
         top = triggerRect.top + window.scrollY - estimatedHeight - offset;
-        setPosition({ top, left });
-        return;
+        setPosition({ top, left, width: resolvedWidth });
+        return true;
       }
       
       // Calculate position based on standard placement
@@ -83,63 +86,91 @@ export default function Dropdown({
       if (placement.endsWith('start')) {
         left = triggerRect.left;
       } else if (placement.endsWith('end')) {
-        left = triggerRect.right - width;
+        left = triggerRect.right - resolvedWidth;
       } else {
         // Default to start
         left = triggerRect.left;
       }
       
       // Boundary detection - adjust if would overflow viewport
-      if (left + width > viewportWidth) {
-        left = viewportWidth - width - 16; // 16px margin from edge
+      if (left + resolvedWidth > viewportWidth) {
+        left = viewportWidth - resolvedWidth - 16; // 16px margin from edge
       }
       if (left < 0) {
         left = 16;
       }
       
-      if (placement.startsWith('bottom') && top + maxHeight > viewportHeight) {
+      const itemCount = React.Children.count(children);
+      const estimatedHeight = Math.min(maxHeight, Math.max(itemCount * 44, 44));
+
+      if (placement.startsWith('bottom') && top + estimatedHeight > viewportHeight) {
         // Flip to top if bottom would overflow
-        top = triggerRect.top - offset;
+        top = triggerRect.top - estimatedHeight - offset;
       }
-      if (placement.startsWith('top') && top < 0) {
-        // Flip to bottom if top would overflow
-        top = triggerRect.bottom + offset;
+      if (placement.startsWith('top')) {
+        top = triggerRect.top - estimatedHeight - offset;
+        if (top < 8) {
+          top = triggerRect.bottom + offset;
+        }
       }
       
-      setPosition({ top, left });
+      setPosition({ top, left, width: resolvedWidth });
+      return true;
     };
     
-    updatePosition();
+    let rafId = null;
+    const scheduleUpdate = () => {
+      if (updatePosition()) return;
+      rafId = window.requestAnimationFrame(() => {
+        updatePosition();
+      });
+    };
+
+    scheduleUpdate();
     
     // Update on scroll/resize
-    window.addEventListener('scroll', updatePosition, true);
-    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', scheduleUpdate, true);
+    window.addEventListener('resize', scheduleUpdate);
     
     return () => {
-      window.removeEventListener('scroll', updatePosition, true);
-      window.removeEventListener('resize', updatePosition);
+      if (rafId) window.cancelAnimationFrame(rafId);
+      window.removeEventListener('scroll', scheduleUpdate, true);
+      window.removeEventListener('resize', scheduleUpdate);
     };
-  }, [visible, triggerRef, placement, offset, width, maxHeight, children]);
+  }, [visible, triggerRef, placement, offset, width, maxHeight, matchTriggerWidth, children]);
   
   useEffect(() => {
     if (!visible) return;
     
     const handleClickOutside = (e) => {
+      const dropdownNode = dropdownRef.current?._nativeNode || dropdownRef.current;
+      const triggerNode = triggerRef?.current?._nativeNode || triggerRef?.current;
+      const target = e.target;
       if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target) &&
-        triggerRef?.current &&
-        !triggerRef.current.contains(e.target)
+        dropdownNode &&
+        typeof dropdownNode.contains === 'function' &&
+        dropdownNode.contains(target)
       ) {
-        onClose();
+        return;
       }
+      if (
+        triggerNode &&
+        typeof triggerNode.contains === 'function' &&
+        triggerNode.contains(target)
+      ) {
+        return;
+      }
+      onClose();
     };
     
-    // Use capture phase to catch clicks before they bubble
-    document.addEventListener('mousedown', handleClickOutside, true);
+    // Defer so the opening click doesn't immediately close the menu
+    const attachTimer = setTimeout(() => {
+      document.addEventListener('click', handleClickOutside, true);
+    }, 0);
     
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside, true);
+      clearTimeout(attachTimer);
+      document.removeEventListener('click', handleClickOutside, true);
     };
   }, [visible, onClose, triggerRef]);
   
@@ -164,9 +195,9 @@ export default function Dropdown({
             position: 'fixed',
             top: position.top,
             left: position.left,
-            width,
+            width: position.width ?? width,
             maxHeight,
-            zIndex: 99999,
+            zIndex: 100100,
             isolation: 'isolate', // Create new stacking context
           },
         ]}

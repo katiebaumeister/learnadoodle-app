@@ -10,6 +10,9 @@ export default function AppModalShell({
   contentContainerStyle,
   bodyStyle,
   shellStyle,
+  footerStyle,
+  titleRowStyle,
+  scrollerStyle,
   disableShellScroll = false,
   // Legacy props — ignored after header streamlining
   mode: _mode,
@@ -20,16 +23,16 @@ export default function AppModalShell({
 }) {
   const ShellScroller = disableShellScroll ? View : ScrollView;
   const shellScrollerProps = disableShellScroll
-    ? { style: styles.scrollContentNoScroll }
+    ? { style: [styles.scrollContentNoScroll, scrollerStyle] }
     : {
-        style: styles.scroll,
+        style: [styles.scroll, scrollerStyle],
         contentContainerStyle: styles.scrollContent,
         showsVerticalScrollIndicator: false,
       };
   return (
     <View style={[styles.modal, shellStyle]}>
       <ShellScroller {...shellScrollerProps}>
-        <View style={styles.titleRow}>
+        <View style={[styles.titleRow, titleRowStyle]}>
           <Text style={styles.title}>{title}</Text>
           <TouchableOpacity
             style={styles.closeBtn}
@@ -46,7 +49,7 @@ export default function AppModalShell({
         <View style={[styles.body, contentContainerStyle, bodyStyle]}>{children}</View>
       </ShellScroller>
 
-      {footer ? <View style={styles.footer}>{footer}</View> : null}
+      {footer ? <View style={[styles.footer, footerStyle]}>{footer}</View> : null}
     </View>
   );
 }
@@ -72,7 +75,8 @@ const styles = StyleSheet.create({
     paddingBottom: 0,
   },
   scrollContentNoScroll: {
-    flex: 1,
+    flexGrow: 0,
+    flexShrink: 0,
   },
   titleRow: {
     flexDirection: 'row',

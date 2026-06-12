@@ -64,7 +64,7 @@ const NAV_ITEM_DEFS = {
 
 const PARENT_NAV_BUCKET_KEYS = [
   ['home', 'messages'],
-  ['planner', 'subjects', 'materials', 'family', 'planningPreferences'],
+  ['planner', 'subjects', 'materials'],
   ['profile'],
 ];
 

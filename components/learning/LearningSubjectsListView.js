@@ -7,7 +7,7 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import { Plus, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Users, CalendarDays } from 'lucide-react';
 import SubjectOverviewCard from '../subjects/SubjectOverviewCard';
 
 const BRAND_SKY_BLUE = '#81C1E1';
@@ -39,6 +39,7 @@ export default function LearningSubjectsListView({
   onShiftSchoolYear,
   onJumpToCurrentSchoolYear,
   onEditSchoolYear,
+  onEditFamily,
   isAtCurrentSchoolYear = false,
   emptyTitle = 'No subjects yet',
   emptyText = 'Create subjects to organize learning.',
@@ -85,18 +86,48 @@ export default function LearningSubjectsListView({
             </View>
           </View>
         ) : null}
-        {canManageSubjects && onAddSubject ? (
-          <TouchableOpacity
-            style={styles.addSubjectButton}
-            onPress={onAddSubject}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel="Add subject"
-            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-          >
-            <Plus size={18} color="#334155" strokeWidth={2.25} />
-            <Text style={styles.addSubjectButtonText}>Add subject</Text>
-          </TouchableOpacity>
+        {(onEditFamily || onEditSchoolYear || (canManageSubjects && onAddSubject)) ? (
+          <View style={styles.headerActions}>
+            {onEditFamily ? (
+              <TouchableOpacity
+                style={styles.headerActionButton}
+                onPress={onEditFamily}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Edit Family"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Users size={18} color="#334155" strokeWidth={2.25} />
+                <Text style={styles.headerActionButtonText}>Edit Family</Text>
+              </TouchableOpacity>
+            ) : null}
+            {onEditSchoolYear ? (
+              <TouchableOpacity
+                style={styles.headerActionButton}
+                onPress={onEditSchoolYear}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Edit School Year"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <CalendarDays size={18} color="#334155" strokeWidth={2.25} />
+                <Text style={styles.headerActionButtonText}>Edit School Year</Text>
+              </TouchableOpacity>
+            ) : null}
+            {canManageSubjects && onAddSubject ? (
+              <TouchableOpacity
+                style={styles.headerActionButton}
+                onPress={onAddSubject}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Add subject"
+                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+              >
+                <Plus size={18} color="#334155" strokeWidth={2.25} />
+                <Text style={styles.headerActionButtonText}>Add subject</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         ) : null}
       </View>
 
@@ -163,28 +194,34 @@ const styles = StyleSheet.create({
     gap: 16,
     flexWrap: 'wrap',
   },
-  addSubjectButton: {
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 0,
+    marginLeft: 'auto',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  },
+  headerActionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 18,
-    paddingVertical: 11,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
     backgroundColor: '#FFFFFF',
-    borderRadius: 22,
+    borderRadius: 9999,
     borderWidth: 1,
-    borderColor: 'rgba(99, 102, 241, 0.22)',
+    borderColor: '#E6EBF2',
     flexShrink: 0,
-    marginLeft: 'auto',
     ...(Platform.OS === 'web' && {
       cursor: 'pointer',
-      transition: 'all 0.2s ease',
     }),
   },
-  addSubjectButtonText: {
+  headerActionButtonText: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#334155',
-    letterSpacing: -0.1,
+    fontWeight: '500',
+    color: 'rgba(15,23,42,0.85)',
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

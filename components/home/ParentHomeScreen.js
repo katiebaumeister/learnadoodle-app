@@ -736,6 +736,16 @@ export default function ParentHomeScreen({
             <Text style={styles.sectionLabel}>Today's Schedule</Text>
           </TouchableOpacity>
         </View>
+        {onAddEvent ? (
+          <TouchableOpacity
+            style={styles.greetingAddButton}
+            onPress={onAddEvent}
+            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+          >
+            <Plus size={18} color="#334155" strokeWidth={2.25} />
+            <Text style={styles.greetingAddButtonText}>Add event</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
       <TodayScheduleCard
         events={filteredLearning}
@@ -763,14 +773,6 @@ export default function ParentHomeScreen({
           <Text style={styles.greetingSubtitle}>Let's see where learning takes us today.</Text>
           <Text style={styles.greetingDateLine}>{formatGreetingDateInline(new Date())}</Text>
         </View>
-        <TouchableOpacity
-          style={styles.greetingAddButton}
-          onPress={onAddEvent}
-          {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-        >
-          <Plus size={18} color="#334155" strokeWidth={2.25} />
-          <Text style={styles.greetingAddButtonText}>Add event</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );

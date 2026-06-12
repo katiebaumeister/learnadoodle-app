@@ -14,6 +14,8 @@ export default function LearningSectionView({
   familyId,
   children = [],
   family,
+  user,
+  profile,
   session,
   userRole,
   accessibleChildren,
@@ -26,6 +28,7 @@ export default function LearningSectionView({
   materialsCache,
   onMaterialsUpdate,
   subjectsCallbacks = {},
+  onFamilyUpdate = null,
   viewingAsChildId = null,
 }) {
   const familyUserControls = useOptionalFamilyUserControls();
@@ -106,6 +109,11 @@ export default function LearningSectionView({
           <SubjectsPage
             familyId={familyId}
             planningMode={family?.default_planning_mode || null}
+            family={family}
+            user={user}
+            profile={profile}
+            fullSubjects={fullSubjects}
+            onFamilyUpdate={onFamilyUpdate}
             children={children}
             preloadedSubjects={subjectsOverviewCache}
             preloadedSubjectDetailCache={subjectDetailCache}

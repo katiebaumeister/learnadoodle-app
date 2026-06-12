@@ -676,10 +676,12 @@ export default function BulletinBoardSection({
         </View>
       ) : posts.length === 0 ? (
         <View style={styles.emptyWrap}>
-          <Text style={styles.emptyTitle}>No notes yet</Text>
-          <Text style={styles.emptyText}>
-            Share reminders, links, and updates with your family.
-          </Text>
+          <View style={styles.emptyState}>
+            <View style={styles.emptyIllustration}>
+              <FileText size={28} color="#94a3b8" strokeWidth={1.75} />
+            </View>
+            <Text style={styles.emptyTitle}>No notes yet</Text>
+          </View>
         </View>
       ) : (
         <ScrollView
@@ -917,21 +919,36 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 48,
-    paddingHorizontal: 24,
-    gap: 8,
+    minHeight: 132,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  emptyState: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+    }),
+  },
+  emptyIllustration: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(148, 163, 184, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
   },
   emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  emptyText: {
     fontSize: 14,
-    lineHeight: 22,
-    color: '#64748B',
+    fontWeight: '400',
+    color: '#94a3b8',
+    marginBottom: 8,
     textAlign: 'center',
-    maxWidth: 320,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   feedScroll: {
     flex: 1,
