@@ -1147,7 +1147,10 @@ export default function AddMaterialModal({
               </View>
             ) : null}
 
-            <View style={styles.formGroup}>
+            <View style={[
+              styles.formGroup,
+              isEditingExistingMaterial ? styles.formGroupBeforeSection : styles.formGroupLast,
+            ]}>
               <Text style={styles.fieldLabel}>Subject</Text>
               {loadingSubjects ? (
                 <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 8 }} />
@@ -1177,6 +1180,7 @@ export default function AddMaterialModal({
               )}
             </View>
 
+            {isEditingExistingMaterial ? (
             <ModalSectionCard
               Icon={Star}
               title="Rate and review material"
@@ -1184,7 +1188,6 @@ export default function AddMaterialModal({
               expanded={showReviewInfo}
               onPress={() => setShowReviewInfo(!showReviewInfo)}
               accent="#9ECFFB"
-              variant="simple"
             >
               {children.length > 0 ? (
                 <View style={styles.formGroup}>
@@ -1303,6 +1306,7 @@ export default function AddMaterialModal({
                 />
               </View>
             </ModalSectionCard>
+            ) : null}
           </AppModalShell>
         </View>
       </View>
@@ -1660,6 +1664,9 @@ const styles = StyleSheet.create({
   },
   formGroup: {
     marginBottom: 14,
+  },
+  formGroupBeforeSection: {
+    marginBottom: 8,
   },
   formGroupLast: {
     marginBottom: 0,

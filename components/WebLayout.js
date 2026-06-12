@@ -2485,14 +2485,13 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = (event) => {
-      fetchFamilyMembers();
       const childId = String(event?.detail?.childId || '').trim() || null;
       setInviteChildModalPrefillId(childId);
       setShowInviteChildModal(true);
     };
     window.addEventListener('openInviteChildModal', handler);
     return () => window.removeEventListener('openInviteChildModal', handler);
-  }, [fetchFamilyMembers]);
+  }, []);
 
   // Helper to navigate to Intelligence Hub with query params
   const navigateToIntelligence = useCallback((params = {}) => {

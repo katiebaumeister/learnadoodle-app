@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -53,14 +53,29 @@ export default function FamilyMessagesPane({
   const [previewMap, setPreviewMap] = useState(new Map());
   const [paneView, setPaneView] = useState('inbox');
   const [chatParticipant, setChatParticipant] = useState(null);
+  const inboxReadyRef = useRef(false);
+  const loadInFlightRef = useRef(false);
 
-  const loadInbox = useCallback(async () => {
+  const familyChildrenKey = useMemo(
+    () => (familyChildren || [])
+      .filter((c) => c?.archived !== true && c?.id != null)
+      .map((c) => String(c.id))
+      .sort()
+      .join(','),
+    [familyChildren]
+  );
+
+  const loadInbox = useCallback(async ({ silent = false } = {}) => {
     if (!familyId || !currentUserId) {
       setParticipants([]);
       setPreviewMap(new Map());
+      inboxReadyRef.current = false;
       return;
     }
-    setLoading(true);
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
+    const showLoadingUi = !silent && !inboxReadyRef.current;
+    if (showLoadingUi) setLoading(true);
     try {
       const { data: familyData } = await getFamilyMembers();
       const members = Array.isArray(familyData?.members) ? familyData.members : [];
@@ -117,28 +132,42 @@ export default function FamilyMessagesPane({
 
       setParticipants(sorted);
       setPreviewMap(previews);
+      inboxReadyRef.current = true;
       setChatParticipant((prev) => {
         if (!prev) return null;
         const key = participantKey(prev);
-        return sorted.find((p) => participantKey(p) === key) || null;
+        const next = sorted.find((p) => participantKey(p) === key) || null;
+        if (!next) return null;
+        if (
+          participantKey(prev) === participantKey(next)
+          && prev.name === next.name
+          && prev.type === next.type
+          && prev.avatar === next.avatar
+        ) {
+          return prev;
+        }
+        return next;
       });
     } catch (error) {
       console.error('[FamilyMessagesPane] loadInbox exception:', error);
-      setParticipants([]);
-      setPreviewMap(new Map());
+      if (!inboxReadyRef.current) {
+        setParticipants([]);
+        setPreviewMap(new Map());
+      }
     } finally {
-      setLoading(false);
+      if (showLoadingUi) setLoading(false);
+      loadInFlightRef.current = false;
     }
-  }, [currentUserId, familyChildren, familyId, viewerChildId, viewerRole]);
+  }, [currentUserId, familyChildrenKey, familyId, viewerChildId, viewerRole]);
 
   useEffect(() => {
     if (!active) return;
-    loadInbox();
+    loadInbox({ silent: inboxReadyRef.current });
   }, [active, loadInbox]);
 
   useEffect(() => {
     if (!active || Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const refresh = () => { loadInbox(); };
+    const refresh = () => { loadInbox({ silent: true }); };
     window.addEventListener('childAssignmentsNeedRefresh', refresh);
     window.addEventListener('parentAssignmentsNeedRefresh', refresh);
     return () => {
@@ -155,7 +184,7 @@ export default function FamilyMessagesPane({
   const handleBackFromChat = useCallback(() => {
     setChatParticipant(null);
     setPaneView('inbox');
-    loadInbox();
+    loadInbox({ silent: true });
   }, [loadInbox]);
 
   const listRows = useMemo(
@@ -205,7 +234,7 @@ export default function FamilyMessagesPane({
         {showPaneClose ? <MessagesPaneCloseButton onPress={onClosePane} /> : null}
       </View>
 
-      {loading ? (
+      {loading && listRows.length === 0 ? (
         <View style={styles.loadingState}>
           <ActivityIndicator size="small" color="#6366F1" />
         </View>

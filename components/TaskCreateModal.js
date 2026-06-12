@@ -47,9 +47,14 @@ const SUB = '#6b7280';
 const BORDER = '#e5e7eb';
 const MUTED = '#9ca3af';
 const ACCENT = '#d4a256';
+const CALENDAR_SELECTED_BG = '#F5F3FF';
+const CALENDAR_SELECTED_TEXT = '#8B7CF6';
+const CALENDAR_TODAY_BORDER = '#C4B5FD';
 const CHIP_BG = '#f3f4f6';
 const CHIP_BORDER = '#e5e7eb';
 const EVENT_MODAL_MAX_WIDTH = 740;
+const EVENT_NOTES_INPUT_MIN_HEIGHT = 44;
+const EVENT_NOTES_INPUT_MAX_HEIGHT = 240;
 
 function ModalFormSection({ title, children, first = false }) {
   return (
@@ -355,6 +360,7 @@ export default function TaskCreateModal({
     [assigneeIds]
   );
   const [notes, setNotes] = useState('');
+  const [notesInputHeight, setNotesInputHeight] = useState(EVENT_NOTES_INPUT_MIN_HEIGHT);
   const [submitting, setSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
   const [validationBanner, setValidationBanner] = useState('');
@@ -1528,6 +1534,7 @@ export default function TaskCreateModal({
       });
       setAssigneeIds(resetAssigneeIds);
       setNotes('');
+      setNotesInputHeight(EVENT_NOTES_INPUT_MIN_HEIGHT);
       // Labels removed - no longer used
       setPlacement(defaultPlacement || 'calendar'); // Use the prop instead of hardcoded 'calendar'
       setAllDay(false);
@@ -2486,6 +2493,22 @@ export default function TaskCreateModal({
     return parseWorkSpec(workSpec, eventType).graded !== false;
   }, [workSpec, eventType]);
   const showScheduleEndDateField = placement === 'calendar';
+
+  const handleNotesContentSizeChange = useCallback((event) => {
+    const contentHeight = event?.nativeEvent?.contentSize?.height;
+    if (!Number.isFinite(contentHeight)) return;
+    const nextHeight = Math.min(
+      EVENT_NOTES_INPUT_MAX_HEIGHT,
+      Math.max(EVENT_NOTES_INPUT_MIN_HEIGHT, Math.ceil(contentHeight)),
+    );
+    setNotesInputHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+  }, []);
+
+  useEffect(() => {
+    if (!notes) {
+      setNotesInputHeight(EVENT_NOTES_INPUT_MIN_HEIGHT);
+    }
+  }, [notes]);
 
   /** Single source of truth for required-field validation (inline errors + Add button state). */
   const buildValidationBannerMessage = useCallback((errors) => {
@@ -3732,7 +3755,7 @@ export default function TaskCreateModal({
           ) : null}
           <View style={styles.formGroup}>
             <Text style={styles.fieldLabel}>
-              Name<Text style={styles.required}> *</Text>
+              Event Title<Text style={styles.required}> *</Text>
             </Text>
             <TextInput
               placeholder="Event name"
@@ -3761,7 +3784,7 @@ export default function TaskCreateModal({
           {/* Placement toggle hidden for now */}
 
           <View style={styles.formGroup}>
-              <Text style={styles.fieldLabel}>Students <Text style={styles.required}>*</Text></Text>
+              <Text style={styles.fieldLabel}>Choose one or more family members <Text style={styles.required}>*</Text></Text>
               <SafeView style={[
                 styles.dropdownContainer,
                 validationErrors.assignee && styles.dropdownContainerError,
@@ -3820,7 +3843,7 @@ export default function TaskCreateModal({
               >
                 <View style={styles.dateTimeStack}>
                   <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
-                    <View style={[styles.timeField, styles.dateFieldInline]}>
+                    <View style={styles.scheduleColumn}>
                       <Text style={styles.fieldLabel}>Start date <Text style={styles.required}>*</Text></Text>
                       <View style={[styles.chip, styles.scheduleDateChip, validationErrors.date && styles.chipError, { backgroundColor: '#ffffff' }]}>
                         <TouchableOpacity
@@ -3855,7 +3878,7 @@ export default function TaskCreateModal({
                       {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
                     </View>
                     {showScheduleEndDateField ? (
-                      <View style={[styles.timeField, styles.dateFieldInline]}>
+                      <View style={styles.scheduleColumn}>
                         <Text style={styles.fieldLabel}>End date</Text>
                         <View style={[styles.chip, styles.scheduleDateChip, validationErrors.endDate && styles.chipError, { backgroundColor: '#ffffff' }]}>
                           <TouchableOpacity
@@ -3898,9 +3921,10 @@ export default function TaskCreateModal({
                     ) : null}
                   </View>
                   {!hideScheduleTimeControls && (
-                  <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
-                      <View style={[styles.timeField, styles.timeFieldCompact]}>
-                        <Text style={styles.fieldLabel}>Start</Text>
+                  <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
+                      <View style={styles.scheduleColumn}>
+                        <Text style={styles.fieldLabel}>Start time</Text>
+                      <View style={styles.scheduleTimeInputWrap}>
                       {Platform.OS === 'web' ? (
                         useTimeDropdownsOnWeb ? (
                           <View style={[styles.selectContainer, styles.timeSelectContainer]}>
@@ -4056,6 +4080,7 @@ export default function TaskCreateModal({
                               color: allDay ? MUTED : FG,
                               width: '100%',
                               maxWidth: '100%',
+                              boxSizing: 'border-box',
                               height: 'auto',
                               outline: 'none',
                               opacity: allDay ? 0.9 : 1,
@@ -4085,6 +4110,7 @@ export default function TaskCreateModal({
                             }}
                             style={[
                               styles.timeInput,
+                              styles.scheduleTimeInput,
                               allDay && styles.timeInputDisabled,
                               validationErrors.time && styles.inputError,
                             ]}
@@ -4092,12 +4118,15 @@ export default function TaskCreateModal({
                             autoCapitalize="characters"
                           />
                         )}
+                      </View>
                         {validationErrors.time && (
                           <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
                         )}
                       </View>
-                      <View style={[styles.timeField, styles.timeFieldCompact]}>
-                        <Text style={styles.fieldLabel}>End</Text>
+                      {showScheduleEndDateField ? (
+                      <View style={styles.scheduleColumn}>
+                        <Text style={styles.fieldLabel}>End time</Text>
+                      <View style={styles.scheduleTimeInputWrap}>
                       {Platform.OS === 'web' ? (
                         useTimeDropdownsOnWeb ? (
                           <View style={[styles.selectContainer, styles.timeSelectContainer]}>
@@ -4243,6 +4272,7 @@ export default function TaskCreateModal({
                               color: allDay ? MUTED : FG,
                               width: '100%',
                               maxWidth: '100%',
+                              boxSizing: 'border-box',
                               height: 'auto',
                               outline: 'none',
                               opacity: allDay ? 0.9 : 1,
@@ -4264,12 +4294,14 @@ export default function TaskCreateModal({
                               const formatted = formatTimeInput(text, endTime);
                               setEndTime(formatted);
                             }}
-                            style={[styles.timeInput, allDay && styles.timeInputDisabled]}
+                            style={[styles.timeInput, styles.scheduleTimeInput, allDay && styles.timeInputDisabled]}
                             editable={!allDay}
                             autoCapitalize="characters"
                           />
                         )}
                       </View>
+                      </View>
+                      ) : null}
                   </View>
                   )}
                   <View style={[styles.timeField, styles.inlineSwitchField]}>
@@ -4960,8 +4992,10 @@ export default function TaskCreateModal({
                 placeholderTextColor={MUTED}
                 value={notes}
                 onChangeText={setNotes}
-                style={[styles.input, styles.notesInput]}
+                style={[styles.input, styles.notesInput, { height: notesInputHeight }]}
                 multiline
+                scrollEnabled={notesInputHeight >= EVENT_NOTES_INPUT_MAX_HEIGHT}
+                onContentSizeChange={handleNotesContentSizeChange}
                 textAlignVertical="top"
               />
             </View>
@@ -5905,15 +5939,15 @@ export default function TaskCreateModal({
                                   alignItems: 'center',
                                   justifyContent: 'center',
                                   borderRadius: 6,
-                                  backgroundColor: isSelected ? ACCENT : 'transparent',
+                                  backgroundColor: isSelected ? CALENDAR_SELECTED_BG : 'transparent',
                                   borderWidth: isToday ? 2 : 0,
-                                  borderColor: isToday ? ACCENT : 'transparent',
+                                  borderColor: isToday ? CALENDAR_TODAY_BORDER : 'transparent',
                                 }}
                               >
                                 <Text style={{
                                   fontSize: 13,
                                   color: isSelected 
-                                    ? '#FFFFFF' 
+                                    ? CALENDAR_SELECTED_TEXT 
                                     : (isCurrentMonth ? FG : MUTED),
                                   fontWeight: isSelected || isToday ? '600' : '400',
                                 }}>
@@ -6138,15 +6172,15 @@ export default function TaskCreateModal({
                                   alignItems: 'center',
                                   justifyContent: 'center',
                                   borderRadius: 6,
-                                  backgroundColor: isSelected ? ACCENT : 'transparent',
+                                  backgroundColor: isSelected ? CALENDAR_SELECTED_BG : 'transparent',
                                   borderWidth: isToday ? 2 : 0,
-                                  borderColor: isToday ? ACCENT : 'transparent',
+                                  borderColor: isToday ? CALENDAR_TODAY_BORDER : 'transparent',
                                 }}
                               >
                                 <Text style={{
                                   fontSize: 13,
                                   color: isSelected 
-                                    ? '#FFFFFF' 
+                                    ? CALENDAR_SELECTED_TEXT 
                                     : (isCurrentMonth ? FG : MUTED),
                                   fontWeight: isSelected || isToday ? '600' : '400',
                                   ...(Platform.OS === 'web' && {
@@ -6365,16 +6399,16 @@ export default function TaskCreateModal({
                                   alignItems: 'center',
                                   justifyContent: 'center',
                                   borderRadius: 6,
-                                  backgroundColor: isSelected ? ACCENT : (isInRange ? 'rgba(167, 139, 250, 0.1)' : 'transparent'),
+                                  backgroundColor: isSelected ? CALENDAR_SELECTED_BG : (isInRange ? 'rgba(167, 139, 250, 0.1)' : 'transparent'),
                                   borderWidth: isToday ? 2 : 0,
-                                  borderColor: isToday ? ACCENT : 'transparent',
+                                  borderColor: isToday ? CALENDAR_TODAY_BORDER : 'transparent',
                                   opacity: isBeforeStart ? 0.3 : 1,
                                 }}
                               >
                                 <Text style={{
                                   fontSize: 13,
                                   color: isSelected 
-                                    ? '#FFFFFF' 
+                                    ? CALENDAR_SELECTED_TEXT 
                                     : (isCurrentMonth ? FG : MUTED),
                                   fontWeight: isSelected || isToday ? '600' : '400',
                                 }}>
@@ -6800,7 +6834,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     flexWrap: 'wrap',
-    gap: 12,
     marginBottom: 0,
   },
   dateTimeInlineRowWeb: {
@@ -6811,6 +6844,17 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     flexBasis: Platform.OS === 'web' ? 200 : '46%',
     minWidth: Platform.OS === 'web' ? 200 : 140,
+    marginRight: 12,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' ? { maxWidth: 240 } : {}),
+  },
+  scheduleColumn: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: Platform.OS === 'web' ? 200 : '46%',
+    minWidth: Platform.OS === 'web' ? 200 : 140,
+    marginRight: 12,
+    marginBottom: 4,
     ...(Platform.OS === 'web' ? { maxWidth: 240 } : {}),
   },
   scheduleDateChip: {
@@ -6825,6 +6869,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     minWidth: 96,
     alignItems: 'center',
+  },
+  scheduleTimeInputWrap: {
+    alignSelf: 'flex-start',
+    width: Platform.OS === 'web' ? 116 : '100%',
+    maxWidth: Platform.OS === 'web' ? 116 : 180,
+  },
+  scheduleTimeInput: {
+    width: '100%',
+    maxWidth: '100%',
   },
   inlineSwitchField: {
     minWidth: 84,
@@ -7002,14 +7055,11 @@ const styles = StyleSheet.create({
   timeInputsRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 12,
     width: '100%',
     flexWrap: 'wrap',
+    marginTop: 4,
   },
   timeInputsRowInline: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
     width: '100%',
     minWidth: 0,
     overflow: 'visible',
@@ -7017,6 +7067,11 @@ const styles = StyleSheet.create({
   timeField: {
     flex: 1,
     minWidth: 0,
+    alignSelf: 'stretch',
+    overflow: 'visible',
+  },
+  scheduleTimeField: {
+    width: '100%',
     alignSelf: 'stretch',
     overflow: 'visible',
   },
@@ -7074,7 +7129,9 @@ const styles = StyleSheet.create({
     }),
   },
   notesInput: {
-    minHeight: 80,
+    minHeight: EVENT_NOTES_INPUT_MIN_HEIGHT,
+    paddingTop: 10,
+    paddingBottom: 10,
     textAlignVertical: 'top',
   },
   footer: {

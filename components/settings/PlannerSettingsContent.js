@@ -1594,24 +1594,6 @@ export default function PlannerSettingsContent({
     }
     return true;
   }, [persist, toast, embeddedInModal]);
-  const handleLearningStartTimeWebChange = useCallback((value) => {
-    const parts = String(value || '').split(':').map((n) => Number(n));
-    if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return;
-    const sql = `${String(parts[0]).padStart(2, '0')}:${String(parts[1]).padStart(2, '0')}:00`;
-    const display = normalizeLearningTimeDisplay(sql, DEFAULT_LEARNING_START_TIME);
-    setLearningStartTime(display);
-    persistLearningTimes(display, stateRef.current?.learningEndTime);
-  }, [persistLearningTimes]);
-  const handleLearningEndTimeWebChange = useCallback((value) => {
-    const parts = String(value || '').split(':').map((n) => Number(n));
-    if (parts.length !== 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return;
-    const sql = `${String(parts[0]).padStart(2, '0')}:${String(parts[1]).padStart(2, '0')}:00`;
-    const display = normalizeLearningTimeDisplay(sql, DEFAULT_LEARNING_END_TIME);
-    setLearningEndTime(display);
-    persistLearningTimes(stateRef.current?.learningStartTime, display);
-  }, [persistLearningTimes]);
-  const learningStartTimeWebValue = normalizeLearningTimeSql(learningStartTime, DEFAULT_LEARNING_START_TIME).slice(0, 5);
-  const learningEndTimeWebValue = normalizeLearningTimeSql(learningEndTime, DEFAULT_LEARNING_END_TIME).slice(0, 5);
   const handleFollowChange = (v) => {
     stateRef.current = { ...(stateRef.current || {}), followGlobalHolidays: v };
     setFollowGlobalHolidays(v);
@@ -1898,13 +1880,14 @@ export default function PlannerSettingsContent({
   const sectionBucketStyle = {
     width: '100%',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 24,
-    paddingTop: 24,
-    paddingBottom: 24,
-    marginBottom: 16,
+    borderColor: '#EEF1F6',
+    borderRadius: 18,
+    backgroundColor: '#F8F9FC',
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 18,
+    marginBottom: 8,
+    overflow: 'hidden',
     ...(Platform.OS === 'web' && {
       maxWidth: 680,
       alignSelf: 'flex-start',
@@ -1914,17 +1897,17 @@ export default function PlannerSettingsContent({
     marginTop: 0,
   };
   const sectionBucketTitleStyle = {
-    fontSize: 22,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 24,
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#2B3345',
+    marginBottom: 14,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   };
   const formStackStyle = {
     width: '100%',
-    gap: 20,
+    gap: 16,
   };
   const formFieldStyle = {
     width: '100%',
@@ -1933,22 +1916,69 @@ export default function PlannerSettingsContent({
     fontSize: 12,
     fontWeight: '500',
     color: '#6B7280',
-    marginBottom: 8,
+    marginBottom: 6,
+    textAlign: 'left',
     ...(Platform.OS === 'web' && {
       fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   };
-  const formFieldSurfaceStyle = {
-    width: '100%',
-    backgroundColor: '#F3F4F6',
-    borderBottomWidth: 1,
-    borderBottomColor: '#9CA3AF',
-    borderTopLeftRadius: 4,
-    borderTopRightRadius: 4,
-    paddingHorizontal: 12,
+  const dateTimeInlineRow = {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    flexWrap: 'wrap',
+    marginBottom: 0,
+    gap: 12,
+  };
+  const scheduleColumn = {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: Platform.OS === 'web' ? 200 : '46%',
+    minWidth: Platform.OS === 'web' ? 200 : 140,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' ? { maxWidth: 240 } : {}),
+  };
+  const scheduleDateFieldStyle = {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    minHeight: 40,
+    minWidth: 120,
+    alignSelf: 'flex-start',
+  };
+  const scheduleTimeInputWrap = {
+    alignSelf: 'flex-start',
+    width: Platform.OS === 'web' ? 116 : '100%',
+    maxWidth: Platform.OS === 'web' ? 116 : 180,
+  };
+  const scheduleTimeInputStyle = {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 14,
     paddingVertical: 10,
-    minHeight: 48,
-    justifyContent: 'center',
+    paddingHorizontal: 12,
+    color: '#111827',
+    backgroundColor: '#ffffff',
+    fontSize: 14,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
+    }),
+  };
+  const inlineSwitchRowStyle = {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    minHeight: 36,
+  };
+  const chipRowStyle = {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   };
   const subjectPacingRowStyle = {
     minHeight: 0,
@@ -2284,6 +2314,42 @@ export default function PlannerSettingsContent({
     setSelectedSchoolYearLabel(currentSchoolYearLabel);
   }, [canShiftSchoolYear, isAtCurrentSchoolYear, currentSchoolYearLabel]);
 
+  const renderDateRangeField = (label, startValue, onStartChange, endValue, onEndChange) => (
+    <View style={formFieldStyle}>
+      <Text style={formFieldLabelStyle}>{label}</Text>
+      <View style={dateTimeInlineRow}>
+        <View style={scheduleColumn}>
+          <Text style={formFieldLabelStyle}>Start date</Text>
+          <PlannerPreferenceDateField
+            value={startValue}
+            onChange={onStartChange}
+            placeholder="Start"
+            borderColor="#e5e7eb"
+            textColor={TEXT_BLACK}
+            mutedColor="rgba(15,23,42,0.4)"
+            style={scheduleDateFieldStyle}
+            minDate={yearRangeMinYmd}
+            maxDate={yearRangeMaxYmd}
+          />
+        </View>
+        <View style={scheduleColumn}>
+          <Text style={formFieldLabelStyle}>End date</Text>
+          <PlannerPreferenceDateField
+            value={endValue}
+            onChange={onEndChange}
+            placeholder="End"
+            borderColor="#e5e7eb"
+            textColor={TEXT_BLACK}
+            mutedColor="rgba(15,23,42,0.4)"
+            style={scheduleDateFieldStyle}
+            minDate={yearRangeMinYmd}
+            maxDate={yearRangeMaxYmd}
+          />
+        </View>
+      </View>
+    </View>
+  );
+
   if (loading && embeddedInModal) {
     return (
       <View style={{ padding: 20, alignItems: 'center' }}>
@@ -2400,206 +2466,72 @@ export default function PlannerSettingsContent({
         <View style={[sectionBucketStyle, sectionBucketFirstStyle]}>
           <Text style={sectionBucketTitleStyle}>Learning defaults</Text>
           <View style={formStackStyle}>
-            <View style={formFieldStyle}>
-              <Text style={formFieldLabelStyle}>School year</Text>
-              <View style={formFieldSurfaceStyle}>
-                <View style={compactRangeControlStyle}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ChevronLeft size={14} color={rangeControlChevronColor} />
-                    <PlannerPreferenceDateField
-                      value={defaultYearStartDate}
-                      onChange={handleRangeDefaultChange(setDefaultYearStartDate)}
-                      placeholder="Start"
-                      borderColor="transparent"
-                      textColor={TEXT_BLACK}
-                      mutedColor="rgba(15,23,42,0.4)"
-                      style={rangeValueFieldStyle}
-                      minDate={yearRangeMinYmd}
-                      maxDate={yearRangeMaxYmd}
-                    />
-                  </View>
-                  <ArrowRight size={14} color="#CAD2DD" />
-                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                    <PlannerPreferenceDateField
-                      value={defaultYearEndDate}
-                      onChange={handleRangeDefaultChange(setDefaultYearEndDate)}
-                      placeholder="End"
-                      borderColor="transparent"
-                      textColor={TEXT_BLACK}
-                      mutedColor="rgba(15,23,42,0.4)"
-                      style={rangeValueFieldStyle}
-                      minDate={yearRangeMinYmd}
-                      maxDate={yearRangeMaxYmd}
-                    />
-                    <ChevronRight size={14} color={rangeControlChevronColor} />
-                  </View>
-                </View>
-              </View>
-            </View>
-            <View style={formFieldStyle}>
-              <Text style={formFieldLabelStyle}>Fall term</Text>
-              <View style={formFieldSurfaceStyle}>
-                <View style={compactRangeControlStyle}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ChevronLeft size={14} color={rangeControlChevronColor} />
-                    <PlannerPreferenceDateField
-                      value={defaultFallStartDate}
-                      onChange={handleRangeDefaultChange(setDefaultFallStartDate)}
-                      placeholder="Start"
-                      borderColor="transparent"
-                      textColor={TEXT_BLACK}
-                      mutedColor="rgba(15,23,42,0.4)"
-                      style={rangeValueFieldStyle}
-                      minDate={yearRangeMinYmd}
-                      maxDate={yearRangeMaxYmd}
-                    />
-                  </View>
-                  <ArrowRight size={14} color="#CAD2DD" />
-                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                    <PlannerPreferenceDateField
-                      value={defaultFallEndDate}
-                      onChange={handleRangeDefaultChange(setDefaultFallEndDate)}
-                      placeholder="End"
-                      borderColor="transparent"
-                      textColor={TEXT_BLACK}
-                      mutedColor="rgba(15,23,42,0.4)"
-                      style={rangeValueFieldStyle}
-                      minDate={yearRangeMinYmd}
-                      maxDate={yearRangeMaxYmd}
-                    />
-                    <ChevronRight size={14} color={rangeControlChevronColor} />
-                  </View>
-                </View>
-              </View>
-            </View>
-            <View style={formFieldStyle}>
-              <Text style={formFieldLabelStyle}>Spring term</Text>
-              <View style={formFieldSurfaceStyle}>
-                <View style={compactRangeControlStyle}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ChevronLeft size={14} color={rangeControlChevronColor} />
-                    <PlannerPreferenceDateField
-                      value={defaultSpringStartDate}
-                      onChange={handleRangeDefaultChange(setDefaultSpringStartDate)}
-                      placeholder="Start"
-                      borderColor="transparent"
-                      textColor={TEXT_BLACK}
-                      mutedColor="rgba(15,23,42,0.4)"
-                      style={rangeValueFieldStyle}
-                      minDate={yearRangeMinYmd}
-                      maxDate={yearRangeMaxYmd}
-                    />
-                  </View>
-                  <ArrowRight size={14} color="#CAD2DD" />
-                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                    <PlannerPreferenceDateField
-                      value={defaultSpringEndDate}
-                      onChange={handleRangeDefaultChange(setDefaultSpringEndDate)}
-                      placeholder="End"
-                      borderColor="transparent"
-                      textColor={TEXT_BLACK}
-                      mutedColor="rgba(15,23,42,0.4)"
-                      style={rangeValueFieldStyle}
-                      minDate={yearRangeMinYmd}
-                      maxDate={yearRangeMaxYmd}
-                    />
-                    <ChevronRight size={14} color={rangeControlChevronColor} />
-                  </View>
-                </View>
-              </View>
-            </View>
+            {renderDateRangeField(
+              'School year',
+              defaultYearStartDate,
+              handleRangeDefaultChange(setDefaultYearStartDate),
+              defaultYearEndDate,
+              handleRangeDefaultChange(setDefaultYearEndDate),
+            )}
+            {renderDateRangeField(
+              'Fall term',
+              defaultFallStartDate,
+              handleRangeDefaultChange(setDefaultFallStartDate),
+              defaultFallEndDate,
+              handleRangeDefaultChange(setDefaultFallEndDate),
+            )}
+            {renderDateRangeField(
+              'Spring term',
+              defaultSpringStartDate,
+              handleRangeDefaultChange(setDefaultSpringStartDate),
+              defaultSpringEndDate,
+              handleRangeDefaultChange(setDefaultSpringEndDate),
+            )}
             <View style={formFieldStyle}>
               <Text style={formFieldLabelStyle}>Usual learning days</Text>
-              <View style={formFieldSurfaceStyle}>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                  {LEARNING_DAY_OPTIONS.map((option) => {
-                    const active = preferredLearningDayNums.includes(option.id);
-                    return (
-                      <TouchableOpacity
-                        key={`learning-day-${option.id}`}
-                        style={weekdayDotStyle(active)}
-                        onPress={() => handlePreferredLearningDayToggle(option.id)}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={weekdayDotLabelStyle(active)}>{option.label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+              <View style={chipRowStyle}>
+                {LEARNING_DAY_OPTIONS.map((option) => {
+                  const active = preferredLearningDayNums.includes(option.id);
+                  return (
+                    <TouchableOpacity
+                      key={`learning-day-${option.id}`}
+                      style={weekdayDotStyle(active)}
+                      onPress={() => handlePreferredLearningDayToggle(option.id)}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={weekdayDotLabelStyle(active)}>{option.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </View>
             <View style={formFieldStyle}>
               <Text style={formFieldLabelStyle}>Usual learning hours</Text>
-              <View style={formFieldSurfaceStyle}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <View style={{ flex: 1, alignItems: 'flex-start' }}>
-                    {Platform.OS === 'web' ? (
-                      <input
-                        type="time"
-                        value={learningStartTimeWebValue}
-                        onChange={(e) => handleLearningStartTimeWebChange(e.target.value)}
-                        style={{
-                          backgroundColor: 'transparent',
-                          borderWidth: 0,
-                          borderStyle: 'none',
-                          fontSize: 14,
-                          fontWeight: '500',
-                          color: '#111827',
-                          width: '100%',
-                          outline: 'none',
-                          textAlign: 'left',
-                        }}
-                      />
-                    ) : (
-                      <TextInput
-                        value={learningStartTime}
-                        onChangeText={setLearningStartTime}
-                        onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
-                        placeholder="8:00 AM"
-                        placeholderTextColor={MUTED}
-                        style={[inputStyle, {
-                          borderWidth: 0,
-                          backgroundColor: 'transparent',
-                          width: '100%',
-                          fontWeight: '500',
-                        }]}
-                      />
-                    )}
+              <View style={dateTimeInlineRow}>
+                <View style={scheduleColumn}>
+                  <Text style={formFieldLabelStyle}>Start time</Text>
+                  <View style={scheduleTimeInputWrap}>
+                    <TextInput
+                      value={learningStartTime}
+                      onChangeText={setLearningStartTime}
+                      onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
+                      placeholder="8:00 AM"
+                      placeholderTextColor={MUTED}
+                      style={scheduleTimeInputStyle}
+                    />
                   </View>
-                  <ArrowRight size={15} color="#B5BFCD" />
-                  <View style={{ flex: 1, alignItems: 'flex-start' }}>
-                    {Platform.OS === 'web' ? (
-                      <input
-                        type="time"
-                        value={learningEndTimeWebValue}
-                        onChange={(e) => handleLearningEndTimeWebChange(e.target.value)}
-                        style={{
-                          backgroundColor: 'transparent',
-                          borderWidth: 0,
-                          borderStyle: 'none',
-                          fontSize: 14,
-                          fontWeight: '500',
-                          color: '#111827',
-                          width: '100%',
-                          outline: 'none',
-                          textAlign: 'left',
-                        }}
-                      />
-                    ) : (
-                      <TextInput
-                        value={learningEndTime}
-                        onChangeText={setLearningEndTime}
-                        onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
-                        placeholder="3:00 PM"
-                        placeholderTextColor={MUTED}
-                        style={[inputStyle, {
-                          borderWidth: 0,
-                          backgroundColor: 'transparent',
-                          width: '100%',
-                          fontWeight: '500',
-                        }]}
-                      />
-                    )}
+                </View>
+                <View style={scheduleColumn}>
+                  <Text style={formFieldLabelStyle}>End time</Text>
+                  <View style={scheduleTimeInputWrap}>
+                    <TextInput
+                      value={learningEndTime}
+                      onChangeText={setLearningEndTime}
+                      onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
+                      placeholder="4:00 PM"
+                      placeholderTextColor={MUTED}
+                      style={scheduleTimeInputStyle}
+                    />
                   </View>
                 </View>
               </View>
@@ -2611,8 +2543,8 @@ export default function PlannerSettingsContent({
           <Text style={sectionBucketTitleStyle}>Attendance tracking</Text>
           <View style={formStackStyle}>
             <View style={formFieldStyle}>
-              <View style={formFieldSurfaceStyle}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <Text style={formFieldLabelStyle}>Tracking mode</Text>
+              <View style={chipRowStyle}>
                   <TouchableOpacity
                     style={[modeToggleButtonStyle(isClassDayAttendanceActive), { minWidth: 104 }]}
                     onPress={() => handleAttendanceTrackingModeChange('class_day')}
@@ -2627,7 +2559,6 @@ export default function PlannerSettingsContent({
                   >
                     <Text style={modeToggleButtonTextStyle(isPerSubjectAttendanceActive)}>Per subject</Text>
                   </TouchableOpacity>
-                </View>
               </View>
             </View>
             {(attendanceTrackingMode === 'class_day' || targetScope === 'per_subject') ? (
@@ -2635,14 +2566,13 @@ export default function PlannerSettingsContent({
             {attendanceTrackingMode === 'class_day' ? (
               <View style={formFieldStyle}>
                 <Text style={formFieldLabelStyle}>Total attendance goal</Text>
-                <View style={formFieldSurfaceStyle}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     {goalMode === 'days' && (
                       <TextInput
                         value={targetDays}
                         onChangeText={handleTargetDaysChange}
                         keyboardType="number-pad"
-                        style={[inputStyle, { width: 72, borderWidth: 0, backgroundColor: 'transparent', minHeight: 28 }]}
+                        style={[inputStyle, { width: 72, minHeight: 40, borderRadius: 14 }]}
                         placeholder="180"
                         placeholderTextColor="rgba(15,23,42,0.4)"
                       />
@@ -2652,12 +2582,12 @@ export default function PlannerSettingsContent({
                         value={targetHours}
                         onChangeText={handleTargetHoursChange}
                         keyboardType="number-pad"
-                        style={[inputStyle, { width: 80, borderWidth: 0, backgroundColor: 'transparent', minHeight: 28 }]}
+                        style={[inputStyle, { width: 80, minHeight: 40, borderRadius: 14 }]}
                         placeholder="1000"
                         placeholderTextColor="rgba(15,23,42,0.4)"
                       />
                     )}
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <View style={chipRowStyle}>
                       <TouchableOpacity style={modeToggleButtonStyle(goalMode === 'days')} onPress={() => handleGoalChange('days')}>
                         <Text style={modeToggleButtonTextStyle(goalMode === 'days')}>days</Text>
                       </TouchableOpacity>
@@ -2665,7 +2595,6 @@ export default function PlannerSettingsContent({
                         <Text style={modeToggleButtonTextStyle(goalMode === 'hours')}>hours</Text>
                       </TouchableOpacity>
                     </View>
-                  </View>
                 </View>
               </View>
             ) : visibleSubjects.length === 0 ? (
@@ -2681,8 +2610,7 @@ export default function PlannerSettingsContent({
                   return (
                     <View key={subj.id} style={formFieldStyle}>
                       <Text style={formFieldLabelStyle}>{subj.name || 'Subject'}</Text>
-                      <View style={formFieldSurfaceStyle}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           {mode === 'days' ? (
                             <TextInput
                               value={daysValue}
@@ -2694,7 +2622,7 @@ export default function PlannerSettingsContent({
                                 })
                               }
                               keyboardType="number-pad"
-                              style={[inputStyle, { width: 72, borderWidth: 0, backgroundColor: 'transparent', minHeight: 28 }]}
+                              style={[inputStyle, { width: 72, minHeight: 40, borderRadius: 14 }]}
                               placeholder="180"
                               placeholderTextColor="rgba(15,23,42,0.4)"
                             />
@@ -2709,12 +2637,12 @@ export default function PlannerSettingsContent({
                                 })
                               }
                               keyboardType="number-pad"
-                              style={[inputStyle, { width: 80, borderWidth: 0, backgroundColor: 'transparent', minHeight: 28 }]}
+                              style={[inputStyle, { width: 80, minHeight: 40, borderRadius: 14 }]}
                               placeholder="1000"
                               placeholderTextColor="rgba(15,23,42,0.4)"
                             />
                           )}
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={chipRowStyle}>
                             <TouchableOpacity
                               style={modeToggleButtonStyle(mode === 'days')}
                               onPress={() =>
@@ -2740,7 +2668,6 @@ export default function PlannerSettingsContent({
                               <Text style={modeToggleButtonTextStyle(mode === 'hours')}>hours</Text>
                             </TouchableOpacity>
                           </View>
-                        </View>
                       </View>
                     </View>
                   );
@@ -2756,9 +2683,11 @@ export default function PlannerSettingsContent({
           <Text style={sectionBucketTitleStyle}>Days off</Text>
           <View style={formStackStyle}>
             <View style={formFieldStyle}>
-              <Text style={formFieldLabelStyle}>U.S. Public Holidays</Text>
-              <View style={[formFieldSurfaceStyle, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
-                <Text style={settingRowLabelStyle}>Include federal holidays</Text>
+              <View style={inlineSwitchRowStyle}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text style={formFieldLabelStyle}>U.S. Public Holidays</Text>
+                  <Text style={mutedMetaTextStyle}>Include federal holidays</Text>
+                </View>
                 <Switch
                   value={followGlobalHolidays}
                   onValueChange={handleFollowChange}
@@ -2770,7 +2699,7 @@ export default function PlannerSettingsContent({
 
             <View style={formFieldStyle}>
               <Text style={formFieldLabelStyle}>{PLANNING_PREFERENCES_UI.customDaysOffListTitle}</Text>
-              <View style={[formFieldSurfaceStyle, { gap: 8 }]}>
+              <View style={{ gap: 8 }}>
               {visibleDaysOffEntries.length === 0 && !addingDayOff ? (
                 <Text style={mutedMetaTextStyle}>No custom days off yet</Text>
               ) : null}

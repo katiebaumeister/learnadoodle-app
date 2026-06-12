@@ -103,6 +103,12 @@ export default function FamilyDmChat({
   const sendInFlightRef = useRef(false);
   const scrollToBottomOnLoadRef = useRef(true);
   const swipeBackRef = useRef(null);
+  const chatReadyRef = useRef(false);
+  const loadInFlightRef = useRef(false);
+  const participantRef = useRef(participant);
+  participantRef.current = participant;
+  const participantId = String(participant?.id || '').trim();
+  const participantType = participant?.type || '';
 
   const { swipeStyle, panHandlers: swipeBackHandlers, webHandlers: swipeBackWebHandlers } = useSwipeBackGesture({
     onBack,
@@ -195,13 +201,18 @@ export default function FamilyDmChat({
     });
   }, []);
 
-  const loadMessages = useCallback(async () => {
-    if (!familyId || !currentUserId || !participant) {
+  const loadMessages = useCallback(async ({ silent = false } = {}) => {
+    const activeParticipant = participantRef.current;
+    if (!familyId || !currentUserId || !activeParticipant) {
       setMessages([]);
+      chatReadyRef.current = false;
       setLoading(false);
       return;
     }
-    setLoading(true);
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
+    const showLoadingUi = !silent && !chatReadyRef.current;
+    if (showLoadingUi) setLoading(true);
     try {
       const { data: dmRows, error: dmError, attachmentsSupported: dmAttachmentsSupported } =
         await queryFamilyDirectMessages(supabase, {
@@ -234,7 +245,7 @@ export default function FamilyDmChat({
       const dmList = Array.isArray(dmRows) ? dmRows : [];
 
       const unreadForMe = dmList
-        .filter((row) => messageMatchesParticipant(row, participant, currentUserId, viewerChildId))
+        .filter((row) => messageMatchesParticipant(row, activeParticipant, currentUserId, viewerChildId))
         .filter((row) => String(row.sender_user_id) !== String(currentUserId))
         .filter((row) => !row.read_at)
         .filter((row) => isDirectMessageRecipient(row, currentUserId, viewerChildId));
@@ -274,7 +285,7 @@ export default function FamilyDmChat({
       const unified = mergeUnifiedStream({
         directMessages: dmList,
         assignments: assignmentList,
-        participant,
+        participant: activeParticipant,
         currentUserId,
         viewerRole,
         viewerChildId,
@@ -282,21 +293,30 @@ export default function FamilyDmChat({
       });
       const enriched = await enrichMessages(unified, assignmentList);
       setMessages(enriched);
+      chatReadyRef.current = true;
     } catch (error) {
       console.error('[FamilyDmChat] loadMessages exception:', error);
-      setMessages([]);
+      if (!chatReadyRef.current) setMessages([]);
     } finally {
-      setLoading(false);
+      if (showLoadingUi) setLoading(false);
+      loadInFlightRef.current = false;
     }
-  }, [childCtx?.childId, currentUserId, enrichMessages, familyId, participant, viewerChildId, viewerRole]);
+  }, [childCtx?.childId, currentUserId, enrichMessages, familyId, participantId, participantType, viewerChildId, viewerRole]);
+
+  const loadMessagesRef = useRef(loadMessages);
+  loadMessagesRef.current = loadMessages;
 
   useEffect(() => {
-    loadMessages();
-  }, [loadMessages]);
-
-  useEffect(() => {
+    chatReadyRef.current = false;
     scrollToBottomOnLoadRef.current = true;
-  }, [participant?.id]);
+    setMessages([]);
+    loadMessagesRef.current({ silent: false });
+  }, [participantId, participantType]);
+
+  useEffect(() => {
+    if (!chatReadyRef.current) return;
+    loadMessagesRef.current({ silent: true });
+  }, [childCtx?.childId, familyId, currentUserId, viewerChildId, viewerRole]);
 
   const scrollToBottom = useCallback((animated = false) => {
     const scroll = scrollRef.current;
@@ -322,12 +342,12 @@ export default function FamilyDmChat({
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const refresh = () => { loadMessages(); };
+    const refresh = () => { loadMessages({ silent: true }); };
     window.addEventListener('childAssignmentsNeedRefresh', refresh);
     window.addEventListener('parentAssignmentsNeedRefresh', refresh);
     const onVisible = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        loadMessages();
+        loadMessages({ silent: true });
       }
     };
     document.addEventListener('visibilitychange', onVisible);
@@ -620,7 +640,7 @@ export default function FamilyDmChat({
         ) : null}
       </View>
 
-      {loading ? (
+      {loading && messages.length === 0 && !childInviteGate ? (
         <View style={styles.loadingState}>
           <ActivityIndicator size="small" color="#6366F1" />
         </View>

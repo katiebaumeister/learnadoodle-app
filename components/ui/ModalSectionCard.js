@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
-    marginTop: 20,
+    marginTop: 10,
     marginBottom: 0,
   },
   wrapOverflowVisible: {

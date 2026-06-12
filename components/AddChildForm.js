@@ -91,7 +91,6 @@ const AddChildForm = forwardRef(
     return arr.filter((i) => i !== otherItem).concat('Other');
   });
   const [avatar, setAvatar] = useState(initial.avatar || initial.avatar_url || 'prof1');
-  const [nameInputFocused, setNameInputFocused] = useState(false);
   const [showLearningSetup, setShowLearningSetup] = useState(false);
   const [showLearningProfile, setShowLearningProfile] = useState(false);
   const [showAdditionalNotes, setShowAdditionalNotes] = useState(false);
@@ -350,13 +349,11 @@ const AddChildForm = forwardRef(
         <View style={styles.field}>
           <Text style={styles.nameFieldLabel}>Name <Text style={styles.required}>*</Text></Text>
           <TextInput
-            style={[styles.nameInput, nameInputFocused && styles.nameInputFocused]}
+            style={styles.nameInput}
             placeholder="e.g., Lily"
             value={name}
             onChangeText={setName}
             placeholderTextColor={MUTED}
-            onFocus={() => setNameInputFocused(true)}
-            onBlur={() => setNameInputFocused(false)}
           />
         </View>
         <View style={styles.field}>
@@ -649,36 +646,31 @@ const styles = StyleSheet.create({
   nameFieldLabel: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#6b7280',
-    marginBottom: 8,
-    fontFamily: Platform.select({
-      web: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      default: 'System',
+    color: '#6B7280',
+    marginBottom: 6,
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   nameInput: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '400',
     color: '#111827',
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 6,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    minHeight: 48,
-    fontFamily: Platform.select({
-      web: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      default: 'System',
-    }),
+    backgroundColor: '#F3F4F6',
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#9CA3AF',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    width: '100%',
     ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       outlineStyle: 'none',
-      transition: 'border-color 0.15s ease',
     }),
-  },
-  nameInputFocused: {
-    borderColor: '#6BB3E8',
-    borderWidth: 1.5,
   },
   hint: {
     color: '#9ca3af',

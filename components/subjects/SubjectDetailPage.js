@@ -1030,7 +1030,7 @@ export default function SubjectDetailPage({
     if (existingMenu) existingMenu.remove();
     const menuItems = [
       { text: 'Attachment details', action: () => setViewingMaterial(material), icon: FileText },
-      { text: 'Edit attachment details', action: () => setEditingMaterial(material), icon: Edit2 },
+      { text: 'Edit Material', action: () => setEditingMaterial(material), icon: Edit2 },
       { text: 'Create assignment from material', action: () => handleCreateAssignmentFromMaterial(material), icon: FileText },
       { text: 'Open in new tab', action: () => handleOpenInNewTab(material), icon: ExternalLink },
       { text: 'Delete', action: () => handleDeleteMaterial(material), icon: Trash2, isDelete: true },

@@ -774,6 +774,8 @@ const SUB = '#6b7280';
 const BORDER = '#e5e7eb';
 const MUTED = '#9ca3af';
 const ACCENT = '#d4a256';
+const EVENT_NOTES_INPUT_MIN_HEIGHT = 44;
+const EVENT_NOTES_INPUT_MAX_HEIGHT = 240;
 const CHIP_BG = '#f3f4f6';
 const CHIP_BORDER = '#e5e7eb';
 const RECURRENCE_WEEKDAY_OPTIONS = [
@@ -1108,6 +1110,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [allDay, setAllDay] = useState(false);
   const [draftNotes, setDraftNotes] = useState('');
   const [notes, setNotes] = useState('');
+  const [notesInputHeight, setNotesInputHeight] = useState(EVENT_NOTES_INPUT_MIN_HEIGHT);
   const [draftStatus, setDraftStatus] = useState('scheduled');
   const [draftTags, setDraftTags] = useState([]);
   const [tagInput, setTagInput] = useState('');
@@ -1564,7 +1567,23 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     return yearEnd;
   }, [academicYears, academicYearId, plannerDefaults, dueDate]);
 
-  const showDayOffEndDateField = placement === 'calendar' && normalizeEventTypeForDisplay(eventType, currentHolidayType) === 'Day Off';
+  const showScheduleEndDateField = placement === 'calendar';
+
+  const handleNotesContentSizeChange = useCallback((event) => {
+    const contentHeight = event?.nativeEvent?.contentSize?.height;
+    if (!Number.isFinite(contentHeight)) return;
+    const nextHeight = Math.min(
+      EVENT_NOTES_INPUT_MAX_HEIGHT,
+      Math.max(EVENT_NOTES_INPUT_MIN_HEIGHT, Math.ceil(contentHeight)),
+    );
+    setNotesInputHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+  }, []);
+
+  useEffect(() => {
+    if (!notes) {
+      setNotesInputHeight(EVENT_NOTES_INPUT_MIN_HEIGHT);
+    }
+  }, [notes]);
 
   const buildValidationBannerMessage = useCallback((errors) => {
     const messagesByKey = {
@@ -1614,7 +1633,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       errors.eventType = 'Event type is required';
     }
 
-    if (showDayOffEndDateField && eventEndDate && dueDate && eventEndDate < dueDate) {
+    if (showScheduleEndDateField && eventEndDate && dueDate && eventEndDate < dueDate) {
       errors.endDate = 'End date cannot be before the start date';
     }
     
@@ -1646,7 +1665,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     draftTitle,
     dueDate,
     eventType,
-    showDayOffEndDateField,
+    showScheduleEndDateField,
     eventEndDate,
     assigneeIds,
     isRecurring,
@@ -5260,33 +5279,30 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           <X size={18} color="#64748B" strokeWidth={2.25} />
         </TouchableOpacity>
       </View>
-      <SafeFieldRow style={[styles.fieldRow, styles.fieldRowFull, { marginTop: 4, marginBottom: 8 }]}>
-        <View style={[styles.field, styles.fieldStretch]}>
-          <Text style={styles.fieldLabel}>
-            Name <Text style={{ color: '#ef4444' }}>*</Text>
-          </Text>
-          <TextInput
-            placeholder="Name"
-            placeholderTextColor={MUTED}
-            value={draftTitle}
-            onChangeText={(text) => {
-              setDraftTitle(text);
-              if (validationErrors.title) {
-                setValidationErrors({ ...validationErrors, title: null });
-              }
-            }}
-            style={[
-              styles.titleInputHero,
-              styles.inputFullWidth,
-              validationErrors.title && styles.inputError,
-            ]}
-            autoFocus
-          />
-          {validationErrors.title && (
-            <Text style={styles.errorText}>{validationErrors.title}</Text>
-          )}
-        </View>
-      </SafeFieldRow>
+      <View style={styles.formGroup}>
+        <Text style={styles.fieldLabel}>
+          Event Title <Text style={{ color: '#ef4444' }}>*</Text>
+        </Text>
+        <TextInput
+          placeholder="Event name"
+          placeholderTextColor={MUTED}
+          value={draftTitle}
+          onChangeText={(text) => {
+            setDraftTitle(text);
+            if (validationErrors.title) {
+              setValidationErrors({ ...validationErrors, title: null });
+            }
+          }}
+          style={[
+            styles.fieldInput,
+            validationErrors.title && styles.fieldInputError,
+          ]}
+          autoFocus
+        />
+        {validationErrors.title && (
+          <Text style={styles.errorText}>{validationErrors.title}</Text>
+        )}
+      </View>
       {validationBanner ? (
         <View style={styles.validationBannerContainer}>
           <Text style={styles.validationBannerText}>{validationBanner}</Text>
@@ -5426,9 +5442,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
 
       {/* Placement toggle hidden for now */}
       
-      <SafeFieldRow style={[styles.fieldRow, { marginTop: 0, marginBottom: 8 }]}>
+      <View style={styles.formGroup}>
         <View style={styles.field}>
-          <Text style={styles.fieldLabel}>Students <Text style={{ color: '#ef4444' }}>*</Text></Text>
+          <Text style={styles.fieldLabel}>Choose one or more family members <Text style={{ color: '#ef4444' }}>*</Text></Text>
           <SafeView style={[
             styles.dropdownContainer,
             validationErrors.assignee && styles.dropdownContainerError,
@@ -5475,66 +5491,26 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
             </ChipRow>
           </SafeView>
           {validationErrors.assignee ? (
-            <Text style={styles.errorTextSmall}>{validationErrors.assignee}</Text>
+            <Text style={[styles.errorTextSmall, { marginTop: 2, marginBottom: 4 }]}>{validationErrors.assignee}</Text>
           ) : null}
         </View>
-      </SafeFieldRow>
+      </View>
 
       <SafeView>
         {placement === 'calendar' && (
-          <View style={[styles.scheduleFieldsWrap, validationErrors.time && styles.scheduleFieldsWrapError]}>
-            <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
-              <View style={[styles.timeField, styles.dateFieldInline]}>
-                <Text style={styles.timeLabel}>
-                  {isSeriesEditScope ? 'Series start date' : 'Date'} <Text style={{ color: '#ef4444' }}>*</Text>
-                </Text>
-                <View style={[styles.chip, validationErrors.date && styles.chipFieldError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setDueDate(addDays(dueDate, -1));
-                      if (validationErrors.date) {
-                        setValidationErrors((prev) => ({ ...prev, date: null }));
-                      }
-                    }}
-                  >
-                    <ChevronLeft size={16} color={FG} />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setCalendarViewMonth(dueDate);
-                      setShowCalendarPicker(true);
-                      if (validationErrors.date) {
-                        setValidationErrors((prev) => ({ ...prev, date: null }));
-                      }
-                    }}
-                    style={{ flex: 1, paddingHorizontal: 8 }}
-                  >
-                    <Text style={styles.chipText}>{fmt(dueDate)}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setDueDate(addDays(dueDate, +1));
-                      if (validationErrors.date) {
-                        setValidationErrors((prev) => ({ ...prev, date: null }));
-                      }
-                    }}
-                  >
-                    <ChevronRight size={16} color={FG} />
-                  </TouchableOpacity>
-                </View>
-                {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
-              </View>
-              {showDayOffEndDateField ? (
-                <View style={[styles.timeField, styles.dateFieldInline]}>
-                  <Text style={styles.timeLabel}>End date</Text>
-                  <View style={[styles.chip, validationErrors.endDate && styles.chipFieldError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>
+          <View style={[styles.scheduleFieldsWrap, styles.formGroup, validationErrors.time && styles.scheduleFieldsWrapError]}>
+            <View style={styles.dateTimeStack}>
+              <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
+                <View style={styles.scheduleColumn}>
+                  <Text style={styles.fieldLabel}>
+                    {isSeriesEditScope ? 'Series start date' : 'Start date'} <Text style={{ color: '#ef4444' }}>*</Text>
+                  </Text>
+                  <View style={[styles.chip, styles.scheduleDateChip, validationErrors.date && styles.chipFieldError, { backgroundColor: '#ffffff' }]}>
                     <TouchableOpacity
                       onPress={() => {
-                        const next = new Date(eventEndDate || dueDate || new Date());
-                        next.setDate(next.getDate() - 1);
-                        setEventEndDate(next);
-                        if (validationErrors.endDate) {
-                          setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                        setDueDate(addDays(dueDate, -1));
+                        if (validationErrors.date) {
+                          setValidationErrors((prev) => ({ ...prev, date: null }));
                         }
                       }}
                     >
@@ -5542,269 +5518,158 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => {
-                        if (validationErrors.endDate) {
-                          setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                        setCalendarViewMonth(dueDate);
+                        setShowCalendarPicker(true);
+                        if (validationErrors.date) {
+                          setValidationErrors((prev) => ({ ...prev, date: null }));
                         }
-                        setEventEndDateCalendarViewMonth(eventEndDate || dueDate || new Date());
-                        setShowEventEndDatePicker(true);
                       }}
-                      style={{ flex: 1, paddingHorizontal: 8 }}
+                      style={styles.scheduleDateChipLabel}
+                      {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
-                      <Text style={[styles.chipText, !eventEndDate && { color: MUTED }]}>
-                        {eventEndDate ? fmt(eventEndDate) : 'Optional'}
-                      </Text>
+                      <Text style={styles.chipText}>{fmt(dueDate)}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => {
-                        const next = new Date(eventEndDate || dueDate || new Date());
-                        next.setDate(next.getDate() + 1);
-                        setEventEndDate(next);
-                        if (validationErrors.endDate) {
-                          setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                        setDueDate(addDays(dueDate, +1));
+                        if (validationErrors.date) {
+                          setValidationErrors((prev) => ({ ...prev, date: null }));
                         }
                       }}
                     >
                       <ChevronRight size={16} color={FG} />
                     </TouchableOpacity>
                   </View>
-                  {validationErrors.endDate ? <Text style={styles.errorTextSmall}>{validationErrors.endDate}</Text> : null}
+                  {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
                 </View>
-              ) : null}
-              {!hideScheduleTimeControls && (
-              <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
-                <View style={[styles.timeField, styles.timeFieldCompact]}>
-                  <Text style={styles.timeLabel}>Start</Text>
-                  {Platform.OS === 'web' ? (
-                    <View style={styles.selectContainer}>
+                {showScheduleEndDateField ? (
+                  <View style={styles.scheduleColumn}>
+                    <Text style={styles.fieldLabel}>End date</Text>
+                    <View style={[styles.chip, styles.scheduleDateChip, validationErrors.endDate && styles.chipFieldError, { backgroundColor: '#ffffff' }]}>
                       <TouchableOpacity
-                        ref={startTimeButtonRef}
+                        onPress={() => {
+                          const next = new Date(eventEndDate || dueDate || new Date());
+                          next.setDate(next.getDate() - 1);
+                          setEventEndDate(next);
+                          if (validationErrors.endDate) {
+                            setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                          }
+                        }}
+                      >
+                        <ChevronLeft size={16} color={FG} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (validationErrors.endDate) {
+                            setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                          }
+                          setEventEndDateCalendarViewMonth(eventEndDate || dueDate || new Date());
+                          setShowEventEndDatePicker(true);
+                        }}
+                        style={styles.scheduleDateChipLabel}
+                        {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                      >
+                        <Text style={[styles.chipText, !eventEndDate && { color: MUTED }]}>
+                          {eventEndDate ? fmt(eventEndDate) : 'Optional'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const next = new Date(eventEndDate || dueDate || new Date());
+                          next.setDate(next.getDate() + 1);
+                          setEventEndDate(next);
+                          if (validationErrors.endDate) {
+                            setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                          }
+                        }}
+                      >
+                        <ChevronRight size={16} color={FG} />
+                      </TouchableOpacity>
+                    </View>
+                    {validationErrors.endDate ? <Text style={styles.errorTextSmall}>{validationErrors.endDate}</Text> : null}
+                  </View>
+                ) : null}
+              </View>
+              {!hideScheduleTimeControls && (
+                <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
+                  <View style={styles.scheduleColumn}>
+                    <Text style={styles.fieldLabel}>Start time</Text>
+                    <View style={styles.scheduleTimeInputWrap}>
+                      <TextInput
+                        placeholder="Optional"
+                        placeholderTextColor={MUTED}
+                        value={startTime}
+                        onFocus={() => {
+                          if (!startTime) {
+                            setStartTime('__:__ __');
+                            setDraftStartTime('__:__ __');
+                          }
+                        }}
+                        onBlur={() => {
+                          setStartTime((prev) => (prev === '__:__ __' ? '' : prev));
+                          setDraftStartTime((prev) => (prev === '__:__ __' ? '' : prev));
+                        }}
+                        onChangeText={(text) => {
+                          const formatted = formatTimeInput(text, startTime);
+                          setStartTime(formatted);
+                          setDraftStartTime(formatted);
+                          if (validationErrors.time) {
+                            setValidationErrors({ ...validationErrors, time: null });
+                          }
+                        }}
                         style={[
-                          styles.select,
-                          styles.timeSelectButton,
+                          styles.timeInputEdit,
+                          styles.scheduleTimeInput,
                           allDay && styles.timeInputDisabled,
                           validationErrors.time && styles.inputError,
                         ]}
-                        onPress={() => {
-                          if (allDay) return;
-                          setShowStartTimeDropdown((prev) => !prev);
-                          setShowEndTimeDropdown(false);
-                        }}
-                        disabled={allDay}
-                      >
-                        <Text style={[styles.selectText, !startTime && styles.selectPlaceholder]}>
-                          {startTime || 'Optional'}
-                        </Text>
-                        <ChevronDown size={16} color={MUTED} />
-                      </TouchableOpacity>
-                      {showStartTimeDropdown && (Platform.OS !== 'web' || startTimeDropdownLayout.ready) && (() => {
-                        let ReactDOM;
-                        try {
-                          ReactDOM = require('react-dom');
-                        } catch (_) {
-                          ReactDOM = null;
-                        }
-                        const dropdownContent = (
-                          <View
-                            ref={startTimeDropdownRef}
-                            style={[
-                              styles.selectOptions,
-                              styles.timeSelectOptions,
-                              Platform.OS === 'web' && {
-                                position: 'fixed',
-                                top: startTimeDropdownLayout.position?.top,
-                                left: startTimeDropdownLayout.position?.left,
-                                width: startTimeDropdownLayout.position?.width || 150,
-                                marginTop: 0,
-                                zIndex: 99999,
-                              },
-                            ]}
-                          >
-                            <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={{ maxHeight: 220 }}>
-                              <TouchableOpacity
-                                style={[styles.selectOption, !startTime && styles.selectOptionActive]}
-                                onPress={() => {
-                                  setStartTime('');
-                                  setDraftStartTime('');
-                                  setShowStartTimeDropdown(false);
-                                  if (validationErrors.time) {
-                                    setValidationErrors((prev) => ({ ...prev, time: null }));
-                                  }
-                                }}
-                              >
-                                <Text style={[styles.selectOptionText, !startTime && styles.selectOptionTextActive]}>Optional</Text>
-                              </TouchableOpacity>
-                              {TIME_SELECT_OPTIONS.map((timeOption) => (
-                                <TouchableOpacity
-                                  key={`start-${timeOption}`}
-                                  style={[styles.selectOption, startTime === timeOption && styles.selectOptionActive]}
-                                  onPress={() => {
-                                    setStartTime(timeOption);
-                                    setDraftStartTime(timeOption);
-                                    setShowStartTimeDropdown(false);
-                                    if (validationErrors.time) {
-                                      setValidationErrors((prev) => ({ ...prev, time: null }));
-                                    }
-                                  }}
-                                >
-                                  <Text style={[styles.selectOptionText, startTime === timeOption && styles.selectOptionTextActive]}>
-                                    {timeOption}
-                                  </Text>
-                                </TouchableOpacity>
-                              ))}
-                            </ScrollView>
-                          </View>
-                        );
-                        if (ReactDOM?.createPortal && typeof document !== 'undefined' && document.body) {
-                          return ReactDOM.createPortal(dropdownContent, document.body);
-                        }
-                        return dropdownContent;
-                      })()}
+                        editable={!allDay}
+                        autoCapitalize="characters"
+                      />
                     </View>
-                  ) : (
-                    <TextInput
-                      placeholder="Optional"
-                      placeholderTextColor={MUTED}
-                      value={startTime}
-                      onFocus={() => {
-                        if (!startTime) {
-                          setStartTime('__:__ __');
-                          setDraftStartTime('__:__ __');
-                        }
-                      }}
-                      onBlur={() => {
-                        setStartTime((prev) => (prev === '__:__ __' ? '' : prev));
-                        setDraftStartTime((prev) => (prev === '__:__ __' ? '' : prev));
-                      }}
-                      onChangeText={(text) => {
-                        const formatted = formatTimeInput(text, startTime);
-                        setStartTime(formatted);
-                        setDraftStartTime(formatted);
-                        if (validationErrors.time) {
-                          setValidationErrors({ ...validationErrors, time: null });
-                        }
-                      }}
-                      style={[
-                        styles.timeInputEdit,
-                        allDay && styles.timeInputDisabled,
-                        validationErrors.time && styles.inputError,
-                      ]}
-                      editable={!allDay}
-                      autoCapitalize="characters"
-                    />
-                  )}
-                  {validationErrors.time && (
-                    <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
-                  )}
-                </View>
-                <View style={[styles.timeField, styles.timeFieldCompact]}>
-                  <Text style={styles.timeLabel}>End</Text>
-                  {Platform.OS === 'web' ? (
-                    <View style={styles.selectContainer}>
-                      <TouchableOpacity
-                        ref={endTimeButtonRef}
-                        style={[
-                          styles.select,
-                          styles.timeSelectButton,
-                          allDay && styles.timeInputDisabled,
-                        ]}
-                        onPress={() => {
-                          if (allDay) return;
-                          setShowEndTimeDropdown((prev) => !prev);
-                          setShowStartTimeDropdown(false);
-                        }}
-                        disabled={allDay}
-                      >
-                        <Text style={[styles.selectText, !endTime && styles.selectPlaceholder]}>
-                          {endTime || 'Optional'}
-                        </Text>
-                        <ChevronDown size={16} color={MUTED} />
-                      </TouchableOpacity>
-                      {showEndTimeDropdown && (Platform.OS !== 'web' || endTimeDropdownLayout.ready) && (() => {
-                        let ReactDOM;
-                        try {
-                          ReactDOM = require('react-dom');
-                        } catch (_) {
-                          ReactDOM = null;
-                        }
-                        const dropdownContent = (
-                          <View
-                            ref={endTimeDropdownRef}
-                            style={[
-                              styles.selectOptions,
-                              styles.timeSelectOptions,
-                              Platform.OS === 'web' && {
-                                position: 'fixed',
-                                top: endTimeDropdownLayout.position?.top,
-                                left: endTimeDropdownLayout.position?.left,
-                                width: endTimeDropdownLayout.position?.width || 150,
-                                marginTop: 0,
-                                zIndex: 99999,
-                              },
-                            ]}
-                          >
-                            <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" style={{ maxHeight: 220 }}>
-                              <TouchableOpacity
-                                style={[styles.selectOption, !endTime && styles.selectOptionActive]}
-                                onPress={() => {
-                                  setEndTime('');
-                                  setDraftEndTime('');
-                                  setShowEndTimeDropdown(false);
-                                }}
-                              >
-                                <Text style={[styles.selectOptionText, !endTime && styles.selectOptionTextActive]}>Optional</Text>
-                              </TouchableOpacity>
-                              {TIME_SELECT_OPTIONS.map((timeOption) => (
-                                <TouchableOpacity
-                                  key={`end-${timeOption}`}
-                                  style={[styles.selectOption, endTime === timeOption && styles.selectOptionActive]}
-                                  onPress={() => {
-                                    setEndTime(timeOption);
-                                    setDraftEndTime(timeOption);
-                                    setShowEndTimeDropdown(false);
-                                  }}
-                                >
-                                  <Text style={[styles.selectOptionText, endTime === timeOption && styles.selectOptionTextActive]}>
-                                    {timeOption}
-                                  </Text>
-                                </TouchableOpacity>
-                              ))}
-                            </ScrollView>
-                          </View>
-                        );
-                        if (ReactDOM?.createPortal && typeof document !== 'undefined' && document.body) {
-                          return ReactDOM.createPortal(dropdownContent, document.body);
-                        }
-                        return dropdownContent;
-                      })()}
+                    {validationErrors.time ? (
+                      <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
+                    ) : null}
+                  </View>
+                  {showScheduleEndDateField ? (
+                    <View style={styles.scheduleColumn}>
+                      <Text style={styles.fieldLabel}>End time</Text>
+                      <View style={styles.scheduleTimeInputWrap}>
+                        <TextInput
+                          placeholder="Optional"
+                          placeholderTextColor={MUTED}
+                          value={endTime}
+                          onFocus={() => {
+                            if (!endTime) {
+                              setEndTime('__:__ __');
+                              setDraftEndTime('__:__ __');
+                            }
+                          }}
+                          onBlur={() => {
+                            setEndTime((prev) => (prev === '__:__ __' ? '' : prev));
+                            setDraftEndTime((prev) => (prev === '__:__ __' ? '' : prev));
+                          }}
+                          onChangeText={(text) => {
+                            const formatted = formatTimeInput(text, endTime);
+                            setEndTime(formatted);
+                            setDraftEndTime(formatted);
+                          }}
+                          style={[
+                            styles.timeInputEdit,
+                            styles.scheduleTimeInput,
+                            allDay && styles.timeInputDisabled,
+                          ]}
+                          editable={!allDay}
+                          autoCapitalize="characters"
+                        />
+                      </View>
                     </View>
-                  ) : (
-                    <TextInput
-                      placeholder="Optional"
-                      placeholderTextColor={MUTED}
-                      value={endTime}
-                      onFocus={() => {
-                        if (!endTime) {
-                          setEndTime('__:__ __');
-                          setDraftEndTime('__:__ __');
-                        }
-                      }}
-                      onBlur={() => {
-                        setEndTime((prev) => (prev === '__:__ __' ? '' : prev));
-                        setDraftEndTime((prev) => (prev === '__:__ __' ? '' : prev));
-                      }}
-                      onChangeText={(text) => {
-                        const formatted = formatTimeInput(text, endTime);
-                        setEndTime(formatted);
-                        setDraftEndTime(formatted);
-                      }}
-                      style={[styles.timeInputEdit, allDay && styles.timeInputDisabled]}
-                      editable={!allDay}
-                      autoCapitalize="characters"
-                    />
-                  )}
+                  ) : null}
                 </View>
-                <View style={[styles.inlineSwitchField, styles.inlineSwitchFieldStack]}>
-                  <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>Repeat</Text>
+              )}
+              {!hideScheduleTimeControls && (
+                <View style={[styles.inlineSwitchField, styles.inlineSwitchRow]}>
+                  <Text style={[styles.fieldLabel, styles.inlineSwitchLabel]}>Repeat</Text>
                   <View style={styles.inlineSwitchControlWrap}>
                     {isSingleSeriesOccurrenceEdit ? (
                       <View
@@ -5855,7 +5720,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     )}
                   </View>
                 </View>
-              </View>
               )}
             </View>
             {!hideScheduleTimeControls && isRecurring && !isSingleSeriesOccurrenceEdit && (
@@ -6103,6 +5967,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </View>
         )}
       </SafeView>
+
         {/* Student Work — Assignment / Project / Exam */}
         {isWorkProducingEventType(eventType) ? (
         <ModalSectionCard
@@ -6124,12 +5989,179 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         </ModalSectionCard>
         ) : null}
 
+        <View style={styles.formGroup}>
+          <Text style={styles.fieldLabel}>Notes</Text>
+          <TextInput
+            placeholder="Add any additional notes about this event"
+            placeholderTextColor={MUTED}
+            value={notes}
+            onChangeText={(text) => {
+              setNotes(text);
+              setDraftNotes(text);
+            }}
+            style={[styles.input, styles.notesInput, { height: notesInputHeight }]}
+            multiline
+            scrollEnabled={notesInputHeight >= EVENT_NOTES_INPUT_MAX_HEIGHT}
+            onContentSizeChange={handleNotesContentSizeChange}
+            textAlignVertical="top"
+          />
+        </View>
+
+        {familyId ? (
+          <View style={styles.formGroup}>
+            <View style={styles.field}>
+              <Text style={styles.fieldLabel}>Attachments</Text>
+              <View style={styles.materialSelectorContainer}>
+                <TouchableOpacity
+                  ref={materialButtonRef}
+                  style={styles.materialSelector}
+                  onPress={handleMaterialDropdownToggle}
+                >
+                  <Text style={[
+                    styles.materialSelectorText,
+                    !selectedMaterialId && styles.materialSelectorPlaceholder
+                  ]}>
+                    {selectedMaterialId
+                      ? (materials.find(m => m.id === selectedMaterialId)?.title || materials.find(m => m.id === selectedMaterialId)?.provider_name || 'Select attachment...')
+                      : 'Select attachment...'}
+                  </Text>
+                  <ChevronDown size={16} color={MUTED} />
+                </TouchableOpacity>
+                {selectedMaterialId && (
+                  <TouchableOpacity
+                    style={styles.clearMaterialButton}
+                    onPress={() => {
+                      setSelectedMaterialId(null);
+                      setAttachedMaterialIds([]);
+                      setDraftMaterialId(null);
+                    }}
+                  >
+                    <Text style={styles.clearMaterialText}>Clear</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={styles.addMaterialButton}
+                  onPress={() => setShowAddMaterialModal(true)}
+                >
+                  <Plus size={14} color="#5B6880" />
+                  <Text style={styles.addMaterialText}>Add New</Text>
+                </TouchableOpacity>
+              </View>
+              {showMaterialDropdown && materialDropdownLayout.ready && Platform.OS === 'web' && (() => {
+                let ReactDOM;
+                try {
+                  ReactDOM = require('react-dom');
+                } catch (e) {
+                }
+
+                const dropdownContent = (
+                  <View
+                    ref={materialDropdownRef}
+                    style={{
+                      position: 'fixed',
+                      top: materialDropdownLayout.position.top,
+                      left: materialDropdownLayout.position.left,
+                      width: materialDropdownLayout.position.width || 400,
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: 'rgba(15,23,42,0.08)',
+                      padding: 4,
+                      minWidth: 400,
+                      maxHeight: materialDropdownLayout.position.maxHeight || 300,
+                      zIndex: 99999,
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                      ...(Platform.OS === 'web' && {
+                        overflow: 'hidden',
+                        display: 'flex',
+                        flexDirection: 'column',
+                      }),
+                    }}
+                  >
+                    <ScrollView
+                      style={{
+                        maxHeight: (materialDropdownLayout.position.maxHeight || 300) - 8,
+                        ...(Platform.OS === 'web' && {
+                          overflowY: 'auto',
+                          overflowX: 'hidden',
+                          WebkitOverflowScrolling: 'touch',
+                        }),
+                      }}
+                      nestedScrollEnabled
+                      showsVerticalScrollIndicator={Platform.OS !== 'web'}
+                    >
+                      {loadingMaterials ? (
+                        <View style={{ padding: 12 }}>
+                          <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
+                        </View>
+                      ) : materials.length === 0 ? (
+                        <View style={{ padding: 12 }}>
+                          <Text style={{ fontSize: 13, color: MUTED }}>No materials yet</Text>
+                        </View>
+                      ) : (
+                        <>
+                          <TouchableOpacity
+                            style={{
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 4,
+                            }}
+                            onPress={() => {
+                              setSelectedMaterialId(null);
+                              setAttachedMaterialIds([]);
+                              setDraftMaterialId(null);
+                              setShowMaterialDropdown(false);
+                            }}
+                          >
+                            <Text style={{ fontSize: 13, color: FG }}>None</Text>
+                          </TouchableOpacity>
+                          {materials.map((material) => (
+                            <TouchableOpacity
+                              key={material.id}
+                              style={{
+                                paddingVertical: 6,
+                                paddingHorizontal: 10,
+                                borderRadius: 4,
+                                backgroundColor: selectedMaterialId === material.id ? 'rgba(212, 162, 86, 0.1)' : 'transparent',
+                              }}
+                              onPress={() => {
+                                setSelectedMaterialId(material.id);
+                                setAttachedMaterialIds([material.id]);
+                                setDraftMaterialId(material.id);
+                                setShowMaterialDropdown(false);
+                              }}
+                            >
+                              <Text style={{
+                                fontSize: 13,
+                                color: selectedMaterialId === material.id ? ACCENT : FG,
+                                fontWeight: selectedMaterialId === material.id ? '600' : '400',
+                              }}>
+                                {material.title || material.provider_name || 'Untitled Material'}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </>
+                      )}
+                    </ScrollView>
+                  </View>
+                );
+
+                if (ReactDOM && typeof document !== 'undefined' && document.body) {
+                  return ReactDOM.createPortal(dropdownContent, document.body);
+                }
+
+                return dropdownContent;
+              })()}
+            </View>
+          </View>
+        ) : null}
+
         {/* Academic details section */}
         {!hideLearningDetailsSection && (
         <ModalSectionCard
           Icon={GraduationCap}
           title={academicSectionTitle}
-          subtitle="Scheduling and grading context"
+          subtitle="Subjects, lesson, and grading"
           expanded={showAcademicDetails}
           onPress={() => setShowAcademicDetails(!showAcademicDetails)}
           accent="#9ECFFB"
@@ -6630,180 +6662,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
           </SafeFieldRow>
         </ModalSectionCard>
 
-        {/* Notes and attachments section */}
-        <ModalSectionCard
-          Icon={FileText}
-          title="Notes and attachments"
-          subtitle="Anything else to remember"
-          expanded={showNotesSection}
-          onPress={() => setShowNotesSection(!showNotesSection)}
-          accent="#9ECFFB"
-        >
-          <View style={{ marginTop: 2 }}>
-            <Text style={styles.fieldLabel}>Notes</Text>
-            <TextInput
-              placeholder="Add any additional notes about this event"
-              placeholderTextColor={MUTED}
-              value={notes}
-              onChangeText={(text) => {
-                setNotes(text);
-                setDraftNotes(text);
-              }}
-              style={[styles.input, styles.notesInput]}
-              multiline
-              textAlignVertical="top"
-            />
-          </View>
-
-          {familyId && (
-            <SafeFieldRow style={[styles.fieldRow, { marginTop: 8 }]}>
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Attachments</Text>
-              <View style={styles.materialSelectorContainer}>
-                <TouchableOpacity
-                  ref={materialButtonRef}
-                  style={styles.materialSelector}
-                  onPress={handleMaterialDropdownToggle}
-                >
-                  <Text style={[
-                    styles.materialSelectorText,
-                    !selectedMaterialId && styles.materialSelectorPlaceholder
-                  ]}>
-                    {selectedMaterialId
-                      ? (materials.find(m => m.id === selectedMaterialId)?.title || materials.find(m => m.id === selectedMaterialId)?.provider_name || 'Select attachment...')
-                      : 'Select attachment...'}
-                  </Text>
-                  <ChevronDown size={16} color={MUTED} />
-                </TouchableOpacity>
-                {selectedMaterialId && (
-                  <TouchableOpacity
-                    style={styles.clearMaterialButton}
-                    onPress={() => {
-                      setSelectedMaterialId(null);
-                      setAttachedMaterialIds([]);
-                      setDraftMaterialId(null);
-                    }}
-                  >
-                    <Text style={styles.clearMaterialText}>Clear</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  style={styles.addMaterialButton}
-                  onPress={() => setShowAddMaterialModal(true)}
-                >
-                  <Plus size={14} color="#5B6880" />
-                  <Text style={styles.addMaterialText}>Add New</Text>
-                </TouchableOpacity>
-              </View>
-              {showMaterialDropdown && materialDropdownLayout.ready && Platform.OS === 'web' && (() => {
-                let ReactDOM;
-                try {
-                  ReactDOM = require('react-dom');
-                } catch (e) {
-                }
-                
-                const dropdownContent = (
-                  <View
-                    ref={materialDropdownRef}
-                    style={{
-                      position: 'fixed',
-                      top: materialDropdownLayout.position.top,
-                      left: materialDropdownLayout.position.left,
-                      width: materialDropdownLayout.position.width || 400,
-                      backgroundColor: '#FFFFFF',
-                      borderRadius: 8,
-                      borderWidth: 1,
-                      borderColor: 'rgba(15,23,42,0.08)',
-                      padding: 4,
-                      minWidth: 400,
-                      maxHeight: materialDropdownLayout.position.maxHeight || 300,
-                      zIndex: 99999,
-                      boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                      ...(Platform.OS === 'web' && {
-                        overflow: 'hidden',
-                        display: 'flex',
-                        flexDirection: 'column',
-                      }),
-                    }}
-                  >
-                    <ScrollView 
-                      style={{ 
-                        maxHeight: (materialDropdownLayout.position.maxHeight || 300) - 8,
-                        ...(Platform.OS === 'web' && {
-                          overflowY: 'auto',
-                          overflowX: 'hidden',
-                          WebkitOverflowScrolling: 'touch',
-                        }),
-                      }} 
-                      nestedScrollEnabled
-                      showsVerticalScrollIndicator={Platform.OS !== 'web'}
-                    >
-            {loadingMaterials ? (
-                        <View style={{ padding: 12 }}>
-                          <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
-                        </View>
-            ) : materials.length === 0 ? (
-                        <View style={{ padding: 12 }}>
-                          <Text style={{ fontSize: 13, color: MUTED }}>No materials yet</Text>
-                        </View>
-            ) : (
-              <>
-                <TouchableOpacity
-                            style={{
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
-                              borderRadius: 4,
-                            }}
-                  onPress={() => {
-                              setSelectedMaterialId(null);
-                              setAttachedMaterialIds([]);
-                    setDraftMaterialId(null);
-                    setShowMaterialDropdown(false);
-                  }}
-                >
-                            <Text style={{ fontSize: 13, color: FG }}>None</Text>
-                </TouchableOpacity>
-                {materials.map((material) => (
-                  <TouchableOpacity
-                    key={material.id}
-                              style={{
-                                paddingVertical: 6,
-                                paddingHorizontal: 10,
-                                borderRadius: 4,
-                                backgroundColor: selectedMaterialId === material.id ? 'rgba(212, 162, 86, 0.1)' : 'transparent',
-                              }}
-                    onPress={() => {
-                                setSelectedMaterialId(material.id);
-                                setAttachedMaterialIds([material.id]);
-                      setDraftMaterialId(material.id);
-                      setShowMaterialDropdown(false);
-                    }}
-                  >
-                              <Text style={{
-                                fontSize: 13,
-                                color: selectedMaterialId === material.id ? ACCENT : FG,
-                                fontWeight: selectedMaterialId === material.id ? '600' : '400',
-                              }}>
-                                {material.title || material.provider_name || 'Untitled Material'}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
-          </ScrollView>
-        </View>
-                );
-                
-                if (ReactDOM && typeof document !== 'undefined' && document.body) {
-                  return ReactDOM.createPortal(dropdownContent, document.body);
-                }
-                
-                return dropdownContent;
-              })()}
-            </View>
-            </SafeFieldRow>
-          )}
-        </ModalSectionCard>
       </View>
 
       </ScrollView>
@@ -8336,7 +8194,9 @@ const styles = StyleSheet.create({
     }),
   },
   notesInput: {
-    minHeight: 80,
+    minHeight: EVENT_NOTES_INPUT_MIN_HEIGHT,
+    paddingTop: 10,
+    paddingBottom: 10,
     textAlignVertical: 'top',
   },
   inlineRow: {
@@ -8897,6 +8757,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 0,
     paddingBottom: 6,
+  },
+  formGroup: {
+    marginBottom: 14,
+  },
+  fieldInput: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#111827',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#9CA3AF',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
+    }),
+  },
+  fieldInputError: {
+    borderBottomColor: '#ef4444',
+    borderBottomWidth: 2,
   },
   modeToggle: {
     flexDirection: 'row',
@@ -9573,20 +9459,56 @@ const styles = StyleSheet.create({
   },
   scheduleFieldsWrap: {
     marginBottom: 8,
+    overflow: 'visible',
   },
   scheduleFieldsWrapError: {
     borderColor: '#ef4444',
   },
-  dateTimeInlineRow: {
+  dateTimeStack: {
     flexDirection: 'column',
     alignItems: 'stretch',
-    gap: 8,
-    marginBottom: 10,
+    gap: 14,
+    width: '100%',
   },
-  dateTimeInlineRowWeb: {
+  dateTimeInlineRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 4,
+    flexWrap: 'wrap',
+    marginBottom: 0,
+  },
+  dateTimeInlineRowWeb: {
+    gap: 12,
+  },
+  scheduleColumn: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: Platform.OS === 'web' ? 200 : '46%',
+    minWidth: Platform.OS === 'web' ? 200 : 140,
+    marginRight: 12,
+    marginBottom: 4,
+    ...(Platform.OS === 'web' ? { maxWidth: 240 } : {}),
+  },
+  scheduleDateChip: {
+    alignSelf: 'flex-start',
+    marginRight: 0,
+    minHeight: 40,
+    height: 40,
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  scheduleDateChipLabel: {
+    paddingHorizontal: 6,
+    minWidth: 96,
+    alignItems: 'center',
+  },
+  scheduleTimeInputWrap: {
+    alignSelf: 'flex-start',
+    width: Platform.OS === 'web' ? 116 : '100%',
+    maxWidth: Platform.OS === 'web' ? 116 : 180,
+  },
+  scheduleTimeInput: {
+    width: '100%',
+    maxWidth: '100%',
   },
   dateFieldInline: {
     flexGrow: 0,
@@ -9781,7 +9703,9 @@ const styles = StyleSheet.create({
     }),
   },
   notesInput: {
-    minHeight: 80,
+    minHeight: EVENT_NOTES_INPUT_MIN_HEIGHT,
+    paddingTop: 10,
+    paddingBottom: 10,
     textAlignVertical: 'top',
   },
   connectedPlanBanner: {

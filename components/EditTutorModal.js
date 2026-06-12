@@ -4,13 +4,12 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  ScrollView,
   Modal as RNModal,
   Platform,
   TextInput,
   ActivityIndicator,
 } from 'react-native';
-import { AlertTriangle, CheckSquare, ChevronDown, ChevronUp, Square, UserCheck } from 'lucide-react';
+import { AlertTriangle, CheckSquare, ChevronDown, ChevronUp, Square } from 'lucide-react';
 import { inviteTutor, updateTutorScope } from '../lib/apiClient';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
@@ -38,14 +37,6 @@ export default function EditTutorModal({
   children = [],
   onTutorUpdated,
 }) {
-  const TUTOR_PROFILE_OPTIONS = useMemo(
-    () => [
-      { id: 'viewer', label: 'Viewer Tutor' },
-      { id: 'teaching', label: 'Teaching Tutor' },
-      { id: 'manager', label: 'Lead Tutor' },
-    ],
-    []
-  );
   const toast = useToast();
   const [selectedChildIds, setSelectedChildIds] = useState([]);
   const [displayName, setDisplayName] = useState('');
@@ -59,8 +50,6 @@ export default function EditTutorModal({
   const isNewTutor = tutor?.isNew === true || String(tutor?.id || '').startsWith('draft-');
   const isPendingInvite = !isNewTutor && tutor?.invite_status === 'pending';
   const tutorName = isNewTutor ? 'Add tutor' : (tutor?.name || tutor?.email || 'Tutor');
-  const showPermissionField = isNewTutor || !!(String(email || tutor?.email || '').trim());
-  const permissionEditable = isNewTutor || !isPendingInvite;
 
   const childOptions = useMemo(
     () =>
@@ -186,30 +175,31 @@ export default function EditTutorModal({
   };
 
   if (!tutor) return null;
-  const hasAttachedEmail = !!(String(email || tutor?.email || '').trim());
 
   return (
     <RNModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
         <TouchableOpacity activeOpacity={1} onPress={(e) => e?.stopPropagation?.()} style={styles.modalWrap}>
           <AppModalShell
-            mode={isNewTutor ? 'add' : 'edit'}
             title={tutorName}
             onClose={onClose}
+            shellStyle={styles.compactShell}
+            bodyStyle={styles.compactBody}
+            scrollerStyle={styles.compactScroller}
             contentContainerStyle={styles.scrollContent}
             footer={(
               <ModalFooter
-                mode={isNewTutor ? 'add' : 'edit'}
+                mode="edit"
                 primaryLabel={
                   isSaving
                     ? 'Saving...'
-                    : (isNewTutor ? 'Add Tutor' : 'Save changes')
+                    : (isNewTutor ? 'Add tutor' : 'Save changes')
                 }
                 destructiveLabel={isPendingInvite || isNewTutor ? null : 'Remove access'}
                 onCancel={onClose}
                 onDelete={isPendingInvite ? undefined : () => setShowDangerZone((v) => !v)}
                 onPrimary={handleSaveScope}
-                accent="#4BB39C"
+                accent="#9ECFFB"
                 disabled={isSaving || savingInviteEmail}
                 loading={isSaving}
               />
@@ -221,11 +211,10 @@ export default function EditTutorModal({
               </View>
             ) : null}
 
-            <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator>
-              <View style={styles.sectionCard}>
-                <Text style={styles.sectionTitle}>Children access</Text>
-                <View style={styles.sectionRule} />
-                <Text style={styles.sectionHint}>Select which children this tutor can view and manage.</Text>
+            <View style={styles.formStack}>
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Children access</Text>
+                <Text style={styles.fieldHint}>Select which children this tutor can view and manage.</Text>
                 <View style={styles.childList}>
                   {childOptions.map((child) => {
                     const checked = selectedChildIds.includes(child.id);
@@ -237,7 +226,7 @@ export default function EditTutorModal({
                         activeOpacity={0.85}
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
-                        {checked ? <CheckSquare size={18} color="#0ea5e9" /> : <Square size={18} color="#94a3b8" />}
+                        {checked ? <CheckSquare size={18} color="#6BB3E8" /> : <Square size={18} color="#94a3b8" />}
                         <Text style={styles.childRowText}>{child.name}</Text>
                       </TouchableOpacity>
                     );
@@ -245,12 +234,10 @@ export default function EditTutorModal({
                 </View>
               </View>
 
-              <View style={styles.sectionCard}>
-                <Text style={styles.sectionTitle}>Account</Text>
-                <View style={styles.sectionRule} />
-                <Text style={styles.inputLabel}>Tutor name</Text>
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Tutor name</Text>
                 <TextInput
-                  style={styles.emailInput}
+                  style={styles.fieldInput}
                   value={displayName}
                   onChangeText={setDisplayName}
                   placeholder="Professor Doodle"
@@ -260,9 +247,9 @@ export default function EditTutorModal({
                 />
                 {isNewTutor ? (
                   <>
-                    <Text style={styles.inputLabel}>Email</Text>
+                    <Text style={[styles.fieldLabel, styles.fieldLabelSpaced]}>Email</Text>
                     <TextInput
-                      style={styles.emailInput}
+                      style={styles.fieldInput}
                       value={email}
                       onChangeText={setEmail}
                       placeholder="tutor@email.com"
@@ -271,7 +258,7 @@ export default function EditTutorModal({
                       keyboardType="email-address"
                       autoCorrect={false}
                     />
-                    <Text style={styles.connectedHint}>
+                    <Text style={styles.fieldHint}>
                       An invite will be sent to this email when you add the tutor.
                     </Text>
                   </>
@@ -279,7 +266,7 @@ export default function EditTutorModal({
                   <>
                     <Text style={styles.pendingTitle}>Invite sent</Text>
                     <TextInput
-                      style={styles.emailInput}
+                      style={styles.fieldInput}
                       value={email}
                       onChangeText={setEmail}
                       placeholder="tutor@email.com"
@@ -319,42 +306,11 @@ export default function EditTutorModal({
                     <Text style={styles.connectedLine}>
                       {email ? `✓ Connected · ${email}` : 'Tutor account connected'}
                     </Text>
-                    <Text style={styles.connectedHint}>
+                    <Text style={styles.fieldHint}>
                       This tutor can access only the selected children from this section.
                     </Text>
                   </>
                 )}
-                {showPermissionField ? (
-                  <View style={styles.permissionFieldWrap}>
-                    <Text style={styles.inputLabel}>Permission level</Text>
-                    <View style={styles.permissionPills}>
-                      {TUTOR_PROFILE_OPTIONS.map((option) => {
-                        const selected = option.id === tutorPermissionProfile;
-                        return (
-                          <TouchableOpacity
-                            key={option.id}
-                            style={[
-                              styles.permissionPill,
-                              selected && styles.permissionPillSelected,
-                              !permissionEditable && styles.permissionPillDisabled,
-                            ]}
-                            onPress={() => setTutorPermissionProfile(option.id)}
-                            disabled={!permissionEditable}
-                            activeOpacity={0.85}
-                            {...(Platform.OS === 'web' && { cursor: permissionEditable ? 'pointer' : 'not-allowed' })}
-                          >
-                            <Text style={[styles.permissionPillText, selected && styles.permissionPillTextSelected]}>
-                              {option.label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    {isPendingInvite && !isNewTutor ? (
-                      <Text style={styles.permissionHelpText}>Permission level becomes editable after acceptance.</Text>
-                    ) : null}
-                  </View>
-                ) : null}
               </View>
 
               {!isNewTutor ? (
@@ -403,7 +359,7 @@ export default function EditTutorModal({
                 ) : null}
               </View>
               ) : null}
-            </ScrollView>
+            </View>
           </AppModalShell>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -423,11 +379,78 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 860,
   },
-  scrollContainer: {
-    flex: 1,
+  compactShell: {
+    ...(Platform.OS === 'web'
+      ? {
+          height: 'auto',
+          maxHeight: '90vh',
+          minHeight: 0,
+          borderRadius: 28,
+          boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+        }
+      : {
+          height: 'auto',
+          maxHeight: '86%',
+        }),
+    overflow: 'hidden',
+  },
+  compactBody: {
+    flex: 0,
+    flexGrow: 0,
+    flexShrink: 0,
+    paddingBottom: 8,
+  },
+  compactScroller: {
+    flexGrow: 0,
+    flexShrink: 0,
   },
   scrollContent: {
-    padding: 20,
+    paddingBottom: 4,
+  },
+  formStack: {
+    width: '100%',
+    gap: 0,
+  },
+  formGroup: {
+    marginBottom: 16,
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6B7280',
+    marginBottom: 6,
+    textAlign: 'left',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  fieldLabelSpaced: {
+    marginTop: 12,
+  },
+  fieldInput: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#111827',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#9CA3AF',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
+    }),
+  },
+  fieldHint: {
+    fontSize: 13,
+    color: '#64748b',
+    lineHeight: 19,
+    marginTop: 8,
   },
   errorContainer: {
     backgroundColor: '#fef2f2',
@@ -441,77 +464,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#dc2626',
   },
-  sectionCard: {
-    marginBottom: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    backgroundColor: '#f8fafc',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0f172a',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
-  },
-  sectionRule: {
-    height: 1,
-    backgroundColor: '#e2e8f0',
-    marginTop: 10,
-    marginBottom: 12,
-  },
-  sectionHint: {
-    fontSize: 13,
-    color: '#64748b',
-    marginTop: 8,
-    marginBottom: 10,
-  },
-  inputLabel: {
-    fontSize: 11,
-    color: '#6b7280',
-    marginBottom: 4,
-  },
-  permissionFieldWrap: {
-    marginTop: 12,
-  },
-  permissionPills: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  permissionPill: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#ffffff',
-  },
-  permissionPillSelected: {
-    borderColor: '#9ECFFB',
-    backgroundColor: 'rgba(158, 207, 251, 0.22)',
-  },
-  permissionPillText: {
-    fontSize: 12,
-    color: '#374151',
-    fontWeight: '600',
-  },
-  permissionPillTextSelected: {
-    color: '#1e5f8a',
-  },
-  permissionPillDisabled: {
-    opacity: 0.55,
-  },
-  permissionHelpText: {
-    marginTop: 6,
-    fontSize: 12,
-    color: '#6b7280',
-  },
   childList: {
     gap: 8,
+    marginTop: 4,
   },
   childRow: {
     flexDirection: 'row',
@@ -527,17 +482,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#0f172a',
+    marginTop: 12,
     marginBottom: 8,
-  },
-  emailInput: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 10,
-    backgroundColor: '#fff',
-    color: '#111827',
-    fontSize: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
   },
   pendingWait: {
     fontSize: 12,
@@ -568,12 +514,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#166534',
     lineHeight: 22,
-  },
-  connectedHint: {
-    fontSize: 13,
-    color: '#64748b',
-    lineHeight: 19,
-    marginTop: 6,
+    marginTop: 12,
   },
   dangerZoneAccordion: {
     borderWidth: 1,

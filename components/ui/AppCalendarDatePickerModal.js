@@ -2,10 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, TouchableOpacity, Modal, Platform, StyleSheet } from 'react-native';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
-/** Match TaskCreateModal mini calendar (tan selected day, month/year nav). */
+/** Match TaskCreateModal mini calendar (light purple selected day, month/year nav). */
 const FG = '#111827';
 const SUB = '#6b7280';
-const ACCENT = '#d4a256';
+const CALENDAR_SELECTED_BG = '#F5F3FF';
+const CALENDAR_SELECTED_TEXT = '#8B7CF6';
+const CALENDAR_TODAY_BORDER = '#C4B5FD';
 
 const modalCardStyle = {
   backgroundColor: '#FFFFFF',
@@ -268,9 +270,9 @@ export function AppCalendarDatePickerModal({
                               alignItems: 'center',
                               justifyContent: 'center',
                               borderRadius: 6,
-                              backgroundColor: isSelected ? ACCENT : 'transparent',
+                              backgroundColor: isSelected ? CALENDAR_SELECTED_BG : 'transparent',
                               borderWidth: isToday ? 2 : 0,
-                              borderColor: isToday ? ACCENT : 'transparent',
+                              borderColor: isToday ? CALENDAR_TODAY_BORDER : 'transparent',
                               opacity: isInRange ? 1 : 0.35,
                             }}
                             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
@@ -278,7 +280,7 @@ export function AppCalendarDatePickerModal({
                             <Text
                               style={{
                                 fontSize: 13,
-                                color: isSelected ? '#FFFFFF' : isCurrentMonth ? FG : SUB,
+                                color: isSelected ? CALENDAR_SELECTED_TEXT : isCurrentMonth ? FG : SUB,
                                 fontWeight: isSelected || isToday ? '600' : '400',
                               }}
                             >

@@ -752,7 +752,7 @@ export default function MaterialsLibrary({
     }
     
     const menuItems = [
-      { text: 'Edit attachment details', action: () => handleEditAttachment(item), icon: Edit2 },
+      { text: 'Edit Material', action: () => handleEditAttachment(item), icon: Edit2 },
        { text: 'Create assignment from material', action: () => handleCreateAssignmentFromMaterial(item), icon: FileText },
        { text: 'Open in new tab', action: () => handleOpenInNewTab(item), icon: ExternalLink },
        { text: 'Delete', action: () => handleDeleteItem(item), isDelete: true, icon: Trash2 }
