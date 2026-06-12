@@ -66,7 +66,7 @@ const styles = StyleSheet.create({
     borderColor: '#EEF1F6',
     overflow: 'hidden',
     // Keep a small visual gap between stacked collapsible cards.
-    marginBottom: 8,
+    marginBottom: 14,
   },
   wrapSimple: {
     borderRadius: 0,

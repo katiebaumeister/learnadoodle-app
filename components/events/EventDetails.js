@@ -11,7 +11,7 @@ import {
 import { Clock, BookOpen, Edit2, Plus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, X, Save, Check, Calculator, FlaskConical, ExternalLink, AlertCircle, MapPin, GraduationCap, FileText, Trash2 } from 'lucide-react';
 import { colors, shadows } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
-import { formatDate, apiRequest, pushEventToGoogleCalendar, getFamilyMembers } from '../../lib/apiClient';
+import { formatDate, apiRequest, getFamilyMembers } from '../../lib/apiClient';
 import { getMaterials } from '../../lib/services/materialsClient';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import { logDeleteEvent } from '../../app/services/plannerInstrumentation';
@@ -760,11 +760,6 @@ const TAG_CATEGORIES = {
 };
 
 const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
-const CALENDAR_CONNECTION_OPTIONS = [
-  { value: 'google', label: 'Google' },
-  { value: 'apple', label: 'Apple' },
-];
-
 const DEFAULT_DURATION_MINUTES = 30;
 
 // Color constants matching TaskCreateModal
@@ -1192,7 +1187,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   const [percentOfTotalGrade, setPercentOfTotalGrade] = useState(() => initialAcademicStringsFromEvent(event).percent);
   const [location, setLocation] = useState('');
   const [mode, setMode] = useState('');
-  const [connectedCalendarTargets, setConnectedCalendarTargets] = useState([]);
   const [instructor, setInstructor] = useState('');
   const [goalLink, setGoalLink] = useState(null);
   const [subjects, setSubjects] = useState(() => {
@@ -2179,7 +2173,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     // Location fields
     setLocation(event.location || '');
     setMode(event.mode || '');
-    setConnectedCalendarTargets([]);
     setInstructor(event.instructor || '');
     setGoalLink(event.goal_link || null);
     
@@ -5032,18 +5025,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         }
       }
 
-      if (
-        placement === 'calendar' &&
-        Array.isArray(connectedCalendarTargets) &&
-        connectedCalendarTargets.includes('google')
-      ) {
-        const { error: syncError } = await pushEventToGoogleCalendar(event.id);
-        if (syncError) {
-          toast.push(`Saved, but Google Calendar sync failed: ${syncError.message || 'Unknown error'}`, 'error');
-        } else {
-          toast.push('Event also synced to Google Calendar', 'success');
-        }
-      }
 
       // Keep canonical curriculum rows in sync when this occurrence is tied to a plan/subject lesson.
       const syncPlanOrSubject =
@@ -5999,7 +5980,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
               setNotes(text);
               setDraftNotes(text);
             }}
-            style={[styles.input, styles.notesInput, { height: notesInputHeight }]}
+            style={[styles.fieldInput, styles.notesInput, { height: notesInputHeight }]}
             multiline
             scrollEnabled={notesInputHeight >= EVENT_NOTES_INPUT_MAX_HEIGHT}
             onContentSizeChange={handleNotesContentSizeChange}
@@ -6615,48 +6596,6 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     </TouchableOpacity>
                   ))}
                 </ChipRow>
-              </SafeView>
-              <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add to connected calendar</Text>
-              <SafeView style={styles.dropdownContainer}>
-                <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
-                  {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
-                    const isSelected = connectedCalendarTargets.includes(provider.value);
-                    return (
-                      <TouchableOpacity
-                        key={provider.value}
-                        onPress={() =>
-                          setConnectedCalendarTargets((prev) =>
-                            prev.includes(provider.value)
-                              ? prev.filter((value) => value !== provider.value)
-                              : [...prev, provider.value]
-                          )
-                        }
-                        style={[
-                          styles.dropdownOption,
-                          styles.calendarConnectionOption,
-                          isSelected && styles.dropdownOptionActive,
-                        ]}
-                      >
-                        <View style={styles.calendarConnectionOptionContent}>
-                          {isSelected ? <Check size={12} color="#6BB3E8" /> : null}
-                          <Text
-                            style={[
-                              styles.dropdownOptionText,
-                              isSelected && styles.dropdownOptionTextActive,
-                            ]}
-                          >
-                            {provider.label}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ChipRow>
-                {connectedCalendarTargets.length > 0 ? (
-                  <Text style={[styles.fieldHelpText, styles.connectedCalendarDevNotice]}>
-                    This feature is still under development but the logic will still save for syncing later
-                  </Text>
-                ) : null}
               </SafeView>
             </View>
           </SafeFieldRow>
@@ -8693,14 +8632,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  calendarConnectionOption: {
-    minHeight: 30,
-  },
-  calendarConnectionOptionContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
   headerDivider: {
     height: 1,
     backgroundColor: '#EEF0F5',
@@ -8751,7 +8682,7 @@ const styles = StyleSheet.create({
   },
   bodyScroll: {
     flex: 1,
-    maxHeight: Platform.OS === 'web' ? 'min(60vh, calc(100vh - 300px))' : undefined,
+    maxHeight: Platform.OS === 'web' ? 'min(62vh, calc(100vh - 284px))' : undefined,
   },
   bodyContent: {
     paddingHorizontal: 20,
@@ -9116,11 +9047,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  connectedCalendarDevNotice: {
-    marginTop: 8,
-    fontSize: 11,
-    lineHeight: 16,
   },
   helpBubble: {
     marginTop: 6,
@@ -9552,7 +9478,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
     gap: 6,
     ...(Platform.OS === 'web' && {
-      marginBottom: 6,
+      marginBottom: 0,
     }),
   },
   inlineSwitchRow: {

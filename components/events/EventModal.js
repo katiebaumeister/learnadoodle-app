@@ -451,7 +451,7 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     width: '100%',
     maxWidth: 860,
-    maxHeight: Platform.OS === 'web' ? '78vh' : '84%',
+    maxHeight: Platform.OS === 'web' ? '80vh' : '86%',
     minHeight: Platform.OS === 'web' ? 320 : '46%',
     ...(Platform.OS === 'web' && {
       height: 'auto',
@@ -466,8 +466,8 @@ const styles = StyleSheet.create({
   containerEditMode: {
     width: '100%',
     maxWidth: 860,
-    maxHeight: Platform.OS === 'web' ? '78vh' : '84%',
-    minHeight: Platform.OS === 'web' ? 360 : '52%',
+    maxHeight: Platform.OS === 'web' ? '80vh' : '86%',
+    minHeight: Platform.OS === 'web' ? 392 : '54%',
     ...(Platform.OS === 'web' && {
       height: 'auto',
     }),

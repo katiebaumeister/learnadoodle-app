@@ -8,7 +8,7 @@ import { logAddEvent } from '../app/services/plannerInstrumentation';
 import { getMaterials } from '../lib/services/materialsClient';
 import { useSession } from '../contexts/SessionContext';
 import AddMaterialModal from './materials/AddMaterialModal';
-import { apiRequest, pushEventToGoogleCalendar } from '../lib/apiClient';
+import { apiRequest } from '../lib/apiClient';
 import { Search } from 'lucide-react';
 import {
   LearnerPill,
@@ -226,11 +226,6 @@ const normalizeEventTypeForPersistence = (type) => {
 };
 
 const MODE_OPTIONS = ['home', 'online', 'outside', 'travel'];
-const CALENDAR_CONNECTION_OPTIONS = [
-  { value: 'google', label: 'Google' },
-  { value: 'apple', label: 'Apple' },
-];
-
 // Safe View wrapper that filters out text nodes
 function SafeView({ children, style, ...props }) {
   // Convert to array and filter aggressively
@@ -438,7 +433,6 @@ export default function TaskCreateModal({
   const [percentOfTotalGrade, setPercentOfTotalGrade] = useState('');
   const [location, setLocation] = useState('');
   const [mode, setMode] = useState('');
-  const [connectedCalendarTargets, setConnectedCalendarTargets] = useState([]);
   const [instructor, setInstructor] = useState('');
   const [goalLink, setGoalLink] = useState(null);
   const [subjects, setSubjects] = useState([]);
@@ -1564,7 +1558,6 @@ export default function TaskCreateModal({
       setPercentOfTotalGrade('');
       setLocation('');
       setMode('');
-      setConnectedCalendarTargets([]);
       setInstructor('');
       setGoalLink(null);
       setShowAcademicDetails(false);
@@ -3610,19 +3603,6 @@ export default function TaskCreateModal({
         }
       }
 
-      if (
-        data?.id &&
-        placement === 'calendar' &&
-        Array.isArray(connectedCalendarTargets) &&
-        connectedCalendarTargets.includes('google')
-      ) {
-        const { error: syncError } = await pushEventToGoogleCalendar(data.id);
-        if (syncError) {
-          toast.push(`Saved, but Google Calendar sync failed: ${syncError.message || 'Unknown error'}`, 'error');
-        } else {
-          toast.push('Event also added to Google Calendar', 'success');
-        }
-      }
 
       if (placement === 'backlog') {
         toast.push('Backlog task created', 'success');
@@ -4992,7 +4972,7 @@ export default function TaskCreateModal({
                 placeholderTextColor={MUTED}
                 value={notes}
                 onChangeText={setNotes}
-                style={[styles.input, styles.notesInput, { height: notesInputHeight }]}
+                style={[styles.fieldInput, styles.notesInput, { height: notesInputHeight }]}
                 multiline
                 scrollEnabled={notesInputHeight >= EVENT_NOTES_INPUT_MAX_HEIGHT}
                 onContentSizeChange={handleNotesContentSizeChange}
@@ -5682,52 +5662,6 @@ export default function TaskCreateModal({
                           </TouchableOpacity>
                         ))}
                       </ChipRow>
-                    </SafeView>
-                </View>
-                <View style={styles.formGroup}>
-                    <Text style={styles.fieldLabel}>Add to connected calendar</Text>
-                    <SafeView style={styles.dropdownContainer}>
-                      <ChipRow style={styles.dropdownRow}>
-                        {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
-                          const isSelected = connectedCalendarTargets.includes(provider.value);
-                          return (
-                            <TouchableOpacity
-                              key={provider.value}
-                              onPress={() =>
-                                setConnectedCalendarTargets((prev) =>
-                                  prev.includes(provider.value)
-                                    ? prev.filter((value) => value !== provider.value)
-                                    : [...prev, provider.value]
-                                )
-                              }
-                              style={[
-                                styles.dropdownOption,
-                                styles.calendarConnectionOption,
-                                isSelected && styles.dropdownOptionActive,
-                              ]}
-                            >
-                              <View style={styles.calendarConnectionOptionContent}>
-                                {isSelected ? (
-                                  <Check size={12} color="#6BB3E8" />
-                                ) : null}
-                                <Text
-                                  style={[
-                                    styles.dropdownOptionText,
-                                    isSelected && styles.dropdownOptionTextActive,
-                                  ]}
-                                >
-                                  {provider.label}
-                                </Text>
-                              </View>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </ChipRow>
-                      {connectedCalendarTargets.length > 0 ? (
-                        <Text style={[styles.fieldHelpText, styles.connectedCalendarDevNotice]}>
-                          This feature is still under development but the logic will still save for syncing later
-                        </Text>
-                      ) : null}
                     </SafeView>
                 </View>
               </SafeView>
@@ -6484,14 +6418,15 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web'
       ? {
           height: 'auto',
-          maxHeight: '90vh',
-          minHeight: 0,
+          maxHeight: '92vh',
+          minHeight: 392,
           borderRadius: 28,
           boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
         }
       : {
           height: 'auto',
-          maxHeight: '86%',
+          maxHeight: '88%',
+          minHeight: 392,
         }),
     overflow: 'hidden',
   },
@@ -6594,7 +6529,7 @@ const styles = StyleSheet.create({
   },
   shellBody: {
     paddingTop: 0,
-    paddingBottom: 4,
+    paddingBottom: 8,
   },
   header: {
     paddingVertical: 12,
@@ -6627,14 +6562,6 @@ const styles = StyleSheet.create({
   titleInputRowError: {
     borderBottomWidth: 1,
     borderBottomColor: '#ef4444',
-  },
-  calendarConnectionOption: {
-    minHeight: 30,
-  },
-  calendarConnectionOptionContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
   },
   chipRow: {
     paddingHorizontal: 0,
@@ -6886,7 +6813,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
     gap: 6,
     ...(Platform.OS === 'web' && {
-      marginBottom: 6,
+      marginBottom: 0,
     }),
   },
   inlineSwitchRow: {
@@ -7239,11 +7166,6 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
-  },
-  connectedCalendarDevNotice: {
-    marginTop: 8,
-    fontSize: 11,
-    lineHeight: 16,
   },
   recurringSectionHeader: {
     flexDirection: 'row',
