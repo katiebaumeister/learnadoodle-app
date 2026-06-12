@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { View, Text, TouchableOpacity, TextInput, Platform, Animated, Easing, ScrollView, StyleSheet, Modal, Switch } from 'react-native';
-import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, Calendar, MapPin, FileText, GraduationCap } from 'lucide-react';
+import { View, Text, TouchableOpacity, TextInput, Platform, ScrollView, StyleSheet, Modal, Switch } from 'react-native';
+import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, GraduationCap, MapPin } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import AddSubjectModal from './AddSubjectModal';
@@ -18,7 +18,7 @@ import {
   resolveLearnerChild,
   sharedConflictBannerStyles as cb,
 } from './planner/conflictBannerShared';
-import { getEventTypeChipTextColor, resolvePlannerExclusionKind } from './planner/plannerListTableUtils';
+import { resolvePlannerExclusionKind } from './planner/plannerListTableUtils';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
 import { ModalSectionCard } from './ui/ModalSectionCard';
@@ -49,6 +49,16 @@ const MUTED = '#9ca3af';
 const ACCENT = '#d4a256';
 const CHIP_BG = '#f3f4f6';
 const CHIP_BORDER = '#e5e7eb';
+const EVENT_MODAL_MAX_WIDTH = 740;
+
+function ModalFormSection({ title, children, first = false }) {
+  return (
+    <View style={[styles.formSectionBucket, first && styles.formSectionBucketFirst]}>
+      <Text style={styles.formSectionTitle}>{title}</Text>
+      {children}
+    </View>
+  );
+}
 
 const DEFAULT_DURATION_MINUTES = 30;
 let createTaskEventAllowOverlapsSupported = true;
@@ -176,43 +186,6 @@ const toAmPmTime = (sqlTime) => {
   return `${hours}:${minutes} ${period}`;
 };
 
-const EVENT_TYPES = [
-  'Lesson',
-  'Project',
-  'Exam',
-  'Assignment',
-  'Activity',
-  'Appointment',
-  'Day Off',
-];
-const EVENT_TYPE_FILTER_COLORS = {
-  lesson: '#E3F0FF',
-  assignment: '#DFF7E3',
-  activity: '#EDE6FF',
-  appointment: '#F2F4F7',
-  project: '#D6F0ED',
-  exam: '#FCE7F3',
-  'day off': '#FFEDE2',
-};
-const EVENT_TYPE_FILTER_OUTLINE_COLORS = {
-  lesson: '#BFDFFF',
-  assignment: '#BEE8C8',
-  activity: '#D9C9FF',
-  appointment: '#D3D9E3',
-  project: '#AEE2DB',
-  exam: '#F6C8DE',
-  'day off': '#F7D1BD',
-};
-const getEventTypeActiveChipStyle = (type) => {
-  const key = String(type || '').trim().toLowerCase();
-  const fill = EVENT_TYPE_FILTER_COLORS[key] || 'rgba(133,196,242,0.2)';
-  const outline = EVENT_TYPE_FILTER_OUTLINE_COLORS[key] || '#6BB3E8';
-  return {
-    backgroundColor: fill,
-    borderColor: outline,
-    borderWidth: 1.5,
-  };
-};
 const MULTI_DAY_EVENT_TYPES = ['Project', 'Trip', 'Holiday', 'Other'];
 
 const normalizeExclusionTypeForEvent = (type, startYmd, endYmd) => {
@@ -382,9 +355,6 @@ export default function TaskCreateModal({
     [assigneeIds]
   );
   const [notes, setNotes] = useState('');
-  const [showAcademicDetails, setShowAcademicDetails] = useState(false); // Collapsed by default
-  const [showNotesSection, setShowNotesSection] = useState(false); // Collapsed by default (match Add Subject)
-  const [showLogisticDetails, setShowLogisticDetails] = useState(false); // Collapsed by default
   const [submitting, setSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
   const [validationBanner, setValidationBanner] = useState('');
@@ -427,8 +397,6 @@ export default function TaskCreateModal({
   const endTimeInputRef = useRef(null);
   const startTimeJustFocusedRef = useRef(false);
   const endTimeJustFocusedRef = useRef(false);
-  const bodyScrollRef = useRef(null);
-  const bodyScrollOffsetYRef = useRef(0);
 
   function normalizeTimeValue(rawValue) {
     const value = String(rawValue || '').replace(/_/g, '').trim();
@@ -453,8 +421,9 @@ export default function TaskCreateModal({
   
   // New academic and metadata fields
   const [eventType, setEventType] = useState('Lesson'); // Default to "Lesson" for new events
+  const [showAcademicDetails, setShowAcademicDetails] = useState(false);
+  const [showLogisticDetails, setShowLogisticDetails] = useState(false);
   const [workSpec, setWorkSpec] = useState(() => defaultWorkSpec('Assignment'));
-  const [studentWorkExpanded, setStudentWorkExpanded] = useState(false);
   const [subjectIds, setSubjectIds] = useState(defaultSubjectId ? [defaultSubjectId] : []);
   const [subjectId, setSubjectId] = useState(defaultSubjectId || null);
   const [unit, setUnit] = useState('');
@@ -626,9 +595,6 @@ export default function TaskCreateModal({
     setIsClassDayTitleAutofilled(false);
     if (isWorkProducingEventType(nextType)) {
       setWorkSpec(defaultWorkSpec(nextType));
-      setStudentWorkExpanded(true);
-    } else {
-      setStudentWorkExpanded(false);
     }
   }, [eventType, isClassDayTitleAutofilled, title, applySubjectSelection]);
   
@@ -648,22 +614,6 @@ export default function TaskCreateModal({
   const isClassDayEvent = eventType === 'Class Day';
   const showStudentWorkPanel = isWorkProducingEventType(eventType);
   const academicSectionTitle = 'Learning details';
-  const handleBodyScroll = useCallback((evt) => {
-    const nextY = Number(evt?.nativeEvent?.contentOffset?.y || 0);
-    bodyScrollOffsetYRef.current = Number.isFinite(nextY) ? nextY : 0;
-  }, []);
-  const handleModalWheelCapture = useCallback((evt) => {
-    if (Platform.OS !== 'web') return;
-    const nativeEvt = evt?.nativeEvent || evt;
-    const deltaY = Number(nativeEvt?.deltaY || 0);
-    if (!Number.isFinite(deltaY) || deltaY === 0) return;
-    const scrollRef = bodyScrollRef.current;
-    if (!scrollRef || typeof scrollRef.scrollTo !== 'function') return;
-    const nextY = Math.max(0, bodyScrollOffsetYRef.current + deltaY);
-    bodyScrollOffsetYRef.current = nextY;
-    scrollRef.scrollTo({ y: nextY, animated: false });
-    if (typeof evt?.preventDefault === 'function') evt.preventDefault();
-  }, []);
   // Check grade percentage sum when percentOfTotalGrade or subjectId changes
   useEffect(() => {
     const checkPercentSum = async () => {
@@ -1438,8 +1388,6 @@ export default function TaskCreateModal({
     }
   }, [selectedMaterialId, attachedMaterialIds]);
 
-  const fade = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(0.96)).current;
   // Label input ref removed - labels no longer used
 
   // Load materials from library (now unified in materials table)
@@ -1597,15 +1545,9 @@ export default function TaskCreateModal({
       const initialMaterialId = defaultMaterialId ? String(defaultMaterialId) : null;
       setSelectedMaterialId(initialMaterialId);
       setAttachedMaterialIds(initialMaterialId ? [initialMaterialId] : []);
-      // If user starts from "Create assignment from material", open Notes/attachments by default.
-      setShowNotesSection(!!initialMaterialId);
       setAttachedStandards([]);
       setShowStandardsModal(false);
       applySubjectSelection(defaultSubjectId ? [defaultSubjectId] : []);
-      // Expand academic details if defaultSubjectId is provided
-      if (defaultSubjectId) {
-        setShowAcademicDetails(true);
-      }
       setUnit('');
       setLesson('');
       setGrade('');
@@ -1615,6 +1557,8 @@ export default function TaskCreateModal({
       setConnectedCalendarTargets([]);
       setInstructor('');
       setGoalLink(null);
+      setShowAcademicDetails(false);
+      setShowLogisticDetails(false);
       setShowMaterialDropdown(false);
       setShowSubjectDropdown(false);
       setShowGoalDropdown(false);
@@ -1888,28 +1832,6 @@ export default function TaskCreateModal({
       setSubjectGoals([]);
     }
   };
-
-  useEffect(() => {
-    if (visible) {
-      Animated.parallel([
-        Animated.timing(fade, {
-          toValue: 1,
-          duration: 180,
-          useNativeDriver: Platform.OS !== 'web',
-          easing: Easing.out(Easing.quad),
-        }),
-        Animated.spring(scale, {
-          toValue: 1,
-          useNativeDriver: Platform.OS !== 'web',
-          friction: 8,
-          tension: 80,
-        }),
-      ]).start();
-    } else {
-      fade.setValue(0);
-      scale.setValue(0.96);
-    }
-  }, [visible, fade, scale]);
 
   // Label functions removed - labels no longer used
 
@@ -2566,7 +2488,6 @@ export default function TaskCreateModal({
   const buildValidationBannerMessage = useCallback((errors) => {
     const messagesByKey = {
       title: 'enter an event name',
-      eventType: 'select an event type',
       date: 'choose a date',
       assignee: 'select at least one assignee',
       time: 'enter a start time',
@@ -2577,7 +2498,6 @@ export default function TaskCreateModal({
     };
     const orderedKeys = [
       'title',
-      'eventType',
       'date',
       'assignee',
       'time',
@@ -2605,10 +2525,6 @@ export default function TaskCreateModal({
 
     if (!dueDate) {
       errors.date = 'Date is required';
-    }
-
-    if (!eventType) {
-      errors.eventType = 'Event type is required';
     }
 
     if (assigneeIds.length === 0) {
@@ -3721,14 +3637,7 @@ export default function TaskCreateModal({
       visible={visible}
       onRequestClose={handleDismiss}
     >
-      <Animated.View
-        style={[
-          styles.overlay,
-          {
-            opacity: fade,
-          },
-        ]}
-      >
+      <View style={styles.overlay}>
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
           activeOpacity={1}
@@ -3741,30 +3650,22 @@ export default function TaskCreateModal({
             }
           }}
         />
-        <Animated.View
-          style={[
-            styles.modal,
-            {
-              transform: [{ scale }],
-            },
-          ]}
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={(e) => e.stopPropagation()}
+          style={styles.modalWrap}
         >
           <AppModalShell
-            mode="add"
             title="New event"
-            eyebrow="EVENT"
-            accent="#9ECFFB"
-            accentSoft="#F0F8FF"
-            HeroIcon={Calendar}
             onClose={handleDismiss}
-            shellStyle={styles.modalShell}
-            contentContainerStyle={styles.bodyContent}
+            shellStyle={styles.compactShell}
+            titleRowStyle={styles.compactTitleRow}
+            contentContainerStyle={styles.contentContainer}
             bodyStyle={styles.shellBody}
-            disableShellScroll
             footer={(
               <ModalFooter
-                mode="add"
-                primaryLabel={submitting ? 'Adding…' : 'Add Event'}
+                mode="edit"
+                primaryLabel={submitting ? 'Saving…' : 'Save changes'}
                 onCancel={handleDismiss}
                 onPrimary={handleCreate}
                 onBlockedPrimary={() => {
@@ -3777,43 +3678,15 @@ export default function TaskCreateModal({
               />
             )}
           >
-          <View
-            style={styles.bodyScrollWrap}
-            {...(Platform.OS === 'web' ? { onWheelCapture: handleModalWheelCapture } : {})}
-          >
-          <ScrollView
-            ref={bodyScrollRef}
-            style={styles.bodyScroll}
-            contentContainerStyle={styles.bodyScrollContent}
-            showsVerticalScrollIndicator={true}
-            nestedScrollEnabled={true}
-            onScroll={handleBodyScroll}
-            scrollEventThrottle={16}
-            {...(Platform.OS === 'web' && {
-              style: {
-                ...styles.bodyScroll,
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                WebkitOverflowScrolling: 'touch',
-              },
-            })}
-          >
           {validationBanner ? (
             <View style={styles.validationBannerContainer}>
               <Text style={styles.validationBannerText}>{validationBanner}</Text>
             </View>
           ) : null}
-          <View style={{ marginBottom: 8 }}>
+          <View style={styles.formGroup}>
             <Text style={styles.fieldLabel}>
-              Name <Text style={{ color: '#ef4444' }}>*</Text>
+              Name<Text style={styles.required}> *</Text>
             </Text>
-          </View>
-          <View
-            style={[
-              styles.titleInputRow,
-              validationErrors.title && styles.titleInputRowError,
-            ]}
-          >
             <TextInput
               placeholder="Event name"
               placeholderTextColor={MUTED}
@@ -3827,7 +3700,10 @@ export default function TaskCreateModal({
                   setValidationErrors({ ...validationErrors, title: null });
                 }
               }}
-              style={styles.titleInput}
+              style={[
+                styles.fieldInput,
+                validationErrors.title && styles.fieldInputError,
+              ]}
               autoFocus
             />
           </View>
@@ -3835,63 +3711,10 @@ export default function TaskCreateModal({
             <Text style={styles.errorText}>{validationErrors.title}</Text>
           )}
 
-          {/* Event Type - at top above Schedule on calendar/backlog */}
-          <SafeFieldRow style={[styles.fieldRow, { marginTop: 12, marginBottom: 8 }]}>
-            <View style={styles.field}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text style={styles.fieldLabel}>Event Type <Text style={{ color: '#ef4444' }}>*</Text></Text>
-              </View>
-              <SafeView style={[
-                styles.dropdownContainer,
-                validationErrors.eventType && styles.dropdownContainerError,
-              ]}>
-                <ChipRow style={styles.dropdownRow}>{EVENT_TYPES.map((type) => {
-                  const isSelected = eventType === type;
-                  return (
-                  <TouchableOpacity
-                    key={type}
-                    onPress={() => {
-                      applyEventTypeSelection(type);
-                      if (validationErrors.eventType) {
-                        setValidationErrors({ ...validationErrors, eventType: null });
-                      }
-                      if (
-                        validationBanner
-                        || validationErrors.recurrenceEnd
-                        || validationErrors.recurrenceWeekdays
-                        || validationErrors.recurrenceInterval
-                      ) {
-                        clearRecurrenceValidation();
-                      }
-                    }}
-                    style={[
-                      styles.dropdownOption,
-                      isSelected && styles.dropdownOptionActive,
-                      isSelected && getEventTypeActiveChipStyle(type),
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.dropdownOptionText,
-                        isSelected && { color: getEventTypeChipTextColor(type), fontWeight: '700' },
-                      ]}
-                    >
-                      {type}
-                    </Text>
-                  </TouchableOpacity>
-                );})}</ChipRow>
-              </SafeView>
-              {validationErrors.eventType && (
-                <Text style={styles.errorTextSmall}>{validationErrors.eventType}</Text>
-              )}
-            </View>
-          </SafeFieldRow>
-
           {/* Placement toggle hidden for now */}
 
-          <SafeFieldRow style={[styles.fieldRow, { marginTop: 0, marginBottom: 8 }]}>
-            <View style={styles.field}>
-              <Text style={styles.fieldLabel}>Students <Text style={{ color: '#ef4444' }}>*</Text></Text>
+          <View style={styles.formGroup}>
+              <Text style={styles.fieldLabel}>Students <Text style={styles.required}>*</Text></Text>
               <SafeView style={[
                 styles.dropdownContainer,
                 validationErrors.assignee && styles.dropdownContainerError,
@@ -3937,22 +3760,22 @@ export default function TaskCreateModal({
                   {validationErrors.assignee}
                 </Text>
               ) : null}
-            </View>
-          </SafeFieldRow>
+          </View>
 
           <SafeView>
             {placement === 'calendar' && (
               <View
                 style={[
                   styles.scheduleFieldsWrap,
+                  styles.formGroup,
                   validationErrors.time && styles.scheduleFieldsWrapError,
                   (showStartTimeDropdown || showEndTimeDropdown) && styles.scheduleFieldsWrapOverlay,
                 ]}
               >
-                <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
-                  <View style={[styles.timeField, styles.dateFieldInline]}>
-                    <Text style={styles.timeLabel}>Date <Text style={{ color: '#ef4444' }}>*</Text></Text>
-                    <View style={[styles.chip, validationErrors.date && styles.chipError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>
+                <View style={styles.dateTimeStack}>
+                  <View style={[styles.timeField, styles.stackedField]}>
+                    <Text style={styles.fieldLabel}>Date <Text style={styles.required}>*</Text></Text>
+                    <View style={[styles.chip, styles.stackedFieldControl, validationErrors.date && styles.chipError, { backgroundColor: '#ffffff' }]}>
                       <TouchableOpacity
                         onPress={() => {
                           setDueDate(addDays(dueDate, -1));
@@ -3984,9 +3807,9 @@ export default function TaskCreateModal({
                     {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
                   </View>
                   {showDayOffEndDateField ? (
-                    <View style={[styles.timeField, styles.dateFieldInline]}>
-                      <Text style={styles.timeLabel}>End date</Text>
-                      <View style={[styles.chip, validationErrors.endDate && styles.chipError, { alignSelf: 'flex-start', marginRight: 0, backgroundColor: '#ffffff' }]}>
+                    <View style={[styles.timeField, styles.stackedField]}>
+                      <Text style={styles.fieldLabel}>End date</Text>
+                      <View style={[styles.chip, styles.stackedFieldControl, validationErrors.endDate && styles.chipError, { backgroundColor: '#ffffff' }]}>
                         <TouchableOpacity
                           onPress={() => {
                             const next = new Date(eventEndDate || dueDate || new Date());
@@ -4027,13 +3850,12 @@ export default function TaskCreateModal({
                   ) : null}
                   <View
                     style={[
-                      styles.timeInputsRow,
-                      Platform.OS === 'web' && styles.timeInputsRowInline,
+                      styles.timeInputsStack,
                       hideScheduleTimeControls && { display: 'none' },
                     ]}
                   >
-                      <View style={[styles.timeField, styles.timeFieldCompact]}>
-                        <Text style={styles.timeLabel}>Start</Text>
+                      <View style={[styles.timeField, styles.stackedField]}>
+                        <Text style={styles.fieldLabel}>Start</Text>
                       {Platform.OS === 'web' ? (
                         useTimeDropdownsOnWeb ? (
                           <View style={[styles.selectContainer, styles.timeSelectContainer]}>
@@ -4188,7 +4010,7 @@ export default function TaskCreateModal({
                               fontSize: 14,
                               color: allDay ? MUTED : FG,
                               width: '100%',
-                              maxWidth: 100,
+                              maxWidth: '100%',
                               height: 'auto',
                               outline: 'none',
                               opacity: allDay ? 0.9 : 1,
@@ -4229,8 +4051,8 @@ export default function TaskCreateModal({
                           <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
                         )}
                       </View>
-                      <View style={[styles.timeField, styles.timeFieldCompact]}>
-                        <Text style={styles.timeLabel}>End</Text>
+                      <View style={[styles.timeField, styles.stackedField]}>
+                        <Text style={styles.fieldLabel}>End</Text>
                       {Platform.OS === 'web' ? (
                         useTimeDropdownsOnWeb ? (
                           <View style={[styles.selectContainer, styles.timeSelectContainer]}>
@@ -4375,7 +4197,7 @@ export default function TaskCreateModal({
                               fontSize: 14,
                               color: allDay ? MUTED : FG,
                               width: '100%',
-                              maxWidth: 100,
+                              maxWidth: '100%',
                               height: 'auto',
                               outline: 'none',
                               opacity: allDay ? 0.9 : 1,
@@ -4403,8 +4225,8 @@ export default function TaskCreateModal({
                           />
                         )}
                       </View>
-                      <View style={[styles.inlineSwitchField, styles.inlineSwitchFieldStack]}>
-                        <Text style={[styles.timeLabel, styles.inlineSwitchLabel]}>Repeat</Text>
+                      <View style={[styles.timeField, styles.stackedField]}>
+                        <Text style={styles.fieldLabel}>Repeat</Text>
                         <View style={styles.inlineSwitchControlWrap}>
                           <Switch
                             value={isRecurring}
@@ -5072,14 +4894,7 @@ export default function TaskCreateModal({
 
             {/* Student Work — Assignment / Project / Exam */}
             {showStudentWorkPanel ? (
-            <ModalSectionCard
-              Icon={FileText}
-              title="Student Work"
-              subtitle="Submission, instructions, and start date"
-              expanded={studentWorkExpanded}
-              onPress={() => setStudentWorkExpanded(!studentWorkExpanded)}
-              accent="#85C4F2"
-            >
+            <ModalFormSection title="Student Work">
               <SafeView>
                 <StudentWorkSection
                   workSpec={workSpec}
@@ -5089,23 +4904,238 @@ export default function TaskCreateModal({
                   labelStyle={styles.fieldLabel}
                 />
               </SafeView>
-            </ModalSectionCard>
+            </ModalFormSection>
             ) : null}
 
-            {/* Academic Details Section - after Schedule time */}
+            <View style={styles.formGroup}>
+              <Text style={styles.fieldLabel}>Notes</Text>
+              <TextInput
+                placeholder="Add any additional notes about this event"
+                placeholderTextColor={MUTED}
+                value={notes}
+                onChangeText={setNotes}
+                style={[styles.input, styles.notesInput]}
+                multiline
+                textAlignVertical="top"
+              />
+            </View>
+
+            {familyId ? (
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Attachments</Text>
+                <View style={styles.materialSelectorContainer}>
+                  <TouchableOpacity
+                    ref={materialButtonRef}
+                    {...(Platform.OS === 'web' ? { 'data-material-selector': 'true' } : {})}
+                    style={styles.materialSelector}
+                    onPress={() => {
+                      const willShow = !showMaterialDropdown;
+                      if (willShow && Platform.OS === 'web') {
+                        const calculatePosition = () => {
+                          let node = null;
+
+                          if (materialButtonRef.current) {
+                            node = materialButtonRef.current._nativeNode || materialButtonRef.current;
+                          }
+
+                          if (!node || !node.getBoundingClientRect) {
+                            const selector = document.querySelector('[data-material-selector="true"]');
+                            if (selector) {
+                              node = selector;
+                            }
+                          }
+
+                          if (node && typeof node.getBoundingClientRect === 'function') {
+                            const rect = node.getBoundingClientRect();
+                            const dropdownMaxHeight = 300;
+                            const spaceBelow = window.innerHeight - rect.bottom;
+                            const spaceAbove = rect.top;
+
+                            let top, maxHeight;
+                            if (spaceBelow < 200 && spaceAbove > spaceBelow) {
+                              top = rect.top - Math.min(dropdownMaxHeight, spaceAbove - 10);
+                              maxHeight = Math.min(dropdownMaxHeight, spaceAbove - 10);
+                            } else {
+                              top = rect.bottom + 4;
+                              maxHeight = Math.min(dropdownMaxHeight, spaceBelow - 10);
+                            }
+
+                            setMaterialDropdownPosition({
+                              top,
+                              left: rect.left,
+                              width: Math.max(rect.width, 200),
+                              maxHeight,
+                            });
+                            setMaterialDropdownPositionReady(true);
+                            return true;
+                          }
+                          return false;
+                        };
+
+                        if (calculatePosition()) {
+                          setShowMaterialDropdown(true);
+                        } else {
+                          setTimeout(() => {
+                            if (calculatePosition()) {
+                              setShowMaterialDropdown(true);
+                            }
+                          }, 0);
+                        }
+                      } else {
+                        setShowMaterialDropdown(willShow);
+                        if (!willShow) {
+                          setMaterialDropdownPositionReady(false);
+                        }
+                      }
+                    }}
+                  >
+                    <Text style={[
+                      styles.materialSelectorText,
+                      !selectedMaterialId && styles.materialSelectorPlaceholder
+                    ]}>
+                      {selectedMaterialId
+                        ? (materials.find(m => m.id === selectedMaterialId)?.title || materials.find(m => m.id === selectedMaterialId)?.provider_name || 'Select attachment...')
+                        : 'Select attachment...'}
+                    </Text>
+                    <ChevronDown size={16} color={MUTED} />
+                  </TouchableOpacity>
+                  {selectedMaterialId ? (
+                    <TouchableOpacity
+                      style={styles.clearMaterialButton}
+                      onPress={() => {
+                        setSelectedMaterialId(null);
+                        setAttachedMaterialIds([]);
+                      }}
+                    >
+                      <Text style={styles.clearMaterialText}>Clear</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  <TouchableOpacity
+                    style={styles.addMaterialButton}
+                    onPress={() => setShowAddMaterialModal(true)}
+                  >
+                    <Plus size={14} color="#5B6880" />
+                    <Text style={styles.addMaterialText}>Add New</Text>
+                  </TouchableOpacity>
+                </View>
+                {showMaterialDropdown && Platform.OS === 'web' && materialDropdownPositionReady ? (() => {
+                  let ReactDOM;
+                  try {
+                    ReactDOM = require('react-dom');
+                  } catch (e) {
+                    // ReactDOM not available, fall back to normal rendering
+                  }
+
+                  const dropdownContent = (
+                    <View
+                      ref={materialDropdownRef}
+                      style={{
+                        position: 'fixed',
+                        top: materialDropdownPosition.top,
+                        left: materialDropdownPosition.left,
+                        width: materialDropdownPosition.width || 200,
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: 'rgba(15,23,42,0.08)',
+                        padding: 4,
+                        maxHeight: materialDropdownPosition.maxHeight || 300,
+                        zIndex: 99999,
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                        ...(Platform.OS === 'web' && {
+                          overflow: 'hidden',
+                          display: 'flex',
+                          flexDirection: 'column',
+                        }),
+                      }}
+                    >
+                      <ScrollView
+                        style={{
+                          maxHeight: (materialDropdownPosition.maxHeight || 300) - 8,
+                          ...(Platform.OS === 'web' && {
+                            overflowY: 'auto',
+                            overflowX: 'hidden',
+                            WebkitOverflowScrolling: 'touch',
+                          }),
+                        }}
+                        nestedScrollEnabled
+                        showsVerticalScrollIndicator={Platform.OS !== 'web'}
+                      >
+                        {loadingMaterials ? (
+                          <View style={{ padding: 12 }}>
+                            <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
+                          </View>
+                        ) : materials.length === 0 ? (
+                          <View style={{ padding: 12 }}>
+                            <Text style={{ fontSize: 13, color: MUTED }}>No materials yet</Text>
+                          </View>
+                        ) : (
+                          <>
+                            <TouchableOpacity
+                              style={{
+                                paddingVertical: 6,
+                                paddingHorizontal: 10,
+                                borderRadius: 4,
+                              }}
+                              onPress={() => {
+                                setSelectedMaterialId(null);
+                                setAttachedMaterialIds([]);
+                                setShowMaterialDropdown(false);
+                              }}
+                            >
+                              <Text style={{ fontSize: 13, color: FG }}>None</Text>
+                            </TouchableOpacity>
+                            {materials.map((material) => (
+                              <TouchableOpacity
+                                key={material.id}
+                                style={{
+                                  paddingVertical: 6,
+                                  paddingHorizontal: 10,
+                                  borderRadius: 4,
+                                  backgroundColor: selectedMaterialId === material.id ? 'rgba(212, 162, 86, 0.1)' : 'transparent',
+                                }}
+                                onPress={() => {
+                                  setSelectedMaterialId(material.id);
+                                  setAttachedMaterialIds([material.id]);
+                                  setShowMaterialDropdown(false);
+                                }}
+                              >
+                                <Text style={{
+                                  fontSize: 13,
+                                  color: selectedMaterialId === material.id ? ACCENT : FG,
+                                  fontWeight: selectedMaterialId === material.id ? '600' : '400',
+                                }}>
+                                  {material.title || material.provider_name || 'Untitled Material'}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </>
+                        )}
+                      </ScrollView>
+                    </View>
+                  );
+
+                  if (ReactDOM && typeof document !== 'undefined' && document.body) {
+                    return ReactDOM.createPortal(dropdownContent, document.body);
+                  }
+
+                  return dropdownContent;
+                })() : null}
+              </View>
+            ) : null}
+
             {!hideLearningDetailsSection ? (
             <ModalSectionCard
               Icon={GraduationCap}
               title={academicSectionTitle}
-              subtitle="Scheduling and grading context"
+              subtitle="Subjects, lesson, and grading"
               expanded={showAcademicDetails}
-              onPress={() => setShowAcademicDetails(!showAcademicDetails)}
+              onPress={() => setShowAcademicDetails((open) => !open)}
               accent="#9ECFFB"
             >
-                <SafeView>
-              <SafeFieldRow style={[styles.fieldRow, styles.learningRow]}>
-                <View style={[styles.field, styles.academicFieldSubject]}>
-                  <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Subjects</Text>
+                <SafeView style={styles.formStack}>
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Subjects</Text>
                   <View style={[styles.selectContainer, styles.academicSelectContainer]}>
                     <TouchableOpacity
                       ref={subjectButtonRef}
@@ -5294,9 +5324,9 @@ export default function TaskCreateModal({
                       </View>
                     )}
                   </View>
-                </View>
-                <View style={[styles.field, styles.academicFieldUnit]}>
-                  <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Lesson</Text>
+              </View>
+              <View style={styles.formGroup}>
+                  <Text style={styles.fieldLabel}>Lesson</Text>
                   <View style={[styles.selectContainer, styles.academicSelectContainer]}>
                     <TouchableOpacity
                       ref={lessonButtonRef}
@@ -5450,11 +5480,11 @@ export default function TaskCreateModal({
                       </View>
                     ) : null}
                   </View>
-                </View>
+              </View>
                 {showLearningGradeFields ? (
-                <View style={styles.learningSectionGradesRow}>
-                  <View style={[styles.field, styles.academicFieldPercent]}>
-                    <Text style={[styles.fieldLabel, styles.learningRowLabel]}>% Grade</Text>
+                <>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.fieldLabel}>% Grade</Text>
                     <TextInput
                       placeholder="e.g. 25"
                       placeholderTextColor={MUTED}
@@ -5462,7 +5492,7 @@ export default function TaskCreateModal({
                       onChangeText={setPercentOfTotalGrade}
                       style={[
                         styles.input,
-                        styles.academicInputCompact,
+                        styles.stackedTextInput,
                         percentValidationError && styles.inputError
                       ]}
                       keyboardType="numeric"
@@ -5503,19 +5533,18 @@ export default function TaskCreateModal({
                       </View>
                     )}
                   </View>
-                  <View style={[styles.field, styles.academicFieldGrade]}>
-                    <Text style={[styles.fieldLabel, styles.learningRowLabel]}>Grade</Text>
+                  <View style={styles.formGroup}>
+                    <Text style={styles.fieldLabel}>Grade</Text>
                     <TextInput
                       placeholder="e.g. A+"
                       placeholderTextColor={MUTED}
                       value={grade}
                       onChangeText={setGrade}
-                      style={[styles.input, styles.academicInputCompact]}
+                      style={[styles.input, styles.stackedTextInput]}
                     />
                   </View>
-                </View>
+                </>
                 ) : null}
-              </SafeFieldRow>
                 </SafeView>
             </ModalSectionCard>
             ) : null}
@@ -5525,12 +5554,11 @@ export default function TaskCreateModal({
               title="Logistical details"
               subtitle="Location, mode, and contact"
               expanded={showLogisticDetails}
-              onPress={() => setShowLogisticDetails(!showLogisticDetails)}
+              onPress={() => setShowLogisticDetails((open) => !open)}
               accent="#9ECFFB"
             >
-              <SafeView>
-                <SafeFieldRow style={styles.fieldRow}>
-                  <View style={styles.field}>
+              <SafeView style={styles.formStack}>
+                <View style={styles.formGroup}>
                     <Text style={styles.fieldLabel}>Location (optional)</Text>
                     <TextInput
                       placeholder="e.g. Library, co-op, or address"
@@ -5539,7 +5567,9 @@ export default function TaskCreateModal({
                       onChangeText={setLocation}
                       style={styles.input}
                     />
-                    <Text style={[styles.fieldLabel, { marginTop: 8 }]}>Contact (optional)</Text>
+                </View>
+                <View style={styles.formGroup}>
+                    <Text style={styles.fieldLabel}>Contact (optional)</Text>
                     <TextInput
                       placeholder="e.g. professor, tutor, or parent"
                       placeholderTextColor={MUTED}
@@ -5547,11 +5577,11 @@ export default function TaskCreateModal({
                       onChangeText={setInstructor}
                       style={styles.input}
                     />
-                  </View>
-                  <View style={styles.field}>
+                </View>
+                <View style={styles.formGroup}>
                     <Text style={styles.fieldLabel}>Mode (optional)</Text>
                     <SafeView style={styles.dropdownContainer}>
-                      <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
+                      <ChipRow style={styles.dropdownRow}>
                         {MODE_OPTIONS.map((m) => (
                           <TouchableOpacity
                             key={m}
@@ -5573,9 +5603,11 @@ export default function TaskCreateModal({
                         ))}
                       </ChipRow>
                     </SafeView>
-                    <Text style={[styles.fieldLabel, { marginTop: 10 }]}>Add to connected calendar</Text>
+                </View>
+                <View style={styles.formGroup}>
+                    <Text style={styles.fieldLabel}>Add to connected calendar</Text>
                     <SafeView style={styles.dropdownContainer}>
-                      <ChipRow style={[styles.dropdownRow, { marginTop: 4 }]}>
+                      <ChipRow style={styles.dropdownRow}>
                         {CALENDAR_CONNECTION_OPTIONS.map((provider) => {
                           const isSelected = connectedCalendarTargets.includes(provider.value);
                           return (
@@ -5617,253 +5649,13 @@ export default function TaskCreateModal({
                         </Text>
                       ) : null}
                     </SafeView>
-                  </View>
-                </SafeFieldRow>
+                </View>
               </SafeView>
             </ModalSectionCard>
 
-            {/* Additional notes — collapsible, same pattern as Add Subject modal */}
-            <ModalSectionCard
-              Icon={FileText}
-              title="Notes and attachments"
-              subtitle="Anything else to remember"
-              expanded={showNotesSection}
-              onPress={() => setShowNotesSection(!showNotesSection)}
-              accent="#9ECFFB"
-            >
-                <View style={{ marginTop: 2 }}>
-                  <Text style={styles.fieldLabel}>Notes</Text>
-                  <TextInput
-                    placeholder="Add any additional notes about this event"
-                    placeholderTextColor={MUTED}
-                    value={notes}
-                    onChangeText={setNotes}
-                    style={[styles.input, styles.notesInput]}
-                    multiline
-                    textAlignVertical="top"
-                  />
-                </View>
-
-            {/* Labels removed - no longer used */}
-
-            {/* Material Selector - always visible */}
-            {familyId && (
-              <SafeFieldRow style={[styles.fieldRow, { marginTop: 8 }]}>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Attachments</Text>
-                  <View style={styles.materialSelectorContainer}>
-                    <TouchableOpacity
-                      ref={materialButtonRef}
-                      {...(Platform.OS === 'web' ? { 'data-material-selector': 'true' } : {})}
-                      style={styles.materialSelector}
-                      onPress={() => {
-                        const willShow = !showMaterialDropdown;
-                        if (willShow && Platform.OS === 'web') {
-                          // Calculate position immediately before showing
-                          const calculatePosition = () => {
-                            let node = null;
-                            
-                            if (materialButtonRef.current) {
-                              node = materialButtonRef.current._nativeNode || materialButtonRef.current;
-                            }
-                            
-                            if (!node || !node.getBoundingClientRect) {
-                              const selector = document.querySelector('[data-material-selector="true"]');
-                              if (selector) {
-                                node = selector;
-                              }
-                            }
-                            
-                            if (node && typeof node.getBoundingClientRect === 'function') {
-                              const rect = node.getBoundingClientRect();
-                              const dropdownMaxHeight = 300;
-                              const spaceBelow = window.innerHeight - rect.bottom;
-                              const spaceAbove = rect.top;
-                              
-                              let top, maxHeight;
-                              if (spaceBelow < 200 && spaceAbove > spaceBelow) {
-                                top = rect.top - Math.min(dropdownMaxHeight, spaceAbove - 10);
-                                maxHeight = Math.min(dropdownMaxHeight, spaceAbove - 10);
-                              } else {
-                                top = rect.bottom + 4;
-                                maxHeight = Math.min(dropdownMaxHeight, spaceBelow - 10);
-                              }
-                              
-                              setMaterialDropdownPosition({
-                                top,
-                                left: rect.left,
-                                width: Math.max(rect.width, 200),
-                                maxHeight,
-                              });
-                              setMaterialDropdownPositionReady(true);
-                              return true;
-                            }
-                            return false;
-                          };
-                          
-                          // Calculate position immediately
-                          if (calculatePosition()) {
-                            setShowMaterialDropdown(true);
-                          } else {
-                            // If immediate calculation fails, try with a tiny delay
-                            setTimeout(() => {
-                              if (calculatePosition()) {
-                                setShowMaterialDropdown(true);
-                              }
-                            }, 0);
-                          }
-                        } else {
-                          setShowMaterialDropdown(willShow);
-                          if (!willShow) {
-                            setMaterialDropdownPositionReady(false);
-                          }
-                        }
-                      }}
-                    >
-                      <Text style={[
-                        styles.materialSelectorText,
-                        !selectedMaterialId && styles.materialSelectorPlaceholder
-                      ]}>
-                        {selectedMaterialId
-                          ? (materials.find(m => m.id === selectedMaterialId)?.title || materials.find(m => m.id === selectedMaterialId)?.provider_name || 'Select attachment...')
-                          : 'Select attachment...'}
-                      </Text>
-                      <ChevronDown size={16} color={MUTED} />
-                    </TouchableOpacity>
-                    {selectedMaterialId && (
-                      <TouchableOpacity
-                        style={styles.clearMaterialButton}
-                        onPress={() => {
-                          setSelectedMaterialId(null);
-                          setAttachedMaterialIds([]);
-                        }}
-                      >
-                        <Text style={styles.clearMaterialText}>Clear</Text>
-                      </TouchableOpacity>
-                    )}
-                    <TouchableOpacity
-                      style={styles.addMaterialButton}
-                      onPress={() => setShowAddMaterialModal(true)}
-                    >
-                      <Plus size={14} color="#5B6880" />
-                      <Text style={styles.addMaterialText}>Add New</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {showMaterialDropdown && Platform.OS === 'web' && materialDropdownPositionReady && (() => {
-                    // Use portal to render outside modal to avoid positioning issues
-                    let ReactDOM;
-                    try {
-                      ReactDOM = require('react-dom');
-                    } catch (e) {
-                      // ReactDOM not available, fall back to normal rendering
-                    }
-                    
-                    const dropdownContent = (
-                      <View
-                        ref={materialDropdownRef}
-                        style={{
-                          position: 'fixed',
-                          top: materialDropdownPosition.top,
-                          left: materialDropdownPosition.left,
-                          width: materialDropdownPosition.width || 200,
-                          backgroundColor: '#FFFFFF',
-                          borderRadius: 8,
-                          borderWidth: 1,
-                          borderColor: 'rgba(15,23,42,0.08)',
-                          padding: 4,
-                          maxHeight: materialDropdownPosition.maxHeight || 300,
-                          zIndex: 99999,
-                          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                          ...(Platform.OS === 'web' && {
-                            overflow: 'hidden',
-                            display: 'flex',
-                            flexDirection: 'column',
-                          }),
-                        }}
-                      >
-                        <ScrollView 
-                          style={{ 
-                            maxHeight: (materialDropdownPosition.maxHeight || 300) - 8,
-                            ...(Platform.OS === 'web' && {
-                              overflowY: 'auto',
-                              overflowX: 'hidden',
-                              WebkitOverflowScrolling: 'touch',
-                            }),
-                          }} 
-                          nestedScrollEnabled
-                          showsVerticalScrollIndicator={Platform.OS !== 'web'}
-                        >
-                          {loadingMaterials ? (
-                            <View style={{ padding: 12 }}>
-                              <Text style={{ fontSize: 13, color: MUTED }}>Loading...</Text>
-                            </View>
-                          ) : materials.length === 0 ? (
-                            <View style={{ padding: 12 }}>
-                              <Text style={{ fontSize: 13, color: MUTED }}>No materials yet</Text>
-                            </View>
-                          ) : (
-                            <>
-                              <TouchableOpacity
-                                style={{
-                                  paddingVertical: 6,
-                                  paddingHorizontal: 10,
-                                  borderRadius: 4,
-                                }}
-                                onPress={() => {
-                                  setSelectedMaterialId(null);
-                                  setAttachedMaterialIds([]);
-                                  setShowMaterialDropdown(false);
-                                }}
-                              >
-                                <Text style={{ fontSize: 13, color: FG }}>None</Text>
-                              </TouchableOpacity>
-                              {materials.map((material) => (
-                                <TouchableOpacity
-                                  key={material.id}
-                                  style={{
-                                    paddingVertical: 6,
-                                    paddingHorizontal: 10,
-                                    borderRadius: 4,
-                                    backgroundColor: selectedMaterialId === material.id ? 'rgba(212, 162, 86, 0.1)' : 'transparent',
-                                  }}
-                                  onPress={() => {
-                                    setSelectedMaterialId(material.id);
-                                    setAttachedMaterialIds([material.id]);
-                                    setShowMaterialDropdown(false);
-                                  }}
-                                >
-                                  <Text style={{
-                                    fontSize: 13,
-                                    color: selectedMaterialId === material.id ? ACCENT : FG,
-                                    fontWeight: selectedMaterialId === material.id ? '600' : '400',
-                                  }}>
-                                    {material.title || material.provider_name || 'Untitled Material'}
-                                  </Text>
-                                </TouchableOpacity>
-                              ))}
-                            </>
-                          )}
-                        </ScrollView>
-                      </View>
-                    );
-                    
-                    // Render to document.body via portal if available
-                    if (ReactDOM && typeof document !== 'undefined' && document.body) {
-                      return ReactDOM.createPortal(dropdownContent, document.body);
-                    }
-                    
-                    return dropdownContent;
-                  })()}
-                </View>
-              </SafeFieldRow>
-            )}
-            </ModalSectionCard>
-
-          </ScrollView>
-          </View>
           </AppModalShell>
-        </Animated.View>
-      </Animated.View>
+        </TouchableOpacity>
+      </View>
       
       {/* Mini Calendar Picker Modal */}
       {showCalendarPicker && (
@@ -6598,20 +6390,109 @@ export default function TaskCreateModal({
 
 const styles = StyleSheet.create({
   overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
-    zIndex: 50,
+    padding: 20,
+  },
+  modalWrap: {
+    width: '100%',
+    maxWidth: EVENT_MODAL_MAX_WIDTH,
+  },
+  compactShell: {
+    ...(Platform.OS === 'web'
+      ? {
+          height: 'auto',
+          maxHeight: '90vh',
+          minHeight: 0,
+          borderRadius: 28,
+          boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
+        }
+      : {
+          height: 'auto',
+          maxHeight: '86%',
+        }),
+    overflow: 'hidden',
+  },
+  compactTitleRow: {
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  contentContainer: {
+    paddingBottom: 4,
+  },
+  formGroup: {
+    marginBottom: 14,
+  },
+  formStack: {
+    width: '100%',
+    gap: 0,
+  },
+  stackedField: {
+    width: '100%',
+    alignSelf: 'stretch',
+  },
+  stackedFieldControl: {
+    alignSelf: 'stretch',
+    marginRight: 0,
+    width: '100%',
+    maxWidth: '100%',
+  },
+  stackedTextInput: {
+    width: '100%',
+    maxWidth: '100%',
+    alignSelf: 'stretch',
+  },
+  required: {
+    color: '#ef4444',
+  },
+  fieldInput: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#111827',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#9CA3AF',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
+    }),
+  },
+  fieldInputError: {
+    borderBottomColor: '#ef4444',
+    borderBottomWidth: 2,
+  },
+  formSectionBucket: {
+    marginTop: 20,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+  },
+  formSectionBucketFirst: {
+    marginTop: 12,
+    paddingTop: 0,
+    borderTopWidth: 0,
+  },
+  formSectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 16,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   modal: {
     width: '100%',
-    maxWidth: 860,
+    maxWidth: EVENT_MODAL_MAX_WIDTH,
     maxHeight: Platform.OS === 'web' ? '78vh' : '84%',
     backgroundColor: 'transparent',
     borderRadius: 0,
@@ -6632,12 +6513,10 @@ const styles = StyleSheet.create({
       : { height: '84%' }),
   },
   shellBody: {
-    flex: 1,
-    minHeight: 0,
-    paddingTop: 10,
+    paddingTop: 0,
+    paddingBottom: 4,
   },
   header: {
-    paddingHorizontal: 20,
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: BORDER,
@@ -6854,23 +6733,6 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  bodyScroll: {
-    flex: 1,
-    minHeight: 0,
-    maxHeight: Platform.OS === 'web' ? 'min(60vh, calc(100vh - 300px))' : undefined,
-  },
-  bodyScrollWrap: {
-    flex: 1,
-    minHeight: 0,
-  },
-  bodyScrollContent: {
-    paddingBottom: 6,
-  },
-  bodyContent: {
-    paddingHorizontal: 20,
-    paddingTop: 0,
-    paddingBottom: 6,
-  },
   scheduleFieldsWrap: {
     marginBottom: 8,
     overflow: 'visible',
@@ -6882,21 +6744,26 @@ const styles = StyleSheet.create({
   scheduleFieldsWrapError: {
     borderColor: '#ef4444',
   },
+  dateTimeStack: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 14,
+    width: '100%',
+  },
   dateTimeInlineRow: {
     flexDirection: 'column',
     alignItems: 'stretch',
-    gap: 8,
-    marginBottom: 10,
+    gap: 14,
+    marginBottom: 0,
   },
   dateTimeInlineRowWeb: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 4,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 14,
   },
   dateFieldInline: {
-    flexGrow: 0,
-    flexShrink: 0,
-    minWidth: 220,
+    width: '100%',
+    minWidth: 0,
   },
   inlineSwitchField: {
     minWidth: 84,
@@ -7065,29 +6932,34 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
+  timeInputsStack: {
+    flexDirection: 'column',
+    gap: 14,
+    width: '100%',
+    overflow: 'visible',
+  },
   timeInputsRow: {
-    flexDirection: 'row',
-    gap: 12,
+    flexDirection: 'column',
+    gap: 14,
+    width: '100%',
   },
   timeInputsRowInline: {
-    flex: 1,
-    minWidth: 220,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    width: '100%',
+    minWidth: 0,
     overflow: 'visible',
   },
   timeField: {
-    flex: 1,
+    width: '100%',
+    alignSelf: 'stretch',
     overflow: 'visible',
   },
   timeFieldCompact: {
-    ...(Platform.OS === 'web'
-      ? {
-          flex: 0,
-          width: 148,
-          maxWidth: 148,
-          minWidth: 148,
-          flexShrink: 0,
-        }
-      : {}),
+    width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
+    flexShrink: 0,
   },
   timeLabel: {
     color: SUB,
@@ -7367,56 +7239,57 @@ const styles = StyleSheet.create({
     }),
   },
   fieldRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 10,
+    flexDirection: 'column',
+    gap: 14,
+    marginBottom: 0,
     overflow: 'visible',
+    width: '100%',
   },
   learningRow: {
+    flexDirection: 'column',
     alignItems: 'stretch',
-    ...(Platform.OS === 'web'
-      ? {
-          display: 'grid',
-          gridTemplateColumns: 'minmax(130px, 180px) minmax(220px, 1fr) minmax(82px, 96px) minmax(82px, 96px)',
-          gap: 4,
-        }
-      : {
-          flexWrap: 'wrap',
-        }),
+    gap: 14,
+    width: '100%',
   },
   learningSectionGradesRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 4,
-    marginTop: 8,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 0,
+    marginTop: 0,
     paddingTop: 0,
     width: '100%',
-    alignSelf: 'stretch',
-    ...(Platform.OS === 'web' && {
-      gridColumn: '1 / -1',
-      display: 'flex',
-    }),
   },
   field: {
-    flex: 1,
+    width: '100%',
+    alignSelf: 'stretch',
     alignItems: 'flex-start',
     overflow: 'visible',
   },
   academicFieldSubject: {
-    ...(Platform.OS === 'web'
-      ? { minWidth: 0, maxWidth: 180, width: '100%', alignSelf: 'flex-start' }
-      : { minWidth: '47%' }),
+    width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
+    alignSelf: 'stretch',
   },
   academicFieldUnit: {
-    ...(Platform.OS === 'web' ? { minWidth: 0 } : { minWidth: '47%' }),
+    width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
+    alignSelf: 'stretch',
   },
   academicFieldGrade: {
-    ...(Platform.OS === 'web' ? { minWidth: 0, maxWidth: 96, width: '100%', alignSelf: 'flex-start' } : { minWidth: '47%' }),
-    flex: 0.5,
+    width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
+    alignSelf: 'stretch',
+    flex: 0,
   },
   academicFieldPercent: {
-    ...(Platform.OS === 'web' ? { minWidth: 0, maxWidth: 96, width: '100%', alignSelf: 'flex-start' } : { minWidth: '47%' }),
-    flex: 0.4,
+    width: '100%',
+    maxWidth: '100%',
+    minWidth: 0,
+    alignSelf: 'stretch',
+    flex: 0,
   },
   academicFieldGradeStack: {
     flex: 0,
@@ -7431,13 +7304,13 @@ const styles = StyleSheet.create({
     maxWidth: 96,
   },
   fieldLabel: {
-    color: SUB,
+    color: '#6B7280',
     fontSize: 12,
-    marginBottom: 4,
+    marginBottom: 6,
     fontWeight: '500',
     textAlign: 'left',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   learningRowLabel: {
@@ -7445,13 +7318,13 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   academicInputCompact: {
-    minHeight: 40,
-    height: 40,
+    minHeight: 44,
+    height: 44,
     borderRadius: 12,
-    width: 96,
-    maxWidth: 96,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
+    width: '100%',
+    maxWidth: '100%',
+    alignSelf: 'stretch',
+    paddingHorizontal: 12,
     paddingVertical: 8,
     marginBottom: 0,
   },
@@ -7533,7 +7406,7 @@ const styles = StyleSheet.create({
   },
   timeSelectContainer: {
     width: '100%',
-    maxWidth: 100,
+    maxWidth: '100%',
     zIndex: 32000,
   },
   timeSelectButton: {

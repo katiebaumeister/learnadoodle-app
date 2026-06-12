@@ -56,8 +56,11 @@ export default function EditTutorModal({
   const [error, setError] = useState(null);
   const [savingInviteEmail, setSavingInviteEmail] = useState(false);
 
-  const isPendingInvite = tutor?.invite_status === 'pending';
-  const tutorName = tutor?.name || tutor?.email || 'Tutor';
+  const isNewTutor = tutor?.isNew === true || String(tutor?.id || '').startsWith('draft-');
+  const isPendingInvite = !isNewTutor && tutor?.invite_status === 'pending';
+  const tutorName = isNewTutor ? 'Add tutor' : (tutor?.name || tutor?.email || 'Tutor');
+  const showPermissionField = isNewTutor || !!(String(email || tutor?.email || '').trim());
+  const permissionEditable = isNewTutor || !isPendingInvite;
 
   const childOptions = useMemo(
     () =>
@@ -107,18 +110,19 @@ export default function EditTutorModal({
     setIsSaving(true);
     setError(null);
     try {
-      if (isPendingInvite) {
+      if (isNewTutor || isPendingInvite) {
         if (!email.trim()) {
-          throw new Error('Enter an email address for this tutor invite.');
+          throw new Error('Enter an email address for this tutor.');
         }
         const { error: inviteError } = await inviteTutor({
           email: email.trim(),
           role: 'tutor',
           child_ids: selectedChildIds,
           tutor_name: displayName.trim() || null,
+          tutor_permission_profile: normalizeTutorProfile(tutorPermissionProfile),
         });
         if (inviteError) throw inviteError;
-        toast.push('Tutor invite updated and re-sent.', 'success');
+        toast.push(isNewTutor ? 'Tutor added. Invite sent!' : 'Tutor invite updated and re-sent.', 'success');
       } else {
         const { error: patchError } = await updateTutorScope(tutor.id, {
           child_ids: selectedChildIds,
@@ -189,19 +193,19 @@ export default function EditTutorModal({
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
         <TouchableOpacity activeOpacity={1} onPress={(e) => e?.stopPropagation?.()} style={styles.modalWrap}>
           <AppModalShell
-            mode="edit"
+            mode={isNewTutor ? 'add' : 'edit'}
             title={tutorName}
-            eyebrow="TUTOR"
-            accent="#4BB39C"
-            accentSoft="#EEF9F6"
-            HeroIcon={UserCheck}
             onClose={onClose}
             contentContainerStyle={styles.scrollContent}
             footer={(
               <ModalFooter
-                mode="edit"
-                primaryLabel={isSaving ? 'Saving...' : 'Save changes'}
-                destructiveLabel={isPendingInvite ? null : 'Remove access'}
+                mode={isNewTutor ? 'add' : 'edit'}
+                primaryLabel={
+                  isSaving
+                    ? 'Saving...'
+                    : (isNewTutor ? 'Add Tutor' : 'Save changes')
+                }
+                destructiveLabel={isPendingInvite || isNewTutor ? null : 'Remove access'}
                 onCancel={onClose}
                 onDelete={isPendingInvite ? undefined : () => setShowDangerZone((v) => !v)}
                 onPrimary={handleSaveScope}
@@ -254,7 +258,24 @@ export default function EditTutorModal({
                   autoCapitalize="words"
                   autoCorrect={false}
                 />
-                {isPendingInvite ? (
+                {isNewTutor ? (
+                  <>
+                    <Text style={styles.inputLabel}>Email</Text>
+                    <TextInput
+                      style={styles.emailInput}
+                      value={email}
+                      onChangeText={setEmail}
+                      placeholder="tutor@email.com"
+                      placeholderTextColor="#9ca3af"
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      autoCorrect={false}
+                    />
+                    <Text style={styles.connectedHint}>
+                      An invite will be sent to this email when you add the tutor.
+                    </Text>
+                  </>
+                ) : isPendingInvite ? (
                   <>
                     <Text style={styles.pendingTitle}>Invite sent</Text>
                     <TextInput
@@ -303,7 +324,7 @@ export default function EditTutorModal({
                     </Text>
                   </>
                 )}
-                {hasAttachedEmail ? (
+                {showPermissionField ? (
                   <View style={styles.permissionFieldWrap}>
                     <Text style={styles.inputLabel}>Permission level</Text>
                     <View style={styles.permissionPills}>
@@ -315,12 +336,12 @@ export default function EditTutorModal({
                             style={[
                               styles.permissionPill,
                               selected && styles.permissionPillSelected,
-                              isPendingInvite && styles.permissionPillDisabled,
+                              !permissionEditable && styles.permissionPillDisabled,
                             ]}
                             onPress={() => setTutorPermissionProfile(option.id)}
-                            disabled={isPendingInvite}
+                            disabled={!permissionEditable}
                             activeOpacity={0.85}
-                            {...(Platform.OS === 'web' && { cursor: isPendingInvite ? 'not-allowed' : 'pointer' })}
+                            {...(Platform.OS === 'web' && { cursor: permissionEditable ? 'pointer' : 'not-allowed' })}
                           >
                             <Text style={[styles.permissionPillText, selected && styles.permissionPillTextSelected]}>
                               {option.label}
@@ -329,13 +350,14 @@ export default function EditTutorModal({
                         );
                       })}
                     </View>
-                    {isPendingInvite ? (
+                    {isPendingInvite && !isNewTutor ? (
                       <Text style={styles.permissionHelpText}>Permission level becomes editable after acceptance.</Text>
                     ) : null}
                   </View>
                 ) : null}
               </View>
 
+              {!isNewTutor ? (
               <View style={styles.dangerZoneAccordion}>
                 <TouchableOpacity
                   onPress={() => setShowDangerZone((v) => !v)}
@@ -380,6 +402,7 @@ export default function EditTutorModal({
                   </View>
                 ) : null}
               </View>
+              ) : null}
             </ScrollView>
           </AppModalShell>
         </TouchableOpacity>

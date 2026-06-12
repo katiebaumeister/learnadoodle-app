@@ -1679,13 +1679,15 @@ export default function SubjectsPage({
     return (
     <>
       {showChildrenRow && showInlineChildrenFilters ? (
-        <View style={[styles.filterRow, styles.coursesFilterRowTop]}>
-          <View style={styles.filterRowMain}>
-            <View style={styles.filterLabelGroup}>
-              <Text style={styles.filterLabel}>Children</Text>
-            </View>
-            <View style={styles.filterChipsWrap}>
-              <View style={styles.filterChecklist}>
+        <View style={[styles.filterRow, styles.filterRowTop]}>
+          <Text style={styles.filterLabel}>Children</Text>
+          <View style={styles.filterChipsScrollWrap}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterChipsScroll}
+              contentContainerStyle={styles.filterChipsScrollContent}
+            >
               <TouchableOpacity
                 style={[
                   styles.filterOptionChip,
@@ -1710,7 +1712,7 @@ export default function SubjectsPage({
                   ]}
                   numberOfLines={1}
                 >
-                  All children
+                  All Children
                 </Text>
               </TouchableOpacity>
               {safeChildren.map((child) => {
@@ -1752,8 +1754,7 @@ export default function SubjectsPage({
                   </TouchableOpacity>
                 );
               })}
-              </View>
-            </View>
+            </ScrollView>
           </View>
         </View>
       ) : null}
@@ -1762,15 +1763,19 @@ export default function SubjectsPage({
         <View
           style={[
             styles.filterRow,
-            !showInlineChildrenFilters && styles.coursesFilterRowTop,
+            !showInlineChildrenFilters && styles.filterRowTop,
             styles.filterRowBelowChildren,
             isChildView && styles.childTermFilterRowSpacing,
           ]}
         >
-          <View style={styles.filterRowMain}>
-            <Text style={styles.filterLabel}>Term</Text>
-            <View style={styles.filterChipsWrap}>
-              <View style={styles.filterChecklist}>
+          <Text style={styles.filterLabel}>Term</Text>
+          <View style={styles.filterChipsScrollWrap}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterChipsScrollSubjects}
+              contentContainerStyle={styles.filterChipsScrollContent}
+            >
               <TouchableOpacity
                 style={[
                   styles.filterOptionChip,
@@ -1811,20 +1816,28 @@ export default function SubjectsPage({
                   </TouchableOpacity>
                 );
               })}
-              </View>
-            </View>
+            </ScrollView>
           </View>
         </View>
       ) : null}
 
       {showSubjectRow && (isCatalogScreen || allCourseSubjectIds.length > 0) ? (
-        <View style={[styles.filterRow, styles.filterRowBelowTerm]}>
-          <View style={styles.filterRowMain}>
-            <View style={styles.filterLabelGroup}>
-              <Text style={styles.filterLabel}>Subjects</Text>
-            </View>
-            <View style={styles.filterChipsWrap}>
-            <View style={styles.filterChecklist}>
+        <View
+          style={[
+            styles.filterRow,
+            styles.filterRowBelowChildren,
+            ((!showChildrenRow || !showInlineChildrenFilters)
+              && !(showTermRow && registeredTerms.length > 0)) && styles.filterRowTop,
+          ]}
+        >
+          <Text style={styles.filterLabel}>Subjects</Text>
+          <View style={styles.filterChipsScrollWrap}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterChipsScrollSubjects}
+              contentContainerStyle={styles.filterChipsScrollContent}
+            >
               <TouchableOpacity
                 style={[
                   styles.filterOptionChip,
@@ -1839,7 +1852,7 @@ export default function SubjectsPage({
                   ]}
                   numberOfLines={1}
                 >
-                  All subjects
+                  All Subjects
                 </Text>
               </TouchableOpacity>
               {subjectsForSubjectFilterChips.map((subject) => {
@@ -1868,8 +1881,7 @@ export default function SubjectsPage({
                   </TouchableOpacity>
                 );
               })}
-            </View>
-            </View>
+            </ScrollView>
           </View>
         </View>
       ) : null}
@@ -2785,11 +2797,9 @@ export default function SubjectsPage({
             shellStyle={styles.learnadoodleModalShell}
             bodyStyle={[styles.learnadoodleModalBody, styles.learnadoodleModalScrollBody]}
             contentContainerStyle={styles.learnadoodleModalBodyContent}
-            footerStyle={styles.learnadoodleModalFooter}
             footer={(
               <ModalFooter
                 mode="edit"
-                compact
                 primaryLabel={
                   planningModalFooterState.saving ? 'Saving...' : 'Save changes'
                 }
@@ -2859,14 +2869,14 @@ export default function SubjectsPage({
         <TouchableOpacity
           activeOpacity={1}
           onPress={(e) => e.stopPropagation()}
-          style={styles.learnadoodleModalWrapWide}
+          style={styles.learnadoodleModalWrap}
         >
           <AppModalShell
             title="Family"
             onClose={closeFamilyMembersModal}
             disableShellScroll
             scrollerStyle={styles.learnadoodleModalScroller}
-            shellStyle={styles.learnadoodleModalShellWide}
+            shellStyle={styles.learnadoodleModalShell}
             bodyStyle={[styles.learnadoodleModalBody, styles.learnadoodleModalScrollBody]}
             contentContainerStyle={styles.learnadoodleModalBodyContent}
           >
@@ -3459,7 +3469,7 @@ const styles = StyleSheet.create({
   headerYearNavTitle: {
     fontSize: 24,
     fontWeight: '600',
-    color: '#111827',
+    color: colors.text,
     letterSpacing: 0,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -4431,8 +4441,7 @@ const styles = StyleSheet.create({
   /** Match MaterialsLibrary `childrenFilterRow` / `subjectsFilterRow` */
   filterRow: {
     width: '100%',
-    marginTop: 24,
-    marginBottom: 8,
+    marginBottom: 16,
     paddingHorizontal: 24,
     flexDirection: 'row',
     alignItems: 'center',
@@ -4442,20 +4451,31 @@ const styles = StyleSheet.create({
       boxSizing: 'border-box',
     }),
   },
+  filterRowTop: {
+    marginTop: 20,
+  },
   filterRowBelowChildren: {
     marginTop: 0,
-    marginBottom: 8,
-  },
-  filterRowBelowTerm: {
-    marginTop: 0,
-    marginBottom: 8,
+    marginBottom: 16,
   },
   childTermFilterRowSpacing: {
-    marginTop: 24,
-    paddingTop: 4,
+    marginTop: 20,
+    paddingTop: 0,
   },
-  coursesFilterRowTop: {
-    marginTop: 8,
+  filterChipsScrollWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  filterChipsScroll: {
+    flex: 1,
+  },
+  filterChipsScrollSubjects: {
+    flexGrow: 0,
+  },
+  filterChipsScrollContent: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 8,
   },
   filterRowWithTrailingActions: {
     alignItems: 'center',
@@ -4532,11 +4552,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 24,
     marginBottom: 8,
   },
-  filterLabelGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexShrink: 0,
-  },
   filterLabel: {
     fontSize: 15,
     fontWeight: '700',
@@ -4546,23 +4561,12 @@ const styles = StyleSheet.create({
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  filterChipsWrap: {
-    flex: 1,
-    minWidth: 0,
-  },
-  filterChecklist: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingRight: 8,
-    paddingBottom: 6,
-  },
   filterOptionChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: '#e5e7eb',
     borderRadius: 999,
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 12,
@@ -4573,17 +4577,22 @@ const styles = StyleSheet.create({
   },
   filterOptionChipActive: {
     borderColor: '#6BB3E8',
-    backgroundColor: 'rgba(107,179,232,0.12)',
+    backgroundColor: 'rgba(107, 179, 232, 0.12)',
   },
   filterOptionChipText: {
     fontSize: 14,
     lineHeight: 18,
     color: 'rgba(15,23,42,0.9)',
-    fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   filterOptionChipTextActive: {
     color: '#6BB3E8',
     fontWeight: '600',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   filterOptionChipAvatarWrap: {
     width: 18,

@@ -245,6 +245,10 @@ export default function BulletinBoardSection({
   profile = null,
   composerOpen = false,
   onComposerOpenChange,
+  /** When set, only show posts tagged to this subject and default new notes to it. */
+  filterSubjectId = null,
+  /** Taller feed for subject detail (full-width panel). */
+  expandedLayout = false,
 }) {
   const session = useSession();
   const [loading, setLoading] = useState(true);
@@ -262,7 +266,7 @@ export default function BulletinBoardSection({
   const [visibility, setVisibility] = useState(VISIBILITY_ALL);
   const [selectedUserIds, setSelectedUserIds] = useState([]);
   const [selectedChildIds, setSelectedChildIds] = useState([]);
-  const [subjectId, setSubjectId] = useState(null);
+  const [subjectId, setSubjectId] = useState(filterSubjectId || null);
   const [subjectMenuOpen, setSubjectMenuOpen] = useState(false);
   const [pendingMaterials, setPendingMaterials] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -330,6 +334,18 @@ export default function BulletinBoardSection({
     loadPosts();
   }, [loadPosts]);
 
+  useEffect(() => {
+    if (filterSubjectId) {
+      setSubjectId(filterSubjectId);
+    }
+  }, [filterSubjectId]);
+
+  const visiblePosts = useMemo(() => {
+    if (!filterSubjectId) return posts;
+    const filterKey = String(filterSubjectId);
+    return posts.filter((post) => String(post.subjectId || '') === filterKey);
+  }, [posts, filterSubjectId]);
+
   const toggleParticipant = (participant) => {
     if (participant.type === 'child') {
       const id = String(participant.id);
@@ -356,7 +372,7 @@ export default function BulletinBoardSection({
     setVisibility(VISIBILITY_ALL);
     setSelectedUserIds([]);
     setSelectedChildIds([]);
-    setSubjectId(null);
+    setSubjectId(filterSubjectId || null);
     setSubjectMenuOpen(false);
     setPendingMaterials([]);
     setComposerOpenState(false);
@@ -493,7 +509,7 @@ export default function BulletinBoardSection({
   const selectedSubjectLabel = subjectId ? subjectById.get(String(subjectId)) || 'Subject' : 'No subject';
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, expandedLayout && styles.rootExpanded]}>
       <Modal
         isOpen={isComposerOpen}
         onClose={resetComposer}
@@ -559,45 +575,52 @@ export default function BulletinBoardSection({
             </ScrollView>
           ) : null}
 
-          <View style={styles.subjectRow}>
-            <Text style={styles.composerLabel}>Subject</Text>
-            <View style={styles.subjectPickerWrap}>
-              <TouchableOpacity
-                ref={subjectMenuRef}
-                style={styles.subjectPickerBtn}
-                onPress={() => setSubjectMenuOpen((open) => !open)}
-                {...(Platform.OS === 'web' && { cursor: 'pointer' })}
-              >
-                <Text style={styles.subjectPickerText}>{selectedSubjectLabel}</Text>
-                <ChevronDown size={14} color="#64748B" />
-              </TouchableOpacity>
-              <Dropdown
-                visible={subjectMenuOpen}
-                triggerRef={subjectMenuRef}
-                onClose={() => setSubjectMenuOpen(false)}
-                placement="bottom-start"
-                width={220}
-              >
-                <DropdownItem
-                  label="No subject"
-                  onPress={() => {
-                    setSubjectId(null);
-                    setSubjectMenuOpen(false);
-                  }}
-                />
-                {(subjects || []).map((subject) => (
+          {filterSubjectId ? (
+            <View style={styles.subjectRow}>
+              <Text style={styles.composerLabel}>Subject</Text>
+              <Text style={styles.subjectLockedText}>{selectedSubjectLabel}</Text>
+            </View>
+          ) : (
+            <View style={styles.subjectRow}>
+              <Text style={styles.composerLabel}>Subject</Text>
+              <View style={styles.subjectPickerWrap}>
+                <TouchableOpacity
+                  ref={subjectMenuRef}
+                  style={styles.subjectPickerBtn}
+                  onPress={() => setSubjectMenuOpen((open) => !open)}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.subjectPickerText}>{selectedSubjectLabel}</Text>
+                  <ChevronDown size={14} color="#64748B" />
+                </TouchableOpacity>
+                <Dropdown
+                  visible={subjectMenuOpen}
+                  triggerRef={subjectMenuRef}
+                  onClose={() => setSubjectMenuOpen(false)}
+                  placement="bottom-start"
+                  width={220}
+                >
                   <DropdownItem
-                    key={subject.id}
-                    label={subject.name || 'Subject'}
+                    label="No subject"
                     onPress={() => {
-                      setSubjectId(subject.id);
+                      setSubjectId(null);
                       setSubjectMenuOpen(false);
                     }}
                   />
-                ))}
-              </Dropdown>
+                  {(subjects || []).map((subject) => (
+                    <DropdownItem
+                      key={subject.id}
+                      label={subject.name || 'Subject'}
+                      onPress={() => {
+                        setSubjectId(subject.id);
+                        setSubjectMenuOpen(false);
+                      }}
+                    />
+                  ))}
+                </Dropdown>
+              </View>
             </View>
-          </View>
+          )}
 
           <TextInput
             style={styles.composerInput}
@@ -674,8 +697,8 @@ export default function BulletinBoardSection({
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="small" color="#6366F1" />
         </View>
-      ) : posts.length === 0 ? (
-        <View style={styles.emptyWrap}>
+      ) : visiblePosts.length === 0 ? (
+        <View style={[styles.emptyWrap, expandedLayout && styles.emptyWrapExpanded]}>
           <View style={styles.emptyState}>
             <View style={styles.emptyIllustration}>
               <FileText size={28} color="#94a3b8" strokeWidth={1.75} />
@@ -685,16 +708,20 @@ export default function BulletinBoardSection({
         </View>
       ) : (
         <ScrollView
-          style={styles.feedScroll}
+          style={[styles.feedScroll, expandedLayout && styles.feedScrollExpanded]}
           contentContainerStyle={styles.feedContent}
           showsVerticalScrollIndicator={false}
         >
-          {posts.map((post) => (
+          {visiblePosts.map((post) => (
             <BulletinPostCard
               key={post.id}
               post={post}
               profileMap={profileMap}
-              subjectName={post.subjectId ? subjectById.get(String(post.subjectId)) : null}
+              subjectName={
+                filterSubjectId
+                  ? null
+                  : (post.subjectId ? subjectById.get(String(post.subjectId)) : null)
+              }
               currentUserId={currentUserId}
               canDelete={
                 canDeleteAny || String(post.authorUserId) === String(currentUserId)
@@ -730,6 +757,12 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && {
       display: 'flex',
       flexDirection: 'column',
+    }),
+  },
+  rootExpanded: {
+    minHeight: 420,
+    ...(Platform.OS === 'web' && {
+      minHeight: 480,
     }),
   },
   composerScroll: {
@@ -828,6 +861,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#334155',
   },
+  subjectLockedText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
   composerInput: {
     minHeight: 96,
     borderWidth: 1,
@@ -923,6 +961,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
   },
+  emptyWrapExpanded: {
+    minHeight: 280,
+    ...(Platform.OS === 'web' && {
+      minHeight: 320,
+    }),
+  },
   emptyState: {
     justifyContent: 'center',
     alignItems: 'center',
@@ -953,6 +997,12 @@ const styles = StyleSheet.create({
   feedScroll: {
     flex: 1,
     minHeight: 0,
+  },
+  feedScrollExpanded: {
+    minHeight: 280,
+    ...(Platform.OS === 'web' && {
+      minHeight: 320,
+    }),
   },
   feedContent: {
     gap: 12,

@@ -340,6 +340,9 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: colors.text,
     flex: 1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   itemTextDanger: {
     color: colors.red,

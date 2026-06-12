@@ -958,15 +958,13 @@ export default function AddSubjectModal({
             onClose={handleCloseWithDraftCleanup}
             disableShellScroll
             shellStyle={styles.compactSubjectShell}
-            footerStyle={!subject ? styles.compactFooter : undefined}
             titleRowStyle={!subject ? styles.compactTitleRow : undefined}
             contentContainerStyle={styles.scrollContent}
             bodyStyle={styles.shellBody}
             footer={(
               <ModalFooter
-                mode={subject ? 'edit' : 'add'}
-                compact={!subject}
-                primaryLabel={isSubmitting ? 'Saving...' : (subject ? 'Save changes' : 'Create')}
+                mode="edit"
+                primaryLabel={isSubmitting ? 'Saving...' : 'Save changes'}
                 destructiveLabel={subject?.id ? (deletingSubject ? 'Deleting...' : 'Delete subject') : undefined}
                 onCancel={handleCloseWithDraftCleanup}
                 onDelete={subject?.id ? () => setShowDeleteSubjectConfirm(true) : undefined}

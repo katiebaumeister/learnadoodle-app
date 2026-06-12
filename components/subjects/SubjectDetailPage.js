@@ -62,7 +62,7 @@ import {
   SubjectAttendanceMonthDrilldown,
 } from './SubjectSectionDrilldownPanels';
 import { supabase } from '../../lib/supabase';
-import SubjectAllEventsSection from './SubjectAllEventsSection';
+import BulletinBoardSection from '../bulletin/BulletinBoardSection';
 import { getStudentSubmissionStatusLabel, getWorkStatusLabel } from '../../lib/workEventHelpers';
 import AssignmentMessageModal from './AssignmentMessageModal';
 import AssignmentSubmittalRequestModal from './AssignmentSubmittalRequestModal';
@@ -74,7 +74,6 @@ import { archiveMaterial } from '../../lib/services/materialsClient';
 import LearningSubjectDetailView from '../learning/LearningSubjectDetailView';
 
 const ATTENDANCE_LIST_LIMIT = 5;
-const SHOW_SUBJECT_EVENTS_SECTION = true;
 const SHOW_SUBJECT_ASSIGNMENTS_SECTION = false;
 const SHOW_SUBJECT_ATTENDANCE_SECTION = false;
 const SHOW_SUBJECT_GRADES_SECTION = false;
@@ -477,6 +476,7 @@ export default function SubjectDetailPage({
   const [attendanceViewMode, setAttendanceViewMode] = useState('list');
   const [showAttendanceExpanded, setShowAttendanceExpanded] = useState(false);
   const [showAttendanceGapSuggestion, setShowAttendanceGapSuggestion] = useState(false);
+  const [bulletinComposerOpen, setBulletinComposerOpen] = useState(false);
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
   const [applyingAttendanceSuggestion, setApplyingAttendanceSuggestion] = useState(false);
   const [showLearningGoalsMethodModal, setShowLearningGoalsMethodModal] = useState(false);
@@ -3146,28 +3146,28 @@ export default function SubjectDetailPage({
           </View>
         ) : null}
 
-        {SHOW_SUBJECT_EVENTS_SECTION ? (
-          <View id="events-section" style={styles.section}>
-            <View style={styles.attendanceSectionHeader}>
-              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Events</Text>
-            </View>
-            <SubjectAllEventsSection
-              events={subjectEvents}
-              eventOutcomes={eventOutcomes}
-              materials={materials}
-              eventAttachmentMaterials={eventAttachmentMaterials}
-              children={children}
-              assignmentsByEventId={assignmentsByEventId}
-              reviewCenterMode={false}
-              onAssignmentPress={(assignment, event) => openAssignedWorkItem(assignment, event)}
-              onEventPress={handleSubjectEventPress}
-              onEventRightClick={handleEventContextMenu}
-              onAttachmentPress={(_material, event) => {
-                if (event?.id) handleOpenEventDetails(event.id, event);
-              }}
-            />
+        <View id="bulletin-board-section" style={styles.bulletinBoardSection}>
+          <View style={styles.bulletinBoardSectionHeader}>
+            <Text style={styles.bulletinBoardSectionLabel}>Bulletin Board</Text>
+            <TouchableOpacity
+              style={styles.bulletinNewNoteButton}
+              onPress={() => setBulletinComposerOpen(true)}
+              {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+            >
+              <Pencil size={18} color="#334155" strokeWidth={2.25} />
+              <Text style={styles.bulletinNewNoteButtonText}>New note</Text>
+            </TouchableOpacity>
           </View>
-        ) : null}
+          <BulletinBoardSection
+            familyId={familyId}
+            children={children}
+            subjects={[subject]}
+            composerOpen={bulletinComposerOpen}
+            onComposerOpenChange={setBulletinComposerOpen}
+            filterSubjectId={subject.id}
+            expandedLayout
+          />
+        </View>
 
         {SHOW_SUBJECT_ASSIGNMENTS_SECTION ? (
           <View id="assignments-section" style={styles.section}>
@@ -4362,6 +4362,67 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 40,
     paddingHorizontal: 14,
+  },
+  bulletinBoardSection: {
+    flex: 1,
+    marginBottom: 40,
+    marginTop: 2,
+    paddingTop: 14,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.12)',
+    ...(Platform.OS === 'web' && {
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: 480,
+    }),
+  },
+  bulletinBoardSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 0,
+    marginBottom: 8,
+    marginHorizontal: -12,
+    paddingHorizontal: 12,
+    paddingRight: 10,
+  },
+  bulletinBoardSectionLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1e293b',
+    letterSpacing: -0.2,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  bulletinNewNoteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.22)',
+    flexShrink: 0,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+    }),
+  },
+  bulletinNewNoteButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#334155',
+    letterSpacing: -0.1,
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
   },
   sectionHeader: {
     flexDirection: 'row',

@@ -744,7 +744,7 @@ import { getTodaySummary, getTodayInsights, getMultiDaySummary, getHomeTilesSumm
 import { generateInsights, buildInsightContext } from '../lib/services/insightEngine'
 import AIActions from './planner/AIActions'
 import CenterPane from './planner/CenterPane'
-import { buildMonthsInRange, resolvePlannerYearRange } from './planner/plannerYearRange'
+import { buildMonthsInRange, resolveCalendarYearRange } from './planner/plannerYearRange'
 import SchedulingAssistant from './planner/SchedulingAssistant'
 import ChildProfile from './ChildProfile'
 import ChildHomeScreen from './child/ChildHomeScreen'
@@ -6590,7 +6590,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
     if (!familyId) return;
     if (String(propPlannerView || '').toLowerCase() !== 'year') return;
 
-    const { yearStart, yearEnd } = resolvePlannerYearRange(plannerDate, propPreloadedAcademicYears);
+    const { yearStart, yearEnd } = resolveCalendarYearRange(plannerDate);
     const months = buildMonthsInRange(yearStart, yearEnd);
     Promise.allSettled(
       months.map((month) => refreshCalendarData(new Date(month.year, month.monthIndex, 1), { background: true })),
@@ -9948,7 +9948,7 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
     let rangeEndKey;
 
     if (normalizedView === 'year') {
-      const range = resolvePlannerYearRange(plannerDate, propPreloadedAcademicYears);
+      const range = resolveCalendarYearRange(plannerDate);
       rangeStartKey = range.yearStart;
       rangeEndKey = range.yearEnd;
     } else {

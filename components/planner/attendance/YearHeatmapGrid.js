@@ -291,8 +291,8 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   cellNone: {
-    backgroundColor: 'rgba(15,23,42,0.02)',
-    borderColor: 'rgba(15,23,42,0.04)',
+    backgroundColor: ATTENDANCE_COLORS.noEvents,
+    borderColor: 'rgba(15,23,42,0.06)',
   },
   cellOutOfRange: {
     backgroundColor: 'transparent',

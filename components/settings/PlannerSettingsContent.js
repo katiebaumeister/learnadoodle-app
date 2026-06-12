@@ -2604,8 +2604,13 @@ export default function PlannerSettingsContent({
                 </View>
               </View>
             </View>
+          </View>
+        </View>
+
+        <View style={sectionBucketStyle}>
+          <Text style={sectionBucketTitleStyle}>Attendance tracking</Text>
+          <View style={formStackStyle}>
             <View style={formFieldStyle}>
-              <Text style={formFieldLabelStyle}>Attendance tracking</Text>
               <View style={formFieldSurfaceStyle}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <TouchableOpacity
@@ -2625,13 +2630,8 @@ export default function PlannerSettingsContent({
                 </View>
               </View>
             </View>
-          </View>
-        </View>
-
-        {(attendanceTrackingMode === 'class_day' || targetScope === 'per_subject') && (
-          <View style={sectionBucketStyle}>
-            <Text style={sectionBucketTitleStyle}>Subject pacing</Text>
-            <View style={formStackStyle}>
+            {(attendanceTrackingMode === 'class_day' || targetScope === 'per_subject') ? (
+            <>
             {attendanceTrackingMode === 'class_day' ? (
               <View style={formFieldStyle}>
                 <Text style={formFieldLabelStyle}>Total attendance goal</Text>
@@ -2746,9 +2746,10 @@ export default function PlannerSettingsContent({
                   );
                 })
             )}
-            </View>
+            </>
+            ) : null}
           </View>
-        )}
+        </View>
 
         {/* Days off */}
         <View style={sectionBucketStyle}>

@@ -34,6 +34,36 @@ function formatGreetingDateInline(date) {
   return `${days[date.getDay()]}, ${months[date.getMonth()]} ${date.getDate()}`;
 }
 
+function getDayOrdinalSuffix(day) {
+  if (day >= 11 && day <= 13) return 'th';
+  switch (day % 10) {
+    case 1: return 'st';
+    case 2: return 'nd';
+    case 3: return 'rd';
+    default: return 'th';
+  }
+}
+
+function formatSchedulePanelTitle(date) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const target = date instanceof Date && !Number.isNaN(date.getTime())
+    ? new Date(date)
+    : new Date(today);
+  target.setHours(0, 0, 0, 0);
+
+  const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+
+  if (diffDays === 0) return "Today's Schedule";
+  if (diffDays === 1) return "Tomorrow's Schedule";
+  if (diffDays === -1) return "Yesterday's Schedule";
+
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const day = target.getDate();
+  return `${months[target.getMonth()]} ${day}${getDayOrdinalSuffix(day)} Schedule`;
+}
+
 function applyAttendanceSnapshotToLearning(learning = [], attendanceRows = []) {
   const events = Array.isArray(learning) ? learning : [];
   const rows = Array.isArray(attendanceRows) ? attendanceRows : [];
@@ -708,6 +738,11 @@ export default function ParentHomeScreen({
     setSelectedDate(new Date());
   };
 
+  const schedulePanelTitle = useMemo(
+    () => formatSchedulePanelTitle(selectedDate),
+    [selectedDate]
+  );
+
   const renderSchedulePanel = (panelStyle) => (
     <View style={[styles.scheduleSection, panelStyle]}>
       <View style={styles.sectionHeader}>
@@ -733,7 +768,7 @@ export default function ParentHomeScreen({
             onPress={jumpToTodaySchedule}
             {...(Platform.OS === 'web' && { cursor: 'pointer' })}
           >
-            <Text style={styles.sectionLabel}>Today's Schedule</Text>
+            <Text style={styles.sectionLabel}>{schedulePanelTitle}</Text>
           </TouchableOpacity>
         </View>
         {onAddEvent ? (

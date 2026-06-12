@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Plus, ChevronLeft, ChevronRight, Users, CalendarDays } from 'lucide-react';
 import SubjectOverviewCard from '../subjects/SubjectOverviewCard';
+import { colors } from '../../theme/colors';
 
 const BRAND_SKY_BLUE = '#81C1E1';
 const BRAND_SKY_BLUE_TEXT = '#5AAEF2';
@@ -184,7 +185,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingTop: 24,
     paddingBottom: 24,
-    gap: 18,
   },
   pageHeader: {
     flexDirection: 'row',
@@ -193,6 +193,7 @@ const styles = StyleSheet.create({
     width: '100%',
     gap: 16,
     flexWrap: 'wrap',
+    paddingBottom: 4,
   },
   headerActions: {
     flexDirection: 'row',
@@ -247,7 +248,7 @@ const styles = StyleSheet.create({
     }),
   },
   filtersPanel: {
-    paddingBottom: 4,
+    width: '100%',
   },
   yearNavRow: {
     flexDirection: 'row',
@@ -279,9 +280,9 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' && { cursor: 'pointer' }),
   },
   yearNavTitle: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '600',
-    color: '#1E293B',
+    color: colors.text,
     ...(Platform.OS === 'web' && {
       fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

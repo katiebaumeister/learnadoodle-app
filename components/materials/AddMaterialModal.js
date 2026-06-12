@@ -15,7 +15,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
-import { X, Upload, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Paperclip, Star } from 'lucide-react';
+import { Upload, ChevronLeft, ChevronRight, Star } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { createMaterial, linkMaterialToChild, updateMaterial, updateMaterialChildStatus } from '../../lib/services/materialsClient';
@@ -56,6 +56,7 @@ const MUTED = '#9ca3af';
 const ACCENT = '#9ECFFB';
 const CHIP_BG = '#f3f4f6';
 const CHIP_BORDER = '#e5e7eb';
+const MATERIAL_MODAL_MAX_WIDTH = 560;
 
 /** Synthetic id when attaching materials to a subject name before the subject row exists */
 const DRAFT_SUBJECT_MATERIAL_ID = '__draft_subject__';
@@ -1049,14 +1050,10 @@ export default function AddMaterialModal({
         />
         <View style={[styles.modalWrap, { pointerEvents: 'box-none' }]}>
           <AppModalShell
-            mode={isEditingExistingMaterial ? 'edit' : 'add'}
             title={isEditingExistingMaterial ? 'Edit material' : 'Add material'}
-            eyebrow="MATERIAL"
-            accent="#9ECFFB"
-            accentSoft="#F0F8FF"
-            HeroIcon={Paperclip}
             onClose={handleDismiss}
-            shellStyle={styles.shellAutoHeight}
+            shellStyle={styles.compactMaterialShell}
+            titleRowStyle={styles.compactTitleRow}
             contentContainerStyle={styles.contentContainer}
             bodyStyle={styles.shellBody}
             footer={(
@@ -1080,12 +1077,11 @@ export default function AddMaterialModal({
                 <Text style={styles.errorText}>{validationError}</Text>
               </View>
             ) : null}
-            {/* Document Upload */}
-            <View style={styles.fieldRow}>
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>
-                  Document Upload {!effectiveMaterial && <Text style={{ color: '#ef4444' }}>*</Text>}
-                </Text>
+
+            <View style={styles.formGroup}>
+              <Text style={styles.fieldLabel}>
+                Document Upload {!effectiveMaterial ? <Text style={styles.required}> *</Text> : null}
+              </Text>
               <TouchableOpacity
                 style={[styles.uploadButton, uploading && styles.uploadButtonDisabled]}
                 onPress={handleFileSelect}
@@ -1105,106 +1101,80 @@ export default function AddMaterialModal({
                   </>
                 )}
               </TouchableOpacity>
-              </View>
             </View>
 
-            {/* Title - required after upload (or always in edit mode) */}
             {showTitleField ? (
-              <View style={styles.fieldRow}>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>
-                    Title <Text style={{ color: '#ef4444' }}>*</Text>
-                  </Text>
-                  <TextInput
-                    style={styles.input}
-                    value={title}
-                    onChangeText={setTitle}
-                    placeholder="e.g., Biology Textbook, Grade 4"
-                    placeholderTextColor={MUTED}
-                  />
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>
+                  Title <Text style={styles.required}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.fieldInput}
+                  value={title}
+                  onChangeText={setTitle}
+                  placeholder="e.g., Biology Textbook, Grade 4"
+                  placeholderTextColor={MUTED}
+                />
+              </View>
+            ) : null}
+
+            {children.length > 0 ? (
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Children</Text>
+                <View style={styles.chipRow}>
+                  {children.map((child) => {
+                    const childId = child.id ?? child.child_id;
+                    const label = child.first_name || child.name || 'Child';
+                    const active = selectedChildIds.some((id) => String(id) === String(childId));
+                    return (
+                      <TouchableOpacity
+                        key={childId}
+                        style={[styles.optionChip, active && styles.optionChipSelected]}
+                        onPress={() => {
+                          const nextIds = active
+                            ? selectedChildIds.filter((id) => String(id) !== String(childId))
+                            : [...selectedChildIds, childId];
+                          setSelectedChildIds(nextIds);
+                        }}
+                      >
+                        <Text style={[styles.optionChipText, active && styles.optionChipTextSelected]}>
+                          {label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </View>
             ) : null}
 
-            {/* Children */}
-            {children.length > 0 && (
-              <View style={styles.fieldRow}>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Children</Text>
-                  <View style={styles.dropdownContainer}>
-                    <View style={styles.dropdownRow}>
-                      {children.map((child) => {
-                        const childId = child.id ?? child.child_id;
-                        const label = child.first_name || child.name || 'Child';
-                        const active = selectedChildIds.some((id) => String(id) === String(childId));
-                        return (
-                          <TouchableOpacity
-                            key={childId}
-                            style={[
-                              styles.dropdownOption,
-                              active && styles.dropdownOptionActive
-                            ]}
-                            onPress={() => {
-                              const nextIds = active
-                                ? selectedChildIds.filter((id) => String(id) !== String(childId))
-                                : [...selectedChildIds, childId];
-                              setSelectedChildIds(nextIds);
-                            }}
-                          >
-                            <Text style={[
-                              styles.dropdownOptionText,
-                              active && styles.dropdownOptionTextActive
-                            ]}>
-                              {label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </View>
+            <View style={styles.formGroup}>
+              <Text style={styles.fieldLabel}>Subject</Text>
+              {loadingSubjects ? (
+                <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 8 }} />
+              ) : subjectsForPicker.length > 0 ? (
+                <View style={styles.chipRow}>
+                  {subjectsForPicker.map((subject) => {
+                    const isSelected = selectedSubjectId === subject.id;
+                    return (
+                      <TouchableOpacity
+                        key={subject.id}
+                        style={[styles.optionChip, isSelected && styles.optionChipSelected]}
+                        onPress={() => setSelectedSubjectId(isSelected ? null : subject.id)}
+                      >
+                        <Text style={[styles.optionChipText, isSelected && styles.optionChipTextSelected]}>
+                          {subject.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-              </View>
-            )}
-
-            {/* Subject - Chip Selection */}
-            <View style={styles.fieldRow}>
-              <View style={styles.field}>
-                <Text style={styles.fieldLabel}>Subject</Text>
-                {loadingSubjects ? (
-                  <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 8 }} />
-                ) : subjectsForPicker.length > 0 ? (
-                  <View style={styles.dropdownContainer}>
-                    <View style={styles.dropdownRow}>
-                      {subjectsForPicker.map((subject) => {
-                        const isSelected = selectedSubjectId === subject.id;
-                        return (
-                          <TouchableOpacity
-                            key={subject.id}
-                            style={[
-                              styles.dropdownOption,
-                              isSelected && styles.dropdownOptionActive
-                            ]}
-                            onPress={() => setSelectedSubjectId(isSelected ? null : subject.id)}
-                          >
-                            <Text style={[
-                              styles.dropdownOptionText,
-                              isSelected && styles.dropdownOptionTextActive
-                            ]}>
-                              {subject.name}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </View>
-                ) : (
-                  <Text style={styles.emptySubjectsText}>
-                    {selectedChildIds.length > 0 
-                      ? 'No subjects found for selected children. Select different children or add subjects first.'
-                      : 'No subjects available. Add subjects first.'}
-                  </Text>
-                )}
-              </View>
+              ) : (
+                <Text style={styles.emptySubjectsText}>
+                  {selectedChildIds.length > 0
+                    ? 'No subjects found for selected children. Select different children or add subjects first.'
+                    : 'No subjects available. Add subjects first.'}
+                </Text>
+              )}
             </View>
 
             <ModalSectionCard
@@ -1214,162 +1184,124 @@ export default function AddMaterialModal({
               expanded={showReviewInfo}
               onPress={() => setShowReviewInfo(!showReviewInfo)}
               accent="#9ECFFB"
+              variant="simple"
             >
-                <View style={styles.sectionCardBody}>
-                  {/* Select Child for Review */}
-                  {children.length > 0 && (
-                    <View style={styles.fieldRow}>
-                      <View style={styles.field}>
-                        <Text style={styles.fieldLabel}>Child</Text>
-                        <View style={styles.dropdownContainer}>
-                          <View style={styles.dropdownRow}>
-                            {children.map((child) => {
-                              const label = child.first_name || child.name || 'Child';
-                              const active = reviewChildId === child.id;
-                              return (
-                                <TouchableOpacity
-                                  key={child.id}
-                                  style={[
-                                    styles.dropdownOption,
-                                    active && styles.dropdownOptionActive
-                                  ]}
-                                  onPress={() => setReviewChildId(active ? null : child.id)}
-                                >
-                                  <Text style={[
-                                    styles.dropdownOptionText,
-                                    active && styles.dropdownOptionTextActive
-                                  ]}>
-                                    {label}
-                                  </Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </View>
-                        </View>
-                      </View>
-                    </View>
-                  )}
-
-                  {/* Rating */}
-                  <View style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Rating (1-5)</Text>
-                      <View style={styles.ratingContainer}>
-                        {[1, 2, 3, 4, 5].map(num => (
-                          <TouchableOpacity
-                            key={num}
-                            style={[
-                              styles.dropdownOption,
-                              reviewRating === num && styles.dropdownOptionActive
-                            ]}
-                            onPress={() => setReviewRating(reviewRating === num ? null : num)}
-                          >
-                            <Text style={[
-                              styles.dropdownOptionText,
-                              reviewRating === num && styles.dropdownOptionTextActive
-                            ]}>
-                              {num}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Emotion */}
-                  <View style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Emotional Response</Text>
-                      <View style={styles.emotionContainer}>
-                        {EMOTIONS.map(em => (
-                          <TouchableOpacity
-                            key={em.value}
-                            style={[
-                              styles.dropdownOption,
-                              reviewEmotion === em.value && styles.dropdownOptionActive
-                            ]}
-                            onPress={() => setReviewEmotion(reviewEmotion === em.value ? null : em.value)}
-                          >
-                            <Text style={[
-                              styles.dropdownOptionText,
-                              reviewEmotion === em.value && styles.dropdownOptionTextActive
-                            ]}>
-                              {em.label}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Pacing */}
-                  <View style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Pacing Fit</Text>
-                      <View style={styles.pillsContainer}>
-                        {PACING_OPTIONS.map(opt => (
-                          <TouchableOpacity
-                            key={opt.value}
-                            style={[
-                              styles.dropdownOption,
-                              reviewPacingFit === opt.value && styles.dropdownOptionActive
-                            ]}
-                            onPress={() => setReviewPacingFit(reviewPacingFit === opt.value ? null : opt.value)}
-                          >
-                            <Text style={[
-                              styles.dropdownOptionText,
-                              reviewPacingFit === opt.value && styles.dropdownOptionTextActive
-                            ]}>
-                              {opt.label}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Difficulty */}
-                  <View style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Difficulty Level</Text>
-                      <View style={styles.pillsContainer}>
-                        {DIFFICULTY_OPTIONS.map(opt => (
-                          <TouchableOpacity
-                            key={opt.value}
-                            style={[
-                              styles.dropdownOption,
-                              reviewDifficulty === opt.value && styles.dropdownOptionActive
-                            ]}
-                            onPress={() => setReviewDifficulty(reviewDifficulty === opt.value ? null : opt.value)}
-                          >
-                            <Text style={[
-                              styles.dropdownOptionText,
-                              reviewDifficulty === opt.value && styles.dropdownOptionTextActive
-                            ]}>
-                              {opt.label}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Review Notes */}
-                  <View style={styles.fieldRow}>
-                    <View style={styles.field}>
-                      <Text style={styles.fieldLabel}>Notes</Text>
-                      <TextInput
-                        style={[styles.input, styles.textArea]}
-                        multiline
-                        numberOfLines={3}
-                        placeholder="Any additional thoughts..."
-                        value={reviewNotes}
-                        onChangeText={setReviewNotes}
-                        placeholderTextColor={MUTED}
-                      />
-                    </View>
+              {children.length > 0 ? (
+                <View style={styles.formGroup}>
+                  <Text style={styles.fieldLabel}>Child</Text>
+                  <View style={styles.chipRow}>
+                    {children.map((child) => {
+                      const label = child.first_name || child.name || 'Child';
+                      const active = reviewChildId === child.id;
+                      return (
+                        <TouchableOpacity
+                          key={child.id}
+                          style={[styles.optionChip, active && styles.optionChipSelected]}
+                          onPress={() => setReviewChildId(active ? null : child.id)}
+                        >
+                          <Text style={[styles.optionChipText, active && styles.optionChipTextSelected]}>
+                            {label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 </View>
+              ) : null}
+
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Rating (1-5)</Text>
+                <View style={styles.chipRow}>
+                  {[1, 2, 3, 4, 5].map((num) => {
+                    const active = reviewRating === num;
+                    return (
+                      <TouchableOpacity
+                        key={num}
+                        style={[styles.ratingChip, active && styles.optionChipSelected]}
+                        onPress={() => setReviewRating(reviewRating === num ? null : num)}
+                      >
+                        <Text style={[styles.optionChipText, active && styles.optionChipTextSelected]}>
+                          {num}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Emotional response</Text>
+                <View style={styles.chipRow}>
+                  {EMOTIONS.map((em) => {
+                    const active = reviewEmotion === em.value;
+                    return (
+                      <TouchableOpacity
+                        key={em.value}
+                        style={[styles.optionChip, active && styles.optionChipSelected]}
+                        onPress={() => setReviewEmotion(reviewEmotion === em.value ? null : em.value)}
+                      >
+                        <Text style={[styles.optionChipText, active && styles.optionChipTextSelected]}>
+                          {em.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Pacing fit</Text>
+                <View style={styles.chipRow}>
+                  {PACING_OPTIONS.map((opt) => {
+                    const active = reviewPacingFit === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.optionChip, active && styles.optionChipSelected]}
+                        onPress={() => setReviewPacingFit(reviewPacingFit === opt.value ? null : opt.value)}
+                      >
+                        <Text style={[styles.optionChipText, active && styles.optionChipTextSelected]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>Difficulty level</Text>
+                <View style={styles.chipRow}>
+                  {DIFFICULTY_OPTIONS.map((opt) => {
+                    const active = reviewDifficulty === opt.value;
+                    return (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.optionChip, active && styles.optionChipSelected]}
+                        onPress={() => setReviewDifficulty(reviewDifficulty === opt.value ? null : opt.value)}
+                      >
+                        <Text style={[styles.optionChipText, active && styles.optionChipTextSelected]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={[styles.formGroup, styles.formGroupLast]}>
+                <Text style={styles.fieldLabel}>Notes</Text>
+                <TextInput
+                  style={[styles.fieldInput, styles.fieldInputMultiline]}
+                  multiline
+                  numberOfLines={3}
+                  placeholder="Any additional thoughts..."
+                  value={reviewNotes}
+                  onChangeText={setReviewNotes}
+                  placeholderTextColor={MUTED}
+                  textAlignVertical="top"
+                />
+              </View>
             </ModalSectionCard>
           </AppModalShell>
         </View>
@@ -1651,19 +1583,29 @@ const styles = StyleSheet.create({
   },
   modalWrap: {
     width: '100%',
-    maxWidth: 860,
+    maxWidth: MATERIAL_MODAL_MAX_WIDTH,
   },
-  shellAutoHeight: {
+  compactMaterialShell: {
     ...(Platform.OS === 'web'
       ? {
           height: 'auto',
-          maxHeight: '86vh',
+          maxHeight: '90vh',
           minHeight: 0,
+          borderRadius: 28,
+          boxShadow: '0 8px 28px rgba(15, 23, 42, 0.12)',
         }
-      : {}),
+      : {
+          height: 'auto',
+          maxHeight: '86%',
+        }),
+  },
+  compactTitleRow: {
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   shellBody: {
-    paddingTop: 18,
+    paddingTop: 0,
+    paddingBottom: 4,
   },
   header: {
     flexDirection: 'row',
@@ -1714,7 +1656,65 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    paddingBottom: 14,
+    paddingBottom: 4,
+  },
+  formGroup: {
+    marginBottom: 14,
+  },
+  formGroupLast: {
+    marginBottom: 0,
+  },
+  required: {
+    color: '#ef4444',
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  optionChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  optionChipSelected: {
+    borderColor: '#85C4F2',
+    backgroundColor: 'rgba(133, 196, 242, 0.2)',
+  },
+  optionChipText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '400',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  optionChipTextSelected: {
+    color: '#6BB3E8',
+    fontWeight: '700',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  ratingChip: {
+    minWidth: 32,
+    height: 32,
+    paddingHorizontal: 6,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
   },
   section: {
     marginBottom: 24,
@@ -1731,13 +1731,13 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
   fieldLabel: {
-    color: SUB,
     fontSize: 12,
-    marginBottom: 4,
     fontWeight: '500',
+    color: '#6B7280',
+    marginBottom: 6,
     textAlign: 'left',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
   label: {
@@ -1765,19 +1765,28 @@ const styles = StyleSheet.create({
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),
   },
-  input: {
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 10,
-    padding: 10,
-    color: FG,
-    marginBottom: 8,
-    textAlign: 'left',
-    backgroundColor: '#ffffff',
-    fontSize: 14,
+  fieldInput: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: '#111827',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderBottomColor: '#9CA3AF',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    width: '100%',
     ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
     }),
+  },
+  fieldInputMultiline: {
+    minHeight: 96,
+    textAlignVertical: 'top',
   },
   inputMarginTop: {
     marginTop: 8,
@@ -1947,12 +1956,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: BORDER,
-    backgroundColor: CHIP_BG,
+    backgroundColor: '#F3F4F6',
+    borderBottomWidth: 1,
+    borderBottomColor: '#9CA3AF',
+    borderTopLeftRadius: 4,
+    borderTopRightRadius: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    width: '100%',
     ...Platform.select({
       web: { cursor: 'pointer' },
     }),
