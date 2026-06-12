@@ -38,7 +38,7 @@ import DayEventsPanel from './DayEventsPanel';
 import AttendanceExportModal from './AttendanceExportModal';
 import { useToast } from '../../Toast';
 import { TOKENS } from './constants';
-import { resolveCalendarYearRange } from '../plannerYearRange';
+import { resolveCalendarYearRange, buildMonthsInRange } from '../plannerYearRange';
 
 const REQUIRED_DAYS_DEFAULT = 180;
 const REQUIRED_HOURS_DEFAULT = 1000;
@@ -88,6 +88,11 @@ function toLocalYYYYMMDD(d) {
 
 function eventLocalDateKey(event) {
   if (!event) return null;
+  const dateLocal = event.date_local || event.dateLocal;
+  if (dateLocal) {
+    const localPrefix = String(dateLocal).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(localPrefix)) return localPrefix;
+  }
   const raw = event.start_local || event.start_ts || event.start;
   if (!raw) return null;
   if (event.start_local && typeof event.start_local === 'string') {
@@ -97,6 +102,39 @@ function eventLocalDateKey(event) {
   const parsed = new Date(raw);
   if (Number.isNaN(parsed.getTime())) return null;
   return toLocalYYYYMMDD(parsed);
+}
+
+async function fetchEventsForLocalDateRange(familyId, yearStartKey, yearEndKey) {
+  const months = buildMonthsInRange(yearStartKey, yearEndKey);
+  if (!familyId || months.length === 0) return [];
+  const responses = await Promise.all(
+    months.map(({ year, monthIndex }) =>
+      supabase.rpc('get_month_view', {
+        _family_id: familyId,
+        _year: year,
+        _month: monthIndex + 1,
+        _child_ids: null,
+      })
+    )
+  );
+  const byId = new Map();
+  responses.forEach(({ data, error }) => {
+    if (error || !data?.events_by_date) return;
+    Object.entries(data.events_by_date).forEach(([dateKey, dayEvents]) => {
+      const list = Array.isArray(dayEvents)
+        ? dayEvents
+        : (dayEvents?.events && Array.isArray(dayEvents.events) ? dayEvents.events : []);
+      (list || []).forEach((eventItem) => {
+        if (!eventItem?.id) return;
+        const normalizedDate = String(eventItem.date_local || dateKey || '').slice(0, 10);
+        byId.set(String(eventItem.id), {
+          ...eventItem,
+          date_local: /^\d{4}-\d{2}-\d{2}$/.test(normalizedDate) ? normalizedDate : eventItem.date_local,
+        });
+      });
+    });
+  });
+  return Array.from(byId.values());
 }
 
 function getEventChildIds(event, fallbackChildIds = []) {
@@ -343,21 +381,27 @@ export default function AttendanceView({
         const startStr = yearStartKey;
         const endStr = yearEndKey;
         const childIds = children.map((c) => c.id);
-        const [logs, eventsRes] = await Promise.all([
+        const [logs, eventsData] = await Promise.all([
           getAttendanceLogs(familyIdResolved, childIds.length ? childIds : null, { start: startStr, end: endStr }),
-          supabase
-            .from('events')
-            .select('*')
-            .eq('family_id', familyIdResolved)
-            .gte('start_ts', fetchStart.toISOString())
-            .lte('start_ts', fetchEnd.toISOString())
-            .neq('status', 'canceled')
-            .is('deleted_at', null)
-            .order('start_ts', { ascending: true }),
+          isYearPlannerLayout
+            ? fetchEventsForLocalDateRange(familyIdResolved, startStr, endStr)
+            : supabase
+              .from('events')
+              .select('*')
+              .eq('family_id', familyIdResolved)
+              .gte('start_ts', fetchStart.toISOString())
+              .lte('start_ts', fetchEnd.toISOString())
+              .neq('status', 'canceled')
+              .is('deleted_at', null)
+              .order('start_ts', { ascending: true })
+              .then(({ data, error }) => {
+                if (error) throw error;
+                return data || [];
+              }),
         ]);
         if (!cancelled) {
           setAttendanceRecords(logs || []);
-          setYearEvents(eventsRes?.data || []);
+          setYearEvents(Array.isArray(eventsData) ? eventsData : []);
         }
       } catch (e) {
         if (!cancelled) {
@@ -369,7 +413,7 @@ export default function AttendanceView({
       }
     })();
     return () => { cancelled = true; };
-  }, [familyIdResolved, rangeReady, yearStartKey, yearEndKey, children.length, attendanceRefreshKey]);
+  }, [familyIdResolved, rangeReady, yearStartKey, yearEndKey, children.length, attendanceRefreshKey, isYearPlannerLayout]);
 
   const attendanceTrackingMode = getAttendanceMode({ academicYearMode: academicYear?.attendance_tracking_mode });
 

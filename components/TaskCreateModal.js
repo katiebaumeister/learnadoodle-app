@@ -392,7 +392,7 @@ export default function TaskCreateModal({
   const [allDay, setAllDay] = useState(false);
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
-  const useTimeDropdownsOnWeb = true;
+  const useTimeDropdownsOnWeb = false;
   const startTimeInputRef = useRef(null);
   const endTimeInputRef = useRef(null);
   const startTimeJustFocusedRef = useRef(false);
@@ -787,16 +787,23 @@ export default function TaskCreateModal({
           return;
         }
 
-        // For multi-day events, use eventEndDate
-        const isMultiDayEventType = eventType && MULTI_DAY_EVENT_TYPES.includes(eventType);
+        // When an end date spans past the start date, use it for conflict range
+        const startDay = new Date(baseDate);
+        const endDay = eventEndDate instanceof Date ? new Date(eventEndDate) : null;
+        if (endDay) endDay.setHours(0, 0, 0, 0);
+        const spansMultipleDays = endDay && endDay.getTime() > startDay.getTime();
         let resolvedEnd;
-        
-        if (isMultiDayEventType && eventEndDate) {
-          // Set end date to end of the selected day (23:59:59.999)
-          const endDateYear = eventEndDate.getFullYear();
-          const endDateMonth = eventEndDate.getMonth();
-          const endDateDay = eventEndDate.getDate();
-          resolvedEnd = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
+
+        if (spansMultipleDays) {
+          const endDateYear = endDay.getFullYear();
+          const endDateMonth = endDay.getMonth();
+          const endDateDay = endDay.getDate();
+          if (normalizedEndTime) {
+            resolvedEnd = applyTimeToDate(endDay, normalizedEndTime)
+              || new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
+          } else {
+            resolvedEnd = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
+          }
         } else {
           resolvedEnd = normalizedEndTime
             ? applyTimeToDate(baseDate, normalizedEndTime)
@@ -998,19 +1005,15 @@ export default function TaskCreateModal({
     }
   }, [eventEndDate, showEventEndDatePicker]);
 
-  // Auto-set end date when multi-day event type is selected
+  // Default end date for multi-day event types when none is set yet
   useEffect(() => {
     const isMultiDayEventType = eventType && MULTI_DAY_EVENT_TYPES.includes(eventType);
     if (isMultiDayEventType && placement === 'calendar' && !eventEndDate) {
-      // Set end date to one day after start date by default
       const defaultEnd = new Date(dueDate);
       defaultEnd.setDate(defaultEnd.getDate() + 1);
       setEventEndDate(defaultEnd);
-    } else if (!isMultiDayEventType && eventEndDate) {
-      // Clear end date when switching away from multi-day event types
-      setEventEndDate(null);
     }
-  }, [eventType, placement, dueDate, eventEndDate]); // Include dueDate and eventEndDate to properly handle changes
+  }, [eventType, placement, dueDate, eventEndDate]);
 
   // Calculate dropdown position when it opens
   useEffect(() => {
@@ -2482,7 +2485,7 @@ export default function TaskCreateModal({
     if (!showsLearningGradingSwitches(eventType)) return false;
     return parseWorkSpec(workSpec, eventType).graded !== false;
   }, [workSpec, eventType]);
-  const showDayOffEndDateField = placement === 'calendar' && eventType === 'Day Off';
+  const showScheduleEndDateField = placement === 'calendar';
 
   /** Single source of truth for required-field validation (inline errors + Add button state). */
   const buildValidationBannerMessage = useCallback((errors) => {
@@ -2525,6 +2528,16 @@ export default function TaskCreateModal({
 
     if (!dueDate) {
       errors.date = 'Date is required';
+    }
+
+    if (showScheduleEndDateField && eventEndDate && dueDate) {
+      const startDay = new Date(dueDate);
+      startDay.setHours(0, 0, 0, 0);
+      const endDay = new Date(eventEndDate);
+      endDay.setHours(0, 0, 0, 0);
+      if (endDay < startDay) {
+        errors.endDate = 'End date cannot be before the start date';
+      }
     }
 
     if (assigneeIds.length === 0) {
@@ -2890,7 +2903,9 @@ export default function TaskCreateModal({
         // Calculate start_ts and end_ts from due date and selected time
         const baseDate = new Date(dueDate);
         baseDate.setHours(0, 0, 0, 0);
-        const eventEndDateToUse = dueDate;
+        const endDay = eventEndDate instanceof Date ? new Date(eventEndDate) : null;
+        if (endDay) endDay.setHours(0, 0, 0, 0);
+        const spansMultipleDays = endDay && endDay.getTime() > baseDate.getTime();
         if (!allDay && !normalizedStartTime && normalizedEndTime) {
           setValidationErrors((prev) => ({
             ...prev,
@@ -2907,14 +2922,21 @@ export default function TaskCreateModal({
 
         if (allDay) {
           startDate = new Date(baseDate);
-          endDate = new Date(baseDate);
-          endDate.setHours(23, 59, 0, 0);
-        } else {
-          if (!hasExplicitStartTime) {
-            // Date-only placement (midnight–end of day); is_flexible marks "no time added", not all-day.
-            startDate = new Date(baseDate);
+          if (spansMultipleDays) {
+            endDate = new Date(endDay.getFullYear(), endDay.getMonth(), endDay.getDate(), 23, 59, 0, 0);
+          } else {
             endDate = new Date(baseDate);
             endDate.setHours(23, 59, 0, 0);
+          }
+        } else {
+          if (!hasExplicitStartTime) {
+            startDate = new Date(baseDate);
+            if (spansMultipleDays) {
+              endDate = new Date(endDay.getFullYear(), endDay.getMonth(), endDay.getDate(), 23, 59, 0, 0);
+            } else {
+              endDate = new Date(baseDate);
+              endDate.setHours(23, 59, 0, 0);
+            }
           } else {
             const resolvedStart = applyTimeToDate(baseDate, normalizedStartTime);
             if (!resolvedStart) {
@@ -2927,7 +2949,25 @@ export default function TaskCreateModal({
             }
             startDate = resolvedStart;
 
-            if (normalizedEndTime) {
+            if (spansMultipleDays) {
+              if (normalizedEndTime) {
+                let resolvedEnd = applyTimeToDate(endDay, normalizedEndTime);
+                if (!resolvedEnd) {
+                  setValidationErrors((prev) => ({
+                    ...prev,
+                    time: 'Enter a valid end time (e.g., 10:00 AM) or leave it blank.',
+                  }));
+                  setSubmitting(false);
+                  return;
+                }
+                if (resolvedEnd <= startDate) {
+                  resolvedEnd = new Date(endDay.getFullYear(), endDay.getMonth(), endDay.getDate(), 23, 59, 0, 0);
+                }
+                endDate = resolvedEnd;
+              } else {
+                endDate = new Date(endDay.getFullYear(), endDay.getMonth(), endDay.getDate(), 23, 59, 0, 0);
+              }
+            } else if (normalizedEndTime) {
               let resolvedEnd = applyTimeToDate(baseDate, normalizedEndTime);
               if (!resolvedEnd) {
                 setValidationErrors((prev) => ({
@@ -3371,11 +3411,13 @@ export default function TaskCreateModal({
               let resolvedStart = applyTimeToDate(baseDate, normalizedStartTime) || baseDate;
               
               let resolvedEnd;
-              if (isMultiDayEventType && eventEndDate) {
-                const endDateYear = eventEndDate.getFullYear();
-                const endDateMonth = eventEndDate.getMonth();
-                const endDateDay = eventEndDate.getDate();
-                resolvedEnd = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
+              if (spansMultipleDays && endDay) {
+                const endDateYear = endDay.getFullYear();
+                const endDateMonth = endDay.getMonth();
+                const endDateDay = endDay.getDate();
+                resolvedEnd = normalizedEndTime
+                  ? (applyTimeToDate(endDay, normalizedEndTime) || new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999))
+                  : new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
               } else if (normalizedEndTime) {
                 resolvedEnd = applyTimeToDate(baseDate, normalizedEndTime) || new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
               } else {
@@ -3414,11 +3456,16 @@ export default function TaskCreateModal({
           let resolvedStart = applyTimeToDate(baseDate, normalizedStartTime) || baseDate;
           
           let resolvedEnd;
-          if (isMultiDayEventType && eventEndDate) {
-            const endDateYear = eventEndDate.getFullYear();
-            const endDateMonth = eventEndDate.getMonth();
-            const endDateDay = eventEndDate.getDate();
-            resolvedEnd = new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
+          const overlapEndDay = eventEndDate instanceof Date ? new Date(eventEndDate) : null;
+          if (overlapEndDay) overlapEndDay.setHours(0, 0, 0, 0);
+          const overlapSpansMultipleDays = overlapEndDay && overlapEndDay.getTime() > baseDate.getTime();
+          if (overlapSpansMultipleDays && overlapEndDay) {
+            const endDateYear = overlapEndDay.getFullYear();
+            const endDateMonth = overlapEndDay.getMonth();
+            const endDateDay = overlapEndDay.getDate();
+            resolvedEnd = normalizedEndTime
+              ? (applyTimeToDate(overlapEndDay, normalizedEndTime) || new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999))
+              : new Date(endDateYear, endDateMonth, endDateDay, 23, 59, 59, 999);
           } else if (normalizedEndTime) {
             resolvedEnd = applyTimeToDate(baseDate, normalizedEndTime) || new Date(resolvedStart.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000);
           } else {
@@ -3769,92 +3816,90 @@ export default function TaskCreateModal({
                   styles.scheduleFieldsWrap,
                   styles.formGroup,
                   validationErrors.time && styles.scheduleFieldsWrapError,
-                  (showStartTimeDropdown || showEndTimeDropdown) && styles.scheduleFieldsWrapOverlay,
                 ]}
               >
                 <View style={styles.dateTimeStack}>
-                  <View style={[styles.timeField, styles.stackedField]}>
-                    <Text style={styles.fieldLabel}>Date <Text style={styles.required}>*</Text></Text>
-                    <View style={[styles.chip, styles.stackedFieldControl, validationErrors.date && styles.chipError, { backgroundColor: '#ffffff' }]}>
-                      <TouchableOpacity
-                        onPress={() => {
-                          setDueDate(addDays(dueDate, -1));
-                          if (validationErrors.date) setValidationErrors((prev) => ({ ...prev, date: null }));
-                        }}
-                      >
-                        <ChevronLeft size={16} color={FG} />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => {
-                          if (validationErrors.date) setValidationErrors((prev) => ({ ...prev, date: null }));
-                          setActiveDatePickerField('start');
-                          setCalendarViewMonth(dueDate);
-                          setShowCalendarPicker(true);
-                        }}
-                        style={{ flex: 1, paddingHorizontal: 8 }}
-                      >
-                        <Text style={styles.chipText}>{fmt(dueDate)}</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => {
-                          setDueDate(addDays(dueDate, +1));
-                          if (validationErrors.date) setValidationErrors((prev) => ({ ...prev, date: null }));
-                        }}
-                      >
-                        <ChevronRight size={16} color={FG} />
-                      </TouchableOpacity>
-                    </View>
-                    {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
-                  </View>
-                  {showDayOffEndDateField ? (
-                    <View style={[styles.timeField, styles.stackedField]}>
-                      <Text style={styles.fieldLabel}>End date</Text>
-                      <View style={[styles.chip, styles.stackedFieldControl, validationErrors.endDate && styles.chipError, { backgroundColor: '#ffffff' }]}>
+                  <View style={[styles.dateTimeInlineRow, Platform.OS === 'web' && styles.dateTimeInlineRowWeb]}>
+                    <View style={[styles.timeField, styles.dateFieldInline]}>
+                      <Text style={styles.fieldLabel}>Start date <Text style={styles.required}>*</Text></Text>
+                      <View style={[styles.chip, styles.scheduleDateChip, validationErrors.date && styles.chipError, { backgroundColor: '#ffffff' }]}>
                         <TouchableOpacity
                           onPress={() => {
-                            const next = new Date(eventEndDate || dueDate || new Date());
-                            next.setDate(next.getDate() - 1);
-                            setEventEndDate(next);
-                            if (validationErrors.endDate) setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                            setDueDate(addDays(dueDate, -1));
+                            if (validationErrors.date) setValidationErrors((prev) => ({ ...prev, date: null }));
                           }}
                         >
                           <ChevronLeft size={16} color={FG} />
                         </TouchableOpacity>
                         <TouchableOpacity
                           onPress={() => {
-                            if (validationErrors.endDate) setValidationErrors((prev) => ({ ...prev, endDate: null }));
-                            setActiveDatePickerField('end');
-                            setCalendarViewMonth(eventEndDate || dueDate || new Date());
+                            if (validationErrors.date) setValidationErrors((prev) => ({ ...prev, date: null }));
+                            setActiveDatePickerField('start');
+                            setCalendarViewMonth(dueDate);
                             setShowCalendarPicker(true);
                           }}
-                          style={{ flex: 1, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                          style={styles.scheduleDateChipLabel}
                           {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                         >
-                          <Text style={[styles.chipText, !eventEndDate && { color: MUTED }]}>
-                            {eventEndDate ? fmt(eventEndDate) : 'Optional'}
-                          </Text>
+                          <Text style={styles.chipText}>{fmt(dueDate)}</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           onPress={() => {
-                            const next = new Date(eventEndDate || dueDate || new Date());
-                            next.setDate(next.getDate() + 1);
-                            setEventEndDate(next);
-                            if (validationErrors.endDate) setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                            setDueDate(addDays(dueDate, +1));
+                            if (validationErrors.date) setValidationErrors((prev) => ({ ...prev, date: null }));
                           }}
                         >
                           <ChevronRight size={16} color={FG} />
                         </TouchableOpacity>
                       </View>
-                      {validationErrors.endDate ? <Text style={styles.errorTextSmall}>{validationErrors.endDate}</Text> : null}
+                      {validationErrors.date ? <Text style={styles.errorTextSmall}>{validationErrors.date}</Text> : null}
                     </View>
-                  ) : null}
-                  <View
-                    style={[
-                      styles.timeInputsStack,
-                      hideScheduleTimeControls && { display: 'none' },
-                    ]}
-                  >
-                      <View style={[styles.timeField, styles.stackedField]}>
+                    {showScheduleEndDateField ? (
+                      <View style={[styles.timeField, styles.dateFieldInline]}>
+                        <Text style={styles.fieldLabel}>End date</Text>
+                        <View style={[styles.chip, styles.scheduleDateChip, validationErrors.endDate && styles.chipError, { backgroundColor: '#ffffff' }]}>
+                          <TouchableOpacity
+                            onPress={() => {
+                              const next = new Date(eventEndDate || dueDate || new Date());
+                              next.setDate(next.getDate() - 1);
+                              setEventEndDate(next);
+                              if (validationErrors.endDate) setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                            }}
+                          >
+                            <ChevronLeft size={16} color={FG} />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              if (validationErrors.endDate) setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                              setActiveDatePickerField('end');
+                              setCalendarViewMonth(eventEndDate || dueDate || new Date());
+                              setShowCalendarPicker(true);
+                            }}
+                            style={styles.scheduleDateChipLabel}
+                            {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                          >
+                            <Text style={[styles.chipText, !eventEndDate && { color: MUTED }]}>
+                              {eventEndDate ? fmt(eventEndDate) : 'Optional'}
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              const next = new Date(eventEndDate || dueDate || new Date());
+                              next.setDate(next.getDate() + 1);
+                              setEventEndDate(next);
+                              if (validationErrors.endDate) setValidationErrors((prev) => ({ ...prev, endDate: null }));
+                            }}
+                          >
+                            <ChevronRight size={16} color={FG} />
+                          </TouchableOpacity>
+                        </View>
+                        {validationErrors.endDate ? <Text style={styles.errorTextSmall}>{validationErrors.endDate}</Text> : null}
+                      </View>
+                    ) : null}
+                  </View>
+                  {!hideScheduleTimeControls && (
+                  <View style={[styles.timeInputsRow, Platform.OS === 'web' && styles.timeInputsRowInline]}>
+                      <View style={[styles.timeField, styles.timeFieldCompact]}>
                         <Text style={styles.fieldLabel}>Start</Text>
                       {Platform.OS === 'web' ? (
                         useTimeDropdownsOnWeb ? (
@@ -4051,7 +4096,7 @@ export default function TaskCreateModal({
                           <Text style={styles.errorTextSmall}>{validationErrors.time}</Text>
                         )}
                       </View>
-                      <View style={[styles.timeField, styles.stackedField]}>
+                      <View style={[styles.timeField, styles.timeFieldCompact]}>
                         <Text style={styles.fieldLabel}>End</Text>
                       {Platform.OS === 'web' ? (
                         useTimeDropdownsOnWeb ? (
@@ -4225,7 +4270,9 @@ export default function TaskCreateModal({
                           />
                         )}
                       </View>
-                      <View style={[styles.timeField, styles.stackedField]}>
+                  </View>
+                  )}
+                  <View style={[styles.timeField, styles.inlineSwitchField]}>
                         <Text style={styles.fieldLabel}>Repeat</Text>
                         <View style={styles.inlineSwitchControlWrap}>
                           <Switch
@@ -4254,7 +4301,6 @@ export default function TaskCreateModal({
                           />
                         </View>
                       </View>
-                    </View>
                 </View>
                 {/* Suggested Change (when inline reschedule is available) */}
                 {suggestedChange ? (
@@ -6751,19 +6797,34 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   dateTimeInlineRow: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-    gap: 14,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    flexWrap: 'wrap',
+    gap: 12,
     marginBottom: 0,
   },
   dateTimeInlineRowWeb: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-    gap: 14,
+    gap: 12,
   },
   dateFieldInline: {
-    width: '100%',
-    minWidth: 0,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: Platform.OS === 'web' ? 200 : '46%',
+    minWidth: Platform.OS === 'web' ? 200 : 140,
+    ...(Platform.OS === 'web' ? { maxWidth: 240 } : {}),
+  },
+  scheduleDateChip: {
+    alignSelf: 'flex-start',
+    marginRight: 0,
+    minHeight: 40,
+    height: 40,
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  scheduleDateChipLabel: {
+    paddingHorizontal: 6,
+    minWidth: 96,
+    alignItems: 'center',
   },
   inlineSwitchField: {
     minWidth: 84,
@@ -6939,27 +7000,39 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
   timeInputsRow: {
-    flexDirection: 'column',
-    gap: 14,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
     width: '100%',
+    flexWrap: 'wrap',
   },
   timeInputsRowInline: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
     width: '100%',
     minWidth: 0,
     overflow: 'visible',
   },
   timeField: {
-    width: '100%',
+    flex: 1,
+    minWidth: 0,
     alignSelf: 'stretch',
     overflow: 'visible',
   },
   timeFieldCompact: {
-    width: '100%',
-    maxWidth: '100%',
-    minWidth: 0,
-    flexShrink: 0,
+    ...(Platform.OS === 'web'
+      ? {
+          flex: 0,
+          width: 148,
+          maxWidth: 148,
+          minWidth: 148,
+          flexShrink: 0,
+        }
+      : {
+          flex: 1,
+          minWidth: 0,
+        }),
   },
   timeLabel: {
     color: SUB,

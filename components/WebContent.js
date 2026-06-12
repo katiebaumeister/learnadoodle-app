@@ -10180,7 +10180,9 @@ I can see you have ${children.length} child(ren) set up. How can I help you toda
         }}
         filters={{
           childIds: propSelectedCalendarChildren && propSelectedCalendarChildren.length > 0 ? propSelectedCalendarChildren : null,
-          eventTypes: propSelectedEventTypes && propSelectedEventTypes.length > 0 ? propSelectedEventTypes : null,
+          eventTypes: String(propPlannerView || '').toLowerCase() === 'year'
+            ? null
+            : (propSelectedEventTypes && propSelectedEventTypes.length > 0 ? propSelectedEventTypes : null),
         }}
         plannerHolidaysCache={plannerHolidaysCache}
         plannerExclusions={plannerExclusionsCache}
