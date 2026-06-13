@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { Plus, Users, Activity, FileText, Sparkles, GraduationCap } from 'lucide-react';
+import { Plus, Users, FileText, Sparkles, GraduationCap, Calendar } from 'lucide-react';
 
 /**
  * Global "+ New" menu that appears in top bar and sidebar footer
@@ -13,7 +13,9 @@ export default function GlobalNewMenu({
   position = { x: 0, y: 0 },
   currentContext = 'home',
   onAddChild,
-  onAddActivity,
+  onAddCalendarEvent,
+  onAddLesson,
+  onAddAssignment,
   onAddSyllabus,
   onAddSubject,
   onAIGenerate,
@@ -111,11 +113,18 @@ export default function GlobalNewMenu({
       onPress: () => { onClose(); onAddSubject?.(); }
     },
     { 
-      id: 'add-activity',
-      label: 'Add Event', 
-      icon: Activity,
+      id: 'add-calendar-event',
+      label: 'Calendar Event', 
+      icon: Calendar,
       context: 'calendar',
-      onPress: () => { onClose(); onAddActivity?.(); }
+      onPress: () => { onClose(); onAddCalendarEvent?.(); }
+    },
+    { 
+      id: 'add-assignment',
+      label: 'Assignment', 
+      icon: FileText,
+      context: 'home',
+      onPress: () => { onClose(); onAddAssignment?.(); }
     },
     { 
       id: 'add-syllabus',

@@ -210,7 +210,7 @@ export const STRINGS = {
         },
       },
       breaks: {
-        title: "Planning Preferences",
+        title: "School Year Settings",
         subtitle:
           "Exclude dates where slots should not be created.",
         actions: {
@@ -324,8 +324,8 @@ export const STRINGS = {
       subjectSuggestedEndCta: "Extend to {date} for {name}",
       applyAnywayHint: "You can still apply the plan even if targets are not met.",
       existingPlanNoTargetHint: "This plan has no overall target saved yet.",
-      adoptCurrentTargetCtaDays: "Use current Planning Preferences target ({n} days)",
-      adoptCurrentTargetCtaHours: "Use current Planning Preferences target ({n} hours)",
+      adoptCurrentTargetCtaDays: "Use current School Year Settings target ({n} days)",
+      adoptCurrentTargetCtaHours: "Use current School Year Settings target ({n} hours)",
     },
 
     multiSubjectUnits: {
@@ -860,19 +860,19 @@ export const STRINGS = {
     rhythm: {
       emptyState: {
         noRecommendedActionsYet:
-          "No recommended actions yet. Set targets in Planning Preferences, add events in the next 4 weeks, and add backlog items for future learning.",
+          "No recommended actions yet. Set targets in School Year Settings, add events in the next 4 weeks, and add backlog items for future learning.",
         noTimeShiftsSuggested:
           "No time shifts suggested. Add more scheduled events in the next 4 weeks or move backlog items onto your calendar.",
         selectMoveOrIncludeHint:
           "Select a move or tap Include on a skipped row to apply changes.",
         requirementsTitle: "To unlock full Rebalance functions:",
         missingActiveTarget:
-          "Set an overall or per-subject target in Planning Preferences (settings button in the top planner toolbar).",
+          "Set an overall or per-subject target in School Year Settings (settings button in the top planner toolbar).",
         missingSchedulableWork:
           "Add items to the backlog for future learning.",
         missingMovablePattern:
           "Add more scheduled events in the next 4 weeks so heavy/light balancing can be detected.",
-        openPlanningPreferences: "Open Planning Preferences",
+        openPlanningPreferences: "Open School Year Settings",
         openBacklog: "Open Backlog",
         openMonthView: "Open Month View",
       },

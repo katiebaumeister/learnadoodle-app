@@ -520,7 +520,7 @@ export default function SubjectProgressPlanSection({
   /** Route subject-detail unit actions without opening deprecated plan modal. */
   const openCurriculumStructureAction = useCallback(
     () => {
-      toast.push('Plan routing is deprecated. Use Schedule and Planning Preferences instead.', 'info');
+      toast.push('Plan routing is deprecated. Use Schedule and School Year Settings instead.', 'info');
     },
     [toast]
   );
@@ -594,7 +594,7 @@ export default function SubjectProgressPlanSection({
       }
       if (!eventId) {
         toast.push(
-          'No calendar event for this slot yet. Use Schedule and Planning Preferences to set weekly rhythm, then apply updates.',
+          'No calendar event for this slot yet. Use Schedule and School Year Settings to set weekly rhythm, then apply updates.',
           'info'
         );
         return;
@@ -858,7 +858,7 @@ export default function SubjectProgressPlanSection({
           </View>
           {hasPlan && !hasUnits ? (
             <Text style={styles.muted}>
-              No scheduled dates in range yet. Use Schedule and Planning Preferences to manage weekly rhythm.
+              No scheduled dates in range yet. Use Schedule and School Year Settings to manage weekly rhythm.
             </Text>
           ) : null}
         </>

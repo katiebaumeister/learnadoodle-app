@@ -255,7 +255,7 @@ export default function OverviewTab({
         />
       </View>
 
-      {/* Plan Year CTA */}
+      {/* School Year Settings */}
       {onPlanYear && yearPlansEnabled && (
         <View style={styles.section}>
           <TouchableOpacity
@@ -265,8 +265,8 @@ export default function OverviewTab({
           >
             <Target size={20} color={colors.accent} />
             <View style={styles.planYearCTAContent}>
-              <Text style={styles.planYearCTATitle}>Plan the Year</Text>
-              <Text style={styles.planYearCTADesc}>Create an annual plan with pacing and milestones</Text>
+              <Text style={styles.planYearCTATitle}>School Year Settings</Text>
+              <Text style={styles.planYearCTADesc}>Set learning days, hours, holidays, and year-wide targets</Text>
             </View>
             <ChevronRight size={20} color={colors.muted} />
           </TouchableOpacity>

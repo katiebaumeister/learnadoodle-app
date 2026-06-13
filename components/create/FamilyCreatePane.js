@@ -7,7 +7,7 @@ import {
   Platform,
   ScrollView,
 } from 'react-native';
-import { Calendar, BookOpen, Smile, Upload, FileText, Send } from 'lucide-react';
+import { Calendar, BookOpen, Smile, Upload, FileText, GraduationCap } from 'lucide-react';
 import MessagesPaneCloseButton from '../messages/MessagesPaneCloseButton';
 
 /** Match AppModalShell hero icons on add modals (TaskCreateModal, AddSubjectModal, etc.) */
@@ -20,9 +20,8 @@ const CREATE_ICON_STYLE = {
 const CREATE_SECTIONS = [
   {
     options: [
-      { id: 'event', label: 'New Event', icon: Calendar, ...CREATE_ICON_STYLE },
-      { id: 'assignment', label: 'New Assignment', icon: FileText, ...CREATE_ICON_STYLE },
-      { id: 'submission_request', label: 'New Submission Request', icon: Send, ...CREATE_ICON_STYLE },
+      { id: 'calendar_event', label: 'Calendar Event', icon: Calendar, ...CREATE_ICON_STYLE },
+      { id: 'assignment', label: 'Assignment', icon: FileText, ...CREATE_ICON_STYLE },
     ],
   },
   {

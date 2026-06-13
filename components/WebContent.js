@@ -646,7 +646,6 @@ import SyllabusUpload from './SyllabusUpload'
 import SyllabusUploadModal from './planner/SyllabusUploadModal'
 import AIChatModal from './AIChatModal'
 import CalendarPlanning from './CalendarPlanning'
-import TaskCreateModal from './TaskCreateModal'
 import EventModal from './events/EventModal'
 // import ExploreContent from './archived/ExploreContent' // Archived - explore page removed
 import QuickReviewModal from './materials/QuickReviewModal'
@@ -1316,42 +1315,7 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
   // Initialize the ref and global function - this will be set when refreshCalendarData is defined
   // We'll set it up in a useEffect that depends on refreshCalendarData being available
 
-  // Listen for openTaskModal event - only handle if NOT on family screen
-  // Family screen events are handled by WebLayout's global modal
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    
-    const handleOpenTaskModal = (event) => {
-      const detail = event.detail || {};
-      
-      // Check if we're on the family screen - if so, let WebLayout handle it
-      const isFamilyScreen = activeTab === 'profile' || activeTab === 'settings' ||
-                            (activeTab && typeof activeTab === 'string' && activeTab.startsWith('child-')) ||
-                            (activeTab && typeof activeTab === 'string' && activeTab.startsWith('notes-pages-')) ||
-                            activeTab === 'children-list';
-
-      if (isFamilyScreen) return;
-      
-      // Only handle for non-family screens (planner, home, etc.)
-      const date = detail.date || new Date();
-      const incomingChildIds = detail.childIds && Array.isArray(detail.childIds)
-        ? detail.childIds
-        : (detail.childId ? [detail.childId] : []);
-      const primaryChildId = incomingChildIds.length > 0 ? incomingChildIds[0] : null;
-      const subjectId = detail.subjectId || null;
-      
-      setTaskModalDate(date);
-      setTaskModalChildIds(incomingChildIds);
-      setTaskModalChildId(primaryChildId);
-      setTaskModalDefaultSubjectId(subjectId);
-      setTaskModalDefaultEventType(detail.eventType || null);
-      setTaskModalDefaultPlacement(detail.placement || 'calendar');
-      setShowTaskModal(true);
-    };
-    
-    window.addEventListener('openTaskModal', handleOpenTaskModal);
-    return () => window.removeEventListener('openTaskModal', handleOpenTaskModal);
-  }, [activeTab]);
+  // openTaskModal is handled globally by WebLayout (all screens).
 
   // Listen for openEventModal event to open event details modal
   // Only handle if NOT on family screen - family screen events are handled by WebLayout's global modal
@@ -1381,7 +1345,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
       
       // Close any other modals
       setShowNewEventForm(false);
-      setShowTaskModal(false);
       
       // Open the event modal
       setEventModalEventId(eventId);
@@ -1453,7 +1416,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
       if (match) {
         setShowNewEventForm(false);
-        setShowTaskModal(false);
         setEventModalEventId(match.id);
         setEventModalInitialEvent(match);
         setEventModalVisible(true);
@@ -1482,7 +1444,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
           if (!slotErr && slotData?.event) {
             const ev = slotData.event;
             setShowNewEventForm(false);
-            setShowTaskModal(false);
             setEventModalEventId(ev.id);
             setEventModalInitialEvent(ev);
             setEventModalVisible(true);
@@ -5453,13 +5414,6 @@ export default function WebContent({ activeTab, activeSubtab, activeChildId: pro
 
   // Right Pane New Event State
   const [showNewEventForm, setShowNewEventForm] = useState(false);
-  const [showTaskModal, setShowTaskModal] = useState(false);
-  const [taskModalDate, setTaskModalDate] = useState(null);
-  const [taskModalChildId, setTaskModalChildId] = useState(null);
-  const [taskModalChildIds, setTaskModalChildIds] = useState([]);
-  const [taskModalDefaultPlacement, setTaskModalDefaultPlacement] = useState('calendar');
-  const [taskModalDefaultSubjectId, setTaskModalDefaultSubjectId] = useState(null);
-  const [taskModalDefaultEventType, setTaskModalDefaultEventType] = useState(null);
   
   // Add Material Modal state
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);

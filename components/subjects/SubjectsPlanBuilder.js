@@ -16,6 +16,9 @@ import {
 import { Check, ChevronDown, ChevronRight, ChevronUp, Pencil, Plus, Sparkles, Upload, X } from 'lucide-react';
 import { completeEvent, updateEventStatus } from '../../lib/services/attendanceClient';
 import { applyToCalendar, fixTargetGap, getAcademicYear, getFixTargetGapHistory, getPlanHealth, undoFixTargetGap } from '../../lib/services/academicYearClient';
+import { fetchSubjectCurriculumEventsStructure } from '../../lib/services/curriculumClient';
+import { autoAssignLessonsToUnlinkedEvents } from '../../lib/subjectLessonLinking';
+import { curriculumStructureHasContent } from '../../lib/subjectUnitsEditorDraft';
 import { deleteEvent as deletePlannerEvent } from '../../lib/services/plannerClientWithOffline';
 import { supabase } from '../../lib/supabase';
 import { getAcademicYearExclusions, getFamilyPlannerSettings, saveFamilyPlannerSettings } from '../../lib/services/plannerSettingsClient';
@@ -1632,6 +1635,8 @@ async function fetchAndCacheScheduleSupplement({
             hasAttendancePresent: attendedEventIds.has(String(row?.id || '')),
             is_backlog: row?.is_backlog === true,
             sourceBlockId: String(row?.source_block_id || '').trim() || null,
+            curriculum_lesson_id: row?.curriculum_lesson_id != null ? String(row.curriculum_lesson_id) : null,
+            lesson: String(row?.lesson || '').trim() || null,
             durationHours: Number.isFinite(Number(row?.duration_minutes)) && Number(row.duration_minutes) > 0
               ? Number(row.duration_minutes) / 60
               : (
@@ -2145,7 +2150,7 @@ export default function SubjectsPlanBuilder({
   }, [activeScheduleCore?.row?.start_date, activeScheduleCore?.row?.attendance_tracking_mode, selectedYearStart]);
   const resolvedAttendanceTrackingMode = useMemo(() => (
     getAttendanceMode({
-      // Keep this aligned with Planning Preferences:
+      // Keep this aligned with School Year Settings:
       // use saved planner settings for the selected school year first.
       academicYearMode: uiAttendanceModeOverride
         || familyPlannerSettings?.attendance_tracking_mode
@@ -2799,7 +2804,7 @@ export default function SubjectsPlanBuilder({
       const rowRangeEndMs = subjectRange?.end_date ? new Date(`${subjectRange.end_date}T23:59:59`).getTime() : null;
       const subjectSettings = subjectTargetSettingsById?.[subjectId] || null;
       const blocksForSubject = blocks.filter((block) =>
-        Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
+        extractSubjectIdsFromBlock(block).some((sid) => String(sid) === subjectId)
       );
       const weekdaysByScope = {};
       const cadenceDayNums = [
@@ -3664,7 +3669,7 @@ export default function SubjectsPlanBuilder({
       const subjectId = String(subject?.id || '');
       const normalizedName = normalizeSubjectName(subject?.name);
       const blocksForSubject = blocks.filter((block) =>
-        Array.isArray(block?.subject_ids) && block.subject_ids.some((sid) => String(sid) === subjectId)
+        extractSubjectIdsFromBlock(block).some((sid) => String(sid) === subjectId)
       );
       const cadenceText = formatSubjectCadence(blocksForSubject);
       const cadenceCompactLabel = formatSubjectCadenceCompact(blocksForSubject);
@@ -3743,7 +3748,7 @@ export default function SubjectsPlanBuilder({
 
   const handleCurriculumAction = (subject, method) => {
     openPlanningPreferences();
-    toast?.push?.('Plan routing is deprecated. Use Planning Preferences and Schedule instead.', 'info');
+    toast?.push?.('Plan routing is deprecated. Use School Year Settings and Schedule instead.', 'info');
   };
 
   const handleSave = async () => {
@@ -4624,7 +4629,7 @@ export default function SubjectsPlanBuilder({
     const cadenceRhythmLabel = formatWeekdaySummary(preferredRhythmDayNums);
     const bodyLines = confirmDisabled
       ? [
-        `You are ${remainingUnfixableGap} day${remainingUnfixableGap === 1 ? '' : 's'} short. We could not add more learning days without changing your planning preferences.`,
+        `You are ${remainingUnfixableGap} day${remainingUnfixableGap === 1 ? '' : 's'} short. We could not add more learning days without changing your school year settings.`,
         'Try extending the school year, adding more preferred learning days, or allowing multiple sessions per day.',
       ]
       : (targetKind === 'days' && isShort
@@ -4656,8 +4661,8 @@ export default function SubjectsPlanBuilder({
           ...(partialFixPossible
             ? [
               targetKind === 'hours'
-                ? `${toOneDecimal(remainingUnfixableGap)} hours could not fit without changing planning preferences.`
-                : `${remainingUnfixableGap} days could not fit without changing planning preferences.`,
+                ? `${toOneDecimal(remainingUnfixableGap)} hours could not fit without changing school year settings.`
+                : `${remainingUnfixableGap} days could not fit without changing school year settings.`,
               targetKind === 'hours'
                 ? `After adding these, you'll still be ${toOneDecimal(remainingUnfixableGap)} hours short.`
                 : `After adding these, you'll still be ${remainingUnfixableGap} day${remainingUnfixableGap === 1 ? '' : 's'} short.`,
@@ -4681,7 +4686,7 @@ export default function SubjectsPlanBuilder({
         bodyLines,
         previewLines,
         confirmLabel: confirmDisabled
-          ? 'Change planning preferences'
+          ? 'Change School Year Settings'
           : (targetKind === 'hours' ? 'Add hours' : 'Add days'),
         confirmDisabled: confirmDisabled ? false : confirmDisabled,
         confirmAction: confirmDisabled ? 'open_preferences' : 'fix_gap',
@@ -4824,7 +4829,7 @@ export default function SubjectsPlanBuilder({
         setFixGapConfirmContent({
           title: canRemoveScheduledDays
             ? `Remove ${daysToRemove} learning day${daysToRemove === 1 ? '' : 's'}?`
-            : 'Adjust planning preferences',
+            : 'Adjust school year settings',
           bodyLines: canRemoveScheduledDays
             ? [
               `Current: ${toOneDecimal(projectedDays)}/${toOneDecimal(targetDays)} days.`,
@@ -4832,10 +4837,10 @@ export default function SubjectsPlanBuilder({
             ]
             : [
               `Current: ${toOneDecimal(projectedDays)}/${toOneDecimal(targetDays)} days.`,
-              'No future scheduled learning days are available to remove. Adjust the target or planning range in Planning Preferences.',
+              'No future scheduled learning days are available to remove. Adjust the target or planning range in School Year Settings.',
             ],
           previewLines: [],
-          confirmLabel: canRemoveScheduledDays ? 'Remove days' : 'Open planning preferences',
+          confirmLabel: canRemoveScheduledDays ? 'Remove days' : 'Open School Year Settings',
           confirmDisabled: !canRemoveScheduledDays,
           confirmAction: canRemoveScheduledDays ? 'fix_gap' : 'open_preferences',
           showLowerTargetOption: false,
@@ -5035,9 +5040,9 @@ export default function SubjectsPlanBuilder({
             title: 'Complete setup before Fix gap',
             bodyLines: [
               'Fix gap could not find a saved school-year range for this view.',
-              'Open planning preferences to confirm your school year dates, then try again.',
+              'Open School Year Settings to confirm your school year dates, then try again.',
             ],
-            primaryLabel: 'Open planning preferences',
+            primaryLabel: 'Open School Year Settings',
             primaryAction: 'open_preferences',
           });
           setShowFixGapSetupModal(true);
@@ -5427,6 +5432,58 @@ export default function SubjectsPlanBuilder({
         );
         return;
       }
+
+      let curriculumLessonsLinked = 0;
+      try {
+        const slotSubjectIds = new Set(
+          (Array.isArray(fixResult?.selectedAssignments) ? fixResult.selectedAssignments : [])
+            .map((slot) => String(slot?.subject_id || '').trim())
+            .filter(Boolean)
+        );
+        if (scope === 'per_subject' && rowId) {
+          slotSubjectIds.add(String(rowId).trim());
+        }
+        const targetSubjectIds = slotSubjectIds.size > 0 ? [...slotSubjectIds] : subjectIds;
+        const eventsBySubject = refreshed.instructionalEventsBySubject || {};
+        const assignResults = await Promise.all(
+          targetSubjectIds.map(async (sid) => {
+            const { data: structure } = await fetchSubjectCurriculumEventsStructure(familyId, sid, academicYearId);
+            if (!curriculumStructureHasContent(structure)) return 0;
+            const { assigned } = await autoAssignLessonsToUnlinkedEvents({
+              familyId,
+              subjectId: sid,
+              subjectEvents: eventsBySubject[sid] || [],
+              units: structure?.units || [],
+              limit: Math.max(successfulInsertCount, 12),
+            });
+            return assigned;
+          })
+        );
+        curriculumLessonsLinked = assignResults.reduce((sum, n) => sum + Number(n || 0), 0);
+        if (curriculumLessonsLinked > 0) {
+          invalidateScheduleSupplementCache(familyId, schoolYearLabel);
+          const relinked = await fetchAndCacheScheduleSupplement({
+            familyId,
+            schoolYearLabel,
+            startYear: displaySchoolYear?.start_year,
+            endYear: displaySchoolYear?.end_year,
+            academicYearId,
+            rangeStartYmd: refreshRangeStartYmd,
+            rangeEndYmd: refreshRangeEndYmd,
+            subjectIds,
+            force: true,
+          });
+          setInstructionalEventsBySubject(relinked.instructionalEventsBySubject || {});
+          setClassDayInstructionalEvents(Array.isArray(relinked.classDayInstructionalEvents) ? relinked.classDayInstructionalEvents : []);
+          setAttendedDayKeysBySubject(relinked.attendedDayKeysBySubject || {});
+          setYearTargetProjectionBySubject(relinked.yearTargetProjectionBySubject || {});
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+            window.dispatchEvent(new CustomEvent('refreshSubjects'));
+          }
+        }
+      } catch (_) {}
+
       if (afterGapValue > 0 || failedInsertCount > 0) {
         rememberFixGapFailureToast(
           `Added ${successfulInsertCount} of ${requestedGapFromResult} ${requestedTargetKind === 'hours' ? 'hours' : 'days'}; ${toOneDecimal(afterGapValue)} still short.`
@@ -5436,8 +5493,11 @@ export default function SubjectsPlanBuilder({
       clearFixGapFailureToasts();
       const gapLabel = `0 ${requestedTargetKind === 'hours' ? 'hours' : 'days'} gap`;
       const fixOutcomePrefix = 'Fixed';
+      const lessonLinkSuffix = curriculumLessonsLinked > 0
+        ? ` Linked ${curriculumLessonsLinked} curriculum ${curriculumLessonsLinked === 1 ? 'lesson' : 'lessons'}.`
+        : '';
       toast?.push?.(
-        `${fixOutcomePrefix} ${scope === 'overall' ? 'overall' : rowName} gap: ${toOneDecimal(afterProjectedValue)}/${toOneDecimal(targetDays)} ${requestedTargetKind === 'hours' ? 'hours' : 'days'} (${gapLabel}).`,
+        `${fixOutcomePrefix} ${scope === 'overall' ? 'overall' : rowName} gap: ${toOneDecimal(afterProjectedValue)}/${toOneDecimal(targetDays)} ${requestedTargetKind === 'hours' ? 'hours' : 'days'} (${gapLabel}).${lessonLinkSuffix}`,
         'success'
       );
     } catch (err) {
@@ -6598,10 +6658,10 @@ export default function SubjectsPlanBuilder({
         style={styles.sectionHeaderActionButton}
         activeOpacity={0.85}
         accessibilityRole="button"
-        accessibilityLabel="Open planning preferences"
+        accessibilityLabel="Open School Year Settings"
         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
       >
-        <Text style={styles.sectionHeaderActionButtonText}>Planning preferences</Text>
+        <Text style={styles.sectionHeaderActionButtonText}>School Year Settings</Text>
       </TouchableOpacity>
       {showFixGap ? (
         <TouchableOpacity
@@ -7154,19 +7214,19 @@ export default function SubjectsPlanBuilder({
             extendWeeks: 0,
             suggestionSummaryText: (() => {
               if (savedRangeEnded) {
-                return `${overallShortfallDays} days short. Your saved school-year range ended on ${formatDateDisplayYmd(savedOverallRangeEndYmd)}. Extend planning preferences to add more eligible days.`;
+                return `${overallShortfallDays} days short. Your saved school-year range ended on ${formatDateDisplayYmd(savedOverallRangeEndYmd)}. Extend school year settings to add more eligible days.`;
               }
               const remainingWeeks = remainingWeeksInSavedRange;
               if (remainingWeeks <= 6) {
-                return `${overallShortfallDays} days short. Based on your saved planning preferences, there are about ${remainingWeeks} week${remainingWeeks === 1 ? '' : 's'} left in this school year.`;
+                return `${overallShortfallDays} days short. Based on your saved school year settings, there are about ${remainingWeeks} week${remainingWeeks === 1 ? '' : 's'} left in this school year.`;
               }
-              return `${overallShortfallDays} days short. Based on your saved planning preferences, this year is projected to finish ${overallShortfallDays} instructional day${overallShortfallDays === 1 ? '' : 's'} short.`;
+              return `${overallShortfallDays} days short. Based on your saved school year settings, this year is projected to finish ${overallShortfallDays} instructional day${overallShortfallDays === 1 ? '' : 's'} short.`;
             })(),
             extensionAddedDatesLabel: '',
             suggestedAddedDaysLabel: (
               (() => {
                 if (savedRangeEnded) {
-                  return 'No eligible learning days remain in this saved range. Change planning preferences to extend the range.';
+                  return 'No eligible learning days remain in this saved range. Change School Year Settings to extend the range.';
                 }
                 return `Fix gap will add up to ${overallShortfallDays} placeholder learning day${overallShortfallDays === 1 ? '' : 's'} across the remaining school year while avoiding holidays and days that already count.`;
               })()
@@ -7363,14 +7423,14 @@ export default function SubjectsPlanBuilder({
     );
 
     const savedTargetPrefix = isOverallRow
-      ? `Gap is based on saved overall planning preferences: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`
+      ? `Gap is based on saved overall school year settings: ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`
       : `Gap is based on saved ${String(row?.name || 'subject')} attendance goal of ${toOneDecimal(rowTargetValue)} ${rowTargetLabel}`;
     const gapSummaryLine = (() => {
       if (!(isInline && fixGapInPanelHeader)) return savedTargetPrefix;
       if (suggestedDaysText) {
-        return `${savedTargetPrefix}. ${suggestedDaysText} or change goal in Planning Preferences.`;
+        return `${savedTargetPrefix}. ${suggestedDaysText} or change goal in School Year Settings.`;
       }
-      return `${savedTargetPrefix}. Change goal in Planning Preferences.`;
+      return `${savedTargetPrefix}. Change goal in School Year Settings.`;
     })();
 
     const fixGapButton = suggestedDaysText ? (
@@ -7437,10 +7497,10 @@ export default function SubjectsPlanBuilder({
                 style={styles.sectionHeaderActionButton}
                 activeOpacity={0.85}
                 accessibilityRole="button"
-                accessibilityLabel="Open planning preferences"
+                accessibilityLabel="Open School Year Settings"
                 {...(Platform.OS === 'web' && { cursor: 'pointer' })}
               >
-                <Text style={styles.sectionHeaderActionButtonText}>Planning preferences</Text>
+                <Text style={styles.sectionHeaderActionButtonText}>School Year Settings</Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -7672,11 +7732,11 @@ export default function SubjectsPlanBuilder({
                         onPress={openPlanningPreferences}
                         activeOpacity={0.7}
                         accessibilityRole="button"
-                        accessibilityLabel="Edit planning preferences"
+                        accessibilityLabel="Edit School Year Settings"
                         {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                       >
                         <Pencil size={14} color="#6B7280" />
-                        <Text style={styles.sectionHeaderActionButtonText}>Edit planning preferences</Text>
+                        <Text style={styles.sectionHeaderActionButtonText}>Edit School Year Settings</Text>
                       </TouchableOpacity>
                     ) : null}
                   </View>

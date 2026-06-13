@@ -39,7 +39,7 @@ export default function SuperpowerModal({
     } else if (mode.id === 'rebalance' || mode.id === 'catch-up' || mode.id === 'what-if') {
       setAiModalKey(mode.id);
       setShowAIModal(true);
-    } else if (mode.id === 'plan-year' && onPlanYear) {
+    } else if ((mode.id === 'school-year-settings' || mode.id === 'plan-year') && onPlanYear) {
       onPlanYear();
       onClose();
     } else if (mode.id === 'heatmap' && onHeatmap) {

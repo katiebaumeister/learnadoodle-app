@@ -12,7 +12,6 @@ import { getSkillHeatmap, getStrengthsWeaknesses, getSkillGraph } from '../../li
 import { getPortfolioUploads, getPortfolioTimelineEvents, addGrade } from '../../lib/services/recordsClient';
 import GeistCard from '../GeistCard';
 import AddSubjectModal from '../AddSubjectModal';
-import PlanYearWizard from '../year/PlanYearWizard';
 import AddMaterialModal from '../materials/AddMaterialModal';
 import ProgressForecastModal from '../planner/modals/ProgressForecastModal';
 import ComplianceDashboard from '../compliance/ComplianceDashboard';
@@ -2287,7 +2286,6 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
   const [subjects, setSubjects] = useState(initialSubjects);
   const [expandedSubjectId, setExpandedSubjectId] = useState(null);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
-  const [showPlanYearWizard, setShowPlanYearWizard] = useState(false);
   // If we have cached data, mark as loaded so we show it immediately
   const [hasLoadedOnce, setHasLoadedOnce] = useState(initialSubjects.length > 0);
   const [activeTab, setActiveTab] = useState('chart'); // 'chart'
@@ -6661,18 +6659,6 @@ export default function PrintablePortfolioView({ childId, familyId, child, child
         onClose={() => setShowAddSubjectModal(false)}
         onSubjectAdded={handleSubjectAdded}
         familyId={familyId}
-      />
-
-      <PlanYearWizard
-        visible={showPlanYearWizard}
-        onClose={() => setShowPlanYearWizard(false)}
-        familyId={familyId}
-        children={allChildren}
-        onComplete={() => {
-          setShowPlanYearWizard(false);
-          // Optionally reload subjects after year plan creation
-          loadCurrentSubjects();
-        }}
       />
 
       {/* No Syllabus Modal */}

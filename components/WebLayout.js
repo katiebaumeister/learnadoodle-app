@@ -25,7 +25,9 @@ import GlobalNewMenu from './GlobalNewMenu';
 import AppShell from './layout/AppShell.js';
 import { resolveSection, getSectionNavTab, getSectionsForTab, SECTION_TITLE_BY_TAB } from './layout/sectionNavConfig';
 import SecondaryNavShell from './layout/SecondaryNavShell';
-import TaskCreateModal from './TaskCreateModal';
+import CalendarEventCreateModal from './create/CalendarEventCreateModal';
+import AssignmentCreateModal from './create/AssignmentCreateModal';
+import { resolveCreateModalKind, createPaneOptionToModalKind } from '../lib/create/resolveCreateModalKind';
 import AssignmentSubmittalRequestModal from './subjects/AssignmentSubmittalRequestModal';
 import EventModal from './events/EventModal';
 import AddChildModal from './AddChildModal';
@@ -37,8 +39,6 @@ import RespondToHelpRequestModal from './parent/RespondToHelpRequestModal';
 import WorkReviewModal from './assignments/WorkReviewModal';
 import { runSendNudgeForEvent } from '../lib/openAssignmentWorkflow';
 import { linkedSummariesFromFamilyApiMembers } from '../lib/services/childInviteStatus';
-import PlanYearWizard from './year/PlanYearWizard';
-import PlanYearModal from './planner/PlanYearModal';
 import { STRINGS } from '../lib/i18n/strings';
 import PackWeekModal from './ai/PackWeekModal';
 import CatchUpModal from './ai/CatchUpModal';
@@ -70,12 +70,21 @@ import OnboardingModal from './onboarding/OnboardingModal';
 import ExplorerTourOverlay from './onboarding/ExplorerTourOverlay';
 import LearnerQuickStartModal from './onboarding/LearnerQuickStartModal';
 import { preloadSubjectsPlanOverview, preloadSubjectsScheduleData } from './subjects/SubjectsPlanBuilder';
+import SubjectUnitsEditorHost from './subjects/SubjectUnitsEditorHost';
+import {
+  dispatchOpenSubjectUnitsEditor,
+  dispatchOpenSchoolYearSettings,
+  handleLegacyPlanYearRequest,
+  handleLegacyBuildCurriculumRequest,
+  sanitizeLegacyPlanYearView,
+} from '../lib/planYearRetirement';
 import { prefetchAllSubjectProgressPlans } from '../lib/prefetchSubjectProgressPlan';
 import { parseExplorerTourFromPrefs, persistExplorerTourMerge, EXPLORER_TOUR_PREFS_KEY } from '../lib/services/explorerTourClient';
 import AppLoader, { ensureWebShellImagesLoaded } from './AppLoader';
 import RebalanceModal from './year/RebalanceModal';
 import FamilyMessagesPane from './messages/FamilyMessagesPane';
 import FamilyCreatePane from './create/FamilyCreatePane';
+import PlannerCreateMenu from './create/PlannerCreateMenu';
 import { collectAvatarUrlsFromFamilyState, preloadRemoteImageUrls } from '../lib/preloadRemoteImages';
 import { AVATAR_KEYS } from '../assets/imageAssetMap';
 /**
@@ -214,7 +223,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   /** Optional prefilled prompt when opening Doodle from header search (or other callers). */
   const [doodleSearchInitialPrompt, setDoodleSearchInitialPrompt] = useState(null);
   const [doodleSearchAutoSubmit, setDoodleSearchAutoSubmit] = useState(false);
-  const [showPlanningModal, setShowPlanningModal] = useState(false);
   const [showNewMenu, setShowNewMenu] = useState(false);
   const [showAddChildModal, setShowAddChildModal] = useState(false);
   const [showInviteChildModal, setShowInviteChildModal] = useState(false);
@@ -222,7 +230,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
   const [editingSubject, setEditingSubject] = useState(null);
   const [addSubjectPrefill, setAddSubjectPrefill] = useState({ schoolYear: null, schoolTerm: null, childIds: [] });
-  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [createModalKind, setCreateModalKind] = useState(null);
   const [showEventModal, setShowEventModal] = useState(false);
   const [showDirectSubmitForReviewModal, setShowDirectSubmitForReviewModal] = useState(false);
   const [directSubmitAssignment, setDirectSubmitAssignment] = useState(null);
@@ -305,6 +313,33 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       };
     });
   }, [children, family?.members, family?.child_invite_summaries]);
+
+  const resetCreateModalState = useCallback(() => {
+    setCreateModalKind(null);
+    setTaskModalChildId(null);
+    setTaskModalChildIds([]);
+    setTaskModalDefaultSubjectId(null);
+    setTaskModalDefaultEventType(null);
+    setTaskModalDefaultPlacement('calendar');
+    setTaskModalDefaultStartTime(null);
+    setTaskModalDefaultTitle(null);
+    setTaskModalDefaultMaterialId(null);
+    setTaskModalSubmittalAfterCreate(false);
+    taskModalSubmittalAfterCreateRef.current = false;
+  }, []);
+
+  const handleCreateModalCreated = useCallback(async (task) => {
+    if (taskModalSubmittalAfterCreateRef.current && task?.id) {
+      setSubmittalRequestContext({ event: task, assignment: null });
+      setTaskModalSubmittalAfterCreate(false);
+      taskModalSubmittalAfterCreateRef.current = false;
+    }
+    if (activeTab === 'calendar' || activeTab === 'planner') {
+      if (Platform.OS === 'web') {
+        window.dispatchEvent(new CustomEvent('refreshCalendar'));
+      }
+    }
+  }, [activeTab]);
 
   // Keep familyId in sync with session when it becomes available or changes
   useEffect(() => {
@@ -411,60 +446,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [showPackWeekModal, setShowPackWeekModal] = useState(false);
   const [showCatchUpModal, setShowCatchUpModal] = useState(false);
   const [showSummarizeProgressModal, setShowSummarizeProgressModal] = useState(false);
-  const [showPlanYearWizard, setShowPlanYearWizard] = useState(false);
-  const [planYearInitialAcademicYearId, setPlanYearInitialAcademicYearId] = useState(null);
-  const [planYearInitialPlanSummaryData, setPlanYearInitialPlanSummaryData] = useState(null);
-  const [planYearOpenForNewPlan, setPlanYearOpenForNewPlan] = useState(false);
-  const [planYearOpenToEditList, setPlanYearOpenToEditList] = useState(false);
-  const [planYearOpenDirectlyToScope, setPlanYearOpenDirectlyToScope] = useState(false);
-  const [planYearFromSubjectDetail, setPlanYearFromSubjectDetail] = useState(false);
-  /** Subject "Manage schedule": open logistics/editing UI without the intermediate plan-summary screen. */
-  const [planYearSkipInitialPlanSummary, setPlanYearSkipInitialPlanSummary] = useState(false);
-  const [planYearHighlightFromHealth, setPlanYearHighlightFromHealth] = useState(false);
-  const [planYearInitialSubjectId, setPlanYearInitialSubjectId] = useState(null);
-  const [planYearInitialSubjectName, setPlanYearInitialSubjectName] = useState(null);
-  const [planYearInitialChildIds, setPlanYearInitialChildIds] = useState([]);
-  const [planYearInitialSubjectSchoolYear, setPlanYearInitialSubjectSchoolYear] = useState(null);
-  const [planYearInitialSubjectSchoolTerm, setPlanYearInitialSubjectSchoolTerm] = useState(null);
-  const [planYearInitialMaterialId, setPlanYearInitialMaterialId] = useState(null);
-  const [planYearInitialUnitStructureMethod, setPlanYearInitialUnitStructureMethod] = useState(null);
-  const [planYearInitialSubjectHasCurriculumContent, setPlanYearInitialSubjectHasCurriculumContent] = useState(null);
-  /** When PlanYearModal opens as overlay from subject detail, refresh that subject on close. */
-  const planYearModalReturnSubjectIdRef = useRef(null);
-  const showPlanningModalRef = useRef(false);
-  const planYearInitialAcademicYearIdRef = useRef(null);
   const [showRebalanceModal, setShowRebalanceModal] = useState(false);
   const [rebalanceEvent, setRebalanceEvent] = useState(null);
   const [rebalanceYearPlanId, setRebalanceYearPlanId] = useState(null);
-  const [showPlanYearDropdown, setShowPlanYearDropdown] = useState(false);
-  const planYearDropdownButtonRef = useRef(null);
-  const planYearDropdownRef = useRef(null);
-  const [planYearDropdownPosition, setPlanYearDropdownPosition] = useState({ top: 0, left: 0 });
-  const planYearReturnViewRef = useRef('month');
-  const resetInlinePlanYearOpenState = useCallback(() => {
-    setPlanYearHighlightFromHealth(false);
-    setPlanYearFromSubjectDetail(false);
-    setPlanYearInitialAcademicYearId(null);
-    setPlanYearInitialPlanSummaryData(null);
-    setPlanYearOpenForNewPlan(false);
-    setPlanYearOpenToEditList(false);
-    setPlanYearOpenDirectlyToScope(false);
-    setPlanYearSkipInitialPlanSummary(false);
-    setPlanYearInitialSubjectId(null);
-    setPlanYearInitialSubjectName(null);
-    setPlanYearInitialChildIds([]);
-    setPlanYearInitialSubjectSchoolYear(null);
-    setPlanYearInitialSubjectSchoolTerm(null);
-    setPlanYearInitialMaterialId(null);
-    setPlanYearInitialUnitStructureMethod(null);
-    setPlanYearInitialSubjectHasCurriculumContent(null);
-  }, []);
-  useEffect(() => {
-    showPlanningModalRef.current = showPlanningModal;
-  }, [showPlanningModal]);
-  useEffect(() => {
-    planYearInitialAcademicYearIdRef.current = planYearInitialAcademicYearId;
-  }, [planYearInitialAcademicYearId]);
   const [showWhatIfModal, setShowWhatIfModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showPlanWeekModal, setShowPlanWeekModal] = useState(false);
@@ -485,6 +469,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const [schedulingAssistantWeekStart, setSchedulingAssistantWeekStart] = useState(() => startOfWeek(new Date()));
   const [showSmartActionsMenu, setShowSmartActionsMenu] = useState(false);
   const smartActionsButtonRef = useRef(null);
+  const [showPlannerCreateMenu, setShowPlannerCreateMenu] = useState(false);
+  const plannerCreateButtonRef = useRef(null);
   const [showAnalyticsDashboard, setShowAnalyticsDashboard] = useState(false);
   const [showProgressReport, setShowProgressReport] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -528,6 +514,46 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   const childDoodleBotDisabled =
     session?.role_flags?.isChild === true &&
     familyUserControls.effectivePermissions?.canUseDoodleBot === false;
+
+  const openUnitsAndLessonsModal = useCallback((detail = {}) => {
+    if (sessionRestricted && !familyUserControls.allowed('plans')) {
+      Alert.alert('Not available', 'Your family admin has disabled adding or editing plans.');
+      return;
+    }
+    dispatchOpenSubjectUnitsEditor({
+      subjectId: detail.subjectId || null,
+      subjectName: detail.subjectName || null,
+      method: detail.method || 'manual',
+      childIds: detail.childIds && Array.isArray(detail.childIds)
+        ? detail.childIds.filter(Boolean)
+        : (detail.childId ? [detail.childId] : []),
+    });
+  }, [familyUserControls, sessionRestricted]);
+
+  const openCreateModal = useCallback((kind, detail = {}) => {
+    if (kind === 'lesson') {
+      openUnitsAndLessonsModal(detail);
+      return;
+    }
+    const date = detail.date || new Date();
+    const incomingChildIds = detail.childIds && Array.isArray(detail.childIds)
+      ? detail.childIds
+      : (detail.childId ? [detail.childId] : []);
+    const primaryChildId = incomingChildIds.length > 0 ? incomingChildIds[0] : null;
+
+    setTaskModalDate(date);
+    setTaskModalChildIds(incomingChildIds);
+    setTaskModalChildId(primaryChildId);
+    setTaskModalDefaultSubjectId(detail.subjectId || null);
+    setTaskModalDefaultEventType(detail.eventType || null);
+    setTaskModalDefaultPlacement(detail.placement || 'calendar');
+    setTaskModalDefaultStartTime(detail.startTime || null);
+    setTaskModalDefaultTitle(detail.title ?? null);
+    setTaskModalDefaultMaterialId(detail.materialId || null);
+    setTaskModalSubmittalAfterCreate(!!detail.submittalAfterCreate);
+    taskModalSubmittalAfterCreateRef.current = !!detail.submittalAfterCreate;
+    setCreateModalKind(kind);
+  }, [openUnitsAndLessonsModal]);
 
   const openDoodleSearch = useCallback((options = {}) => {
     if (childDoodleBotDisabled) return;
@@ -895,7 +921,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
       const urlView = urlParams.get('view');
-      if (urlView) return urlView;
+      if (urlView) return sanitizeLegacyPlanYearView(urlView);
       const savedDefault = getDefaultView();
       if (savedDefault) return savedDefault;
       return 'month';
@@ -1112,24 +1138,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       return () => document.removeEventListener('click', handleClickOutside, true);
     }
   }, [showPlannerSettingsPopover]);
-
-  // Handle click outside Plan Year dropdown
-  useEffect(() => {
-    if (showPlanYearDropdown && Platform.OS === 'web' && typeof document !== 'undefined') {
-      const handleClickOutside = (event) => {
-        const buttonNode = planYearDropdownButtonRef.current?._nativeNode || planYearDropdownButtonRef.current;
-        const dropdownNode = planYearDropdownRef.current?._nativeNode || planYearDropdownRef.current;
-        const target = event.target;
-        const isInsideButton = buttonNode && (buttonNode === target || buttonNode.contains(target));
-        const isInsideDropdown = dropdownNode && (dropdownNode === target || dropdownNode.contains(target));
-        if (!isInsideButton && !isInsideDropdown) {
-          setShowPlanYearDropdown(false);
-        }
-      };
-      document.addEventListener('click', handleClickOutside, true);
-      return () => document.removeEventListener('click', handleClickOutside, true);
-    }
-  }, [showPlanYearDropdown]);
 
   // Calculate dropdown position when it opens
   useEffect(() => {
@@ -1388,7 +1396,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         const urlView = urlParams.get('view');
         // If URL has a view param, use it; otherwise check localStorage default
         if (urlView) {
-          setCurrentView(urlView);
+          setCurrentView(sanitizeLegacyPlanYearView(urlView));
         } else {
           const savedDefault = getDefaultView();
           if (savedDefault) {
@@ -1407,7 +1415,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
       
       // Listen for plannerViewChange events (e.g. from month day click → board)
       const handleViewChange = (event) => {
-        const newView = event.detail;
+        const newView = sanitizeLegacyPlanYearView(event.detail);
         setCurrentView(newView);
         // Clear right-toolbar focus when returning to main planner segments
         if (['month', 'board', 'tasks', 'year'].includes(newView)) {
@@ -2182,7 +2190,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('openAddSubjectModal', handler);
   }, []);
 
-  // Listen for openTaskModal event to open the global TaskCreateModal
+  // Listen for openTaskModal — routes to Calendar Event / Lesson / Assignment create modals
   // Available from any screen (family, planner, home, calendar, etc.)
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -2196,22 +2204,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         return;
       }
       const detail = event.detail || {};
-      const date = detail.date || new Date();
-      const incomingChildIds = detail.childIds && Array.isArray(detail.childIds)
-        ? detail.childIds
-        : (detail.childId ? [detail.childId] : []);
-      const primaryChildId = incomingChildIds.length > 0 ? incomingChildIds[0] : null;
-      
-      setTaskModalDate(date);
-      setTaskModalChildIds(incomingChildIds);
-      setTaskModalChildId(primaryChildId);
-      setTaskModalDefaultSubjectId(detail.subjectId || null);
-      setTaskModalDefaultEventType(detail.eventType || null);
-      setTaskModalDefaultPlacement(detail.placement || 'calendar');
-      setTaskModalDefaultStartTime(detail.startTime || null);
-      setTaskModalDefaultTitle(detail.title ?? null);
-      setTaskModalDefaultMaterialId(detail.materialId || null);
-      setShowTaskModal(true);
+      const kind = resolveCreateModalKind(detail.eventType);
+      openCreateModal(kind, detail);
     };
     
     window.addEventListener('openTaskModal', handleOpenTaskModal);
@@ -2219,7 +2213,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => {
       window.removeEventListener('openTaskModal', handleOpenTaskModal);
     };
-  }, [isTutorUser]);
+  }, [isTutorUser, openCreateModal]);
 
   // Listen for openEventModal event to open the global EventModal
   // Available from any screen (family, planner, etc.)
@@ -2505,12 +2499,11 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const handler = () => {
-      // Navigate to Intelligence Hub → Plan the Year instead
-      navigateToIntelligence({ tab: 'planner-ai', tool: 'planYear' });
+      dispatchOpenSchoolYearSettings();
     };
     window.addEventListener('openYearWizard', handler);
     return () => window.removeEventListener('openYearWizard', handler);
-  }, [navigateToIntelligence]);
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return undefined;
@@ -2528,8 +2521,9 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         case 'pack-week':
           setShowPackWeekModal(true);
           break;
+        case 'school-year-settings':
         case 'plan-year':
-          setShowPlanYearWizard(true);
+          dispatchOpenSchoolYearSettings();
           break;
         case 'what-if':
           setShowWhatIfModal(true);
@@ -2584,7 +2578,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('plannerSmartAction', handler);
   }, [navigateToIntelligence, openPlannerExportModal]);
 
-  // Listen for openPlanYearModal event (from PlanHealthBanner / FixItSuggestionsModal / EventDetails / AddSubjectModal / MagicExtract / Library)
+  // Legacy Plan Year entry points → School Year Settings, subject page, or units editor.
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
     const handler = (event) => {
@@ -2594,180 +2588,45 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         Alert.alert('Not available', 'Your family admin has disabled adding or editing plans.');
         return;
       }
-      const detail = event?.detail ?? {};
-      const from = detail.from;
-      const yearIdFromEvent =
-        detail.academicYearId ||
-        detail.academic_year_id ||
-        detail.yearPlanId ||
-        detail.year_plan_id ||
-        null;
-      const subjectId = detail.subjectId ?? null;
-      const subjectName = detail.subjectName ?? null;
-      const childIds = Array.isArray(detail.childIds) ? detail.childIds.filter(Boolean) : [];
-      const subjectSchoolYear = detail.schoolYear ?? detail.subjectSchoolYear ?? null;
-      const subjectSchoolTerm = detail.schoolTerm ?? detail.subjectSchoolTerm ?? null;
-      const materialId = detail.materialId ?? null;
-      const initialUnitStructureMethod = detail.initialUnitStructureMethod ?? null;
-      const subjectHasCurriculumContent =
-        typeof detail.subjectHasCurriculumContent === 'boolean'
-          ? detail.subjectHasCurriculumContent
-          : null;
-      const openToEditListBase = detail.openToEditList === true;
-      const openAsModal = detail.openAsModal === true;
-      const skipPlanSummary = detail.skipPlanSummary === true;
-      const openInSubjectsSchedule = detail.openInSubjectsSchedule === true;
-      if (openInSubjectsSchedule) {
-        const pendingPayload = {
-          from: 'event_details',
-          subjectId: subjectId != null ? String(subjectId) : null,
-          subjectName: subjectName != null ? String(subjectName) : null,
-          academicYearId: yearIdFromEvent || null,
-          schoolYear: subjectSchoolYear != null ? String(subjectSchoolYear) : null,
-          schoolTerm: subjectSchoolTerm != null ? String(subjectSchoolTerm) : null,
-          openToEditList: openToEditListBase || !yearIdFromEvent,
-          skipPlanSummary,
-        };
-        try {
-          window.sessionStorage.setItem(
-            SUBJECTS_PENDING_PLAN_OPEN_STORAGE_KEY,
-            JSON.stringify(pendingPayload)
-          );
-        } catch (_) {
-          // no-op
-        }
-        handleTabChange('subjects');
-        window.history.pushState({}, '', '/subjects');
-        return;
-      }
-      const fromEventDetails = from === 'event_details';
-      const onPlannerLikeShell =
-        activeTabRef.current === 'planner' || activeTabRef.current === 'calendar';
-      const effectiveOpenAsModal = fromEventDetails ? !onPlannerLikeShell : openAsModal;
-      const openToEditList = openToEditListBase || (fromEventDetails && !yearIdFromEvent);
-      const hasExistingEditYearContext =
-        !!planYearInitialAcademicYearIdRef.current && showPlanningModalRef.current;
-      // EventDetails can emit a follow-up openPlanYearModal without academicYearId.
-      // Do not let that downgrade an already-opening edit-year modal into new-plan mode.
-      if (effectiveOpenAsModal && fromEventDetails && !yearIdFromEvent && hasExistingEditYearContext) {
-        console.log('[WebLayout] openPlanYearModal ignored downgrade event', {
-          from,
-          yearIdFromEvent,
-          existingYearId: planYearInitialAcademicYearIdRef.current,
-        });
-        return;
-      }
-      console.log('[WebLayout] openPlanYearModal event', {
-        from,
-        yearIdFromEvent,
-        subjectId,
-        materialId,
-        openToEditList,
-        openAsModal,
-        effectiveOpenAsModal,
-        skipPlanSummary,
-      });
-      setPlanYearHighlightFromHealth(from === 'plan_health_over');
-      setPlanYearFromSubjectDetail(
-        from === 'subject_detail' || (fromEventDetails && effectiveOpenAsModal)
-      );
-      setPlanYearInitialSubjectId(subjectId);
-      setPlanYearInitialSubjectName(subjectName);
-      setPlanYearInitialChildIds(childIds);
-      setPlanYearInitialSubjectSchoolYear(subjectSchoolYear);
-      setPlanYearInitialSubjectSchoolTerm(subjectSchoolTerm);
-      setPlanYearInitialMaterialId(materialId);
-      setPlanYearInitialUnitStructureMethod(initialUnitStructureMethod);
-      setPlanYearInitialSubjectHasCurriculumContent(subjectHasCurriculumContent);
-
-      if (effectiveOpenAsModal) {
-        planYearModalReturnSubjectIdRef.current = subjectId || null;
-        setPlanYearSkipInitialPlanSummary(skipPlanSummary);
-        if (yearIdFromEvent) {
-          setPlanYearInitialAcademicYearId(yearIdFromEvent);
-          setPlanYearInitialPlanSummaryData(detail.planSummaryData ?? null);
-          setPlanYearOpenForNewPlan(false);
-          setPlanYearOpenToEditList(openToEditList);
-        } else {
-          setPlanYearInitialAcademicYearId(null);
-          setPlanYearInitialPlanSummaryData(null);
-          setPlanYearOpenForNewPlan(
-            openToEditList ||
-              materialId != null ||
-              subjectId != null ||
-              from === 'library' ||
-              from === 'generate_curriculum' ||
-              from === 'magic_extract'
-          );
-          // Preserve explicit saved-schedule-list intent from subject detail / toolbar.
-          // Clearing this here incorrectly routes the modal into schedule setup flow.
-          setPlanYearOpenToEditList(openToEditList);
-        }
-        setPlanYearOpenDirectlyToScope(!!detail.openDirectlyToScope && !openToEditList);
-        setShowPlanningModal(true);
-        return;
-      }
-
-      planYearModalReturnSubjectIdRef.current = null;
-      setPlanYearSkipInitialPlanSummary(skipPlanSummary);
-      if (yearIdFromEvent) {
-        setPlanYearInitialAcademicYearId(yearIdFromEvent);
-        setPlanYearInitialPlanSummaryData(detail.planSummaryData ?? null);
-        setPlanYearOpenForNewPlan(false);
-      } else {
-        setPlanYearInitialAcademicYearId(null);
-        setPlanYearInitialPlanSummaryData(null);
-        setPlanYearOpenForNewPlan(openToEditList || materialId != null || subjectId != null || from === 'library' || from === 'generate_curriculum' || from === 'magic_extract');
-      }
-      setPlanYearOpenToEditList(openToEditList || !!yearIdFromEvent);
-      setPlanYearOpenDirectlyToScope(!!detail.openDirectlyToScope && !openToEditList);
-      planYearReturnViewRef.current = currentView;
-      handleTabChange('planner');
-      const viewToShow = yearIdFromEvent || openToEditList ? 'edit-year' : 'plan-year';
-      setCurrentView(viewToShow);
-      if (Platform.OS === 'web') {
-        const url = new URL(window.location);
-        url.pathname = '/planner';
-        url.searchParams.set('view', viewToShow);
-        window.history.pushState({}, '', url);
-        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: viewToShow }));
-      }
+      handleLegacyPlanYearRequest(event?.detail ?? {}, { handleTabChange });
     };
     window.addEventListener('openPlanYearModal', handler);
     return () => window.removeEventListener('openPlanYearModal', handler);
-  }, []);
+  }, [handleTabChange]);
 
-  // Deprecated: openBuildCurriculumModal now opens Plan My Year instead (same params: subjectId, subjectName, materialId)
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    const handler = (e) => {
+    const handler = (event) => {
       const rf = sessionRef.current?.role_flags;
       const restricted = !!(rf?.isChild || rf?.isTutor);
       if (restricted && !allowedRef.current('plans')) {
         Alert.alert('Not available', 'Your family admin has disabled adding or editing plans.');
         return;
       }
-      const detail = e?.detail ?? {};
-      const subjectId = detail.subjectId ?? null;
-      const subjectName = detail.subjectName ?? null;
-      const materialId = detail.materialId ?? null;
-      setPlanYearInitialSubjectId(subjectId);
-      setPlanYearInitialMaterialId(materialId);
-      setPlanYearInitialAcademicYearId(null);
-      setPlanYearOpenForNewPlan(true);
-      planYearReturnViewRef.current = currentView;
-      handleTabChange('planner');
-      setCurrentView('plan-year');
-      if (Platform.OS === 'web') {
-        const url = new URL(window.location);
-        url.searchParams.set('view', 'plan-year');
-        window.history.pushState({}, '', url);
-        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'plan-year' }));
-      }
+      handleLegacyBuildCurriculumRequest(event?.detail ?? {}, { handleTabChange });
     };
     window.addEventListener('openBuildCurriculumModal', handler);
     return () => window.removeEventListener('openBuildCurriculumModal', handler);
-  }, []);
+  }, [handleTabChange]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = (event) => {
+      const tab = String(event?.detail?.tab || '').trim();
+      if (tab) handleTabChange(tab);
+    };
+    window.addEventListener('openNavigateTab', handler);
+    return () => window.removeEventListener('openNavigateTab', handler);
+  }, [handleTabChange]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const handler = () => {
+      handleTabChange('settings', 'planner-settings');
+    };
+    window.addEventListener('openSchoolYearSettings', handler);
+    return () => window.removeEventListener('openSchoolYearSettings', handler);
+  }, [handleTabChange]);
 
   // Listen for openScheduleRules event
   useEffect(() => {
@@ -2802,8 +2661,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     return () => window.removeEventListener('openExportPlannerModal', handler);
   }, []);
 
-  // Legacy unit-structure event routes removed.
-  // Add Subject "Add units" now routes through openPlanYearModal to keep one modal stack.
+  // Subject-scoped units editor is handled by SubjectUnitsEditorHost (openSubjectUnitsEditor).
 
   // Open Doodle chat from anywhere (e.g. Library empty state — optional initialPrompt in event detail)
   useEffect(() => {
@@ -2877,11 +2735,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } else if (target === 'navigate_materials') {
       handleTabChange('materials');
     } else if (target === 'navigate_setup_plan_year') {
-      handleTabChange('planner');
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.history.replaceState({}, '', '/planner?view=plan-year');
-        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'plan-year' }));
-      }
+      dispatchOpenSchoolYearSettings();
+      handleTabChange('settings', 'planner-settings');
     } else if (target === 'navigate_setup_attendance') {
       handleTabChange('planner');
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -2937,40 +2792,31 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     (optionId) => {
       setIsCreatePaneOpen(false);
       syncTopNavFromActiveTab();
+      const modalKind = createPaneOptionToModalKind(optionId);
+      if (modalKind === 'lesson') {
+        if (sessionRestricted && !familyUserControls.allowed('plans')) {
+          Alert.alert('Not available', 'Your family admin has disabled adding or editing plans.');
+          return;
+        }
+        openUnitsAndLessonsModal({
+          date: new Date(),
+          childIds: [],
+        });
+        return;
+      }
+      if (modalKind) {
+        if (sessionRestricted && !familyUserControls.allowed('events')) {
+          Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
+          return;
+        }
+        openCreateModal(modalKind, {
+          date: new Date(),
+          eventType: modalKind === 'assignment' ? 'Assignment' : null,
+          submittalAfterCreate: optionId === 'submission_request',
+        });
+        return;
+      }
       switch (optionId) {
-        case 'event':
-          if (sessionRestricted && !familyUserControls.allowed('events')) {
-            Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
-            return;
-          }
-          setTaskModalSubmittalAfterCreate(false);
-          taskModalSubmittalAfterCreateRef.current = false;
-          setTaskModalDefaultEventType(null);
-          setTaskModalDate(new Date());
-          setShowTaskModal(true);
-          break;
-        case 'assignment':
-          if (sessionRestricted && !familyUserControls.allowed('events')) {
-            Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
-            return;
-          }
-          setTaskModalSubmittalAfterCreate(false);
-          taskModalSubmittalAfterCreateRef.current = false;
-          setTaskModalDefaultEventType('Assignment');
-          setTaskModalDate(new Date());
-          setShowTaskModal(true);
-          break;
-        case 'submission_request':
-          if (sessionRestricted && !familyUserControls.allowed('events')) {
-            Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
-            return;
-          }
-          setTaskModalSubmittalAfterCreate(true);
-          taskModalSubmittalAfterCreateRef.current = true;
-          setTaskModalDefaultEventType('Assignment');
-          setTaskModalDate(new Date());
-          setShowTaskModal(true);
-          break;
         case 'subject':
           if (sessionRestricted && !familyUserControls.allowed('subjects')) {
             Alert.alert('Not available', 'Your family admin has disabled adding or editing subjects.');
@@ -2997,31 +2843,28 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     },
     [
       familyUserControls,
+      openCreateModal,
+      openUnitsAndLessonsModal,
       resolvedShellUserRole,
       sessionRestricted,
       syncTopNavFromActiveTab,
     ]
   );
 
-  const openPlannerAddEventModal = useCallback(() => {
+  const openPlannerCreateModal = useCallback((kind) => {
     if (sessionRestricted && !familyUserControls.allowed('events')) {
       Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
       return;
     }
-    setTaskModalSubmittalAfterCreate(false);
-    taskModalSubmittalAfterCreateRef.current = false;
-    setTaskModalDefaultEventType(null);
-    setTaskModalDefaultPlacement('calendar');
-    setTaskModalDefaultSubjectId(null);
-    setTaskModalDefaultStartTime(null);
-    setTaskModalDefaultTitle(null);
-    setTaskModalDefaultMaterialId(null);
     const childIds = Array.isArray(selectedCalendarChildren) ? selectedCalendarChildren : [];
-    setTaskModalChildIds(childIds);
-    setTaskModalChildId(childIds[0] || null);
-    setTaskModalDate(currentMonth);
-    setShowTaskModal(true);
-  }, [currentMonth, familyUserControls, selectedCalendarChildren, sessionRestricted]);
+    openCreateModal(kind, {
+      date: currentMonth,
+      childIds,
+      childId: childIds[0] || null,
+      eventType: kind === 'assignment' ? 'Assignment' : null,
+    });
+    setShowPlannerCreateMenu(false);
+  }, [currentMonth, familyUserControls, openCreateModal, selectedCalendarChildren, sessionRestricted]);
 
   const handleTopSelect = useCallback(
     (key) => {
@@ -3327,42 +3170,30 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
     } else if (enteringPlanner) {
       // Ensure right pane is closed when switching TO planner (not when already on it)
       setActiveRightTool(null);
-      // If Plan Builder was opened from Subject Detail, do not keep planner stuck on inline
-      // plan-year/edit-year when user navigates back to Planner. Default back to month view.
-      const isInlinePlanView = currentView === 'plan-year' || currentView === 'edit-year';
-      if (isInlinePlanView && planYearFromSubjectDetail) {
-        resetInlinePlanYearOpenState();
-        setCurrentView('month');
-        setDefaultView('month');
+      const sanitizedView = sanitizeLegacyPlanYearView(currentView);
+      if (sanitizedView !== currentView) {
+        setCurrentView(sanitizedView);
+        setDefaultView(sanitizedView);
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
           const url = new URL(window.location);
-          url.searchParams.set('view', 'month');
+          url.searchParams.set('view', sanitizedView);
           window.history.replaceState({}, '', url);
-          window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: 'month' }));
+          window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: sanitizedView }));
         }
       }
     }
     prevActiveTabRef.current = activeTab;
-  }, [activeTab, currentView, planYearFromSubjectDetail, resetInlinePlanYearOpenState]);
+  }, [activeTab, currentView]);
 
   const isCalendarScreen =
     activeTab === 'calendar' || activeTab === 'planner';
 
-  /** Schedule setup / preferences replace the main pane in URL state but must not unmount WebContent (month grid stays warm). */
-  const isPlanYearInline =
-    (activeTab === 'planner' || isCalendarScreen)
-    && (currentView === 'plan-year' || currentView === 'edit-year');
-  const plannerViewForWebContent = isPlanYearInline
-    ? (() => {
-        const r = planYearReturnViewRef.current || defaultView || 'month';
-        return ['plan-year', 'edit-year'].includes(r) ? defaultView || 'month' : r;
-      })()
-    : currentView;
+  const plannerViewForWebContent = sanitizeLegacyPlanYearView(currentView);
 
   /** When true, top segmented view chips should not use purple (full-screen plan/attendance view is primary). */
   const rightToolbarClaimsPlannerSegmentFocus =
     (activeRightTool != null && !['tasks', 'backlog'].includes(activeRightTool)) ||
-    ['plan-year', 'edit-year', 'attendance'].includes(currentView);
+    currentView === 'attendance';
   /** Purple segmented chip only when that row is the active context. */
   const showTopPlannerSegmentHighlight =
     ['month', 'board', 'tasks', 'year', 'attendance-drilldown'].includes(currentView) && !rightToolbarClaimsPlannerSegmentFocus;
@@ -3517,9 +3348,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 }}
                 onSelectOption={handleCreatePaneSelect}
                 disabledOptions={{
-                  event: denyFamilyEventEdit,
+                  calendar_event: denyFamilyEventEdit,
                   assignment: denyFamilyEventEdit,
-                  submission_request: denyFamilyEventEdit,
                   subject: sessionRestricted && !familyUserControls.allowed('subjects'),
                   child:
                     resolvedShellUserRole === 'child'
@@ -3771,9 +3601,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                           }}
                           onPress={() => {
                             const viewValue = view.key;
-                            if (currentView === 'plan-year' || currentView === 'edit-year') {
-                              resetInlinePlanYearOpenState();
-                            }
                             if (Platform.OS !== 'web') {
                               LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                             }
@@ -4043,6 +3870,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   />
                   {!denyFamilyEventEdit ? (
                     <TouchableOpacity
+                      ref={plannerCreateButtonRef}
                       style={{
                         flexDirection: 'row',
                         alignItems: 'center',
@@ -4055,7 +3883,10 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         backgroundColor: '#FFFFFF',
                         flexShrink: 0,
                       }}
-                      onPress={openPlannerAddEventModal}
+                      onPress={() => {
+                        setShowSmartActionsMenu(false);
+                        setShowPlannerCreateMenu((open) => !open);
+                      }}
                       {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                     >
                       <Text style={{
@@ -4064,10 +3895,21 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                         fontWeight: '500',
                         fontFamily: '"League Spartan", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
                       }}>
-                        + Add event
+                        + Create
                       </Text>
+                      {showPlannerCreateMenu ? (
+                        <ChevronUp size={16} color="rgba(15,23,42,0.7)" />
+                      ) : (
+                        <ChevronDown size={16} color="rgba(15,23,42,0.7)" />
+                      )}
                     </TouchableOpacity>
                   ) : null}
+                  <PlannerCreateMenu
+                    visible={showPlannerCreateMenu}
+                    triggerRef={plannerCreateButtonRef}
+                    onClose={() => setShowPlannerCreateMenu(false)}
+                    onSelect={openPlannerCreateModal}
+                  />
                 </View>
               </View>
 
@@ -4149,9 +3991,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                   minHeight: 0,
                   minWidth: 0,
                   zIndex: 0,
-                  ...(isPlanYearInline
-                    ? { pointerEvents: 'none' }
-                    : { pointerEvents: 'auto' }),
+                  pointerEvents: 'auto',
                 }}
               >
               <WebContent
@@ -4211,102 +4051,6 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
                 onExitChildView={handleExitChildView}
               />
               </View>
-              {isPlanYearInline ? (
-                <View
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    right: 0,
-                    bottom: 0,
-                    zIndex: 1,
-                    flex: 1,
-                    minHeight: 0,
-                    minWidth: 0,
-                    backgroundColor: '#FFFFFF',
-                  }}
-                >
-                  <PlanYearModal
-                    renderInline
-                    visible
-                    onClose={(result) => {
-                      const returnView = result?.returnView || planYearReturnViewRef.current || defaultView || 'month';
-                      setCurrentView(returnView);
-                      if (Platform.OS === 'web') {
-                        const url = new URL(window.location);
-                        url.searchParams.set('view', returnView);
-                        window.history.pushState({}, '', url);
-                        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: returnView }));
-                      }
-                      resetInlinePlanYearOpenState();
-                    }}
-                    familyId={familyId}
-                    children={children}
-                    subjects={subjects}
-                    fullSubjects={fullSubjects}
-                    initialAcademicYearId={planYearInitialAcademicYearId}
-                    initialPlanSummaryData={planYearInitialPlanSummaryData}
-                    openForNewPlan={planYearOpenForNewPlan}
-                    openToEditPlanList={currentView === 'edit-year' || planYearOpenToEditList}
-        openDirectlyToScope={planYearOpenDirectlyToScope}
-        fromSubjectDetail={planYearFromSubjectDetail}
-        skipInitialPlanSummary={planYearSkipInitialPlanSummary}
-        highlightFromPlanHealth={planYearHighlightFromHealth}
-        initialSubjectId={planYearInitialSubjectId}
-                    initialSubjectName={planYearInitialSubjectName}
-                    initialSubjectChildIds={planYearInitialChildIds}
-                    initialSubjectSchoolYear={planYearInitialSubjectSchoolYear}
-                    initialSubjectSchoolTerm={planYearInitialSubjectSchoolTerm}
-        initialMaterialId={planYearInitialMaterialId}
-                    initialUnitStructureMethod={planYearInitialUnitStructureMethod}
-        initialSubjectHasCurriculumContent={planYearInitialSubjectHasCurriculumContent}
-        onOpenBuildCurriculum={(params) => {
-          setBuildCurriculumInitialSubjectId(params.initialSubjectId ?? null);
-                      setBuildCurriculumInitialSubjectName(params.initialSubjectName ?? null);
-                      setBuildCurriculumInitialInputMode(params.initialInputMode ?? null);
-                      setBuildCurriculumInitialSourceUrl(params.initialSourceUrl ?? null);
-                      setBuildCurriculumInitialTopic(params.initialTopic ?? null);
-                      setBuildCurriculumInitialMaterialId(params.initialMaterialId ?? null);
-                      setShowBuildCurriculumModal(true);
-                    }}
-                    onOpenRebalance={(params) => {
-                      setRebalanceEvent(params?.event ?? null);
-                      setRebalanceYearPlanId(params?.yearPlanId ?? null);
-                      setShowRebalanceModal(true);
-                    }}
-                    onOpenPlannerSettings={() => handleTabChange('settings', 'planner-settings')}
-                    onOpenManualCurriculumBuilder={(detail) => {
-                      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                        window.dispatchEvent(
-                          new CustomEvent('openPlanYearModal', {
-                            detail: {
-                              from: 'subject_detail',
-                              openAsModal: false,
-                              skipPlanSummary: true,
-                              openDirectlyToScope: true,
-                              subjectId: detail?.subjectId ?? null,
-                              familyId: detail?.familyId ?? familyId ?? null,
-                              initialUnitStructureMethod: 'manual',
-                            },
-                          })
-                        );
-                      }
-                    }}
-                    onComplete={(result) => {
-                      const returnView = result?.returnView || planYearReturnViewRef.current || defaultView || 'month';
-                      setCurrentView(returnView);
-                      if (Platform.OS === 'web') {
-                        const url = new URL(window.location);
-                        url.searchParams.set('view', returnView);
-                        window.history.pushState({}, '', url);
-                        window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: returnView }));
-                        window.dispatchEvent(new CustomEvent('refreshCalendar'));
-                      }
-                      resetInlinePlanYearOpenState();
-                    }}
-                  />
-                </View>
-              ) : null}
             </View>
           </View>
         </AppShell>
@@ -4395,119 +4139,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }}
       />
 
-      {/* Planning Modal - mostly full screen - unified Plan my year + Edit subject structure */}
-      <PlanYearModal
-        key={`${planYearInitialAcademicYearId || 'unified-planning-modal'}-${planYearInitialUnitStructureMethod || 'default'}`}
-        visible={showPlanningModal}
-        onClose={(result) => {
-          const sid = planYearModalReturnSubjectIdRef.current;
-          planYearModalReturnSubjectIdRef.current = null;
-          if (sid && Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: sid } }));
-          }
-          if (result?.returnView) {
-            handleTabChange('planner');
-            setActiveTopNav('planner');
-            setCurrentView(result.returnView);
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.history.pushState({}, '', `/planner?view=${result.returnView}`);
-              window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: result.returnView }));
-            }
-          }
-          setShowPlanningModal(false);
-          setTimeout(() => {
-            setPlanYearHighlightFromHealth(false);
-            setPlanYearFromSubjectDetail(false);
-            setPlanYearInitialAcademicYearId(null);
-            setPlanYearInitialPlanSummaryData(null);
-            setPlanYearOpenForNewPlan(false);
-            setPlanYearOpenToEditList(false);
-            setPlanYearOpenDirectlyToScope(false);
-            setPlanYearSkipInitialPlanSummary(false);
-            setPlanYearInitialSubjectId(null);
-            setPlanYearInitialSubjectName(null);
-            setPlanYearInitialChildIds([]);
-            setPlanYearInitialSubjectSchoolYear(null);
-            setPlanYearInitialSubjectSchoolTerm(null);
-            setPlanYearInitialMaterialId(null);
-            setPlanYearInitialUnitStructureMethod(null);
-          }, 300);
-        }}
-        familyId={familyId}
-        children={children}
-        subjects={subjects}
-        fullSubjects={fullSubjects}
-        initialAcademicYearId={planYearInitialAcademicYearId}
-        initialPlanSummaryData={planYearInitialPlanSummaryData}
-        openForNewPlan={planYearOpenForNewPlan}
-        openToEditPlanList={planYearOpenToEditList}
-        openDirectlyToScope={planYearOpenDirectlyToScope}
-        fromSubjectDetail={planYearFromSubjectDetail}
-        skipInitialPlanSummary={planYearSkipInitialPlanSummary}
-        highlightFromPlanHealth={planYearHighlightFromHealth}
-        initialSubjectId={planYearInitialSubjectId}
-        initialSubjectName={planYearInitialSubjectName}
-        initialSubjectChildIds={planYearInitialChildIds}
-        initialSubjectSchoolYear={planYearInitialSubjectSchoolYear}
-        initialSubjectSchoolTerm={planYearInitialSubjectSchoolTerm}
-        initialMaterialId={planYearInitialMaterialId}
-        initialUnitStructureMethod={planYearInitialUnitStructureMethod}
-        initialSubjectHasCurriculumContent={planYearInitialSubjectHasCurriculumContent}
-        onOpenBuildCurriculum={(params) => {
-          setBuildCurriculumInitialSubjectId(params.subjectId || null);
-          setBuildCurriculumInitialSubjectName(params.subjectName || null);
-          setBuildCurriculumInitialMaterialId(params.materialId || null);
-          setBuildCurriculumInitialInputMode(params.inputMode || null);
-          setBuildCurriculumInitialSourceUrl(params.sourceUrl || null);
-          setBuildCurriculumInitialTopic(params.topic || null);
-          setShowBuildCurriculumModal(true);
-        }}
-        onOpenRebalance={(params) => {
-          setRebalanceEvent(params?.event ?? null);
-          setRebalanceYearPlanId(params?.yearPlanId ?? null);
-          setShowRebalanceModal(true);
-        }}
-        onOpenPlannerSettings={() => handleTabChange('settings', 'planner-settings')}
-        onOpenManualCurriculumBuilder={(detail) => {
-          if (Platform.OS === 'web' && typeof window !== 'undefined') {
-            window.dispatchEvent(
-              new CustomEvent('openPlanYearModal', {
-                detail: {
-                  from: 'subject_detail',
-                  openAsModal: true,
-                  skipPlanSummary: true,
-                  openDirectlyToScope: true,
-                  subjectId: detail?.subjectId ?? null,
-                  familyId: detail?.familyId ?? familyId ?? null,
-                  initialUnitStructureMethod: 'manual',
-                },
-              })
-            );
-          }
-        }}
-        onComplete={async (result) => {
-          const sid = planYearModalReturnSubjectIdRef.current;
-          planYearModalReturnSubjectIdRef.current = null;
-          if (result?.returnView) {
-            handleTabChange('planner');
-            setActiveTopNav('planner');
-            setCurrentView(result.returnView);
-            if (Platform.OS === 'web' && typeof window !== 'undefined') {
-              window.history.pushState({}, '', `/planner?view=${result.returnView}`);
-              window.dispatchEvent(new CustomEvent('plannerViewChange', { detail: result.returnView }));
-            }
-          }
-          setShowPlanningModal(false);
-          await fetchFamilyData();
-          if (Platform.OS === 'web') {
-            window.dispatchEvent(new CustomEvent('refreshChildren'));
-            window.dispatchEvent(new CustomEvent('refreshSubjects'));
-            if (sid) {
-              window.dispatchEvent(new CustomEvent('refreshSubjectDetail', { detail: { subjectId: sid } }));
-            }
-          }
-        }}
-      />
+      <SubjectUnitsEditorHost familyId={familyId} />
 
       <GlobalNewMenu
         visible={showNewMenu}
@@ -4522,73 +4154,64 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
           }
           setShowAddSubjectModal(true);
         }}
-        onAddActivity={() => {
+        onAddCalendarEvent={() => {
           if (sessionRestricted && !familyUserControls.allowed('events')) {
             Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
             return;
           }
-          setTaskModalDate(new Date());
-          setShowTaskModal(true);
+          openCreateModal('calendar_event', { date: new Date() });
+          setShowNewMenu(false);
+        }}
+        onAddLesson={() => {
+          handleTabChange('subjects', 'subjects');
+          setShowNewMenu(false);
+        }}
+        onAddAssignment={() => {
+          if (sessionRestricted && !familyUserControls.allowed('events')) {
+            Alert.alert('Not available', 'Your family admin has disabled creating or editing events.');
+            return;
+          }
+          openCreateModal('assignment', { date: new Date(), eventType: 'Assignment' });
           setShowNewMenu(false);
         }}
         onAddSyllabus={() => setShowSyllabusUpload(true)}
         onAIGenerate={() => setShowAIToolsModal(true)}
       />
 
-      {/* Year Planning Wizard - Now handled by IntelligenceHub */}
-      {/* Removed: PlanYearWizard instance - use IntelligenceHub → Planner AI → Plan the Year */}
-
-      {/* Global Task Create Modal - available from any screen (planner, home, family, etc.) */}
-      {showTaskModal ? (
-      <TaskCreateModal
-        visible
-          onClose={() => {
-            setShowTaskModal(false);
-            setTaskModalChildId(null);
-            setTaskModalChildIds([]);
-            setTaskModalDefaultSubjectId(null);
-            setTaskModalDefaultEventType(null);
-            setTaskModalDefaultPlacement('calendar'); // Reset to default for next time
-            setTaskModalDefaultStartTime(null);
-            setTaskModalDefaultTitle(null);
-            setTaskModalDefaultMaterialId(null);
-            setTaskModalSubmittalAfterCreate(false);
-            taskModalSubmittalAfterCreateRef.current = false;
-          }}
+      {/* Focused create modals — available from any screen */}
+      {createModalKind === 'calendar_event' ? (
+        <CalendarEventCreateModal
+          visible
+          onClose={resetCreateModalState}
+          onCreated={handleCreateModalCreated}
           defaultDate={taskModalDate}
           defaultChildId={taskModalChildId}
           defaultChildIds={taskModalChildIds}
           defaultSubjectId={taskModalDefaultSubjectId}
-          defaultEventType={taskModalDefaultEventType}
-          defaultPlacement={taskModalDefaultPlacement}
-          defaultStartTime={taskModalDefaultStartTime}
           defaultTitle={taskModalDefaultTitle}
           defaultMaterialId={taskModalDefaultMaterialId}
+          defaultStartTime={taskModalDefaultStartTime}
           familyId={familyId}
           familyMembers={familyMembersForEventing}
-          lists={[
-            { id: 'inbox', name: 'Inbox' },
-            ...children.map(child => ({
-              id: `child:${child.id}`,
-              name: child.first_name || child.name || 'Unknown'
-            }))
-          ]}
-          onCreated={async (task) => {
-            if (taskModalSubmittalAfterCreateRef.current && task?.id) {
-              setSubmittalRequestContext({ event: task, assignment: null });
-              setTaskModalSubmittalAfterCreate(false);
-              taskModalSubmittalAfterCreateRef.current = false;
-            }
-            // Refresh calendar data if we're on a calendar screen
-            if (activeTab === 'calendar' || activeTab === 'planner') {
-              // Trigger a refresh by changing and changing back the tab
-              // Or we could emit an event that WebContent listens to
-              if (Platform.OS === 'web') {
-                window.dispatchEvent(new CustomEvent('refreshCalendar'));
-              }
-            }
-          }}
-      />
+        />
+      ) : null}
+
+      {createModalKind === 'assignment' ? (
+        <AssignmentCreateModal
+          visible
+          onClose={resetCreateModalState}
+          onCreated={handleCreateModalCreated}
+          defaultDate={taskModalDate}
+          defaultChildId={taskModalChildId}
+          defaultChildIds={taskModalChildIds}
+          defaultSubjectId={taskModalDefaultSubjectId}
+          defaultTitle={taskModalDefaultTitle}
+          defaultMaterialId={taskModalDefaultMaterialId}
+          defaultEventType={taskModalDefaultEventType}
+          requireParentApprovalDefault={taskModalSubmittalAfterCreate}
+          familyId={familyId}
+          familyMembers={familyMembersForEventing}
+        />
       ) : null}
 
       {submittalRequestContext ? (
@@ -4780,7 +4403,8 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         }}
         onOpenPlanYear={() => {
           setShowAIToolsModal(false);
-          setShowPlanYearWizard(true);
+          dispatchOpenSchoolYearSettings();
+          handleTabChange('settings', 'planner-settings');
         }}
         onOpenRebalance={() => {
           setShowAIToolsModal(false);
@@ -4829,13 +4453,7 @@ export default function WebLayout({ navigation, routeParams, session: propSessio
         familyId={familyId}
       />
 
-      <PlanYearWizard
-        visible={showPlanYearWizard}
-        onClose={() => setShowPlanYearWizard(false)}
-        familyId={familyId}
-      />
-
-      {/* Global Add Child Modal - so Plan Year and other screens can open it */}
+      {/* Global Add Child Modal */}
       <AddChildModal
         visible={showAddChildModal}
         onClose={() => setShowAddChildModal(false)}

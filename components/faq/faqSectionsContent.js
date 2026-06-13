@@ -33,7 +33,7 @@ export const FAMILY_FAQ_SECTIONS = [
       {
         id: 'gs-1',
         q: 'How do I begin with Learnadoodle?',
-        a: 'A clear setup sequence is: (1) open Settings > Family Members and add each child, (2) open the Subjects tab and create core subjects, (3) open Planner and add your first week of events, (4) open Subjects > Schedule to set recurring cadence and learner metrics, and (5) open Settings > Planning Preferences to set household defaults such as total class days and date ranges.',
+        a: 'A clear setup sequence is: (1) open Settings > Family Members and add each child, (2) open the Subjects tab and create core subjects, (3) open Planner and add your first week of events, (4) open Subjects > Schedule to set recurring cadence and learner metrics, and (5) open Settings > School Year Settings to set household defaults such as total class days and date ranges.',
       },
       {
         id: 'gs-2',
@@ -48,7 +48,7 @@ export const FAMILY_FAQ_SECTIONS = [
       {
         id: 'gs-4',
         q: 'Where do I go in the app for common tasks?',
-        a: 'Use Home for daily status and quick review, Planner for creating and editing events, the Subjects tab for curriculum structure and schedule settings, the Materials tab for storing and reusing resources, Settings > Family Members for invites and permissions, and Settings > Planning Preferences for household scheduling defaults.',
+        a: 'Use Home for daily status and quick review, Planner for creating and editing events, the Subjects tab for curriculum structure and schedule settings, the Materials tab for storing and reusing resources, Settings > Family Members for invites and permissions, and Settings > School Year Settings for household scheduling defaults.',
       },
     ],
   },

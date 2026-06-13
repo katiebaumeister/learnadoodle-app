@@ -13,7 +13,7 @@ export const PLANNER_SMART_ACTION_SECTIONS = [
     id: 'plan-ahead',
     title: 'Plan Ahead',
     modes: [
-      { id: 'plan-year', title: 'Plan the Year' },
+      { id: 'school-year-settings', title: 'School Year Settings' },
       { id: 'what-if', title: 'What-If Scenarios' },
     ],
   },

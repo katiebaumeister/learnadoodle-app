@@ -5,7 +5,7 @@
  * Future scheduling can consume these lessons to fill plan slots or create events.
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,7 +20,8 @@ import {
 } from 'react-native';
 import { X, Plus, Trash2, ChevronUp, ChevronDown, Sparkles, List } from 'lucide-react';
 import { STRINGS } from '../lib/i18n/strings';
-import { commitManualDraft } from '../lib/services/curriculumClient';
+import { commitManualDraft, fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
+import { draftFromCurriculumStructure } from '../lib/subjectUnitsEditorDraft';
 import { useToast } from './Toast';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 
@@ -68,20 +69,66 @@ export default function ManualCurriculumBuilderModal({
   subjectName,
   familyId,
   onSaved,
+  loadExisting = false,
+  academicYearId = null,
+  replaceExisting = false,
+  createCalendarEvents = false,
+  headerTitle = null,
 }) {
   const toast = useToast();
   const overlayRef = useRef(null);
   useModalStackElevation(overlayRef, visible, 10002);
   const [draft, setDraft] = useState({ title: null, units: [emptyUnit(1)] });
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expandedUnitIndex, setExpandedUnitIndex] = useState(0);
+  const [loadedExisting, setLoadedExisting] = useState(false);
 
   const resetDraft = useCallback(() => {
     setDraft({ title: null, units: [emptyUnit(1)] });
     setError(null);
     setExpandedUnitIndex(0);
+    setLoadedExisting(false);
   }, []);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    if (!loadExisting || !familyId || !subjectId) {
+      resetDraft();
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const { data, error: fetchError } = await fetchSubjectCurriculumEventsStructure(
+          familyId,
+          subjectId,
+          academicYearId
+        );
+        if (cancelled) return;
+        if (fetchError) {
+          resetDraft();
+          return;
+        }
+        const mapped = draftFromCurriculumStructure(data);
+        if (mapped?.units?.length) {
+          setDraft(mapped);
+          setExpandedUnitIndex(0);
+          setLoadedExisting(true);
+        } else {
+          resetDraft();
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, loadExisting, familyId, subjectId, academicYearId, resetDraft]);
 
   const handleClose = useCallback(() => {
     resetDraft();
@@ -213,7 +260,12 @@ export default function ManualCurriculumBuilderModal({
             }),
           })),
         },
+        replace_existing: replaceExisting || loadedExisting,
+        create_calendar_events: createCalendarEvents,
       };
+      if (academicYearId) {
+        payload.academic_year_id = academicYearId;
+      }
       const { data, err } = await commitManualDraft(payload);
       if (err || !data) {
         setError(err?.message || s('courseStructure.manualBuilder.errorSave'));
@@ -227,7 +279,10 @@ export default function ManualCurriculumBuilderModal({
     } finally {
       setSaving(false);
     }
-  }, [draft, subjectId, familyId, subjectName, onSaved, toast, handleClose]);
+  }, [draft, subjectId, familyId, subjectName, onSaved, toast, handleClose, replaceExisting, loadedExisting, createCalendarEvents, academicYearId]);
+
+  const displayTitle = headerTitle
+    || (loadedExisting ? `Edit units — ${subjectName || 'Subject'}` : s('courseStructure.manualBuilder.title'));
 
   if (!visible) return null;
 
@@ -240,19 +295,26 @@ export default function ManualCurriculumBuilderModal({
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <List size={22} color="#475569" />
-              <Text style={styles.title}>{s('courseStructure.manualBuilder.title')}</Text>
+              <Text style={styles.title}>{displayTitle}</Text>
             </View>
             <TouchableOpacity onPress={handleClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <X size={24} color="#6b7280" />
             </TouchableOpacity>
           </View>
-          {error ? (
+          {loading ? (
+            <View style={styles.loadingWrap}>
+              <ActivityIndicator size="large" color="#6BB3E8" />
+              <Text style={styles.loadingText}>Loading units…</Text>
+            </View>
+          ) : null}
+          {!loading && error ? (
             <View style={styles.errorBanner}>
               <Text style={styles.errorText}>{error}</Text>
               <TouchableOpacity onPress={() => setError(null)}><Text style={styles.errorDismiss}>Dismiss</Text></TouchableOpacity>
             </View>
           ) : null}
 
+          {!loading ? (
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
             <View style={{ padding: 12, backgroundColor: '#f0f9ff', borderRadius: 8, marginBottom: 16, borderWidth: 1, borderColor: '#bae6fd' }}>
               <Text style={{ fontSize: 12, color: '#0369a1', lineHeight: 16 }}>
@@ -351,6 +413,7 @@ export default function ManualCurriculumBuilderModal({
               <Text style={styles.addUnitButtonText}>{s('courseStructure.manualBuilder.addUnit')}</Text>
             </TouchableOpacity>
             </ScrollView>
+          ) : null}
 
           <View style={styles.footer}>
             <TouchableOpacity style={styles.secondaryButton} onPress={handleClose}>
@@ -359,7 +422,7 @@ export default function ManualCurriculumBuilderModal({
             <TouchableOpacity
               style={[styles.primaryButton, saving && styles.primaryButtonDisabled]}
               onPress={handleSave}
-              disabled={saving || !draft.units?.length || !draft.units.every((u) => u.lessons?.length > 0)}
+              disabled={saving || loading || !draft.units?.length || !draft.units.every((u) => u.lessons?.length > 0)}
             >
               {saving ? (
                 <><ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} /><Text style={styles.primaryButtonText}>{s('courseStructure.manualBuilder.saving')}</Text></>
@@ -429,4 +492,6 @@ const styles = StyleSheet.create({
   typeWrap: { flex: 1 },
   lessonActionsRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 20, borderTopWidth: 1, borderTopColor: '#e5e7eb', gap: 12 },
+  loadingWrap: { paddingVertical: 48, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingText: { fontSize: 14, color: '#64748B' },
 });

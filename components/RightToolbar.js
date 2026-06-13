@@ -76,7 +76,7 @@ export default function RightToolbar({
   // Group A: Core, Everyday Planner Actions (always visible)
   const coreTools = [
     ...(onBuildPlan ? [{ key: 'build-plan', icon: CalendarPlus, label: 'Schedule setup', onPress: onBuildPlan, color: '#0d9488' }] : []),
-    ...(onEditPlan ? [{ key: 'edit-plan', icon: Pencil, label: 'Planning preferences', onPress: onEditPlan, color: '#6366f1' }] : []),
+    ...(onEditPlan ? [{ key: 'edit-plan', icon: Pencil, label: 'School Year Settings', onPress: onEditPlan, color: '#6366f1' }] : []),
     ...(onAttendance ? [{ key: 'attendance', icon: ClipboardList, label: 'Attendance', onPress: onAttendance, color: '#059669' }] : []),
     { 
       key: 'rebalance', 

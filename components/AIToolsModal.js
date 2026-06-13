@@ -63,10 +63,10 @@ export default function AIToolsModal({
       description: 'Help me think beyond just this week.',
       modes: [
         {
-          id: 'plan-year',
-          title: 'Plan the Year',
-          description: 'Lay out a high-level plan for the whole year or term.',
-          tagline: 'A bird\'s-eye view of the year, made practical',
+          id: 'school-year-settings',
+          title: 'School Year Settings',
+          description: 'Set learning days, hours, holidays, breaks, and year-wide targets.',
+          tagline: 'Your school year foundation in one place',
           requires: () => onPlanYear !== undefined,
         },
         {
@@ -282,7 +282,7 @@ export default function AIToolsModal({
       setSelectedMode(mode);
       setAiModalKey(mode.id);
       setShowAIModal(true);
-    } else if (mode.id === 'plan-year' && onPlanYear) {
+    } else if ((mode.id === 'school-year-settings' || mode.id === 'plan-year') && onPlanYear) {
       onClose(); // Close main modal for these
       onPlanYear();
     } else if (mode.id === 'heatmap' && onHeatmap) {

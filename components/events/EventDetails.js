@@ -1183,6 +1183,9 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
   );
   const [unit, setUnit] = useState(() => initialAcademicStringsFromEvent(event).unit);
   const [lesson, setLesson] = useState(() => initialAcademicStringsFromEvent(event).lesson);
+  const [curriculumLessonId, setCurriculumLessonId] = useState(
+    () => (event?.curriculum_lesson_id != null ? String(event.curriculum_lesson_id).trim() : '')
+  );
   const [grade, setGrade] = useState(() => initialAcademicStringsFromEvent(event).grade);
   const [percentOfTotalGrade, setPercentOfTotalGrade] = useState(() => initialAcademicStringsFromEvent(event).percent);
   const [location, setLocation] = useState('');
@@ -1316,6 +1319,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
     setSubjectIds(normalized);
     setSubjectId(normalized[0] || null);
     setLesson('');
+    setCurriculumLessonId('');
     setUnit('');
     setShowLessonDropdown(false);
   }, []);
@@ -1376,8 +1380,10 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                 const lessonTitle = String(l?.title || '').trim();
                 if (!lessonTitle) return;
                 const lessonWithUnit = unitTitle ? `${lessonTitle} (${unitTitle})` : lessonTitle;
+                const lessonId = l?.id != null ? String(l.id).trim() : '';
                 next.push({
-                  key: `${sid}::${unitTitle}::${lessonTitle}`,
+                  key: lessonId ? `${sid}::${lessonId}` : `${sid}::${unitTitle}::${lessonTitle}`,
+                  lessonId,
                   lessonTitle,
                   unitTitle,
                   subjectId: sid,
@@ -2167,6 +2173,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
       lessonStr = String(event.title).trim();
     }
     setLesson(lessonStr);
+    setCurriculumLessonId(event?.curriculum_lesson_id != null ? String(event.curriculum_lesson_id).trim() : '');
     setGrade(event.grade || '');
     setPercentOfTotalGrade(event.percent_of_total_grade ? event.percent_of_total_grade.toString() : '');
     
@@ -4150,6 +4157,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
         // Mirror unit/lesson for APIs that read curriculum_unit_title / events.lesson (subject structure, plan slot labels).
         curriculum_unit_title: (unit && unit.trim()) ? unit.trim() : null,
         lesson: (lesson && lesson.trim()) ? lesson.trim() : null,
+        curriculum_lesson_id: curriculumLessonId ? String(curriculumLessonId).trim() : null,
         grade: (grade && grade.trim()) ? grade.trim() : null,
         percent_of_total_grade: percentOfTotalGrade.trim() ? (() => {
           const parsed = parseFloat(percentOfTotalGrade.trim());
@@ -6400,6 +6408,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                         <TouchableOpacity
                           onPress={() => {
                             setLesson('');
+                            setCurriculumLessonId('');
                             setUnit('');
                             setShowLessonDropdown(false);
                           }}
@@ -6408,13 +6417,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                           <Text style={[styles.selectOptionText, !lesson && styles.selectOptionTextActive]}>None</Text>
                         </TouchableOpacity>
                         {lessonOptions.length > 0 ? lessonOptions.map((opt) => {
-                          const active = String(lesson || '').trim() === opt.lessonTitle;
+                          const active = (opt.lessonId && curriculumLessonId === opt.lessonId)
+                            || String(lesson || '').trim() === opt.lessonTitle;
                           return (
                             <TouchableOpacity
                               key={opt.key}
                               onPress={() => {
                                 setLesson(opt.lessonTitle);
                                 setUnit(opt.unitTitle || '');
+                                setCurriculumLessonId(opt.lessonId || '');
                                 setShowLessonDropdown(false);
                               }}
                               style={[styles.selectOption, active && styles.selectOptionActive]}
@@ -6442,6 +6453,7 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                     <TouchableOpacity
                       onPress={() => {
                         setLesson('');
+                        setCurriculumLessonId('');
                         setUnit('');
                         setShowLessonDropdown(false);
                       }}
@@ -6450,13 +6462,15 @@ export default function EventDetails({ event, onEventUpdated, onEventDeleted, fa
                       <Text style={[styles.selectOptionText, !lesson && styles.selectOptionTextActive]}>None</Text>
                     </TouchableOpacity>
                     {lessonOptions.length > 0 ? lessonOptions.map((opt) => {
-                      const active = String(lesson || '').trim() === opt.lessonTitle;
+                      const active = (opt.lessonId && curriculumLessonId === opt.lessonId)
+                        || String(lesson || '').trim() === opt.lessonTitle;
                       return (
                         <TouchableOpacity
                           key={opt.key}
                           onPress={() => {
                             setLesson(opt.lessonTitle);
                             setUnit(opt.unitTitle || '');
+                            setCurriculumLessonId(opt.lessonId || '');
                             setShowLessonDropdown(false);
                           }}
                           style={[styles.selectOption, active && styles.selectOptionActive]}

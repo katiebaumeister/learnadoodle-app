@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, Platform, ScrollView, StyleSheet, Modal, Switch } from 'react-native';
-import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, GraduationCap, MapPin } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ChevronDown, Plus, AlertCircle, Check, GraduationCap, MapPin, FileText } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from './Toast';
 import AddSubjectModal from './AddSubjectModal';
@@ -53,7 +53,7 @@ const CALENDAR_TODAY_BORDER = '#C4B5FD';
 const CHIP_BG = '#f3f4f6';
 const CHIP_BORDER = '#e5e7eb';
 const EVENT_MODAL_MAX_WIDTH = 740;
-const EVENT_NOTES_INPUT_MIN_HEIGHT = 44;
+const EVENT_NOTES_INPUT_MIN_HEIGHT = 80;
 const EVENT_NOTES_INPUT_MAX_HEIGHT = 240;
 
 function ModalFormSection({ title, children, first = false }) {
@@ -424,6 +424,7 @@ export default function TaskCreateModal({
   const [eventType, setEventType] = useState('Lesson'); // Default to "Lesson" for new events
   const [showAcademicDetails, setShowAcademicDetails] = useState(false);
   const [showLogisticDetails, setShowLogisticDetails] = useState(false);
+  const [showNotesSection, setShowNotesSection] = useState(false);
   const [workSpec, setWorkSpec] = useState(() => defaultWorkSpec('Assignment'));
   const [subjectIds, setSubjectIds] = useState(defaultSubjectId ? [defaultSubjectId] : []);
   const [subjectId, setSubjectId] = useState(defaultSubjectId || null);
@@ -1562,6 +1563,7 @@ export default function TaskCreateModal({
       setGoalLink(null);
       setShowAcademicDetails(false);
       setShowLogisticDetails(false);
+      setShowNotesSection(false);
       setShowMaterialDropdown(false);
       setShowSubjectDropdown(false);
       setShowGoalDropdown(false);
@@ -2587,7 +2589,7 @@ export default function TaskCreateModal({
       } else if (recurrenceEndType === 'on' && !recurrenceEndDate) {
         errors.recurrenceEnd = 'Select an end date for the series';
       } else if (recurrenceEndType === 'term_end' && !recurrenceSavedYearEnd) {
-        errors.recurrenceEnd = 'Set a school-year end date in Planning Preferences first';
+        errors.recurrenceEnd = 'Set a school-year end date in School Year Settings first';
       }
     }
 
@@ -2847,7 +2849,7 @@ export default function TaskCreateModal({
           window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
           window.dispatchEvent(new CustomEvent('refreshSubjects'));
         }
-        toast.push('Day off saved to planning preferences', 'success');
+        toast.push('Day off saved to school year settings', 'success');
         handleDismiss();
         setSubmitting(false);
         return;
@@ -4965,20 +4967,30 @@ export default function TaskCreateModal({
             </ModalFormSection>
             ) : null}
 
-            <View style={styles.formGroup}>
-              <Text style={styles.fieldLabel}>Notes</Text>
-              <TextInput
-                placeholder="Add any additional notes about this event"
-                placeholderTextColor={MUTED}
-                value={notes}
-                onChangeText={setNotes}
-                style={[styles.fieldInput, styles.notesInput, { height: notesInputHeight }]}
-                multiline
-                scrollEnabled={notesInputHeight >= EVENT_NOTES_INPUT_MAX_HEIGHT}
-                onContentSizeChange={handleNotesContentSizeChange}
-                textAlignVertical="top"
-              />
-            </View>
+            <ModalSectionCard
+              Icon={FileText}
+              title="Additional notes"
+              subtitle="Anything else to remember"
+              expanded={showNotesSection}
+              onPress={() => setShowNotesSection((open) => !open)}
+              accent="#9ECFFB"
+            >
+              <View style={styles.accordionContent}>
+                <View style={styles.notesField}>
+                  <TextInput
+                    placeholder="Add any additional notes about this event"
+                    placeholderTextColor={MUTED}
+                    value={notes}
+                    onChangeText={setNotes}
+                    style={[styles.notesTextArea, { height: notesInputHeight }]}
+                    multiline
+                    scrollEnabled={notesInputHeight >= EVENT_NOTES_INPUT_MAX_HEIGHT}
+                    onContentSizeChange={handleNotesContentSizeChange}
+                    textAlignVertical="top"
+                  />
+                </View>
+              </View>
+            </ModalSectionCard>
 
             {familyId ? (
               <View style={styles.formGroup}>
@@ -7060,6 +7072,31 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 10,
     textAlignVertical: 'top',
+  },
+  accordionContent: {
+    marginTop: 12,
+    paddingTop: 8,
+  },
+  notesField: {
+    marginBottom: 0,
+  },
+  notesTextArea: {
+    borderWidth: 1,
+    borderColor: 'rgba(15, 23, 42, 0.08)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingTop: 12,
+    paddingBottom: 12,
+    backgroundColor: '#ffffff',
+    fontSize: 14,
+    color: FG,
+    minHeight: EVENT_NOTES_INPUT_MIN_HEIGHT,
+    textAlignVertical: 'top',
+    width: '100%',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      outlineStyle: 'none',
+    }),
   },
   footer: {
     flexDirection: 'row',

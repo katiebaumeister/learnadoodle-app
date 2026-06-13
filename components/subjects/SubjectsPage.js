@@ -2790,7 +2790,7 @@ export default function SubjectsPage({
           style={styles.learnadoodleModalWrap}
         >
           <AppModalShell
-            title="Planning Preferences"
+            title="School Year Settings"
             onClose={requestPlanningPreferencesClose}
             disableShellScroll
             scrollerStyle={styles.learnadoodleModalScroller}

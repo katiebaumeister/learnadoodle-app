@@ -4,6 +4,10 @@ import { Sparkles, X, Plus, BookOpen } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { apiRequest } from '../../lib/apiClient';
 import { STRINGS } from '../../lib/i18n/strings';
+import {
+  dispatchNavigateToTab,
+  storePendingMagicExtractPaste,
+} from '../../lib/planYearRetirement';
 
 /**
  * Magic Extract Component
@@ -125,21 +129,36 @@ export default function MagicExtract({ uploadId, onExtracted }) {
               </>
             ) : (
               <ScrollView style={styles.resultsContainer}>
-                {/* Primary: Attach to course — opens Plan My Year */}
+                {/* Primary: Add extracted lines to subject units */}
                 <TouchableOpacity
                   style={styles.attachToCourseButton}
                   onPress={() => {
+                    const lessonLines = (results?.lessons || [])
+                      .map((lesson) => String(lesson?.title || lesson?.name || '').trim())
+                      .filter(Boolean);
+                    const assignmentLines = (results?.assignments || [])
+                      .map((assignment) => String(assignment?.title || '').trim())
+                      .filter(Boolean);
+                    const pasteBody = [
+                      ...lessonLines,
+                      ...assignmentLines.map((title) => `Assignment: ${title}`),
+                    ].join('\n');
+                    if (pasteBody) {
+                      storePendingMagicExtractPaste(pasteBody);
+                    }
                     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('openPlanYearModal', { detail: { from: 'magic_extract' } }));
+                      dispatchNavigateToTab('subjects');
                     }
                     setShowModal(false);
                     setResults(null);
                   }}
                 >
                   <BookOpen size={18} color="#fff" />
-                  <Text style={styles.attachToCourseButtonText}>{STRINGS.magicExtract.actions.attachToCourse}</Text>
+                  <Text style={styles.attachToCourseButtonText}>Add to subject units</Text>
                 </TouchableOpacity>
-                <Text style={[styles.modalText, { marginBottom: 16 }]}>Add these drafts to a unit or backlog via Schedule and Planning Preferences.</Text>
+                <Text style={[styles.modalText, { marginBottom: 16 }]}>
+                  Opens Learning. Pick a subject, then Edit units → Paste plain text (extracted lines are copied for you).
+                </Text>
 
                 {results.assignments && results.assignments.length > 0 && (
                   <View style={styles.section}>

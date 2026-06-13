@@ -15,7 +15,6 @@ import { proposeReschedule, getWeekStart, freezeWeek, getWeeklyPacket } from '..
 import { getHolidaysForRange } from '../../lib/services/academicYearClient';
 import { rescheduleEvent, createEvent as createEventWithOffline, deleteEvent as deleteEventWithOffline } from '../../lib/services/plannerClientWithOffline';
 import * as offlineStorage from '../../lib/services/offlineStorage';
-import PlanYearWizard from '../year/PlanYearWizard';
 import SaveTemplateModal from '../templates/SaveTemplateModal';
 // import ConstraintsTimeline from '../../app/components/schedule/ConstraintsTimeline';
 import { logDragDrop, logDeleteEvent } from '../../app/services/plannerInstrumentation';
@@ -329,7 +328,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   const [loadingReschedule, setLoadingReschedule] = useState(false);
   const [hasScrolledTo7AM, setHasScrolledTo7AM] = useState(false);
   const [focusedChildId, setFocusedChildId] = useState(null); // For focus mode
-  const [showYearWizard, setShowYearWizard] = useState(false);
   const initialScrollOffset = { x: 0, y: 420 }; // Start at 7 AM (7 hours * 60px)
   const [draggedEventId, setDraggedEventId] = useState(null); // Track which event is being dragged
   const [dragState, setDragState] = useState(null); // { eventId, startX, startY, currentX, currentY }
@@ -678,10 +676,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
   const handleWhatIf = async () => {
     // TODO: Implement what-if modal
     alert('What-if Analysis - Coming soon!');
-  };
-
-  const handlePlanYear = () => {
-    setShowYearWizard(true);
   };
 
   const handleEventClick = (event) => {
@@ -2651,26 +2645,6 @@ export default function PlannerWeek({ familyId, onAddActivity, onOpenAIPlanner, 
               setLoadingReschedule(false);
             }
           }
-        }}
-      />
-
-      {/* Year Planning Wizard */}
-      <PlanYearWizard
-        familyId={familyId}
-        children={(data.children || []).map(c => ({
-          id: c.id,
-          first_name: c.name || c.first_name,
-          avatar_url: c.avatar || c.avatar_url,
-          archived: false,
-        }))}
-        visible={showYearWizard}
-        onClose={() => setShowYearWizard(false)}
-        onComplete={(yearPlan) => {
-          Alert.alert('Success', 'Year plan created successfully!');
-          // Refresh calendar data
-          setLocalEvents({});
-          handleWeekStartChange(new Date(weekStart));
-          setShowYearWizard(false);
         }}
       />
 

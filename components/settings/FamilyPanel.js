@@ -27,7 +27,7 @@ import AddChildModal from '../AddChildModal';
 import InviteChildModal from '../InviteChildModal';
 import AddSubjectModal from '../AddSubjectModal';
 import AddMaterialModal from '../materials/AddMaterialModal';
-import TaskCreateModal from '../TaskCreateModal';
+import CalendarEventCreateModal from '../create/CalendarEventCreateModal';
 import ParsePlainTextModal from '../ParsePlainTextModal';
 import IDCardView from '../profile/IDCardView';
 import PlannerSettingsContent from './PlannerSettingsContent';
@@ -6054,7 +6054,18 @@ export default function FamilyPanel({ user, family: propFamily = null, familyId:
       />
       <AddMaterialModal visible={showAddMaterialModal} onClose={() => setShowAddMaterialModal(false)} familyId={family?.id || familyId} />
       {showTaskModal ? (
-        <TaskCreateModal visible onClose={() => setShowTaskModal(false)} familyId={family?.id || familyId} />
+        <CalendarEventCreateModal
+          visible
+          onClose={() => setShowTaskModal(false)}
+          familyId={family?.id || familyId}
+          familyMembers={(children || []).map((child) => ({
+            id: child.id,
+            child_id: child.id,
+            first_name: child.first_name || child.name || 'Unknown',
+            name: child.first_name || child.name || 'Unknown',
+            role: 'child',
+          }))}
+        />
       ) : null}
       <GoogleDriveImportModal
         visible={showGoogleDriveImportModal}

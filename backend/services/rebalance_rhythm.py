@@ -200,7 +200,7 @@ def _compute_planner_synopsis(
             "We can still spread lessons across your allowed weekdays and surface backlog or syllabus items."
         )
         pace_detail = (
-            "Showing rhythm only from your current schedule and planner weekdays — add targets in Plan My Year "
+            "Showing rhythm only from your current schedule and planner weekdays — add targets in School Year Settings "
             "for pace comparisons."
         )
     else:

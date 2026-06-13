@@ -60,6 +60,8 @@ export function AppCalendarDatePickerModal({
   onSelectDate,
   minDate = null,
   maxDate = null,
+  title = null,
+  subtitle = null,
 }) {
   const selectedKey =
     selectedDate && !isNaN(selectedDate.getTime()) ? selectedDate.getTime() : null;
@@ -116,6 +118,31 @@ export function AppCalendarDatePickerModal({
         onPress={onClose}
       >
         <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={modalCardStyle}>
+          {title ? (
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: '700',
+                color: FG,
+                marginBottom: subtitle ? 4 : 12,
+                ...titleFont,
+              }}
+            >
+              {title}
+            </Text>
+          ) : null}
+          {subtitle ? (
+            <Text
+              style={{
+                fontSize: 13,
+                color: SUB,
+                marginBottom: 12,
+                ...titleFont,
+              }}
+            >
+              {subtitle}
+            </Text>
+          ) : null}
           <View
             style={{
               flexDirection: 'row',

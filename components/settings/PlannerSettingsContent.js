@@ -1,5 +1,5 @@
 /**
- * Planning Preferences - Family default targets, public holidays, custom days, and ranges.
+ * School Year Settings — global learning days, hours, attendance, holidays, and breaks.
  * Not tied to any plan. These defaults are used when creating/editing a plan year.
  * Flat layout: static sections, no accordions, Profile-style rhythm.
  */
@@ -25,12 +25,14 @@ import {
   deleteExclusion,
   saveExcludedPublicHolidayDates,
 } from '../../lib/services/plannerSettingsClient';
+import { SCHOOL_YEAR_SETTINGS_UI } from '../planner/planningPreferencesUiCopy';
 import { getPublicHolidaysForRange } from '../../lib/services/academicYearClient';
 import { supabase } from '../../lib/supabase';
 import { apiRequest } from '../../lib/apiClient';
 import { useToast } from '../Toast';
 import { PLANNING_PREFERENCES_UI } from '../planner/planningPreferencesUiCopy';
 import { PlannerPreferenceDateField } from '../ui/AppCalendarDatePickerModal';
+import MaskedTimeInput from '../ui/MaskedTimeInput';
 import { LEARNADOODLE_LIGHT_BLUE } from '../../theme/comingSoonModalTheme';
 import { designTokens } from '../../theme/designTokens';
 import { SettingsLayout, SettingsTypography } from './settingsDesignTokens';
@@ -240,7 +242,7 @@ const minutesToDisplayTime = (totalMinutes) => {
 };
 
 const parseTimeToMinutesOrNull = (value) => {
-  const raw = String(value || '').trim().toLowerCase();
+  const raw = String(value || '').trim().toLowerCase().replace(/_/g, '');
   if (!raw) return null;
   const normalized = raw.replace(/\s+/g, '');
   const ampmMatch = normalized.match(/^(\d{1,2})(?::(\d{1,2}))?(am|pm)$/);
@@ -1180,7 +1182,7 @@ export default function PlannerSettingsContent({
     async (updates) => {
       if (!familyId) return;
       if (readOnly) {
-        toast.push('Your family admin has disabled changing planning preferences.', 'error');
+        toast.push('Your family admin has disabled changing school year settings.', 'error');
         return false;
       }
       const s = stateRef.current;
@@ -1450,7 +1452,7 @@ export default function PlannerSettingsContent({
 
   const handleAttendanceTrackingModeChange = useCallback(async (mode) => {
     if (readOnly) {
-      toast.push('Your family admin has disabled changing planning preferences.', 'error');
+      toast.push('Your family admin has disabled changing school year settings.', 'error');
       return;
     }
     const normalizedMode = getAttendanceMode({ academicYearMode: mode });
@@ -1620,7 +1622,7 @@ export default function PlannerSettingsContent({
   };
   const handlePreferredLearningDayToggle = useCallback((dayNum) => {
     if (readOnly) {
-      toast.push('Your family admin has disabled changing planning preferences.', 'error');
+      toast.push('Your family admin has disabled changing school year settings.', 'error');
       return;
     }
     const normalizedDay = Number(dayNum);
@@ -1772,7 +1774,7 @@ export default function PlannerSettingsContent({
     if (subjectTargetSaveTimeoutRef.current) clearTimeout(subjectTargetSaveTimeoutRef.current);
     subjectTargetSaveTimeoutRef.current = setTimeout(async () => {
       if (readOnly) {
-        toast.push('Your family admin has disabled changing planning preferences.', 'error');
+        toast.push('Your family admin has disabled changing school year settings.', 'error');
         return;
       }
       const mode = merged.mode || 'none';
@@ -1947,26 +1949,6 @@ export default function PlannerSettingsContent({
     minHeight: 40,
     minWidth: 120,
     alignSelf: 'flex-start',
-  };
-  const scheduleTimeInputWrap = {
-    alignSelf: 'flex-start',
-    width: Platform.OS === 'web' ? 116 : '100%',
-    maxWidth: Platform.OS === 'web' ? 116 : 180,
-  };
-  const scheduleTimeInputStyle = {
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    color: '#111827',
-    backgroundColor: '#ffffff',
-    fontSize: 14,
-    width: '100%',
-    ...(Platform.OS === 'web' && {
-      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      outlineStyle: 'none',
-    }),
   };
   const inlineSwitchRowStyle = {
     flexDirection: 'row',
@@ -2376,7 +2358,7 @@ export default function PlannerSettingsContent({
       <View style={{ paddingHorizontal: 0, paddingTop: 0 }}>
         {embeddedInModal && !hideEmbeddedHeader ? (
           <View style={embeddedTitleRowStyle}>
-            <Text style={embeddedTitleStyle}>Planning Preferences</Text>
+            <Text style={embeddedTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.embeddedTitle}</Text>
             <TouchableOpacity
               onPress={handleRequestClose}
               style={embeddedCloseButtonStyle}
@@ -2399,7 +2381,7 @@ export default function PlannerSettingsContent({
             }}
           >
             <Text style={{ fontSize: 13, color: '#374151', lineHeight: 20 }}>
-              Your family admin has turned off changes to planning preferences. You can still review the settings below.
+              Your family admin has turned off changes to school year settings. You can still review the settings below.
             </Text>
           </View>
         ) : null}
@@ -2462,9 +2444,9 @@ export default function PlannerSettingsContent({
             ) : null}
           </View>
         ) : null}
-        {/* Learning defaults */}
+        {/* Learning days & hours */}
         <View style={[sectionBucketStyle, sectionBucketFirstStyle]}>
-          <Text style={sectionBucketTitleStyle}>Learning defaults</Text>
+          <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.learningDays}</Text>
           <View style={formStackStyle}>
             {renderDateRangeField(
               'School year',
@@ -2506,33 +2488,25 @@ export default function PlannerSettingsContent({
               </View>
             </View>
             <View style={formFieldStyle}>
-              <Text style={formFieldLabelStyle}>Usual learning hours</Text>
+              <Text style={formFieldLabelStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.learningHours}</Text>
               <View style={dateTimeInlineRow}>
                 <View style={scheduleColumn}>
                   <Text style={formFieldLabelStyle}>Start time</Text>
-                  <View style={scheduleTimeInputWrap}>
-                    <TextInput
-                      value={learningStartTime}
-                      onChangeText={setLearningStartTime}
-                      onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
-                      placeholder="8:00 AM"
-                      placeholderTextColor={MUTED}
-                      style={scheduleTimeInputStyle}
-                    />
-                  </View>
+                  <MaskedTimeInput
+                    value={learningStartTime}
+                    onChangeText={setLearningStartTime}
+                    onBlur={(nextValue) => persistLearningTimes(nextValue, learningEndTime)}
+                    placeholder="8:00 AM"
+                  />
                 </View>
                 <View style={scheduleColumn}>
                   <Text style={formFieldLabelStyle}>End time</Text>
-                  <View style={scheduleTimeInputWrap}>
-                    <TextInput
-                      value={learningEndTime}
-                      onChangeText={setLearningEndTime}
-                      onBlur={() => persistLearningTimes(learningStartTime, learningEndTime)}
-                      placeholder="4:00 PM"
-                      placeholderTextColor={MUTED}
-                      style={scheduleTimeInputStyle}
-                    />
-                  </View>
+                  <MaskedTimeInput
+                    value={learningEndTime}
+                    onChangeText={setLearningEndTime}
+                    onBlur={(nextValue) => persistLearningTimes(learningStartTime, nextValue)}
+                    placeholder="4:00 PM"
+                  />
                 </View>
               </View>
             </View>
@@ -2540,7 +2514,7 @@ export default function PlannerSettingsContent({
         </View>
 
         <View style={sectionBucketStyle}>
-          <Text style={sectionBucketTitleStyle}>Attendance tracking</Text>
+          <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.attendanceTracking}</Text>
           <View style={formStackStyle}>
             <View style={formFieldStyle}>
               <Text style={formFieldLabelStyle}>Tracking mode</Text>
@@ -2678,9 +2652,9 @@ export default function PlannerSettingsContent({
           </View>
         </View>
 
-        {/* Days off */}
+        {/* Holidays & breaks */}
         <View style={sectionBucketStyle}>
-          <Text style={sectionBucketTitleStyle}>Days off</Text>
+          <Text style={sectionBucketTitleStyle}>{SCHOOL_YEAR_SETTINGS_UI.sections.daysOff}</Text>
           <View style={formStackStyle}>
             <View style={formFieldStyle}>
               <View style={inlineSwitchRowStyle}>

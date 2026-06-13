@@ -2737,7 +2737,7 @@ async def fix_target_gap(
                     remainingUnfixableGap=0,
                     maxAchievableDays=0,
                     debugFailureReason="saved_range_already_ended",
-                    message="Saved planning range has already ended. Extend planning preferences to add days.",
+                    message="Saved planning range has already ended. Extend School Year Settings to add days.",
                 )
             start_obj = date.fromisoformat(range_start_for_fix)
             end_obj = date.fromisoformat(saved_range_end)

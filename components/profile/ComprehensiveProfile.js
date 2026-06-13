@@ -12,7 +12,6 @@ import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import GeistCard from '../GeistCard';
 import AddSubjectModal from '../AddSubjectModal';
-import PlanYearWizard from '../year/PlanYearWizard';
 import SubjectDetailModal from '../subjects/SubjectDetailModal';
 
 // Import all profile feature components
@@ -771,7 +770,6 @@ function ProfileOverview({ child, familyId, children = [] }) {
   const [expandedSubjectId, setExpandedSubjectId] = useState(null);
   const [selectedSubjectId, setSelectedSubjectId] = useState(null);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
-  const [showPlanYearWizard, setShowPlanYearWizard] = useState(false);
   const [activeTab, setActiveTab] = useState('chart'); // 'chart'
 
   useEffect(() => {
@@ -1309,18 +1307,6 @@ function ProfileOverview({ child, familyId, children = [] }) {
         onClose={() => setShowAddSubjectModal(false)}
         onSubjectAdded={handleSubjectAdded}
         familyId={familyId}
-      />
-
-      <PlanYearWizard
-        visible={showPlanYearWizard}
-        onClose={() => setShowPlanYearWizard(false)}
-        familyId={familyId}
-        children={allChildren}
-        onComplete={() => {
-          setShowPlanYearWizard(false);
-          // Optionally reload subjects after year plan creation
-          loadCurrentSubjects();
-        }}
       />
 
       <SubjectDetailModal

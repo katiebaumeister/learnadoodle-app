@@ -17,6 +17,7 @@ import { X, Check, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
 import RubricScoring from '../rubrics/RubricScoring';
+import { getRubricById } from '../../lib/services/gradebookClient';
 import { descriptionWithoutChildHelpBlocks } from '../../lib/assignmentHelpHistory';
 import { LD, shellShadow, fontDisplay } from '../parent/parentModalTheme';
 
@@ -139,8 +140,12 @@ export default function AssignmentReviewModal({
   const [reviewHistoryLines, setReviewHistoryLines] = useState([]);
 
   useEffect(() => {
+    if (!visible || !assignment?.rubric_id) {
+      setRubric(null);
+      return;
+    }
     loadRubric();
-  }, [assignment]);
+  }, [assignment?.rubric_id, visible]);
 
   useEffect(() => {
     setLinkedEventId(resolveLinkedEventId(assignment));
@@ -281,17 +286,10 @@ export default function AssignmentReviewModal({
       return;
     }
     try {
-      const { data, error } = await supabase
-        .from('rubrics')
-        .select('*')
-        .eq('id', assignment.rubric_id)
-        .single();
-
-      if (error && error.code !== 'PGRST116') {
-      } else if (data) {
-        setRubric(data);
-      }
-    } catch (error) {
+      const data = await getRubricById(assignment.rubric_id);
+      setRubric(data || null);
+    } catch (_) {
+      setRubric(null);
     }
   };
 

@@ -52,7 +52,7 @@ const NAV_ITEM_DEFS = {
   planner: { key: 'planner', label: 'Planner', icon: MAIN_NAV_ICONS.planner },
   planningPreferences: {
     key: 'planning-preferences',
-    label: 'Year Preferences',
+    label: 'School Year',
     icon: MAIN_NAV_ICONS.planningPreferences,
   },
   records: { key: 'records', label: 'Records', icon: MAIN_NAV_ICONS.records },
@@ -64,7 +64,7 @@ const NAV_ITEM_DEFS = {
 
 const PARENT_NAV_BUCKET_KEYS = [
   ['home', 'messages'],
-  ['subjects', 'planner', 'materials'],
+  ['planner', 'subjects', 'materials'],
   ['profile'],
 ];
 

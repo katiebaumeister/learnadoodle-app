@@ -2,12 +2,9 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal as RNModal, Platform, TextInput } from 'react-native';
 import { ChevronDown, CheckCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { isAbortLikeError } from '../lib/apiClient';
 import { useToast } from './Toast';
 import { colors } from '../theme/colors';
 import { parseChildIds } from '../lib/services/subjectsClient';
-import { fetchSubjectCurriculumEventsStructure } from '../lib/services/curriculumClient';
-import { getSubjectProgressCache, mergeSubjectProgressCache } from '../lib/subjectProgressPlanCache';
 import { useModalStackElevation } from './hooks/useModalStackElevation';
 import AppModalShell from './ui/AppModalShell';
 import { ModalFooter } from './ui/ModalFooter';
@@ -75,14 +72,6 @@ function getDefaultSchoolTerm() {
   return month >= 8 ? 'fall_term' : 'spring_term';
 }
 
-function normalizeLessonYmd(dateVal) {
-  if (dateVal == null || dateVal === '') return null;
-  const s = String(dateVal).trim();
-  if (s.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  return null;
-}
-
 export default function AddSubjectModal({ 
   visible, 
   onClose, 
@@ -125,32 +114,12 @@ export default function AddSubjectModal({
   useModalStackElevation(overlayRef, visible);
   const hasSetChildIdsRef = useRef(false);
   const lastSubjectIdRef = useRef(null);
-  const cleanupDraftInFlightRef = useRef(false);
-  
-  // Event management state
-  const [subjectEvents, setSubjectEvents] = useState([]);
-  const [curriculumUnits, setCurriculumUnits] = useState([]);
-  const [loadingCurriculum, setLoadingCurriculum] = useState(false);
-  const [hasLoadedCurriculumOnce, setHasLoadedCurriculumOnce] = useState(false);
-
-  // Accordion state (all collapsed by default)
-  const [showUnitsLessonsAccordion, setShowUnitsLessonsAccordion] = useState(false);
   const [showAdditionalNotesAccordion, setShowAdditionalNotesAccordion] = useState(false);
   const [deletingSubject, setDeletingSubject] = useState(false);
   const [showDeleteSubjectConfirm, setShowDeleteSubjectConfirm] = useState(false);
-  /** Add-mode draft subject persisted early so unit structure can be saved before final subject save. */
-  const [draftSubjectId, setDraftSubjectId] = useState(null);
-  const effectiveSubjectId = subject?.id ?? draftSubjectId ?? null;
-  const draftSubjectIdRef = useRef(null);
-  const [openingAddUnits, setOpeningAddUnits] = useState(false);
-  const finalizedSubjectSaveRef = useRef(false);
   const materialDropdownRef = useRef(null);
   const schoolYearTriggerRef = useRef(null);
   const schoolTermTriggerRef = useRef(null);
-
-  useEffect(() => {
-    draftSubjectIdRef.current = draftSubjectId || null;
-  }, [draftSubjectId]);
 
   // Update children when prop changes
   useEffect(() => {
@@ -162,7 +131,6 @@ export default function AddSubjectModal({
 
   useEffect(() => {
     if (visible) {
-      finalizedSubjectSaveRef.current = false;
       // Only fetch children if not provided as prop
       if (!propChildren || propChildren.length === 0) {
         fetchChildren();
@@ -186,8 +154,6 @@ export default function AddSubjectModal({
         setConnectedCalendarTargets(normalizeCalendarTargets(subject.connected_calendar_targets));
         setShowMaterialDropdown(false);
         // Child IDs will be set in the next useEffect after children load
-        // Load events for this subject
-        loadSubjectEvents(subject.id);
       } else {
         // Add mode - use defaults
         setAdditionalNotes('');
@@ -227,14 +193,7 @@ export default function AddSubjectModal({
       setLogisticalInstructor('');
       setConnectedCalendarTargets([]);
       setError(null);
-      setSubjectEvents([]);
-      setCurriculumUnits([]);
-      setLoadingCurriculum(false);
-      setHasLoadedCurriculumOnce(false);
-      setShowUnitsLessonsAccordion(false);
       setShowAdditionalNotesAccordion(false);
-      setDraftSubjectId(null);
-      setOpeningAddUnits(false);
       setShowMaterialDropdown(false);
       setSelectedMaterialId(null);
     }
@@ -330,95 +289,10 @@ export default function AddSubjectModal({
     connectedCalendarTargets,
   ]);
 
-  const cleanupDraftSubject = useCallback(async (candidateDraftId) => {
-    const draftId = candidateDraftId || null;
-    if (!draftId || !familyId) return;
-    try {
-      await deleteSubjectCascade(
-        supabase,
-        familyId,
-        draftId,
-        subjectName.trim() || 'Subject'
-      );
-    } catch (cleanupError) {
-      console.warn('Failed to clean up draft subject on close:', cleanupError);
-      // Best-effort hard delete fallback for draft rows when cascade helper fails.
-      try {
-        await supabase
-          .from('subject')
-          .delete()
-          .eq('id', draftId)
-          .eq('family_id', familyId);
-      } catch (fallbackError) {
-        console.warn('Fallback draft subject delete failed:', fallbackError);
-      }
-    } finally {
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('refreshSubjects'));
-      }
-    }
-  }, [familyId, subjectName]);
-
-  const handleCloseWithDraftCleanup = useCallback(async () => {
-    if (!onClose) return;
+  const handleClose = useCallback(() => {
     setError(null);
-    const currentDraftId = draftSubjectIdRef.current;
-    if (subject?.id || !currentDraftId || finalizedSubjectSaveRef.current) {
-      onClose();
-      return;
-    }
-    if (cleanupDraftInFlightRef.current) return;
-    cleanupDraftInFlightRef.current = true;
-    try {
-      await cleanupDraftSubject(currentDraftId);
-      draftSubjectIdRef.current = null;
-      setDraftSubjectId(null);
-      onClose();
-    } finally {
-      cleanupDraftInFlightRef.current = false;
-    }
-  }, [onClose, subject?.id, cleanupDraftSubject]);
-
-  useEffect(() => {
-    // Fallback cleanup path for external close/hide flows that bypass the modal close handler.
-    if (!visible) setError(null);
-    if (visible) return;
-    if (subject?.id || finalizedSubjectSaveRef.current) return;
-    const currentDraftId = draftSubjectIdRef.current;
-    if (!currentDraftId || cleanupDraftInFlightRef.current) return;
-    cleanupDraftInFlightRef.current = true;
-    cleanupDraftSubject(currentDraftId)
-      .finally(() => {
-        draftSubjectIdRef.current = null;
-        setDraftSubjectId(null);
-        cleanupDraftInFlightRef.current = false;
-      });
-  }, [visible, subject?.id, cleanupDraftSubject]);
-
-  // Load events for the subject
-  const loadSubjectEvents = async (subjectId) => {
-    if (!subjectId || !familyId) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('events')
-        .select('id, title, start_ts, status, event_type, academic_year_id')
-        .eq('subject_id', subjectId)
-        .eq('family_id', familyId)
-        .is('deleted_at', null)
-        .neq('status', 'canceled')
-        .order('start_ts', { ascending: false });
-      
-      if (error) throw error;
-      
-      setSubjectEvents(data || []);
-    } catch (error) {
-      if (!isAbortLikeError(error)) {
-        console.error('Error loading subject events:', error);
-      }
-      setSubjectEvents([]);
-    }
-  };
+    onClose?.();
+  }, [onClose]);
 
   const fetchMaterials = useCallback(async () => {
     if (!familyId) {
@@ -468,211 +342,6 @@ export default function AddSubjectModal({
     [materials, selectedMaterialId]
   );
 
-  const loadSubjectCurriculum = useCallback(async (subjectId, academicYearIds = []) => {
-    if (!subjectId || !familyId) return;
-    const cachedEntry = getSubjectProgressCache(familyId, subjectId);
-    const cachedUnits = Array.isArray(cachedEntry?.curriculumUnits) ? cachedEntry.curriculumUnits : null;
-    if (cachedUnits) {
-      setCurriculumUnits(cachedUnits);
-      setHasLoadedCurriculumOnce(true);
-    }
-    setLoadingCurriculum(true);
-    try {
-      const yearCandidates = [null, ...academicYearIds]
-        .filter((v, i, arr) => arr.findIndex((x) => String(x) === String(v)) === i);
-      const grouped = new Map();
-      const seenLessons = new Set();
-      for (const yearId of yearCandidates) {
-        const { data, error } = await fetchSubjectCurriculumEventsStructure(
-          familyId,
-          subjectId,
-          yearId
-        );
-        if (error) continue;
-        const units = Array.isArray(data?.units) ? data.units : [];
-        for (const unit of units) {
-          const unitTitle = (unit?.title || '').trim() || 'Unit';
-          if (!grouped.has(unitTitle)) grouped.set(unitTitle, []);
-          for (const lesson of unit?.lessons || []) {
-            const lessonKey = lesson?.id
-              ? `id:${String(lesson.id)}`
-              : `title:${unitTitle}::${String(lesson?.title || '').trim().toLowerCase()}`;
-            if (seenLessons.has(lessonKey)) continue;
-            seenLessons.add(lessonKey);
-            grouped.get(unitTitle).push(lesson);
-          }
-        }
-      }
-      const mergedUnits = Array.from(grouped.entries()).map(([title, lessons]) => ({
-        title,
-        lessons,
-      }));
-      setCurriculumUnits(mergedUnits);
-      mergeSubjectProgressCache(familyId, subjectId, { curriculumUnits: mergedUnits });
-    } catch (error) {
-      if (!isAbortLikeError(error)) {
-        console.error('Error loading subject curriculum:', error);
-      }
-      setCurriculumUnits([]);
-      mergeSubjectProgressCache(familyId, subjectId, { curriculumUnits: [] });
-    } finally {
-      setLoadingCurriculum(false);
-      setHasLoadedCurriculumOnce(true);
-    }
-  }, [familyId]);
-
-  const curriculumAcademicYearIds = useMemo(
-    () => [...new Set(subjectEvents.map((e) => e?.academic_year_id).filter(Boolean))],
-    [subjectEvents]
-  );
-
-  const unscheduledLessons = useMemo(() => {
-    const out = [];
-    for (const unit of curriculumUnits) {
-      const unitTitle = (unit?.title || '').trim() || 'Unit';
-      for (const lesson of unit?.lessons || []) {
-        const meta = lesson?.curriculum_metadata || {};
-        const isUnscheduledPlaceholder = Boolean(meta?.unscheduled_placeholder);
-        // Some existing subjects store placeholder rows with a timestamp; treat those as unscheduled.
-        const ymd = normalizeLessonYmd(lesson?.date);
-        if (!isUnscheduledPlaceholder && ymd) continue;
-        out.push({
-          id: String(lesson?.id || `${unitTitle}-${lesson?.title || 'lesson'}`),
-          unitTitle,
-          lessonTitle: (lesson?.title || '').trim() || 'Lesson',
-        });
-      }
-    }
-    return out;
-  }, [curriculumUnits]);
-
-  const hasUnitsOrLessonsContent = (curriculumUnits || []).some((u) => (u?.lessons || []).length > 0) || unscheduledLessons.length > 0;
-  const totalCurriculumUnits = (curriculumUnits || []).length;
-  const totalCurriculumLessons = useMemo(
-    () => (curriculumUnits || []).reduce((sum, unit) => sum + ((unit?.lessons || []).length || 0), 0),
-    [curriculumUnits]
-  );
-  const curriculumBuildSummaryLine = `${totalCurriculumUnits} ${totalCurriculumUnits === 1 ? 'unit' : 'units'} · ${totalCurriculumLessons} ${totalCurriculumLessons === 1 ? 'lesson' : 'lessons'} built`;
-  const unitsLessonsAccordionSubtitle = hasUnitsOrLessonsContent
-    ? curriculumBuildSummaryLine
-    : 'Build units and lessons for this subject';
-
-  const ensureDraftSubjectForUnits = useCallback(async () => {
-    if (subject?.id) return subject.id;
-    const existingDraft = draftSubjectIdRef.current;
-    if (existingDraft) return existingDraft;
-
-    const trimmedName = String(subjectName || '').trim();
-    if (!trimmedName) {
-      throw new Error('Please enter a subject name before adding units.');
-    }
-    if (selectedChildIds.length === 0) {
-      throw new Error('Please select at least one student before adding units.');
-    }
-    if (!familyId) {
-      throw new Error('Family ID not found. Please refresh and try again.');
-    }
-
-    const payload = {
-      ...buildSubjectPayload(),
-      family_id: familyId,
-    };
-    const { data, error } = await supabase
-      .from('subject')
-      .insert([payload])
-      .select('id')
-      .maybeSingle();
-    if (error) throw error;
-    const newId = data?.id || null;
-    if (!newId) throw new Error('Could not save subject draft.');
-    draftSubjectIdRef.current = newId;
-    setDraftSubjectId(newId);
-    return newId;
-  }, [subject?.id, subjectName, selectedChildIds, familyId, buildSubjectPayload]);
-
-  /** Open Add units flows directly from Add/Edit Subject (no Plan Builder modal hop). */
-  const openAddUnitsCurriculumAction = useCallback(
-    async (kind) => {
-      if (openingAddUnits) return;
-      setError(null);
-      const requestedKind = String(kind || '').trim().toLowerCase();
-      const routedMethod = requestedKind === 'paste' ? 'paste_plain' : requestedKind;
-      const safeMethod = ['manual', 'generate', 'upload', 'paste_plain'].includes(routedMethod)
-        ? routedMethod
-        : 'manual';
-      if (Platform.OS !== 'web' || typeof window === 'undefined') {
-        setError('Add units is available in web planning flow only.');
-        return;
-      }
-      setOpeningAddUnits(true);
-      try {
-        const subjectIdForUnits = await ensureDraftSubjectForUnits();
-        const yearIdForUnits = (subjectEvents || []).find((ev) => ev?.academic_year_id)?.academic_year_id || null;
-        window.dispatchEvent(
-          new CustomEvent('openPlanYearModal', {
-            detail: {
-              from: 'subject_detail',
-              subjectId: subjectIdForUnits,
-              academicYearId: yearIdForUnits,
-              subjectName: subjectName?.trim() || subject?.name || null,
-              childIds: selectedChildIds,
-              openAsModal: true,
-              openToEditList: false,
-              skipPlanSummary: true,
-              openDirectlyToScope: true,
-              initialUnitStructureMethod: safeMethod,
-              subjectHasCurriculumContent: hasUnitsOrLessonsContent,
-            },
-          })
-        );
-      } catch (err) {
-        setError(err?.message || 'Could not open units editor.');
-      } finally {
-        setTimeout(() => setOpeningAddUnits(false), 300);
-      }
-    },
-    [
-      subject?.name,
-      subjectName,
-      selectedChildIds,
-      subjectEvents,
-      openingAddUnits,
-      ensureDraftSubjectForUnits,
-      hasUnitsOrLessonsContent,
-    ]
-  );
-
-  // Keep event management synced for both persisted subjects and add-mode draft subjects.
-  useEffect(() => {
-    if (!visible || !effectiveSubjectId || !familyId) return;
-    loadSubjectEvents(effectiveSubjectId);
-  }, [visible, effectiveSubjectId, familyId]);
-
-  useEffect(() => {
-    if (!visible || !effectiveSubjectId || !familyId) return;
-    const cachedEntry = getSubjectProgressCache(familyId, effectiveSubjectId);
-    if (Array.isArray(cachedEntry?.curriculumUnits)) {
-      setCurriculumUnits(cachedEntry.curriculumUnits);
-      setHasLoadedCurriculumOnce(true);
-    }
-    loadSubjectCurriculum(effectiveSubjectId, curriculumAcademicYearIds);
-  }, [visible, effectiveSubjectId, familyId, curriculumAcademicYearIds, loadSubjectCurriculum]);
-
-  // After Add Units closes, WebLayout emits refreshSubjectDetail for this subject id.
-  // Refresh events and curriculum so action pills reflect the latest subject content.
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
-    if (!visible || !effectiveSubjectId) return;
-    const onRefreshSubjectDetail = (evt) => {
-      const sid = evt?.detail?.subjectId;
-      if (!sid || String(sid) !== String(effectiveSubjectId)) return;
-      loadSubjectEvents(effectiveSubjectId);
-      loadSubjectCurriculum(effectiveSubjectId, curriculumAcademicYearIds);
-    };
-    window.addEventListener('refreshSubjectDetail', onRefreshSubjectDetail);
-    return () => window.removeEventListener('refreshSubjectDetail', onRefreshSubjectDetail);
-  }, [visible, effectiveSubjectId, familyId, loadSubjectCurriculum, curriculumAcademicYearIds]);
-  
   // Delete subject permanently (Danger Zone)
   const performDeleteSubject = async () => {
     if (!subject || !subject.id || !familyId || deletingSubject) return;
@@ -833,14 +502,14 @@ export default function AddSubjectModal({
 
       let newSubjects;
       let insertError;
-      const effectiveSubjectId = subject?.id || draftSubjectId || null;
+      const existingSubjectId = subject?.id || null;
 
-      if (effectiveSubjectId) {
-        // Edit mode OR add-mode draft subject - UPDATE
+      if (existingSubjectId) {
+        // Edit mode - UPDATE
         const { data, error } = await supabase
           .from('subject')
           .update(subjectData)
-          .eq('id', effectiveSubjectId)
+          .eq('id', existingSubjectId)
           .eq('family_id', familyId)
           .select();
         newSubjects = data;
@@ -864,7 +533,7 @@ export default function AddSubjectModal({
         throw insertError;
       }
 
-      const savedSubjectId = newSubjects?.[0]?.id || effectiveSubjectId || null;
+      const savedSubjectId = newSubjects?.[0]?.id || existingSubjectId || null;
       if (savedSubjectId && selectedMaterialId) {
         try {
           const { error: materialLinkError } = await supabase
@@ -879,7 +548,6 @@ export default function AddSubjectModal({
       }
 
       // Success
-      finalizedSubjectSaveRef.current = true;
       const isEdit = !!(subject && subject.id);
       const successMessage = isEdit 
         ? `Subject "${subjectName}" updated successfully!`
@@ -902,16 +570,16 @@ export default function AddSubjectModal({
         window.dispatchEvent(new CustomEvent('refreshMaterials', { detail: { familyId } }));
         window.dispatchEvent(new CustomEvent('refreshPlanHealth'));
         window.dispatchEvent(new CustomEvent('refreshPlanDefaults'));
-        if (effectiveSubjectId) {
+        if (savedSubjectId) {
           window.dispatchEvent(new CustomEvent('refreshSubjectDetail', {
-            detail: { subjectId: effectiveSubjectId }
+            detail: { subjectId: savedSubjectId }
           }));
         }
       }
       
       // Close modal after a brief delay
       setTimeout(() => {
-        handleCloseWithDraftCleanup();
+        handleClose();
       }, 500);
     } catch (err) {
       setError(err.message || 'Failed to add subject. Please try again.');
@@ -943,19 +611,19 @@ export default function AddSubjectModal({
       visible={visible}
       transparent={true}
       animationType="fade"
-      onRequestClose={handleCloseWithDraftCleanup}
+      onRequestClose={handleClose}
     >
       <View ref={overlayRef} style={styles.overlay}>
         <TouchableOpacity
           style={StyleSheet.absoluteFill}
           activeOpacity={1}
-          onPress={handleCloseWithDraftCleanup}
+          onPress={handleClose}
         />
         <TouchableOpacity activeOpacity={1} onPress={(e) => e.stopPropagation()} style={styles.modalWrap}>
           <AppModalShell
             mode={subject ? 'edit' : 'add'}
             title={subject ? 'Edit subject' : 'New subject'}
-            onClose={handleCloseWithDraftCleanup}
+            onClose={handleClose}
             disableShellScroll
             shellStyle={styles.compactSubjectShell}
             titleRowStyle={!subject ? styles.compactTitleRow : undefined}
@@ -966,7 +634,7 @@ export default function AddSubjectModal({
                 mode="edit"
                 primaryLabel={isSubmitting ? 'Saving...' : 'Save changes'}
                 destructiveLabel={subject?.id ? (deletingSubject ? 'Deleting...' : 'Delete subject') : undefined}
-                onCancel={handleCloseWithDraftCleanup}
+                onCancel={handleClose}
                 onDelete={subject?.id ? () => setShowDeleteSubjectConfirm(true) : undefined}
                 onPrimary={handleSubmit}
                 onBlockedPrimary={handleBlockedSubmit}

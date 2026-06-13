@@ -32,6 +32,9 @@ import {
   BarChart3,
   List,
   SlidersHorizontal,
+  CalendarClock,
+  Link2,
+  ClipboardList,
 } from 'lucide-react';
 import { colors } from '../../theme/colors';
 import { getSubjectDetail, parseChildIds } from '../../lib/services/subjectsClient';
@@ -72,6 +75,14 @@ import AddMaterialModal from '../materials/AddMaterialModal';
 import MaterialDetailsModal from '../materials/MaterialDetailsModal';
 import { archiveMaterial } from '../../lib/services/materialsClient';
 import LearningSubjectDetailView from '../learning/LearningSubjectDetailView';
+import AssignWorkModal from './AssignWorkModal';
+import ConfigureSubjectScheduleModal from './ConfigureSubjectScheduleModal';
+import EditSubjectUnitsModal from './EditSubjectUnitsModal';
+import AttachLessonToEventModal from './AttachLessonToEventModal';
+import {
+  computeCurriculumLessonProgress,
+} from './subjectScheduleOverview';
+import { autoAssignLessonsToUnlinkedEvents } from '../../lib/subjectLessonLinking';
 
 const ATTENDANCE_LIST_LIMIT = 5;
 const SHOW_SUBJECT_ASSIGNMENTS_SECTION = false;
@@ -455,6 +466,7 @@ export default function SubjectDetailPage({
   const [showMarkAllAttendedModal, setShowMarkAllAttendedModal] = useState(false);
   const [showPastEventsGradesModal, setShowPastEventsGradesModal] = useState(false);
   const [showAssignedToStudentModal, setShowAssignedToStudentModal] = useState(false);
+  const [showAssignWorkModal, setShowAssignWorkModal] = useState(false);
   /** Web-only: which export icon is hovered (portal tooltip, matches planner RightToolbar). */
   const [exportTooltipKey, setExportTooltipKey] = useState(null);
   const [exportTooltipPos, setExportTooltipPos] = useState({ x: 0, y: 0 });
@@ -480,6 +492,12 @@ export default function SubjectDetailPage({
   const [showAttendanceSuggestionConfirmModal, setShowAttendanceSuggestionConfirmModal] = useState(false);
   const [applyingAttendanceSuggestion, setApplyingAttendanceSuggestion] = useState(false);
   const [showLearningGoalsMethodModal, setShowLearningGoalsMethodModal] = useState(false);
+  const [showConfigureScheduleModal, setShowConfigureScheduleModal] = useState(false);
+  const [showEditUnitsModal, setShowEditUnitsModal] = useState(false);
+  const [editUnitsInitialMethod, setEditUnitsInitialMethod] = useState(null);
+  const [mappingLessonsToSchedule, setMappingLessonsToSchedule] = useState(false);
+  const [showAttachLessonModal, setShowAttachLessonModal] = useState(false);
+  const [attachLessonEvent, setAttachLessonEvent] = useState(null);
   const [learningGoalsUnits, setLearningGoalsUnits] = useState(
     Array.isArray(preloadedProgressCache?.curriculumUnits) ? preloadedProgressCache.curriculumUnits : []
   );
@@ -783,6 +801,10 @@ export default function SubjectDetailPage({
     });
     return [...new Set(ids.filter(Boolean).map((id) => String(id)))];
   }, [subject, subjectData?.events]);
+  const allChildIds = useMemo(
+    () => (children || []).map((child) => String(child?.id || '')).filter(Boolean),
+    [children]
+  );
 
   const childrenNames = assignedChildren.map(getChildName).filter(Boolean);
   const attendanceChildrenLabel = useMemo(() => {
@@ -836,31 +858,25 @@ export default function SubjectDetailPage({
       const safeMethod = ['manual', 'generate', 'upload', 'paste_plain'].includes(routedMethod)
         ? routedMethod
         : 'manual';
-      const yearIdForUnits = (subjectEvents || []).find((ev) => ev?.academic_year_id)?.academic_year_id || null;
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('openPlanYearModal', {
-            detail: {
-              from: 'subject_detail',
-              subjectId: subjectIdForUnits,
-              academicYearId: yearIdForUnits,
-              subjectName: subject?.name?.trim() || subjectData?.subject?.name || null,
-              childIds: assignedChildren,
-              openAsModal: true,
-              openToEditList: false,
-              skipPlanSummary: true,
-              openDirectlyToScope: true,
-              initialUnitStructureMethod: safeMethod,
-              subjectHasCurriculumContent: hasLearningGoalsContent,
-            },
-          })
-        );
-        return;
-      }
-      if (onEditSubject && subjectData?.subject) onEditSubject(subjectData.subject);
+      setEditUnitsInitialMethod(safeMethod);
+      setShowEditUnitsModal(true);
     },
-    [subjectData, subject?.id, subject?.name, subjectEvents, assignedChildren, onEditSubject, hasLearningGoalsContent]
+    [subjectData?.subject?.id, subject?.id]
   );
+  const openConfigureSubjectSchedule = useCallback(() => {
+    const subjectIdForSchedule = subjectData?.subject?.id || subject?.id || null;
+    if (!subjectIdForSchedule) return;
+    setShowConfigureScheduleModal(true);
+  }, [subjectData?.subject?.id, subject?.id]);
+  const handleConfigureScheduleSaved = useCallback(async () => {
+    await loadSubjectDetail({ silent: true });
+    if (!familyId || !subject?.id) return;
+    try {
+      const fetched = await findAcademicYearPlanForSubject(familyId, subject.id);
+      if (fetched?.academicYearId) setSubjectPlanYearId(fetched.academicYearId);
+      if (fetched?.planData) setSubjectPlanData(fetched.planData);
+    } catch (_) {}
+  }, [familyId, subject?.id, loadSubjectDetail]);
   const openSubjectUnitsEditor = useCallback(() => {
     const sourceToMethod = {
       manual: 'manual',
@@ -876,13 +892,79 @@ export default function SubjectDetailPage({
     setShowLearningGoalsMethodModal(false);
   }, []);
   const openLearningGoalsMethodModal = useCallback(() => {
-    // For now, skip method chooser and open manual input directly.
-    openSubjectUnitsEditorForMethod('manual');
-  }, [openSubjectUnitsEditorForMethod]);
+    setShowLearningGoalsMethodModal(true);
+  }, []);
   const selectLearningGoalsMethod = useCallback((method) => {
     setShowLearningGoalsMethodModal(false);
     openSubjectUnitsEditorForMethod(method);
   }, [openSubjectUnitsEditorForMethod]);
+  const curriculumProgress = useMemo(
+    () => computeCurriculumLessonProgress(effectiveLearningGoalsUnits, subjectEvents),
+    [effectiveLearningGoalsUnits, subjectEvents]
+  );
+  const openEditSubjectUnits = useCallback(() => {
+    setEditUnitsInitialMethod(null);
+    setShowEditUnitsModal(true);
+  }, []);
+  const handleEditUnitsSaved = useCallback(async () => {
+    learningGoalsFetchCooldownUntilRef.current = 0;
+    await loadLearningGoalsStructure();
+    await loadSubjectDetail({ silent: true });
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: false } }));
+    }
+  }, [loadLearningGoalsStructure, loadSubjectDetail]);
+  const handleMapLessonsToSchedule = useCallback(async () => {
+    const subjectIdForMap = subjectData?.subject?.id || subject?.id || null;
+    if (!familyId || !subjectIdForMap || mappingLessonsToSchedule) return;
+    setMappingLessonsToSchedule(true);
+    try {
+      const yearId = subjectPlanYearId || subjectPlanYearIdFromEvents || null;
+      const { data: structure, error } = await fetchSubjectCurriculumEventsStructure(
+        familyId,
+        subjectIdForMap,
+        yearId
+      );
+      if (error) throw error;
+      const { assigned } = await autoAssignLessonsToUnlinkedEvents({
+        familyId,
+        subjectId: subjectIdForMap,
+        subjectEvents,
+        units: structure?.units || [],
+        limit: 40,
+      });
+      if (assigned > 0) {
+        toast.push(
+          `Linked ${assigned} ${assigned === 1 ? 'lesson' : 'lessons'} to upcoming sessions`,
+          'success'
+        );
+        learningGoalsFetchCooldownUntilRef.current = 0;
+        await loadLearningGoalsStructure();
+        await loadSubjectDetail({ silent: true });
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: false } }));
+          window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { forceInvalidate: true } }));
+        }
+      } else {
+        toast.push('No open sessions to link, or all lessons are already assigned', 'info');
+      }
+    } catch (err) {
+      toast.push(err?.message || 'Could not map lessons to schedule', 'error');
+    } finally {
+      setMappingLessonsToSchedule(false);
+    }
+  }, [
+    familyId,
+    subject?.id,
+    subjectData?.subject?.id,
+    subjectEvents,
+    subjectPlanYearId,
+    subjectPlanYearIdFromEvents,
+    mappingLessonsToSchedule,
+    loadLearningGoalsStructure,
+    loadSubjectDetail,
+    toast,
+  ]);
 
   useEffect(() => {
     const action = String(initialProgressAction || '').trim().toLowerCase();
@@ -901,13 +983,13 @@ export default function SubjectDetailPage({
         setShowPastEventsGradesModal(true);
         return;
       }
-      if (action === 'learning_goals_add' && SHOW_SUBJECT_UNITS_LESSONS_SECTION) {
-        scrollToSection('learning-goals-section');
+      if (action === 'learning_goals_add') {
+        if (SHOW_SUBJECT_UNITS_LESSONS_SECTION) scrollToSection('learning-goals-section');
         openLearningGoalsMethodModal();
         return;
       }
-      if (action === 'learning_goals_edit' && SHOW_SUBJECT_UNITS_LESSONS_SECTION) {
-        scrollToSection('learning-goals-section');
+      if (action === 'learning_goals_edit') {
+        if (SHOW_SUBJECT_UNITS_LESSONS_SECTION) scrollToSection('learning-goals-section');
         openSubjectUnitsEditor();
       }
     }, 260);
@@ -1578,7 +1660,7 @@ export default function SubjectDetailPage({
     const sourceLabel = target.source === 'subject_plan_target'
       ? 'subject plan target'
       : target.source === 'subject_defaults'
-        ? 'subject planning preferences'
+        ? 'subject school year defaults'
         : target.source === 'plan_settings'
           ? 'plan preferences'
           : 'plan target';
@@ -2215,6 +2297,15 @@ export default function SubjectDetailPage({
     if (!event?.id) return;
     handleOpenEventDetails(event.id, event);
   }, [handleOpenEventDetails]);
+
+  const handleAttachLessonLinked = useCallback(async () => {
+    learningGoalsFetchCooldownUntilRef.current = 0;
+    await loadLearningGoalsStructure();
+    await loadSubjectDetail({ silent: true });
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('refreshSubjects', { detail: { skipSubjectDetailRefresh: false } }));
+    }
+  }, [loadLearningGoalsStructure, loadSubjectDetail]);
   const handleEventContextMenu = useCallback((event, nativeEvent) => {
     if (!event?.id || Platform.OS !== 'web' || typeof window === 'undefined') return;
     nativeEvent?.preventDefault?.();
@@ -3087,64 +3178,77 @@ export default function SubjectDetailPage({
                 <Text style={styles.subtext}>{calendarConnectionsHeaderLine}</Text>
               ) : null}
             </View>
-            <View style={styles.headerActions}>
-              {onEditSubject && (
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => onEditSubject(subject)}
-                >
-                  <Edit2 size={16} color="#6B7280" />
-                  <Text style={styles.actionButtonText}>Edit subject</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </View>
-
-        {isParentViewer && assignmentsNeedingHelp.length > 0 ? (
-          <View id="needs-help-section" style={styles.needsHelpSection}>
-            <View style={styles.needsHelpHeader}>
-              <HelpCircle size={22} color="#b45309" strokeWidth={2} />
-              <View style={styles.needsHelpHeaderText}>
-                <Text style={styles.needsHelpTitle}>Needs help</Text>
-                <Text style={styles.needsHelpSubtitle}>
-                  Your student asked for help on the following. Open one to reply or mark resolved.
-                </Text>
-              </View>
-            </View>
-            <View style={styles.needsHelpList}>
-              {assignmentsNeedingHelp.map((a) => {
-                const reason = extractStudentHelpReason(a);
-                const dueLine = formatDueShort(a.due_date);
-                return (
+            {onEditSubject ? (
+              <View style={styles.headerActions}>
+                {isParentViewer ? (
                   <TouchableOpacity
-                    key={a.id}
-                    style={styles.needsHelpRow}
-                    onPress={() => setHelpModalAssignment(a)}
-                    activeOpacity={0.75}
+                    style={styles.actionButton}
+                    onPress={() => onEditSubject(subject)}
                     accessibilityRole="button"
-                    accessibilityLabel={`Respond to help: ${a.title || 'assignment'}`}
+                    accessibilityLabel="Edit subject"
                     {...(Platform.OS === 'web' && { cursor: 'pointer' })}
                   >
-                    <View style={styles.needsHelpRowBody}>
-                      <Text style={styles.needsHelpRowTitle} numberOfLines={2}>
-                        {a.title || 'Schoolwork'}
-                      </Text>
-                      <Text style={styles.needsHelpRowMeta}>
-                        {getChildName(a.child_id)}
-                        {dueLine ? ` · ${dueLine}` : ''}
-                      </Text>
-                      <Text style={styles.needsHelpRowReason} numberOfLines={2}>
-                        “{reason}”
-                      </Text>
-                    </View>
-                    <ChevronRight size={20} color="#94a3b8" />
+                    <Edit2 size={15} color="#374151" />
+                    <Text style={styles.actionButtonText}>Edit Subject</Text>
                   </TouchableOpacity>
-                );
-              })}
-            </View>
+                ) : null}
+                {isParentViewer ? (
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={openLearningGoalsMethodModal}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit units and lessons"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <List size={15} color="#374151" />
+                    <Text style={styles.actionButtonText}>Edit units</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {isParentViewer ? (
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => setShowAssignWorkModal(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Assign work"
+                    {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                  >
+                    <ClipboardList size={15} color="#374151" />
+                    <Text style={styles.actionButtonText}>Assign Work</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {isParentViewer && curriculumProgress.total > 0 ? (
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={handleMapLessonsToSchedule}
+                    disabled={mappingLessonsToSchedule}
+                    accessibilityRole="button"
+                    accessibilityLabel="Map lessons to schedule"
+                    {...(Platform.OS === 'web' && { cursor: mappingLessonsToSchedule ? 'default' : 'pointer' })}
+                  >
+                    {mappingLessonsToSchedule ? (
+                      <ActivityIndicator size="small" color="#374151" />
+                    ) : (
+                      <Link2 size={15} color="#374151" />
+                    )}
+                    <Text style={styles.actionButtonText}>
+                      {mappingLessonsToSchedule ? 'Mapping…' : 'Map Lessons'}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={openConfigureSubjectSchedule}
+                  accessibilityRole="button"
+                  accessibilityLabel="Configure schedule"
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <CalendarClock size={15} color="#374151" />
+                  <Text style={styles.actionButtonText}>Configure Schedule</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </View>
-        ) : null}
+        </View>
 
         <View id="bulletin-board-section" style={styles.bulletinBoardSection}>
           <View style={styles.bulletinBoardSectionHeader}>
@@ -3702,14 +3806,25 @@ export default function SubjectDetailPage({
               </TouchableOpacity>
             </View>
             <Text style={styles.learningGoalsMethodModalBody}>
-              Choose how you want to add new units.
+              Choose how you want to {hasLearningGoalsContent ? 'add new' : 'build'} units and lessons.
             </Text>
             {hasLearningGoalsContent ? (
               <View style={styles.learningGoalsMethodWarningBox}>
                 <Text style={styles.learningGoalsMethodWarningText}>
                   You previously saved units and lessons for this subject. Choose an option to override those current
-                  units and lessons, or go to Edit current units to make changes to current.
+                  units and lessons, or edit your current units instead.
                 </Text>
+                <TouchableOpacity
+                  style={styles.learningGoalsMethodEditCurrentLink}
+                    onPress={() => {
+                    closeLearningGoalsMethodModal();
+                    setShowEditUnitsModal(true);
+                  }}
+                  activeOpacity={0.85}
+                  {...(Platform.OS === 'web' && { cursor: 'pointer' })}
+                >
+                  <Text style={styles.learningGoalsMethodEditCurrentLinkText}>Edit current units</Text>
+                </TouchableOpacity>
               </View>
             ) : null}
             <View style={styles.learningGoalsMethodOptions}>
@@ -3816,6 +3931,43 @@ export default function SubjectDetailPage({
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+      <ConfigureSubjectScheduleModal
+        visible={showConfigureScheduleModal}
+        onClose={() => setShowConfigureScheduleModal(false)}
+        onSaved={handleConfigureScheduleSaved}
+        familyId={familyId}
+        subject={subject}
+        assignedChildIds={assignedChildren}
+        allChildIds={allChildIds}
+        subjectPlanData={subjectPlanData}
+        academicYearId={subjectPlanYearId || subjectPlanYearIdFromEvents || null}
+      />
+      <EditSubjectUnitsModal
+        visible={showEditUnitsModal}
+        onClose={() => {
+          setShowEditUnitsModal(false);
+          setEditUnitsInitialMethod(null);
+        }}
+        onSaved={handleEditUnitsSaved}
+        familyId={familyId}
+        subject={subject}
+        assignedChildIds={assignedChildren}
+        hasExistingContent={hasLearningGoalsContent}
+        academicYearId={subjectPlanYearId || subjectPlanYearIdFromEvents || null}
+        initialImportMethod={editUnitsInitialMethod}
+      />
+      <AttachLessonToEventModal
+        visible={showAttachLessonModal}
+        onClose={() => {
+          setShowAttachLessonModal(false);
+          setAttachLessonEvent(null);
+        }}
+        onLinked={handleAttachLessonLinked}
+        familyId={familyId}
+        subjectId={subject?.id}
+        subjectName={subject?.name}
+        event={attachLessonEvent}
+      />
       <MarkAllAttendedModal
         visible={showMarkAllAttendedModal}
         onClose={() => setShowMarkAllAttendedModal(false)}
@@ -3929,6 +4081,14 @@ export default function SubjectDetailPage({
           setHelpModalAssignment(null);
           loadSubjectDetail({ silent: true });
         }}
+      />
+      <AssignWorkModal
+        visible={showAssignWorkModal}
+        onClose={() => setShowAssignWorkModal(false)}
+        familyId={familyId}
+        events={subjectEvents}
+        filterSummary={subject?.name || 'Subject'}
+        onCompleted={() => loadSubjectDetail({ silent: true })}
       />
       <AssignmentMessageModal
         visible={!!messageModalContext}
@@ -5283,6 +5443,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
     color: '#1F2937',
+    ...(Platform.OS === 'web' && {
+      fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    }),
+  },
+  learningGoalsMethodEditCurrentLink: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    ...(Platform.OS === 'web' && { cursor: 'pointer' }),
+  },
+  learningGoalsMethodEditCurrentLinkText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2563EB',
+    textDecorationLine: 'underline',
     ...(Platform.OS === 'web' && {
       fontFamily: '"Cooper Hewitt", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     }),

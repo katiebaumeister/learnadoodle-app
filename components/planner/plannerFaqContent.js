@@ -5,7 +5,7 @@ export const PLANNER_FAQ = [
   {
     id: 'pl-1',
     q: 'How does the planner work?',
-    a: 'Use Planner as your daily execution calendar: create, edit, move, and complete events there. Use Subjects > Schedule when you need to change recurring lesson cadence for a subject. Use Settings > Planning Preferences when you need family-wide defaults (total class days, date ranges, breaks/exclusions, and targets). In short: Planner handles daily action, Schedule handles recurring structure, and Planning Preferences handles global rules.',
+    a: 'Use Planner as your daily execution calendar: create, edit, move, and complete events there. Use Subjects > Schedule when you need to change recurring lesson cadence for a subject. Use Settings > School Year Settings when you need family-wide defaults (total class days, date ranges, breaks/exclusions, and targets). In short: Planner handles daily action, Schedule handles recurring structure, and School Year Settings handles global rules.',
   },
   {
     id: 'pl-2',
@@ -29,8 +29,8 @@ export const PLANNER_FAQ = [
   },
   {
     id: 'pl-6',
-    q: 'How do I manage Schedule and Planning Preferences?',
-    a: 'Use this step-by-step path when settings feel buried: (1) open the Subjects tab, (2) choose a subject, and (3) open Schedule to set that subject\'s recurring cadence and metrics. For family-wide rules, open Settings > Planning Preferences and set total class days, year boundaries, exclusions/breaks, and targets. Subject Schedule controls one subject; Planning Preferences controls household defaults.',
+    q: 'How do I manage Schedule and School Year Settings?',
+    a: 'Use this step-by-step path when settings feel buried: (1) open the Subjects tab, (2) choose a subject, and (3) open Schedule to set that subject\'s recurring cadence and metrics. For family-wide rules, open Settings > School Year Settings and set total class days, year boundaries, exclusions/breaks, and targets. Subject Schedule controls one subject; School Year Settings controls household defaults.',
   },
   {
     id: 'pl-7',

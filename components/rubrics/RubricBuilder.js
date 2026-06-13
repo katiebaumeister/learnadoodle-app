@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, ActivityIndicator, Alert } from 'react-native';
 import { Plus, X, Trash2, Save } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
+import { createRubric, updateRubric } from '../../lib/services/gradebookClient';
 import { colors } from '../../theme/colors';
 
 export default function RubricBuilder({ familyId, rubric = null, onSave, onCancel }) {
@@ -94,31 +94,25 @@ export default function RubricBuilder({ familyId, rubric = null, onSave, onCance
 
       let result;
       if (rubric?.id) {
-        // Update existing rubric
-        const { data, error } = await supabase
-          .from('rubrics')
-          .update({
-            title: rubricData.title,
-            description: rubricData.description,
-            criteria: rubricData.criteria,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', rubric.id)
-          .select()
-          .single();
-
-        if (error) throw error;
-        result = data;
+        const apiResult = await updateRubric(rubric.id, {
+          title: rubricData.title,
+          description: rubricData.description,
+          criteria: rubricData.criteria,
+          total_points: rubricData.total_points,
+        });
+        result = apiResult?.data || apiResult;
       } else {
-        // Create new rubric
-        const { data, error } = await supabase
-          .from('rubrics')
-          .insert(rubricData)
-          .select()
-          .single();
+        const apiResult = await createRubric({
+          title: rubricData.title,
+          description: rubricData.description,
+          criteria: rubricData.criteria,
+          total_points: rubricData.total_points,
+        });
+        result = apiResult?.data || apiResult;
+      }
 
-        if (error) throw error;
-        result = data;
+      if (!result?.id) {
+        throw new Error('Rubric save failed');
       }
 
       if (onSave) {

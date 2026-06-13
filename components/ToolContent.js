@@ -109,7 +109,7 @@ export default function ToolContent({
   const [aiModalKey, setAiModalKey] = useState(null);
   const [showPackWeekModal, setShowPackWeekModal] = useState(false);
   const [settingsSubtab, setSettingsSubtab] = useState('schedule_rules');
-  const [aiToolsSubtab, setAiToolsSubtab] = useState('plan-year');
+  const [aiToolsSubtab, setAiToolsSubtab] = useState('school-year-settings');
   const [showSuperpowerModal, setShowSuperpowerModal] = useState(false);
   const [selectedSuperpower, setSelectedSuperpower] = useState(null);
   const [backlogView, setBacklogView] = useState('list'); // 'list' or 'board'
@@ -126,7 +126,7 @@ export default function ToolContent({
   useEffect(() => {
     if (toolKey === TOOL_KEYS.AI_TOOLS) {
       if (onPlanYear) {
-        setAiToolsSubtab('plan-year');
+        setAiToolsSubtab('school-year-settings');
       } else if (onHeatmap) {
         setAiToolsSubtab('heatmap');
       } else if (onPackWeek) {
@@ -1028,10 +1028,10 @@ export default function ToolContent({
           description: 'Help me think beyond just this week.',
           modes: [
             {
-              id: 'plan-year',
-              title: 'Plan the Year',
-              description: 'Lay out a high-level plan for the whole year or term.',
-              tagline: 'A bird\'s-eye view of the year, made practical',
+              id: 'school-year-settings',
+              title: 'School Year Settings',
+              description: 'Set learning days, hours, holidays, breaks, and year-wide targets.',
+              tagline: 'Your school year foundation in one place',
               requires: () => onPlanYear !== undefined,
             },
             {
